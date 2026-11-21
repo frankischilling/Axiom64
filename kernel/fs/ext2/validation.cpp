@@ -119,7 +119,7 @@ struct Validation {
 
     bool bitmaps(const uint8_t* header) {
         uint64_t free_blocks = 0, free_inodes = 0;
-        uint8_t data[max_block_size], desc[32];
+        uint8_t data[max_block_size], desc[max_descriptor_bytes];
         for (unsigned group = 0; group < v.group_count; group++) {
             auto& g = v.groups[group];
             if (!v.descriptor(group, desc) || !v.read_bitmap(group, false, data, desc))
@@ -181,7 +181,7 @@ struct Validation {
             return true;
         // The complete structural scan has succeeded. All counts are derived
         // from the validated bitmaps; layout bounds and directory counts stay strict.
-        uint8_t desc[32];
+        uint8_t desc[max_descriptor_bytes];
         for (unsigned group = 0; group < v.group_count; group++) {
             if (!v.descriptor(group, desc))
                 return false;
@@ -248,7 +248,7 @@ struct Validation {
 
     bool inode_maps() {
         Inode data;
-        uint8_t desc[32];
+        uint8_t desc[max_descriptor_bytes];
         for (unsigned group = 0; group < v.group_count; group++) {
             unsigned dirs = 0;
             auto& g = v.groups[group];

@@ -49,6 +49,10 @@ PROFILES = (
     (4096, "uefi", "legacy", True, ""),
     (1024, "bios", "modern", True, "metadata_csum"),
     (4096, "uefi", "legacy", True, "metadata_csum,metadata_csum_seed"),
+    (4096, "uefi", "modern", True, "metadata_csum,64bit"),
+    (1024, "bios", "modern", True, "metadata_csum,64bit,flex_bg"),
+    (1024, "uefi", "legacy", True, "metadata_csum,flex_bg"),
+    (2048, "bios", "legacy", False, "64bit,flex_bg"),
 )
 LAST_LOGICAL = 2**32 - 2
 
@@ -87,8 +91,10 @@ def checksummed_journal(disk, block):
         raw.write(header)
 
 
-def fixture(directory, disk, block, journal, binaries=(), checksums=""):
+def fixture(directory, disk, block, journal, binaries=(), features_extra=""):
     prefix = "/mnt" if binaries else ""
+    feature_set = set(features_extra.split(","))
+    checksums = "metadata_csum" in feature_set
     with tempfile.TemporaryDirectory(prefix="ext4-extents-") as source:
         root = Path(source)
         store = root
@@ -112,10 +118,13 @@ def fixture(directory, disk, block, journal, binaries=(), checksums=""):
         features = "none,filetype,sparse_super,large_file,extent,dir_index"
         if journal:
             features += ",has_journal"
+        if features_extra:
+            features += "," + features_extra
         if checksums:
-            features += ",ext_attr," + checksums
+            features += ",ext_attr"
         inode_size = "256" if checksums and block == 4096 else "128"
-        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", str(block), "-I", inode_size,
+        layout = ["-G", "4", "-g", "2048"] if "flex_bg" in feature_set else []
+        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", str(block), "-I", inode_size, *layout,
                         "-O", features, "-E", "root_owner=0:0", "-d", root, disk], check=True)
         if checksums:
             value = root / "attribute-value"
@@ -199,10 +208,79 @@ def checksum_rejections(directory, seed, iso):
             raise RuntimeError(f"rejected metadata checksum wrote to the disk: {name}")
 
 
-def lazy_flags(disk):
+def group_layout(disk):
     with disk.open("rb") as raw:
-        raw.seek(2048 + 32 + 18)
+        raw.seek(1024)
+        header = raw.read(1024)
+    first, block_shift, _, per_group = struct.unpack_from("<4I", header, 20)
+    block = 1024 << block_shift
+    incompatible, = struct.unpack_from("<I", header, 96)
+    width = struct.unpack_from("<H", header, 254)[0] if incompatible & 0x80 else 32
+    return header, (first + 1) * block, width, first + per_group
+
+
+def lazy_flags(disk):
+    _, table, width, _ = group_layout(disk)
+    with disk.open("rb") as raw:
+        raw.seek(table + width + 18)
         return struct.unpack("<H", raw.read(2))[0]
+
+
+def verify_flex_placement(disk, block, wide):
+    header, table, width, group1_first = group_layout(disk)
+    with disk.open("rb") as raw:
+        raw.seek(table + width)
+        addresses = struct.unpack("<3I", raw.read(12))
+    if width != (64 if wide else 32) or any(address >= group1_first for address in addresses):
+        raise RuntimeError("native fixture did not relocate all three group 1 metadata regions")
+    if wide and block == 1024:
+        blocks, = struct.unpack_from("<I", header, 4)
+        per_group = group1_first - 1
+        groups = (blocks - 1 + per_group - 1) // per_group
+        if groups * width <= block:
+            raise RuntimeError("native fixture did not span more than one wide descriptor table block")
+    return addresses
+
+
+def wide_descriptor_rejections(directory, seed, images):
+    header, table, width, _ = group_layout(seed)
+    seed_crc = crc32c(0xffffffff, header[104:120])
+    with seed.open("rb") as raw:
+        raw.seek(table)
+        first_bitmap = raw.read(4)
+    cases = (
+        ("block-bitmap-crc-high", 0, 56, None, "invalid"),
+        ("inode-bitmap-crc-high", 0, 58, None, "invalid"),
+        ("block-bitmap-address-high", 1, 32, struct.pack("<I", 1), "invalid"),
+        ("overlapping-block-bitmaps", 1, 0, first_bitmap, "invalid"),
+        ("descriptor-width", None, 254, struct.pack("<H", 96), "unsupported"),
+        ("block-count-high", None, 336, struct.pack("<I", 1), "unsupported"),
+    )
+    for name, group, offset, payload, phase in cases:
+        case = directory / name
+        case.mkdir()
+        disk = case / "disk.raw"
+        sparse_copy_fixture(seed, disk)
+        with disk.open("r+b") as raw:
+            start = 1024 if group is None else table + group * width
+            raw.seek(start)
+            record = bytearray(raw.read(1024 if group is None else width))
+            if payload is None:
+                record[offset] ^= 1
+            else:
+                record[offset:offset + len(payload)] = payload
+            if group is None:
+                struct.pack_into("<I", record, 1020, crc32c(0xffffffff, record[:1020]))
+            else:
+                struct.pack_into("<H", record, 30, 0)
+                checksum = crc32c(seed_crc, struct.pack("<I", group) + record) & 0xffff
+                struct.pack_into("<H", record, 30, checksum)
+            raw.seek(start)
+            raw.write(record)
+        before = digest(disk)
+        boot(case, images[phase], [disk], "bios", "modern", ["EXT4_EXTENT_REJECTION_PASS"])
+        if digest(disk) != before:
+            raise RuntimeError(f"rejected wide descriptor fixture changed bytes: {name}")
 
 
 def verify_cut(directory, seed, images):
@@ -391,19 +469,28 @@ def main():
     rows = []
     selected = range(len(PROFILES)) if args.profile is None else (args.profile,)
     for profile in selected:
-        block, firmware, transport, journal, checksums = PROFILES[profile]
+        block, firmware, transport, journal, features_extra = PROFILES[profile]
+        feature_set = set(features_extra.split(","))
+        checksums = "metadata_csum" in feature_set
         case = directory / f"profile-{profile}"
         case.mkdir()
         disk = case / "disk.raw"
-        fixture(case, disk, block, journal, checksums=checksums)
+        fixture(case, disk, block, journal, features_extra=features_extra)
+        relocated = None
+        if "flex_bg" in feature_set:
+            relocated = verify_flex_placement(disk, block, "64bit" in feature_set)
         cut = None
         if profile == 0:
             rejected(case, disk, boot_images)
             full_volume(case / "full", boot_images["full"])
-        if profile == 4:
+        if checksums and block == 1024:
             if not lazy_flags(disk) & 2:
                 raise RuntimeError("native seed did not have a lazy block group")
+        if profile == 4:
             checksum_rejections(case, disk, boot_images["invalid"])
+        if profile == 7:
+            wide_descriptor_rejections(case, disk, boot_images)
+        if profile in (4, 7):
             cut = verify_cut(case / "metadata-cut", disk, boot_images)
         boot(case, boot_images["write"], [disk], firmware, transport, ["EXT4_EXTENT_MUTATION_PASS"])
         depth = verify_host(case, disk, block)
@@ -414,14 +501,16 @@ def main():
         if digest(disk) != written:
             raise RuntimeError("read-only ext4 reboot changed disk bytes")
         row = dict(profile=profile, block_size=block, firmware=firmware, transport=transport,
-                   journal=journal, metadata_checksums=checksums, tree_depth=depth, disk_sha256=written)
+                   journal=journal, features=features_extra, tree_depth=depth, disk_sha256=written)
+        if relocated:
+            row["group1_metadata_blocks"] = relocated
         if cut:
             row["metadata_cut"] = cut
         if args.root_tools:
             root = case / "root"
             root.mkdir()
             rootdisk = root / "disk.raw"
-            fixture(root, rootdisk, block, journal, (client, *args.root_tools), checksums)
+            fixture(root, rootdisk, block, journal, (client, *args.root_tools), features_extra)
             boot(root, boot_images["root"], [rootdisk], firmware, transport,
                  ["VFS_ROOT_PASS filesystem=ext4 device=/dev/vda readonly=0",
                   "EXT4_EXTENT_MUTATION_PASS"])

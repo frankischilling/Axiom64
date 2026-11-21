@@ -667,6 +667,7 @@ static void destroy(Mount* mount) {
     if (v->claimed)
         block_unclaim(v->device, v);
     release(v->groups);
+    release(v->metadata_ranges);
     journal_close(v->journal);
     release(v->journal_map);
     release(v);
@@ -758,7 +759,7 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
     if (memcmp(normalized, original_header, sizeof(normalized)))
         return v.fail();
     for (unsigned group = 0; group < v.group_count; group++) {
-        uint8_t descriptor[32];
+        uint8_t descriptor[max_descriptor_bytes];
         const auto& expected = v.groups[group];
         if (!v.descriptor(group, descriptor) || u32(descriptor) != expected.block_bitmap ||
             u32(descriptor + 4) != expected.inode_bitmap ||
@@ -805,12 +806,21 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     v.typed_entries = incompatible & 2;
     v.extent_enabled = incompatible & extent_feature;
     if ((v.compatible & ~0x3cu) ||
-        (incompatible & ~(6u | extent_feature | checksum_seed_feature)) ||
+        (incompatible & ~(6u | extent_feature | checksum_seed_feature | wide_descriptor_feature |
+                          flex_group_feature)) ||
         (v.readonly_features & ~(3u | metadata_checksum_feature)) ||
         (v.inode_size != 128 && v.inode_size != 256))
         return v.fail(-95);
     if (!v.configure_checksums(header, incompatible & checksum_seed_feature))
         return false;
+    v.descriptor_bytes = classic_descriptor_bytes;
+    if (incompatible & wide_descriptor_feature) {
+        unsigned bytes = u16(header + 254);
+        if (bytes < wide_descriptor_bytes || bytes > max_descriptor_bytes ||
+            (bytes & (bytes - 1)) || u32(header + 336) || u32(header + 340) || u32(header + 344))
+            return v.fail(-95);
+        v.descriptor_bytes = bytes;
+    }
     v.reserved_gdt = v.compatible & 16 ? u16(header + 206) : 0;
     if (v.first_inode != 11 || ((v.compatible & 16) && !(v.readonly_features & 1)))
         return v.fail(-95);
@@ -830,14 +840,13 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     if ((uint64_t(v.inodes) + v.inodes_per_group - 1) / v.inodes_per_group != v.group_count)
         return v.fail();
     v.gdt = v.first + 1;
-    v.gdt_blocks = (uint64_t(v.group_count) * 32 + v.block_size - 1) / v.block_size;
-    uint64_t table_blocks = uint64_t(v.inodes_per_group) * v.inode_size / v.block_size;
+    v.gdt_blocks = (v.group_count * v.descriptor_bytes + v.block_size - 1) / v.block_size;
     if (v.gdt_blocks + v.reserved_gdt + 1 >= v.blocks_per_group)
         return v.fail();
     v.groups = (Group*)alloc(v.group_count * sizeof(Group));
     if (!v.groups)
         return v.fail(-12);
-    uint8_t desc[32];
+    uint8_t desc[max_descriptor_bytes];
     for (unsigned group = 0; group < v.group_count; group++) {
         if (!v.descriptor(group, desc))
             return false;
@@ -850,18 +859,11 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
              u32(desc + 8)};
         g.blocks = min(v.blocks - g.first, v.blocks_per_group);
         g.inodes = min(v.inodes - group * v.inodes_per_group, v.inodes_per_group);
-        uint64_t start =
-            uint64_t(g.first) + (v.has_super(group) ? 1 + v.gdt_blocks + v.reserved_gdt : 0);
-        uint64_t end = uint64_t(g.first) + g.blocks;
-        if (g.block_bitmap < start || g.block_bitmap >= end || g.inode_bitmap < start ||
-            g.inode_bitmap >= end || g.block_bitmap == g.inode_bitmap || g.inode_table < start ||
-            g.inode_table + table_blocks > end ||
-            (g.block_bitmap >= g.inode_table && g.block_bitmap - g.inode_table < table_blocks) ||
-            (g.inode_bitmap >= g.inode_table && g.inode_bitmap - g.inode_table < table_blocks) ||
-            u16(desc + 12) > g.blocks || u16(desc + 14) > g.inodes || u16(desc + 16) > g.inodes)
+        if (u16(desc + 12) > g.blocks || u16(desc + 14) > g.inodes || u16(desc + 16) > g.inodes)
             return v.fail();
     }
-    if (!open_journal(v, header, disk))
+    if (!v.build_metadata_ranges(incompatible & flex_group_feature) ||
+        !open_journal(v, header, disk))
         return false;
     unsigned state = u16(header + 58);
     v.writable_safe =

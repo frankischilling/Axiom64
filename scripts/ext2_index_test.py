@@ -52,6 +52,7 @@ PROFILES = (
     ("half_md4", False, 4096, "uefi", "modern", "ext3"),
     ("half_md4", True, 1024, "uefi", "legacy", "ext4"),
     ("half_md4", True, 1024, "bios", "modern", "ext4-csum"),
+    ("half_md4", True, 1024, "uefi", "modern", "ext4-csum-flex"),
 )
 
 
@@ -84,10 +85,14 @@ def fixture(directory, disk, block_size, algorithm, unsigned, filesystem):
             features += ",has_journal"
         if filesystem.startswith("ext4"):
             features += ",extent"
-        if filesystem == "ext4-csum":
+        if filesystem.startswith("ext4-csum"):
             features += ",metadata_csum"
+        group_layout = []
+        if filesystem == "ext4-csum-flex":
+            features += ",64bit,flex_bg"
+            group_layout = ["-G", "4"]
         subprocess.run(["mke2fs", "-q", "-F", "-t", filesystem.split("-")[0],
-                        "-b", str(block_size), "-I", "128", "-N", "4096", "-O", features,
+                        "-b", str(block_size), "-I", "128", "-N", "4096", *group_layout, "-O", features,
                         "-E", "hash_seed=01234567-89ab-cdef-0123-456789abcdef,root_owner=0:0",
                         "-d", root, disk], check=True)
     debug(disk, f"set_super_value def_hash_version {algorithm}", write=True)
@@ -119,7 +124,13 @@ def inspect_index(disk, path, logfile, algorithm):
 
 def lazy_inode_flag(disk):
     with disk.open("rb") as source:
-        source.seek(2048 + 32 + 18)
+        source.seek(1024 + 96)
+        incompatible, = struct.unpack("<I", source.read(4))
+        width = 32
+        if incompatible & 0x80:
+            source.seek(1024 + 254)
+            width, = struct.unpack("<H", source.read(2))
+        source.seek(2048 + width + 18)
         return struct.unpack("<H", source.read(2))[0] & 1
 
 
@@ -232,7 +243,8 @@ def main():
         case.mkdir()
         disk = case / "disk.raw"
         before, _ = fixture(case, disk, block_size, algorithm, unsigned, filesystem)
-        if filesystem == "ext4-csum" and not lazy_inode_flag(disk):
+        checksums = filesystem.startswith("ext4-csum")
+        if checksums and not lazy_inode_flag(disk):
             raise RuntimeError("native seed did not have a lazy inode group")
         if profile == 0:
             if before:
@@ -249,9 +261,9 @@ def main():
                 flags = re.search(rb"Flags: 0x([\da-f]+)", debug(disk, "stat " + path))
                 if not flags or int(flags[1], 16) & 0x81000 != 0x81000:
                     raise RuntimeError(f"{disk}: {path} must retain indexed extent mapping")
-        if filesystem == "ext4-csum" and lazy_inode_flag(disk):
+        if checksums and lazy_inode_flag(disk):
             raise RuntimeError("guest did not initialize the next inode group")
-        if filesystem == "ext4-csum":
+        if checksums:
             rejected_index_checksums(case, disk, boot_images["invalid"])
         if profile == 0:
             collision = debug(disk, "htree_dump /target/collision")

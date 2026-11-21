@@ -39,6 +39,9 @@ constexpr uint32_t indexed_directory = 0x1000, directory_index_feature = 0x20;
 constexpr uint32_t extent_inode = 0x80000, extent_feature = 0x40;
 constexpr uint64_t extent_logical_limit = UINT32_MAX;
 constexpr uint32_t metadata_checksum_feature = 0x400, checksum_seed_feature = 0x2000;
+constexpr uint32_t wide_descriptor_feature = 0x80, flex_group_feature = 0x200;
+constexpr unsigned classic_descriptor_bytes = 32, wide_descriptor_bytes = 64;
+constexpr unsigned max_descriptor_bytes = 1024;
 constexpr unsigned inode_uninitialized = 1, block_uninitialized = 2, inode_table_zeroed = 4;
 
 inline uint16_t u16(const uint8_t* p) {
@@ -109,6 +112,10 @@ struct Group {
     uint32_t first, blocks, inodes, block_bitmap, inode_bitmap, inode_table;
 };
 
+struct MetadataRange {
+    uint32_t begin, end;
+};
+
 struct Inode {
     uint8_t bytes[inode_bytes];
     uint32_t number;
@@ -149,6 +156,7 @@ bool validate_extent_tree(Volume&, const Inode& inode, bool allow_unwritten,
 struct Volume {
     Mount* mount;
     unsigned device, block_size, inode_size, group_count, change_count;
+    unsigned descriptor_bytes, metadata_range_count;
     uint32_t blocks, inodes, first, blocks_per_group, inodes_per_group, first_inode;
     uint32_t gdt, gdt_blocks, reserved_gdt, revision, compatible, readonly_features;
     uint32_t directory_hash_seed[4];
@@ -157,6 +165,7 @@ struct Volume {
     bool unsigned_directory_hash;
     bool typed_entries, extent_enabled, claimed, writable_safe, journal_bootstrap;
     Group* groups;
+    MetadataRange* metadata_ranges;
     Change* changes;
     EntryCache entries;
     Journal* journal;
@@ -203,17 +212,8 @@ struct Volume {
         return false;
     }
 
-    bool metadata(uint32_t block) const {
-        if (block < first || block >= blocks)
-            return true;
-        auto group = unsigned((block - first) / blocks_per_group);
-        auto& g = groups[group];
-        uint64_t table_blocks =
-            (uint64_t(inodes_per_group) * inode_size + block_size - 1) / block_size;
-        return block == g.block_bitmap || block == g.inode_bitmap ||
-               (block >= g.inode_table && block - g.inode_table < table_blocks) ||
-               (has_super(group) && block - g.first < 1 + gdt_blocks + reserved_gdt);
-    }
+    bool build_metadata_ranges(bool flex_groups);
+    bool metadata(uint32_t block) const;
 
     bool read_block(uint32_t block, void* data) {
         if (block >= blocks)
@@ -282,21 +282,23 @@ struct Volume {
 
     bool descriptor(unsigned group, uint8_t* data) {
         uint8_t block[max_block_size];
-        if (group >= group_count || !read_block(gdt + group * 32 / block_size, block))
+        unsigned offset = group * descriptor_bytes;
+        if (group >= group_count || !read_block(gdt + offset / block_size, block))
             return fail();
-        memcpy(data, block + (group * 32 % block_size), 32);
+        memcpy(data, block + offset % block_size, descriptor_bytes);
         return check_descriptor(group, data);
     }
 
     bool save_descriptor(unsigned group, const uint8_t* data) {
         uint8_t block[max_block_size];
-        if (group >= group_count || !read_block(gdt + group * 32 / block_size, block))
+        unsigned offset = group * descriptor_bytes;
+        if (group >= group_count || !read_block(gdt + offset / block_size, block))
             return fail();
-        auto target = block + (group * 32 % block_size);
-        memcpy(target, data, 32);
+        auto target = block + offset % block_size;
+        memcpy(target, data, descriptor_bytes);
         if (checksums())
             set16(target + 30, descriptor_checksum(group, target));
-        return write_block(gdt + group * 32 / block_size, block, 4);
+        return write_block(gdt + offset / block_size, block, 4);
     }
 
     bool allocated(uint32_t number, bool inode) {
@@ -466,7 +468,7 @@ struct Volume {
     }
 
     bool counts(unsigned group, bool inode, int delta, int directory_delta = 0) {
-        uint8_t desc[32], header[1024];
+        uint8_t desc[max_descriptor_bytes], header[1024];
         if (!descriptor(group, desc) || !super(header))
             return false;
         unsigned field = inode ? 14 : 12, global = inode ? 16 : 12;
@@ -489,7 +491,7 @@ struct Volume {
         for (unsigned step = 0; step < group_count; step++) {
             unsigned index = (preferred + step) % group_count;
             auto& group = groups[index];
-            uint8_t desc[32];
+            uint8_t desc[max_descriptor_bytes];
             if (!descriptor(index, desc))
                 return 0;
             // Validated counters include this operation's staged allocations.

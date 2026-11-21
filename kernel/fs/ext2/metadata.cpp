@@ -100,10 +100,16 @@ uint16_t Volume::descriptor_checksum(unsigned group, const uint8_t* desc) const 
     uint8_t number[4];
     set32(number, group);
     uint32_t crc = crc32c(metadata_seed, number, sizeof(number));
-    return crc32c(crc32c(crc, desc, 30), zero, 2);
+    crc = crc32c(crc32c(crc, desc, 30), zero, 2);
+    return crc32c(crc, desc + classic_descriptor_bytes,
+                  descriptor_bytes - classic_descriptor_bytes);
 }
 
 bool Volume::check_descriptor(unsigned group, const uint8_t* desc) {
+    if (descriptor_bytes >= wide_descriptor_bytes &&
+        (u32(desc + 32) || u32(desc + 36) || u32(desc + 40) || u32(desc + 44) || u32(desc + 48) ||
+         u32(desc + 20) || u32(desc + 52)))
+        return fail();
     if (!checksums())
         return true;
     unsigned flags = u16(desc + 18);
@@ -153,7 +159,7 @@ bool Volume::read_bitmap(unsigned group, bool inode, uint8_t* data, const uint8_
     uint32_t block = inode ? g.inode_bitmap : g.block_bitmap;
     if (!checksums())
         return read_block(block, data);
-    uint8_t local[32];
+    uint8_t local[max_descriptor_bytes];
     if (!desc) {
         if (!descriptor(group, local))
             return false;
@@ -174,17 +180,25 @@ bool Volume::read_bitmap(unsigned group, bool inode, uint8_t* data, const uint8_
     if (!read_block(block, data))
         return false;
     unsigned bytes = (inode ? inodes_per_group : blocks_per_group) / 8;
-    return uint16_t(crc32c(metadata_seed, data, bytes)) == u16(desc + (inode ? 26 : 24)) || fail();
+    uint32_t checksum = crc32c(metadata_seed, data, bytes);
+    unsigned low = inode ? 26 : 24;
+    return (uint16_t(checksum) == u16(desc + low) &&
+            (descriptor_bytes < wide_descriptor_bytes || checksum >> 16 == u16(desc + low + 32))) ||
+           fail();
 }
 
 bool Volume::save_bitmap(unsigned group, bool inode, const uint8_t* data, unsigned used_inode) {
     const auto& g = groups[group];
     if (checksums()) {
-        uint8_t desc[32];
+        uint8_t desc[max_descriptor_bytes];
         if (!descriptor(group, desc))
             return false;
         unsigned bytes = (inode ? inodes_per_group : blocks_per_group) / 8;
-        set16(desc + (inode ? 26 : 24), crc32c(metadata_seed, data, bytes));
+        uint32_t checksum = crc32c(metadata_seed, data, bytes);
+        unsigned low = inode ? 26 : 24;
+        set16(desc + low, checksum);
+        if (descriptor_bytes >= wide_descriptor_bytes)
+            set16(desc + low + 32, checksum >> 16);
         unsigned flags = u16(desc + 18);
         set16(desc + 18, flags & ~(inode ? inode_uninitialized : block_uninitialized));
         if (inode && used_inode)

@@ -49,7 +49,8 @@ enum class Wait {
     message_queue,
     posix_queue,
     fifo_open,
-    epoll_wait
+    epoll_wait,
+    pcm_drain
 };
 
 struct Descriptor {
@@ -163,7 +164,7 @@ struct Task {
     bool suspend_mask;
     Wait wait;
     int wait_fd, wait_pid;
-    uint64_t deadline;
+    uint64_t deadline, wait_generation;
     int vfork_parent;
     FutexWait futex;
     IoRequest* io;

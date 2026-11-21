@@ -27,6 +27,7 @@
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/block/floppy.hpp"
+#include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
@@ -299,6 +300,13 @@ void devices_init() {
     tag("/dev/full", Device::full);
     tag("/dev/random", Device::random, 8);
     tag("/dev/urandom", Device::random, 9);
+    if (Pcm::initialize()) {
+        tag("/dev/dsp", Device::dsp);
+        auto* dsp = lookup("/dev/dsp");
+        dsp->mode = character | 0660;
+        dsp->uid = 0;
+        dsp->gid = 29; // audio
+    }
     tag("/dev/tty0", Device::vt);
     tag("/dev/tty1", Device::vt, 1);
     tag("/dev/ptmx", Device::ptmx);
@@ -352,6 +360,8 @@ uint64_t device_number(Node* node) {
         return node->device_id;
     case Device::parallel:
         return 0x600;
+    case Device::dsp:
+        return 0xe03;
     case Device::tty:
         return 0x500;
     case Device::vt:
@@ -383,6 +393,8 @@ int device_open(Handle* h) {
     if (!h->node)
         return 0;
     auto kind = h->node->device;
+    if (kind == Device::dsp)
+        return Pcm::open(*h);
     if (kind == Device::tty) {
         if (!current ||
             (!current->process->controlling_pty && !current->process->controlling_console))
@@ -464,6 +476,10 @@ int device_open(Handle* h) {
 }
 
 void device_close(Handle* h) {
+    if (h->node && h->node->device == Device::dsp) {
+        Pcm::close(*h);
+        return;
+    }
     if (!h->pty)
         return;
     auto p = h->pty;
@@ -491,6 +507,7 @@ bool device_has_poll(const Handle& handle) {
     case Device::vt:
     case Device::keyboard:
     case Device::mouse:
+    case Device::dsp:
         return true;
     case Device::random:
         return handle.node->device_id == 8;
@@ -500,6 +517,8 @@ bool device_has_poll(const Handle& handle) {
 }
 
 bool device_ready(Handle* h, bool write) {
+    if (h->node->device == Device::dsp)
+        return Pcm::ready(*h, write);
     if (h->pty) {
         auto p = h->pty;
         if (!h->writer && p->io_error)
@@ -580,6 +599,8 @@ bool device_ignores_buffer(Handle* handle, bool write) {
 }
 
 int64_t device_read(Handle* h, void* data, size_t len) {
+    if (h->node->device == Device::dsp)
+        return Pcm::read(data, len);
     if (h->node->device == Device::block)
         return block_bytes(h, data, len, false);
     if (h->pty) {
@@ -634,6 +655,8 @@ int64_t device_read(Handle* h, void* data, size_t len) {
 }
 
 int64_t device_write(Handle* h, const void* data, size_t len) {
+    if (h->node->device == Device::dsp)
+        return Pcm::write(data, len);
     if (h->node->device == Device::block)
         return block_bytes(h, const_cast<void*>(data), len, true);
     if (h->node->device == Device::parallel)
@@ -708,6 +731,8 @@ static int64_t output(uint64_t dst, const void* data, size_t len) {
 
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
+    if (kind == Device::dsp)
+        return Pcm::ioctl(*h, request, arg);
     if (kind == Device::random) {
         if (request == 0x80045200) { // RNDGETENTCNT reports partial initialization credit.
             int count = random_entropy_count();
@@ -1038,6 +1063,7 @@ static void event(InputQueue& q, uint16_t type, uint16_t code, int32_t value) {
 
 void devices_poll() {
     floppy_poll();
+    Pcm::poll();
     for (unsigned i = 0; i < 64; i++) {
         int c = serial_read();
         if (c < 0)

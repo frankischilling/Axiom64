@@ -1461,12 +1461,12 @@
       "id": "F24",
       "title": "HD Audio and multimedia interfaces",
       "milestone": "M6",
-      "state": "planned",
-      "current": "There is no audio driver or audio service.",
+      "state": "partial",
+      "current": "Intel HD Audio plays and records PCM through /dev/dsp with emulated QEMU codecs. It uses polled DMA and supports direct converter-to-pin codec paths.",
       "scope": [
-        "QEMU Intel HD Audio playback and recording first",
+        "Extend HD Audio to physical codecs, including routed widgets and interrupt-driven streams",
         "AC97, Sound Blaster 16, USB Audio Class, and a null/test backend",
-        "DMA ring/FIFO lifetime, interrupts, resets, and device format negotiation",
+        "Broader DMA ring and FIFO behavior, stream resets, and format negotiation",
         "/dev/audio and OSS /dev/dsp compatibility; required ALSA-style interfaces",
         "PCM conversion, channel mixing, resampling, mixers, and latency behavior",
         "Desktop audio service plus codecs, SDL, players, and recording tools"

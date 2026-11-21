@@ -60,7 +60,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F21 | [X11 and Wayland display servers](https://github.com/frankischilling/Axiom64/issues/21) | partial | M5 | F05, F13, F20 |
 | F22 | [Virtio GPU and accelerated graphics](https://github.com/frankischilling/Axiom64/issues/22) | planned | M6 | F01, F19, F21 |
 | F23 | [Shells, window managers, and desktop environments](https://github.com/frankischilling/Axiom64/issues/23) | partial | M5 | F20, F21 |
-| F24 | [HD Audio and multimedia interfaces](https://github.com/frankischilling/Axiom64/issues/24) | planned | M6 | F01, F05, F19 |
+| F24 | [HD Audio and multimedia interfaces](https://github.com/frankischilling/Axiom64/issues/24) | partial | M6 | F01, F05, F19 |
 | F25 | [Init, login, and system services](https://github.com/frankischilling/Axiom64/issues/25) | partial | M3 | F09, F10, F14 |
 | F26 | [Signed packages and dependency resolution](https://github.com/frankischilling/Axiom64/issues/26) | planned | M8 | F03, F09, F10, F14, F28 |
 | F27 | [Live image and simple disk installer](https://github.com/frankischilling/Axiom64/issues/27) | planned | M8 | F03, F09, F16, F26 |
@@ -603,13 +603,16 @@ Acceptance evidence:
 
 ### F24. HD Audio and multimedia interfaces
 
-There is no audio driver or audio service.
+Intel HD Audio provides PCM playback and capture through `/dev/dsp` with
+the emulated QEMU codecs. The driver uses polled DMA and a direct
+converter-to-pin path. See [audio verification](testing.md) for
+the exercised formats and stream behavior.
 
 Required work:
 
-- QEMU Intel HD Audio playback and recording first.
+- Extend HD Audio to physical codecs, including routed widgets and interrupt-driven streams.
 - AC97, Sound Blaster 16, USB Audio Class, and a null/test backend.
-- DMA ring/FIFO lifetime, interrupts, resets, and device format negotiation.
+- Broader DMA ring and FIFO behavior, stream resets, and format negotiation.
 - /dev/audio and OSS /dev/dsp compatibility; required ALSA-style interfaces.
 - PCM conversion, channel mixing, resampling, mixers, and latency behavior.
 - Desktop audio service plus codecs, SDL, players, and recording tools.

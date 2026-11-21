@@ -161,6 +161,19 @@ Signals use the Linux x86-64 frame layout and a userspace return trampoline. Sup
 
 The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbdev driver uses `/dev/fb0` and platform-device metadata; evdev reads PS/2 events from `/dev/input/event0` and `event1`. Unix sockets carry X11 traffic. The desktop uses software drawing with GLX disabled. Xorg's input thread remains disabled pending dedicated coverage of that path.
 
+The Intel HD Audio driver discovers direct PCM converter and pin routes through
+the codec command rings. It uses one polled DMA stream per direction. The
+`/dev/dsp` endpoint offers signed 16-bit little-endian samples at supported
+mono and stereo rates. The audio group (GID 29) owns the device with mode 0660
+so ordinary accounts need that group to open the microphone. Each direction
+has one open file description, which can be shared through dup and fork.
+Blocking reads, writes, and explicit playback drain allow other tasks to run.
+The last blocking-mode close starts a background drain. A new writer can
+open the device after that drain finishes.
+Capture reports an overrun as an I/O error and restarts after an explicit reset.
+Physical codecs beyond direct pin routes, ALSA PCM, mixing, and a desktop
+audio service remain open.
+
 ## Current limits
 
 This is a development OS with a tested compatibility surface. Unsupported syscalls return `ENOSYS`; these working programs do not imply complete Linux compatibility.

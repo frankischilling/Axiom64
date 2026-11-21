@@ -42,7 +42,8 @@ enum class Device {
     vt,
     block,
     full,
-    parallel
+    parallel,
+    dsp
 };
 
 struct Terminal {

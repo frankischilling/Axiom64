@@ -59,6 +59,13 @@ python3 -B scripts/floppy_test.py
 '''
 
 [[step]]
+suites = ["hda"]
+name = "Verify HD Audio playback, recording, and stream recovery"
+run = '''
+python3 -B scripts/pcm_test.py
+'''
+
+[[step]]
 suites = ["storage"]
 name = "Test virtio disks and reboot persistence"
 run = '''

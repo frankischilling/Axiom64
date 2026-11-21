@@ -26,13 +26,13 @@
 #include "core/time.hpp"
 #include "drivers/block/ahci_command.hpp"
 #include "drivers/block/ata_identity.hpp"
-#include "drivers/block/poll.hpp"
+#include "drivers/platform/poll.hpp"
 #include "drivers/platform/pci.hpp"
 #include "mm/dma.hpp"
 
 namespace ax {
 namespace {
-using BlockPoll::wait;
+using DevicePoll::wait;
 constexpr unsigned host_control = 1, host_status = 2, implemented = 3, version = 4;
 constexpr unsigned capabilities2 = 9, ownership = 10;
 constexpr uint32_t ahci_enable = 1u << 31, host_reset = 1;

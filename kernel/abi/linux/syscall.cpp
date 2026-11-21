@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "drivers/audio/pcm.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
 #include "ipc/ipc.hpp"
@@ -856,7 +857,12 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
     if (!h->node ||
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
         return -25;
-    return device_ioctl(h, request, arg);
+    const auto result = device_ioctl(h, request, arg);
+    if (result == -11 && request == Pcm::sync_request && h->node->device == Device::dsp) {
+        current->wait_generation = h->generation;
+        return block(Wait::pcm_drain, fd);
+    }
+    return result;
 }
 
 static int64_t dispatch(Frame* f) {

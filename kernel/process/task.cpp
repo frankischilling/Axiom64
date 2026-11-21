@@ -40,6 +40,7 @@
 #include "fs/memfd.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/audio/pcm.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "process/futex.hpp"
@@ -489,6 +490,18 @@ static bool awaken(Task& t) {
     case Wait::random:
         ready = random_ready();
         break;
+    case Wait::pcm_drain: {
+        const auto fd = unsigned(t.wait_fd);
+        const auto* handle = fd < max_fds ? t.files->entries[fd].handle : nullptr;
+        const int result =
+            handle && handle->generation == t.wait_generation ? Pcm::drain_status() : -9;
+        if (result != -11) {
+            t.frame.rip += 2;
+            t.frame.rax = result;
+            ready = true;
+        }
+        break;
+    }
     case Wait::futex:
         ready = futex_ready(t);
         break;

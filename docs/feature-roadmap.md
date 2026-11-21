@@ -39,7 +39,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | --- | --- | --- | --- | --- |
 | F01 | [Firmware, buses, and interrupt routing](https://github.com/frankischilling/Axiom64/issues/1) | partial | M1 | Across all tracks |
 | F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | complete | M1 | F01 |
-| F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | partial | M1 | F02 |
+| F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | complete | M1 | F02 |
 | F04 | [VFS, mounts, and pseudo filesystems](https://github.com/frankischilling/Axiom64/issues/4) | partial | M1 | F02 |
 | F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | partial | M2 | F04 |
 | F06 | [Demand paging, copy-on-write, and swap](https://github.com/frankischilling/Axiom64/issues/6) | partial | M2 | F03, F05 |
@@ -128,7 +128,9 @@ Acceptance evidence:
 
 Ext-family root and data volumes support persistent files, writable indexed directories, classic block maps, and writable ext4 extent trees. Ext4 supports metadata checksums, lazy bitmap initialization, wide group descriptors within 32-bit block geometry, flexible block groups, wide inode block counts, extended timestamps, and indexed-directory link overflow. Existing inode-body extended attributes can be read, replaced, removed, or moved to an external block. Internal JBD2 journals support v1 through v3 checksums and recover committed data and metadata after interruption. New normal VM roots use a 32 MiB journal. Journaled volumes write and recover native orphan chains and orphan files. Large truncations and unlinks release blocks across restartable journal transactions. Unlinked inodes are reclaimed after their final descriptor, mapping, executable, directory, or socket reference drops. Both journal formats recover an orphan after a power cut while a mapping holds it. Broader power-loss acceptance remains in development. [Ext-family behavior and verification](ext2.md) [VM roots](build.md)
 
-Required work:
+The 104-boot classic ext2 matrix covers BIOS, UEFI, both virtio transports, reboot persistence, host file inspection, and strict filesystem checks. Full-disk, damaged-metadata, and unsupported-format cases preserve unrelated files or leave rejected disks unchanged. Additional ext-family tests cover 11 extent layouts, writable indexed directories, native extended attributes, and interrupted journal updates. Normal BIOS and UEFI VM roots recover an authenticated account and its file after abrupt shutdown. [Filesystem test commands and limits](ext2.md#verification)
+
+Implemented scope:
 
 - Writable ext2 inodes, directories, indirect blocks, allocation, and links.
 - Mount, unmount, sync, truncation, rename, permissions, and timestamps.

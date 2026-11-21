@@ -281,6 +281,17 @@ struct Frame {
     }
 };
 
+struct ConfigField {
+    uint16_t segment, offset;
+    uint8_t bus, slot, function;
+    bool operator==(const ConfigField&) const = default;
+};
+
+struct LinkChange {
+    ConfigField field;
+    uint8_t previous, next;
+};
+
 struct Namespace {
     Object objects[max_objects];
     Value values[4096];
@@ -292,6 +303,12 @@ struct Namespace {
     uint64_t integer_mask;
     const PciBridges* bridges;
     PciConfigRead read_pci;
+    PciLinkProgram link_program;
+    LinkChange changes[4];
+    unsigned change_count;
+    uint8_t programming_gsi;
+    bool change_emitted;
+    bool link_evaluation;
 
     Object* find(const Path& path) {
         for (unsigned i = 0; i < count; ++i)
@@ -333,7 +350,9 @@ struct Namespace {
 
     bool load(Cursor stream, const Path& scope, unsigned depth);
     bool load_fields(Cursor, const Path&);
+    bool field_address(const Object&, ConfigField&, unsigned depth);
     bool read_field(const Object&, Value&, unsigned depth);
+    bool stage_field(const Object&, Value, unsigned depth);
 
     bool evaluate(Cursor&, const Path&, Frame*, Value&, unsigned depth);
     bool execute(Cursor, const Path&, Frame&, Value&, unsigned depth);
@@ -518,7 +537,7 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
     }
     if (target == 0x88) {
         Value reference{};
-        if (!evaluate(stream, scope, frame, reference, depth + 1) ||
+        if (link_evaluation || !evaluate(stream, scope, frame, reference, depth + 1) ||
             reference.type != Type::Reference || input.type == Type::Reference)
             return false;
         *reference.entries = input;
@@ -541,8 +560,10 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
         return true;
     }
     auto* object = lookup(scope, name);
+    if (object && object->kind == Kind::PciField)
+        return stage_field(*object, input, depth + 1);
     Value old{};
-    if (input.type != Type::Integer || !object || object->kind != Kind::Data ||
+    if (link_evaluation || input.type != Type::Integer || !object || object->kind != Kind::Data ||
         !value(*object, old, depth + 1) || old.type != Type::Integer)
         return false;
     object->assigned = true;
@@ -697,8 +718,15 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     if (!read_name(stream, name) || !name.path.count)
         return false;
     if (auto local = frame ? frame->find(name) : nullptr) {
-        result = *local;
-        return result.type != Type::BufferField;
+        if (local->type == Type::BufferField) {
+            Cursor bytes{local->bytes, size_t(local->number)};
+            if (!bytes.read(unsigned(local->number), number))
+                return false;
+            result = {Type::Integer, number, {}, nullptr};
+        } else {
+            result = *local;
+        }
+        return true;
     }
     const auto* object = lookup(scope, name);
     if (!object)
@@ -853,6 +881,87 @@ bool interrupt_resource(Cursor resources, uint64_t index, PciPinRoute& route) {
     return false;
 }
 
+// A programmable PIIX link uses an extended interrupt descriptor for
+// shared, active-high, level-triggered IRQs.
+uint8_t select_link_gsi(Cursor resources, uint32_t allowed) {
+    const Cursor original = resources;
+    uint64_t size, flags, count;
+    if (resources.peek() != 0x89 || !resources.skip(1) || !resources.read(2, size) ||
+        !resources.read(1, flags) || flags != 9 || !resources.read(1, count) || !count ||
+        count > 32 || size != 2 + count * 4)
+        return 0;
+
+    uint32_t possible = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        uint64_t gsi;
+        if (!resources.read(4, gsi))
+            return 0;
+        if (gsi < 32)
+            possible |= 1u << gsi;
+    }
+    if (resources.left != 2 || resources.next[0] != 0x79)
+        return 0;
+    if (resources.next[1]) {
+        uint8_t sum = 0;
+        for (size_t i = 0; i < original.left; ++i)
+            sum += original.next[i];
+        if (sum)
+            return 0;
+    }
+    constexpr uint8_t preference[]{10, 11, 5};
+    for (auto gsi : preference)
+        if (possible & allowed & (1u << gsi))
+            return gsi;
+    return 0;
+}
+
+bool restore_link(Namespace& space, const Object& device, uint64_t index, PciPinRoute& route) {
+    if (!space.link_program.write || !space.link_program.allowed_gsis || index || !route.level ||
+        route.active_low || !route.shared ||
+        space.change_count == sizeof(space.changes) / sizeof(*space.changes))
+        return false;
+
+    Value id{}, possible{}, state{};
+    const auto* method = space.child(device.path, name_segment("_SRS"));
+    if (!method || !space.config(device.path, name_segment("_HID"), id) ||
+        id.type != Type::Integer || id.number != 0x0f0cd041 ||
+        !space.config(device.path, name_segment("_PRS"), possible) || possible.type != Type::Buffer)
+        return false;
+    const auto* sta = space.child(device.path, name_segment("_STA"));
+    if (sta && (!space.config(device.path, name_segment("_STA"), state) ||
+                state.type != Type::Integer || (state.number & 3) != 1))
+        return false;
+
+    const auto selected = select_link_gsi(possible.content, space.link_program.allowed_gsis);
+    if (!selected)
+        return false;
+
+    uint8_t setting[]{0x89, 6, 0, 9, 1, selected, 0, 0, 0, 0x79, 0};
+    Value argument{Type::Buffer, 0, {setting, sizeof(setting)}, nullptr, nullptr, setting};
+    Value ignored{};
+    unsigned initial_changes = space.change_count;
+    space.programming_gsi = selected;
+    space.change_emitted = false;
+    bool executed = space.method(*method, &argument, 1, ignored);
+    space.programming_gsi = 0;
+
+    // Read through the staged field and require firmware to report exactly what was requested.
+    Value current{};
+    state = {};
+    auto verified = route;
+    if (!executed || space.change_count != initial_changes + 1 ||
+        !space.config(device.path, name_segment("_CRS"), current) || current.type != Type::Buffer ||
+        !interrupt_resource(current.content, index, verified) || verified.gsi != selected ||
+        !verified.level || verified.active_low || !verified.shared ||
+        (sta && (!space.config(device.path, name_segment("_STA"), state) ||
+                 state.type != Type::Integer || (state.number & 3) != 3))) {
+        space.change_count = initial_changes;
+        return false;
+    }
+    route = verified;
+    return true;
+}
+
 bool string_name(Cursor text, Name& name) {
     name = {};
     if (text.peek() == root_prefix) {
@@ -929,12 +1038,17 @@ bool route_package(Namespace& space, Value package, unsigned segment, unsigned b
                          space.config(device->path, name_segment("_CRS"), crs) &&
                          crs.type == Type::Buffer &&
                          interrupt_resource(crs.content, index.number, route);
+            if (valid && !route.gsi) {
+                space.link_evaluation = true;
+                restore_link(space, *device, index.number, route);
+                space.link_evaluation = false;
+            }
             space.used_values = values;
             space.used_bytes = bytes;
             if (!valid)
                 return false;
             if (!route.gsi)
-                continue; // A link with no current interrupt must stay disabled.
+                continue;
         }
         if (result.count == sizeof(result.entries) / sizeof(*result.entries))
             return false;
@@ -977,8 +1091,8 @@ ParentBridge parent_bridge(const PciBridges& bridges, uint16_t segment, uint8_t 
     return result;
 }
 
-bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
-    if (!read_pci || depth >= max_depth)
+bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth) {
+    if (depth >= max_depth)
         return false;
     const auto* region = field.region;
     Cursor operands = region->content;
@@ -1038,11 +1152,48 @@ bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
         bus.number = next->secondary;
         subordinate = next->subordinate;
     }
+    address = {uint16_t(segment.number), uint16_t(base + field.integer), uint8_t(bus.number),
+               uint8_t(addresses[0] >> 16), uint8_t(addresses[0] & 7)};
+    return true;
+}
+
+bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
+    ConfigField address;
+    if (!read_pci || !field_address(field, address, depth))
+        return false;
+    if (field.arguments == 1)
+        for (unsigned i = 0; i < change_count; ++i)
+            if (changes[i].field == address) {
+                result = {Type::Integer, changes[i].next, {}, nullptr};
+                return true;
+            }
     uint32_t value;
-    if (!read_pci(segment.number, bus.number, addresses[0] >> 16, addresses[0] & 7,
-                  base + field.integer, width, value))
+    if (!read_pci(address.segment, address.bus, address.slot, address.function, address.offset,
+                  field.arguments, value))
         return false;
     result = {Type::Integer, value, {}, nullptr};
+    return true;
+}
+
+bool Namespace::stage_field(const Object& field, Value input, unsigned depth) {
+    ConfigField address;
+    if (!programming_gsi || change_emitted || field.arguments != 1 || !read_pci ||
+        input.type != Type::Integer || input.number != programming_gsi ||
+        !field_address(field, address, depth))
+        return false;
+    if (address.segment || address.bus || address.slot != 1 || address.function ||
+        address.offset < 0x60 || address.offset > 0x63)
+        return false;
+    for (unsigned i = 0; i < change_count; ++i)
+        if (changes[i].field == address)
+            return false;
+    uint32_t previous;
+    if (!read_pci(address.segment, address.bus, address.slot, address.function, address.offset, 1,
+                  previous) ||
+        previous > UINT8_MAX || !(previous & 0x80))
+        return false;
+    changes[change_count++] = {address, uint8_t(previous), programming_gsi};
+    change_emitted = true;
     return true;
 }
 
@@ -1053,8 +1204,12 @@ bool scope_routes(Namespace& space, const Path& scope, uint16_t segment, uint8_t
     space.used_values = 0;
     space.used_bytes = 0;
     Value routes{};
-    return space.config(scope, name_segment("_PRT"), routes) &&
-           route_package(space, routes, segment, bus, output);
+    const auto first_change = space.change_count;
+    if (space.config(scope, name_segment("_PRT"), routes) &&
+        route_package(space, routes, segment, bus, output))
+        return true;
+    space.change_count = first_change;
+    return false;
 }
 
 void bridge_routes(Namespace& space, const Path& scope, uint16_t segment, uint8_t bus,
@@ -1152,8 +1307,10 @@ const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8
 } // namespace
 
 bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
-                           PciBridges* bridges, PciConfigRead read_pci) {
+                           PciBridges* bridges, PciConfigRead read_pci, PciLinkProgram program) {
     result.count = 0;
+    result.programmed_links = 0;
+    result.rollback_failed = false;
     if (blocks.ssdt_count > max_root_entries ||
         (bridges && bridges->count > sizeof(bridges->entries) / sizeof(*bridges->entries)))
         return false;
@@ -1172,6 +1329,11 @@ bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
                               : UINT32_MAX;
     space->bridges = bridges;
     space->read_pci = read_pci;
+    space->link_program = program;
+    space->change_count = 0;
+    space->programming_gsi = 0;
+    space->change_emitted = false;
+    space->link_evaluation = false;
     auto load = [&](const DefinitionBlock& block) {
         return block.table && block.length >= 36 &&
                space->load({block.table + 36, block.length - 36}, {}, 0);
@@ -1180,6 +1342,25 @@ bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
     for (size_t i = 0; ok && i < blocks.ssdt_count; ++i)
         ok = load(blocks.ssdt[i]);
     ok = ok && routing(*space, result, bridges);
+    if (ok && space->change_count) {
+        auto apply = [&](const LinkChange& change, bool undo) {
+            const auto& field = change.field;
+            return program.write(field.segment, field.bus, field.slot, field.function, field.offset,
+                                 undo ? change.next : change.previous,
+                                 undo ? change.previous : change.next);
+        };
+        for (unsigned i = 0; i < space->change_count; ++i) {
+            if (!apply(space->changes[i], false)) {
+                while (i)
+                    if (!apply(space->changes[--i], true))
+                        result.rollback_failed = true;
+                ok = false;
+                break;
+            }
+        }
+        if (ok)
+            result.programmed_links = space->change_count;
+    }
     release(space);
     if (!ok)
         result.count = 0;

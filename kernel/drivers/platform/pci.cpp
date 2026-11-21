@@ -493,16 +493,50 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
     return true;
 }
 
-void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci) {
+static bool has_piix_pirq(const PciFunction& bridge) {
+    const uint32_t id = bridge.read32(0);
+    return (id == 0x70008086 || id == 0x71108086) && bridge.read16(0x0a) == 0x0601;
+}
+
+static bool program_link(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
+                         uint16_t offset, uint8_t previous, uint8_t next) {
+    const PciFunction bridge{bus, slot, function, segment, nullptr};
+    if (segment || bus || slot != 1 || function || offset < 0x60 || offset > 0x63 ||
+        !has_piix_pirq(bridge) || bridge.read8(offset) != previous)
+        return false;
+    auto write = [&](uint8_t value) {
+        // PIRQ routes are individual bytes. A wider write could change another route.
+        out32(0xcf8, selector(bridge, offset));
+        out8(0xcfc + (offset & 3), value);
+    };
+    write(next);
+    if (bridge.read8(offset) != next) {
+        write(previous);
+        if (bridge.read8(offset) != previous)
+            log("PCI INTx: could not restore PIRQ register %x\n", uint64_t(offset));
+        return false;
+    }
+    log("PCI INTx: PIRQ register %x changed %x to %x\n", uint64_t(offset), uint64_t(previous),
+        uint64_t(next));
+    return true;
+}
+
+void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint32_t link_gsis) {
     sci_gsi = sci;
     bridges.count = 0;
     bridges.overflow = false;
     scan_pci_functions(record_bridge);
-    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges, read_pci_field))
-        log("PCI INTx: %u firmware pin routes, %u configured bridges\n", uint64_t(pin_routes.count),
-            uint64_t(bridges.count));
-    else
+    const auto allowed = has_piix_pirq({0, 1, 0, 0, nullptr}) ? link_gsis : 0;
+    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges, read_pci_field,
+                                    {program_link, allowed}))
+        log("PCI INTx: %u firmware pin routes, %u configured bridges, %u programmed links\n",
+            uint64_t(pin_routes.count), uint64_t(bridges.count),
+            uint64_t(pin_routes.programmed_links));
+    else {
+        if (pin_routes.rollback_failed)
+            log("PCI INTx: interrupt link rollback failed\n");
         log("PCI INTx: no usable firmware routes\n");
+    }
 }
 
 void pci_scan(void (*visit)(const PciFunction&)) {

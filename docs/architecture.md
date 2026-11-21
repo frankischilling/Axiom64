@@ -91,9 +91,14 @@ several devices. Each device clears
 its own interrupt cause before the local APIC acknowledges the line. A
 repeatedly unclaimed line is masked and the driver resumes polling.
 On i440fx, the evaluator builds the firmware's routing packages and reads
-the current interrupt link from PCI configuration space. Disabled links
-remain inactive. Programming new link settings and broader AML support remain
-under development.
+interrupt links from PCI configuration space. For a disabled PIIX link, it
+selects an available, firmware-described IRQ from `_PRS`, excluding the
+system control interrupt. It stages the byte write requested by `_SRS` and
+checks the resulting `_CRS` and, when present, `_STA` before programming
+the chipset. The PCI driver verifies the register readback. If a write fails,
+the kernel attempts to restore earlier writes and withholds the routing table.
+Existing firmware settings are retained. Other chipsets still use their
+firmware's current settings.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 

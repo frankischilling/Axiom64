@@ -99,6 +99,7 @@ bool interrupt_apic_ready();
 // until reboot so a message already posted by a stopped device cannot be reused.
 bool interrupt_register_message(Irq::Handler, void* context, Irq::Message&);
 void interrupt_retire_message(uint8_t vector);
+bool interrupt_line_available(uint32_t gsi);
 bool interrupt_register_line(uint32_t gsi, bool active_low, bool shared, Irq::LineHandler,
                              void* context, Irq::Line&);
 void interrupt_retire_line(Irq::Line&);

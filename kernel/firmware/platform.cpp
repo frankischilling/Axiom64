@@ -101,6 +101,16 @@ void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopol
     uint32_t sci = fixed.sci;
     if (sci < 16 && topology.isa[sci].present)
         sci = topology.isa[sci].gsi;
-    pci_configure_intx(blocks, sci);
+    // The PIIX router targets ISA lines. Require firmware to identify the
+    // same GSI as active-high and level-triggered before changing a route.
+    constexpr uint16_t active_high_level = 0x0d;
+    uint32_t link_gsis = 0;
+    for (unsigned irq = 0; irq < 16; ++irq) {
+        const auto& route = topology.isa[irq];
+        if (route.present && route.gsi == irq && route.flags == active_high_level && irq != sci &&
+            interrupt_line_available(irq))
+            link_gsis |= 1u << irq;
+    }
+    pci_configure_intx(blocks, sci, link_gsis);
 }
 } // namespace ax

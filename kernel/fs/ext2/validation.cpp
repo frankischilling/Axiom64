@@ -324,7 +324,7 @@ struct Validation {
                             return v.fail();
                 }
                 bool fast_link = fast_symlink(data, v.block_size);
-                if (fast_link && length > 60)
+                if (fast_link && length > inode_block_bytes)
                     return v.fail();
                 if (!fast_link) {
                     uint64_t base = 0, limit = (length + v.block_size - 1) / v.block_size;

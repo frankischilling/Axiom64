@@ -249,7 +249,8 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     } else if (success && target) {
         size_t length = strlen(target);
         set32(inode + 4, length);
-        if (length <= 60)
+        // The inline target and its terminating NUL must fit in i_block.
+        if (length < inode_block_bytes)
             memcpy(inode + 40, target, length);
         else
             for (size_t offset = 0; success && offset < length; offset += v.block_size) {
@@ -346,7 +347,7 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
         return v.error;
     auto out = static_cast<uint8_t*>(buffer);
     if (fast_symlink(inode, v.block_size)) {
-        if (node->size > 60)
+        if (node->size > inode_block_bytes)
             return -117;
         memcpy(out, inode + 40 + offset, count);
         done = count;

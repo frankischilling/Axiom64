@@ -33,7 +33,7 @@
 #include "entries.hpp"
 
 namespace ax::ext2_detail {
-constexpr size_t max_block_size = 4096, inode_bytes = 128;
+constexpr size_t max_block_size = 4096, inode_bytes = 128, inode_block_bytes = 15 * 4;
 constexpr unsigned max_changes = 4096, cached_blocks = 128;
 
 inline uint16_t u16(const uint8_t* p) {

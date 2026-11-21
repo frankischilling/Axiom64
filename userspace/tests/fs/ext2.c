@@ -116,6 +116,21 @@ static void long_name(unsigned i, char* path) {
     path[prefix + 236] = 0;
 }
 
+static void symlink_boundary(int create) {
+    for (size_t length = 59; length <= 61; length++) {
+        char path[64], target[62], actual_target[62];
+        snprintf(path, sizeof(path), "%s/link-%zu", volume, length);
+        target[0] = '.';
+        memset(target + 1, '/', length - 6);
+        memcpy(target + length - 5, "final", sizeof("final"));
+        if (create)
+            CHECK(symlink(target, path) == 0);
+        CHECK(readlink(path, actual_target, sizeof(actual_target)) == (ssize_t)length);
+        CHECK(memcmp(actual_target, target, length) == 0);
+        expect(open(path, O_RDONLY), "linked-data");
+    }
+}
+
 static void namespace_tests(void) {
     CHECK(mkdir("/tmp/ext2-volume/a", 0755) == 0);
     CHECK(mkdir("/tmp/ext2-volume/b", 0755) == 0);
@@ -156,6 +171,7 @@ static void namespace_tests(void) {
           (ssize_t)strlen(target));
     CHECK(!strcmp(link_text, target));
     expect(open("/tmp/ext2-volume/long-link", O_RDONLY), "linked-data");
+    symlink_boundary(1);
     CHECK(mkdir("/tmp/ext2-volume/many", 0755) == 0);
     for (unsigned i = 0; i < 192; i++) {
         char path[320];
@@ -289,6 +305,7 @@ static void verify_tests(int readonly_disk) {
     ERROR(open("/tmp/ext2-volume/orphan", O_RDONLY), ENOENT);
     expect(open("/tmp/ext2-volume/short-link", O_RDONLY), "linked-data");
     expect(open("/tmp/ext2-volume/long-link", O_RDONLY), "linked-data");
+    symlink_boundary(0);
     int fd = open("/tmp/ext2-volume/pattern", O_RDONLY);
     CHECK(fd >= 0 && fstat(fd, &info) == 0 && (uint64_t)info.st_size == 37 + pattern_length);
     pattern(fd, 0, pattern_length, 37);

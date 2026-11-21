@@ -101,8 +101,8 @@ static bool add_name(Volume& v, uint32_t parent, const char* name, uint32_t numb
                         : add_linear_name(v, inode, preferred, name, number, mode);
     if (!inserted)
         return false;
-    set32(inode + 12, node_now().sec);
-    set32(inode + 16, node_now().sec);
+    inode.set_time(inode_ctime, node_now());
+    inode.set_time(inode_mtime, node_now());
     return v.save_inode(parent, inode);
 }
 
@@ -137,8 +137,8 @@ static bool erase_name(Volume& v, uint32_t parent, const char* name, uint32_t ex
         set32(data + target, 0);
         set16(data + target + 6, 0);
     }
-    set32(inode + 12, node_now().sec);
-    set32(inode + 16, node_now().sec);
+    inode.set_time(inode_ctime, node_now());
+    inode.set_time(inode_mtime, node_now());
     return save_directory_block(v, inode, position, block, data) && v.save_inode(parent, inode);
 }
 
@@ -146,13 +146,20 @@ static bool adjust_links(Volume& v, uint32_t number, int delta) {
     Inode inode;
     if (!v.load_inode(number, inode))
         return false;
-    int count = int(u16(inode + 26)) + delta;
+    int current_links = u16(inode + 26);
+    bool can_omit = v.directory_can_omit_links(inode);
+    int count = can_omit && current_links == 1 ? 1 : current_links + delta;
     if (count < 0)
         return v.fail();
+    if ((v.readonly_features & directory_links_feature) && count > int(ext4_link_max)) {
+        if (!can_omit)
+            return v.fail(-31);
+        count = 1;
+    }
     if (count > UINT16_MAX)
         return v.fail(-31);
     set16(inode + 26, count);
-    set32(inode + 12, node_now().sec);
+    inode.set_time(inode_ctime, node_now());
     return v.save_inode(number, inode);
 }
 
@@ -166,7 +173,7 @@ static bool drop_inode(Volume& v, Node* node) {
     if (!links)
         return v.fail();
     set16(inode + 26, dir ? 0 : links - 1);
-    set32(inode + 12, node_now().sec);
+    inode.set_time(inode_ctime, node_now());
     if (!u16(inode + 26)) {
         if (!node_referenced(node))
             return v.delete_inode(node->inode, inode);
@@ -224,9 +231,11 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     set16(inode + 120, uid >> 16);
     set16(inode + 122, gid >> 16);
     set16(inode + 26, dir ? 2 : 1);
-    set32(inode + 8, node_now().sec);
-    set32(inode + 12, node_now().sec);
-    set32(inode + 16, node_now().sec);
+    set16(inode + inode_bytes, v.new_inode_extra_size);
+    inode.set_time(inode_atime, node_now());
+    inode.set_time(inode_ctime, node_now());
+    inode.set_time(inode_mtime, node_now());
+    inode.set_time(inode_crtime, node_now());
     if (v.extent_enabled && (dir || (mode & 0170000) == regular_file ||
                              (target && strlen(target) >= inode_block_bytes)))
         init_extent_tree(inode);
@@ -239,8 +248,7 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
             put_record(v, data, 0, 12, ".", number, directory);
             put_record(v, data, 12, directory_leaf_bytes(v) - 12, "..", parent->inode, directory);
             set32(inode + 4, v.block_size);
-            success =
-                save_directory_leaf(v, inode, block, data) && adjust_links(v, parent->inode, 1);
+            success = save_directory_leaf(v, inode, block, data);
         }
     } else if (success && target) {
         size_t length = strlen(target);
@@ -260,8 +268,9 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
                 }
             }
     }
-    success = success && v.save_inode(number, inode, true) &&
-              add_name(v, parent->inode, name, number, mode);
+    success = success && v.save_inode(number, inode) &&
+              add_name(v, parent->inode, name, number, mode) &&
+              (!dir || adjust_links(v, parent->inode, 1));
     if (!success) {
         v.entries.cancel(entry);
         return v.finish(false);
@@ -320,7 +329,7 @@ static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
         Inode inode;
         success = v.load_inode(node->inode, inode);
         if (success) {
-            set32(inode + 12, node_now().sec);
+            inode.set_time(inode_ctime, node_now());
             success = v.save_inode(node->inode, inode);
         }
     }
@@ -344,7 +353,7 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
     if (!v.load_inode(node->inode, inode))
         return v.error;
     auto out = static_cast<uint8_t*>(buffer);
-    if (fast_symlink(inode, v.block_size)) {
+    if (v.fast_symlink(inode)) {
         if (node->size > inode_block_bytes)
             return -117;
         memcpy(out, inode + 40 + offset, count);
@@ -396,8 +405,8 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
         done += bytes;
     }
     if (success) {
-        set32(inode + 12, node_now().sec);
-        set32(inode + 16, node_now().sec);
+        inode.set_time(inode_ctime, node_now());
+        inode.set_time(inode_mtime, node_now());
         success = v.save_inode(node->inode, inode);
     }
     int result = v.finish(success);
@@ -411,8 +420,8 @@ static int truncate(Node* node, size_t length) {
     Inode inode;
     bool success = v.load_inode(node->inode, inode) && v.size(inode, length);
     if (success) {
-        set32(inode + 12, node_now().sec);
-        set32(inode + 16, node_now().sec);
+        inode.set_time(inode_ctime, node_now());
+        inode.set_time(inode_mtime, node_now());
         success = v.save_inode(node->inode, inode);
     }
     return v.finish(success);
@@ -420,23 +429,23 @@ static int truncate(Node* node, size_t length) {
 
 static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t uid,
                    uint32_t gid) {
-    if (atime.sec < INT32_MIN || atime.sec > INT32_MAX || mtime.sec < INT32_MIN ||
-        mtime.sec > INT32_MAX)
-        return -22;
     auto& v = volume(node);
     if (!v.begin())
         return v.error;
     Inode inode;
     bool success = v.load_inode(node->inode, inode);
+    if (success &&
+        (!inode.can_set_time(inode_atime, atime) || !inode.can_set_time(inode_mtime, mtime)))
+        return v.finish(v.fail(-22));
     if (success) {
         set16(inode, mode);
         set16(inode + 2, uid);
         set16(inode + 24, gid);
         set16(inode + 120, uid >> 16);
         set16(inode + 122, gid >> 16);
-        set32(inode + 8, atime.sec);
-        set32(inode + 16, mtime.sec);
-        set32(inode + 12, node_now().sec);
+        inode.set_time(inode_atime, atime);
+        inode.set_time(inode_mtime, mtime);
+        inode.set_time(inode_ctime, node_now());
         success = v.save_inode(node->inode, inode);
     }
     return v.finish(success);
@@ -511,7 +520,7 @@ static int change_xattr(Node* node, const XattrName& name, const void* value, si
     }
     if (success) {
         set32(inode + 104, target);
-        set32(inode + 12, node_now().sec);
+        inode.set_time(inode_ctime, node_now());
         success = v.save_inode(node->inode, inode);
     }
     int result = v.finish(success);
@@ -708,9 +717,10 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
         return false;
     if ((u16(inode) & 0170000) != regular_file || u16(inode + 26) != 1 || u16(inode + 2) ||
         u16(inode + 24) || u16(inode + 120) || u16(inode + 122) || u32(inode + 20) ||
-        (u32(inode + 32) & ~(v.extent_enabled ? extent_inode : 0u)) || u32(inode + 104) ||
-        u32(inode + 108) || !file_size(inode) || file_size(inode) % v.block_size ||
-        file_size(inode) / v.block_size < 1024 || file_size(inode) / v.block_size > v.blocks)
+        (u32(inode + 32) & ~((v.extent_enabled ? extent_inode : 0u) | v.block_count_flag())) ||
+        u32(inode + 104) || u32(inode + 108) || !file_size(inode) ||
+        file_size(inode) % v.block_size || file_size(inode) / v.block_size < 1024 ||
+        file_size(inode) / v.block_size > v.blocks)
         return v.fail(-95);
     v.journal_blocks = file_size(inode) / v.block_size;
     v.journal_map = static_cast<uint32_t*>(alloc(uint64_t(v.journal_blocks) * sizeof(uint32_t)));
@@ -767,7 +777,7 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
             return v.fail();
     }
     Inode replayed;
-    if (!v.load_inode(8, replayed) || memcmp(inode, replayed, inode_bytes))
+    if (!v.load_inode(8, replayed) || memcmp(inode, replayed, v.inode_size))
         return v.fail();
     if (has_extents(replayed) && !unchanged_extent_nodes(v, replayed))
         return false;
@@ -808,11 +818,18 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     if ((v.compatible & ~0x3cu) ||
         (incompatible & ~(6u | extent_feature | checksum_seed_feature | wide_descriptor_feature |
                           flex_group_feature)) ||
-        (v.readonly_features & ~(3u | metadata_checksum_feature)) ||
-        (v.inode_size != 128 && v.inode_size != 256))
+        (v.readonly_features & ~(3u | huge_file_feature | directory_links_feature |
+                                 extra_inode_size_feature | metadata_checksum_feature)) ||
+        (v.inode_size != inode_bytes && v.inode_size != max_inode_bytes))
         return v.fail(-95);
     if (!v.configure_checksums(header, incompatible & checksum_seed_feature))
         return false;
+    if ((v.readonly_features & extra_inode_size_feature) && v.inode_size > inode_bytes) {
+        unsigned minimum = u16(header + 348), desired = u16(header + 350);
+        if ((minimum | desired) & 3 || max(minimum, desired) > v.inode_size - inode_bytes)
+            return v.fail();
+        v.new_inode_extra_size = max(32u, max(minimum, desired));
+    }
     v.descriptor_bytes = classic_descriptor_bytes;
     if (incompatible & wide_descriptor_feature) {
         unsigned bytes = u16(header + 254);

@@ -53,6 +53,8 @@ PROFILES = (
     (1024, "bios", "modern", True, "metadata_csum,64bit,flex_bg"),
     (1024, "uefi", "legacy", True, "metadata_csum,flex_bg"),
     (2048, "bios", "legacy", False, "64bit,flex_bg"),
+    (4096, "uefi", "modern", True,
+     "metadata_csum,64bit,flex_bg,huge_file,dir_nlink,extra_isize,resize_inode"),
 )
 LAST_LOGICAL = 2**32 - 2
 
@@ -109,6 +111,8 @@ def fixture(directory, disk, block, journal, binaries=(), features_extra=""):
         (store / "native").write_bytes(native_file(block))
         (store / "preallocated").touch()
         (store / "empty-reserved").touch()
+        if "huge_file" in feature_set:
+            (store / "native-inode").write_bytes(b"N")
         if checksums:
             (store / "attribute").touch()
             if block == 1024:
@@ -126,6 +130,10 @@ def fixture(directory, disk, block, journal, binaries=(), features_extra=""):
         layout = ["-G", "4", "-g", "2048"] if "flex_bg" in feature_set else []
         subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", str(block), "-I", inode_size, *layout,
                         "-O", features, "-E", "root_owner=0:0", "-d", root, disk], check=True)
+        if "huge_file" in feature_set:
+            debug(disk, f"set_inode_field {prefix}/native-inode flags 0xc0000", write=True)
+            debug(disk, f"set_inode_field {prefix}/native-inode blocks 1", write=True)
+            debug(disk, "set_super_value want_extra_isize 48", write=True)
         if checksums:
             value = root / "attribute-value"
             value.write_bytes(b"A" * 600)
@@ -150,7 +158,8 @@ def fixture(directory, disk, block, journal, binaries=(), features_extra=""):
 def image(directory, archive, phase):
     name = f"ext4-extent-{phase}.iso"
     args = ["--kernel-option", "root=/dev/vda", "--kernel-option", "rootfstype=ext4"] if phase == "root" else []
-    guest_phase = {"root": "io", "unsupported": "error"}.get(phase, phase)
+    guest_phase = {"root": "io", "unsupported": "error", "link-counts": "queue",
+                   "link-counts-verify": "readonly"}.get(phase, phase)
     with (directory / f"image-{phase}.log").open("wb") as log:
         subprocess.run([sys.executable, "-B", "scripts/image.py", "--test", "--suite", "storage",
                         "--phase", guest_phase, "--kernel", ROOT / "build/axiom64.elf",
@@ -341,6 +350,73 @@ def verify_metadata(disk, block, prefix=""):
                 raise RuntimeError("lazy block allocation did not persist")
 
 
+def verify_native_inodes(disk, block, prefix=""):
+    with disk.open("rb") as raw:
+        raw.seek(inode_offset(disk, f"{prefix}/native-inode", block))
+        native = raw.read(256)
+        raw.seek(inode_offset(disk, f"{prefix}/time-probe", block))
+        timed = raw.read(256)
+    if struct.unpack_from("<II", native, 28) != (2 * block // 512, 0x80000):
+        raise RuntimeError("guest mutation did not normalize the imported block count")
+    if struct.unpack_from("<H", timed, 128)[0] != 48 or not struct.unpack_from("<I", timed, 144)[0]:
+        raise RuntimeError("guest creation did not reserve the desired inode fields")
+    for offset, extra, seconds, nsec in ((8, 140, -42, 987654321), (16, 136, 13569465600, 123456789)):
+        low, = struct.unpack_from("<i", timed, offset)
+        encoded, = struct.unpack_from("<I", timed, extra)
+        if (low + ((encoded & 3) << 32), encoded >> 2) != (seconds, nsec):
+            raise RuntimeError("host inode bytes differ from the guest timestamps")
+
+
+def reject_inode_features(directory, seed, images):
+    cases = (
+        ("oversized-extra-isize", "set_super_value want_extra_isize 132", "invalid"),
+        ("unindexed-dir-nlink", "set_inode_field /lost+found links_count 1", "invalid"),
+        ("inconsistent-wide-block-count", "set_inode_field /native-inode blocks 4294967297", "invalid"),
+    )
+    for name, damage, phase in cases:
+        case = directory / name
+        case.mkdir()
+        disk = case / "disk.raw"
+        sparse_copy_fixture(seed, disk)
+        debug(disk, damage, write=True)
+        before = digest(disk)
+        boot(case, images[phase], [disk], "bios", "modern", ["EXT4_EXTENT_REJECTION_PASS"])
+        if digest(disk) != before:
+            raise RuntimeError(f"rejected inode feature fixture changed bytes: {name}")
+
+
+def link_count_rollover(directory, images):
+    directory.mkdir()
+    disk = directory / "disk.raw"
+    with tempfile.TemporaryDirectory(prefix="ext4-directory-links-") as source:
+        crowded = Path(source) / "crowded"
+        crowded.mkdir()
+        for i in range(64998):
+            (crowded / f"d{i:05}").mkdir()
+        with disk.open("wb") as raw:
+            raw.truncate(128 * 1024 ** 2)
+        features = "none,filetype,sparse_super,large_file,dir_index,extent,has_journal,dir_nlink,metadata_csum"
+        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", "1024", "-I", "128", "-N", "73728",
+                        "-O", features, "-d", source, disk], check=True)
+    with (directory / "index-build.log").open("wb") as log:
+        result = subprocess.run(["e2fsck", "-fyD", disk], stdout=log, stderr=subprocess.STDOUT)
+    if result.returncode not in (0, 1):
+        raise RuntimeError("native directory index construction failed")
+    before = debug(disk, "stat /crowded")
+    if not re.search(rb"Links:\s+65000\b", before) or not re.search(rb"Flags: 0x81000\b", before):
+        raise RuntimeError("native indexed directory did not start at the ext4 link limit")
+    fsck(disk, directory / "before-fsck.log")
+    boot(directory, images["link-counts"], [disk], "bios", "modern", ["EXT4_DIRECTORY_LINK_ROLLOVER_PASS"])
+    fsck(disk, directory / "after-fsck.log")
+    if not re.search(rb"Links:\s+1\b", debug(disk, "stat /crowded")):
+        raise RuntimeError("native inspection did not find the directory link overflow marker")
+    before = digest(disk)
+    boot(directory, images["link-counts-verify"], [disk], "bios", "modern", ["EXT4_DIRECTORY_LINK_REBOOT_PASS"])
+    if digest(disk) != before:
+        raise RuntimeError("read-only directory rollover reboot changed disk bytes")
+    return before
+
+
 def rejected(directory, seed, boot_images):
     block = 1024
     native = inode_offset(seed, "/native", block) + 40
@@ -462,7 +538,8 @@ def main():
     files = {name: (0o40755, b"") for name in ("dev", "proc", "run", "sbin", "sys", "tmp")}
     files["sbin/init"] = 0o100755, client.read_bytes()
     write_cpio(archive, files)
-    phases = ["write", "verify", "invalid", "unsupported", "full", "pressure", "recovery"]
+    phases = ["write", "verify", "invalid", "unsupported", "full", "pressure", "recovery",
+              "link-counts", "link-counts-verify"]
     if args.root_tools:
         phases.append("root")
     boot_images = {phase: image(directory, archive, phase) for phase in phases}
@@ -490,12 +567,16 @@ def main():
             checksum_rejections(case, disk, boot_images["invalid"])
         if profile == 7:
             wide_descriptor_rejections(case, disk, boot_images)
+        if "huge_file" in feature_set:
+            reject_inode_features(case, disk, boot_images)
         if profile in (4, 7):
             cut = verify_cut(case / "metadata-cut", disk, boot_images)
         boot(case, boot_images["write"], [disk], firmware, transport, ["EXT4_EXTENT_MUTATION_PASS"])
         depth = verify_host(case, disk, block)
         if checksums:
             verify_metadata(disk, block)
+        if "huge_file" in feature_set:
+            verify_native_inodes(disk, block)
         written = digest(disk)
         boot(case, boot_images["verify"], [disk], firmware, transport, ["EXT4_EXTENT_REBOOT_PASS"])
         if digest(disk) != written:
@@ -504,6 +585,8 @@ def main():
                    journal=journal, features=features_extra, tree_depth=depth, disk_sha256=written)
         if relocated:
             row["group1_metadata_blocks"] = relocated
+        if "dir_nlink" in feature_set:
+            row["directory_link_rollover_sha256"] = link_count_rollover(case / "directory-links", boot_images)
         if cut:
             row["metadata_cut"] = cut
         if args.root_tools:
@@ -517,6 +600,8 @@ def main():
             verify_host(root, rootdisk, block, "/mnt")
             if checksums:
                 verify_metadata(rootdisk, block, "/mnt")
+            if "huge_file" in feature_set:
+                verify_native_inodes(rootdisk, block, "/mnt")
             row["root_disk_sha256"] = digest(rootdisk)
         rows.append(row)
         (directory / "results.json").write_text(json.dumps(rows, indent=2) + "\n")

@@ -126,7 +126,7 @@ Acceptance evidence:
 
 ### F03. Writable ext2 and later ext4
 
-Ext-family root and data volumes support persistent files, writable indexed directories, classic block maps, and writable ext4 extent trees. Ext4 supports metadata checksums, lazy bitmap initialization, wide group descriptors within 32-bit block geometry, and flexible block groups. Internal JBD2 journals support v1 through v3 checksums and recover committed data and metadata after interruption. New normal VM roots use a 32 MiB journal. General crash recovery and broader ext4 layouts remain in development. [Ext-family behavior and verification](ext2.md) [VM roots](build.md)
+Ext-family root and data volumes support persistent files, writable indexed directories, classic block maps, and writable ext4 extent trees. Ext4 supports metadata checksums, lazy bitmap initialization, wide group descriptors within 32-bit block geometry, flexible block groups, wide inode block counts, extended timestamps, and indexed-directory link overflow. Internal JBD2 journals support v1 through v3 checksums and recover committed data and metadata after interruption. New normal VM roots use a 32 MiB journal. General crash recovery and broader ext4 layouts remain in development. [Ext-family behavior and verification](ext2.md) [VM roots](build.md)
 
 Required work:
 

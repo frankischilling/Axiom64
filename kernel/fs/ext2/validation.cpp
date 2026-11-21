@@ -26,6 +26,8 @@
 
 namespace ax::ext2_detail {
 namespace {
+constexpr uint32_t unknown_directory_links = UINT32_MAX;
+
 // Validate allocation, ownership and directories before staging any mount writes.
 // Checked writable dirty mounts may reconcile counters and reclaim completely
 // validated inodes carrying the on-disk deletion marker. A named file, symlink
@@ -41,7 +43,8 @@ struct Validation {
     uint8_t *block_bits = nullptr, *inode_bits = nullptr, *owners = nullptr;
     uint8_t* deleted_bits = nullptr;
     uint8_t* named_directory_parents = nullptr;
-    uint16_t *modes = nullptr, *links = nullptr;
+    uint16_t* modes = nullptr;
+    uint32_t* links = nullptr;
     uint16_t* xattr_references = nullptr;
     uint32_t *references = nullptr, *parents = nullptr, *dotdots = nullptr;
     uint8_t inode_table[max_block_size]{};
@@ -78,7 +81,7 @@ struct Validation {
         inode_bits = (uint8_t*)alloc(inode_bytes);
         owners = (uint8_t*)alloc(block_bytes);
         modes = (uint16_t*)alloc(inode_count * sizeof(uint16_t));
-        links = (uint16_t*)alloc(inode_count * sizeof(uint16_t));
+        links = (uint32_t*)alloc(inode_count * sizeof(*links));
         xattr_references = (uint16_t*)alloc(uint64_t(v.blocks) * sizeof(uint16_t));
         references = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         parents = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
@@ -104,7 +107,7 @@ struct Validation {
         if (named_directory_parents)
             memset(named_directory_parents, 0, inode_bytes);
         memset(modes, 0, inode_count * sizeof(uint16_t));
-        memset(links, 0, inode_count * sizeof(uint16_t));
+        memset(links, 0, inode_count * sizeof(*links));
         memset(xattr_references, 0, uint64_t(v.blocks) * sizeof(uint16_t));
         memset(references, 0, inode_count * sizeof(uint32_t));
         memset(parents, 0, inode_count * sizeof(uint32_t));
@@ -263,7 +266,7 @@ struct Validation {
                 bool resize = number == 7 && (v.compatible & 16);
                 bool journal = number == 8 && v.journal;
                 if (reserved && !resize && !journal) {
-                    if (mode || file_size(data) || u32(data + 28) || u32(data + 104))
+                    if (mode || file_size(data) || v.inode_sectors(data) || u32(data + 104))
                         return v.fail(-95);
                     for (unsigned slot = 0; slot < 15; slot++)
                         if (u32(data + 40 + slot * 4))
@@ -273,16 +276,16 @@ struct Validation {
                 if (type != regular_file && type != directory && type != symlink && type != fifo &&
                     type != 0140000)
                     return v.fail(-95);
-                uint32_t accepted_flags =
-                    type == directory && (v.compatible & directory_index_feature)
-                        ? indexed_directory
-                        : 0;
+                uint32_t accepted_flags = v.block_count_flag();
+                if (type == directory && (v.compatible & directory_index_feature))
+                    accepted_flags |= indexed_directory;
                 if (v.extent_enabled && !resize &&
                     (type == regular_file || type == directory || type == symlink))
                     accepted_flags |= extent_inode;
                 // Other inode flags and fragments need separate policy/layout support.
-                if ((u32(data + 32) & ~accepted_flags) || u32(data + 112) || u16(data + 116) ||
-                    (type != regular_file && u32(data + 108)))
+                if ((u32(data + 32) & ~accepted_flags) || u32(data + 112) ||
+                    (!(v.readonly_features & huge_file_feature) && u16(data + 116)) ||
+                    u16(data + 118) || (type != regular_file && u32(data + 108)))
                     return v.fail(-95);
                 uint64_t length = file_size(data), count = 0, leaves = 0;
                 uint32_t attribute = u32(data + 104);
@@ -314,7 +317,7 @@ struct Validation {
                 if (type == symlink && (!length || length > 4095))
                     return v.fail();
                 if ((type == fifo || type == 0140000) &&
-                    (length || u32(data + 28) != count * (v.block_size / sector_size)))
+                    (length || v.inode_sectors(data) != count * (v.block_size / sector_size)))
                     return v.fail();
                 if (resize) {
                     if (type != regular_file || !u32(data + 92))
@@ -323,7 +326,7 @@ struct Validation {
                         if (slot != 13 && u32(data + 40 + slot * 4))
                             return v.fail();
                 }
-                bool fast_link = fast_symlink(data, v.block_size);
+                bool fast_link = v.fast_symlink(data);
                 if (fast_link && length > inode_block_bytes)
                     return v.fail();
                 if (has_extents(data)) {
@@ -343,7 +346,7 @@ struct Validation {
                         base += span;
                     }
                 }
-                if (count * (v.block_size / sector_size) != u32(data + 28))
+                if (count * (v.block_size / sector_size) != v.inode_sectors(data))
                     return v.fail();
                 if (type == directory && leaves != length / v.block_size)
                     return v.fail();
@@ -358,6 +361,8 @@ struct Validation {
                         return v.fail();
                     modes[number] = mode;
                     links[number] = u16(data + 26);
+                    if (links[number] == 1 && v.directory_can_omit_links(data))
+                        links[number] = unknown_directory_links;
                     if (type == directory)
                         dirs++;
                 }
@@ -449,7 +454,9 @@ struct Validation {
                         }
                         parents[r.inode] = number;
                     }
-                    if (!detached && ++references[r.inode] > UINT16_MAX) {
+                    if (!detached && (references[r.inode] == UINT32_MAX ||
+                                      (++references[r.inode] > UINT16_MAX &&
+                                       links[r.inode] != unknown_directory_links))) {
                         success = v.fail();
                         break;
                     }
@@ -509,7 +516,8 @@ struct Validation {
             // must identify that live parent; only that known link may be missing.
             if (references[number] != 1 || !parent || dotdots[number] != parent ||
                 deleted(parent) || (modes[parent] & 0170000) != ax::directory ||
-                bit(named_directory_parents, parent) || references[parent] == UINT16_MAX ||
+                bit(named_directory_parents, parent) || references[parent] == UINT32_MAX ||
+                (references[parent] >= UINT16_MAX && links[parent] != unknown_directory_links) ||
                 !inode(number, data) || u32(data + 20) != u32(data + 12))
                 return v.fail();
             setbit(named_directory_parents, parent, true);
@@ -519,7 +527,7 @@ struct Validation {
         for (uint32_t number = 2; number <= v.inodes; number++) {
             if (!modes[number])
                 continue;
-            if (references[number] != links[number]) {
+            if (references[number] != links[number] && links[number] != unknown_directory_links) {
                 Inode data;
                 unsigned type = modes[number] & 0170000;
                 bool parent_link = named_directory_parents &&
@@ -576,7 +584,7 @@ struct Validation {
             return false;
         Inode data;
         for (uint32_t number = 2; number <= v.inodes; number++) {
-            if (!bit(named_directory_parents, number))
+            if (!bit(named_directory_parents, number) || links[number] == unknown_directory_links)
                 continue;
             if (!v.load_inode(number, data))
                 return false;

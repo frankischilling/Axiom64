@@ -28,6 +28,7 @@
 namespace ax::ext2_detail {
 namespace {
 constexpr uint8_t zero[4]{};
+constexpr int64_t inode_epoch_seconds = int64_t(1) << 32;
 
 uint32_t inode_seed_for(uint32_t seed, uint32_t number, const uint8_t* raw) {
     uint8_t identity[4];
@@ -76,6 +77,34 @@ bool index_checksum(Volume& v, const Inode& inode, const uint8_t* data, unsigned
     return true;
 }
 } // namespace
+
+Timestamp Inode::time(InodeTimeField field) const {
+    Timestamp value{int32_t(u32(bytes + field.seconds)), 0};
+    if (fits(field.extra, 4)) {
+        uint32_t extra = u32(bytes + field.extra);
+        value.sec += (extra & 3) * inode_epoch_seconds;
+        value.nsec = extra >> 2;
+    }
+    return value;
+}
+
+bool Inode::can_set_time(InodeTimeField field, Timestamp value) const {
+    int64_t last = INT32_MAX + (fits(field.extra, 4) ? 3 * inode_epoch_seconds : 0);
+    return value.sec >= INT32_MIN && value.sec <= last && value.nsec < 1000000000;
+}
+
+void Inode::set_time(InodeTimeField field, Timestamp value) {
+    if (!fits(field.seconds, 4))
+        return;
+    if (fits(field.extra, 4)) {
+        int32_t low = value.sec;
+        uint32_t epoch = (value.sec - low) / inode_epoch_seconds;
+        set32(bytes + field.seconds, low);
+        set32(bytes + field.extra, (value.nsec << 2) | (epoch & 3));
+    } else {
+        set32(bytes + field.seconds, min<int64_t>(max<int64_t>(value.sec, INT32_MIN), INT32_MAX));
+    }
+}
 
 bool Volume::configure_checksums(const uint8_t* header, bool stored_seed) {
     if (!checksums())
@@ -142,7 +171,9 @@ bool Volume::decode_inode(uint32_t number, const uint8_t* raw, Inode& inode) {
             (has_inode_checksum_high(inode_size, raw) && (checksum >> 16) != u16(raw + 130)))
             return fail();
     }
-    memcpy(inode.bytes, raw, inode_bytes);
+    memcpy(inode.bytes, raw, inode_size);
+    if (inode_size == inode_bytes)
+        set16(inode.bytes + inode_bytes, 0);
     inode.number = number;
     return true;
 }

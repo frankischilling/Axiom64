@@ -261,8 +261,67 @@ static int checksum_recovery(int interrupt) {
     return 0;
 }
 
+static int native_inode_fields(unsigned block, int verify) {
+    int fd = open("/mnt/native-inode", verify ? O_RDONLY : O_RDWR);
+    if (fd < 0) {
+        REQUIRE(errno == ENOENT);
+        return 0;
+    }
+    struct stat st;
+    if (!verify) {
+        REQUIRE(fstat(fd, &st) == 0 && st.st_size == 1 && st.st_blocks == block / 512);
+        REQUIRE(pwrite(fd, "U", 1, block) == 1);
+    }
+    REQUIRE(fstat(fd, &st) == 0 && st.st_size == block + 1 && st.st_blocks == 2 * block / 512);
+    REQUIRE(bytes_are(fd, 0, 1, 'N') && bytes_are(fd, block, 1, 'U') && close(fd) == 0);
+
+    const char* path = "/mnt/time-probe";
+    const struct timespec times[] = {{-42, 987654321}, {13569465600LL, 123456789}};
+    if (!verify) {
+        fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0644);
+        REQUIRE(fd >= 0 && close(fd) == 0);
+        const struct timespec invalid[] = {{0, 0}, {0x380000000LL, 0}};
+        REQUIRE(utimensat(AT_FDCWD, path, invalid, 0) == -1 && errno == EINVAL);
+        REQUIRE(utimensat(AT_FDCWD, path, times, 0) == 0);
+        REQUIRE(chmod(path, 0600) == 0);
+    }
+    REQUIRE(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+    REQUIRE(st.st_atim.tv_sec == times[0].tv_sec && st.st_atim.tv_nsec == times[0].tv_nsec);
+    REQUIRE(st.st_mtim.tv_sec == times[1].tv_sec && st.st_mtim.tv_nsec == times[1].tv_nsec);
+    puts("EXT4_NATIVE_INODE_FIELDS_PASS");
+    return 0;
+}
+
+static int directory_link_counts(int verify) {
+    const char* crowded = "/mnt/crowded";
+    const char* child = "/mnt/crowded/guest";
+    const char* moved = "/mnt/moved";
+    struct stat st;
+    if (!verify) {
+        REQUIRE(stat(crowded, &st) == 0 && st.st_nlink == 65000);
+        REQUIRE(mkdir(child, 0755) == 0);
+        REQUIRE(stat(crowded, &st) == 0 && st.st_nlink == 1);
+        REQUIRE(rename(child, moved) == 0);
+        REQUIRE(stat(crowded, &st) == 0 && st.st_nlink == 1);
+        REQUIRE(rename(moved, child) == 0);
+        REQUIRE(rmdir(child) == 0);
+        REQUIRE(rmdir("/mnt/crowded/d00000") == 0);
+    }
+    REQUIRE(stat(crowded, &st) == 0 && st.st_nlink == 1);
+    ino_t parent = st.st_ino;
+    REQUIRE(stat("/mnt/crowded/d00001/..", &st) == 0 && st.st_ino == parent);
+    REQUIRE(stat("/mnt/crowded/d64997", &st) == 0 && S_ISDIR(st.st_mode));
+    REQUIRE(access(child, F_OK) == -1 && errno == ENOENT);
+    REQUIRE(access(moved, F_OK) == -1 && errno == ENOENT);
+    REQUIRE(access("/mnt/crowded/d00000", F_OK) == -1 && errno == ENOENT);
+    REQUIRE(umount("/mnt") == 0);
+    puts(verify ? "EXT4_DIRECTORY_LINK_REBOOT_PASS" : "EXT4_DIRECTORY_LINK_ROLLOVER_PASS");
+    return 0;
+}
+
 static int exercise(const char* phase) {
-    int verify = !strcmp(phase, "verify"), root = !strcmp(phase, "io");
+    int verify_links = !strcmp(phase, "readonly");
+    int verify = !strcmp(phase, "verify") || verify_links, root = !strcmp(phase, "io");
     if (!root) {
         REQUIRE(mkdir("/mnt", 0755) == 0);
         int rc = mount("/dev/vda", "/mnt", "ext4", verify ? MS_RDONLY : 0, NULL);
@@ -272,6 +331,8 @@ static int exercise(const char* phase) {
             return 0;
         }
         REQUIRE(rc == 0);
+        if (verify_links || !strcmp(phase, "queue"))
+            return directory_link_counts(verify_links);
         if (!strcmp(phase, "full"))
             return full_volume();
         if (!strcmp(phase, "pressure") || !strcmp(phase, "recovery"))
@@ -298,6 +359,7 @@ static int exercise(const char* phase) {
     REQUIRE(truncate_tree(block, verify) == 0);
     REQUIRE(wide_file(block, verify) == 0);
     REQUIRE(checksum_objects(verify) == 0);
+    REQUIRE(native_inode_fields(block, verify) == 0);
     if (!verify) {
         REQUIRE(drop_open_file(block) == 0);
         REQUIRE(rename("/mnt/generated", "/mnt/renamed") == 0);

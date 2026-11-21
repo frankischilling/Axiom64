@@ -33,13 +33,17 @@
 #include "entries.hpp"
 
 namespace ax::ext2_detail {
-constexpr size_t max_block_size = 4096, inode_bytes = 128, inode_block_bytes = 15 * 4;
+constexpr size_t max_block_size = 4096, inode_bytes = 128, max_inode_bytes = 256;
+constexpr size_t inode_block_bytes = 15 * 4;
 constexpr unsigned max_changes = 4096;
 constexpr uint32_t indexed_directory = 0x1000, directory_index_feature = 0x20;
 constexpr uint32_t extent_inode = 0x80000, extent_feature = 0x40;
 constexpr uint64_t extent_logical_limit = UINT32_MAX;
 constexpr uint32_t metadata_checksum_feature = 0x400, checksum_seed_feature = 0x2000;
 constexpr uint32_t wide_descriptor_feature = 0x80, flex_group_feature = 0x200;
+constexpr uint32_t huge_file_feature = 0x8, directory_links_feature = 0x20;
+constexpr uint32_t extra_inode_size_feature = 0x40, huge_file_inode = 0x40000;
+constexpr unsigned ext4_link_max = 65000;
 constexpr unsigned classic_descriptor_bytes = 32, wide_descriptor_bytes = 64;
 constexpr unsigned max_descriptor_bytes = 1024;
 constexpr unsigned inode_uninitialized = 1, block_uninitialized = 2, inode_table_zeroed = 4;
@@ -82,11 +86,6 @@ inline bool has_extents(const uint8_t* inode) {
     return (u32(inode + 32) & extent_inode) != 0;
 }
 
-inline bool fast_symlink(const uint8_t* inode, unsigned block_size) {
-    return (u16(inode) & 0170000) == symlink && !has_extents(inode) &&
-           u32(inode + 28) == (u32(inode + 104) ? block_size / sector_size : 0);
-}
-
 inline uint8_t file_type(uint32_t mode) {
     switch (mode & 0170000) {
     case regular_file:
@@ -116,8 +115,15 @@ struct MetadataRange {
     uint32_t begin, end;
 };
 
+struct InodeTimeField {
+    unsigned seconds, extra;
+};
+
+constexpr InodeTimeField inode_atime{8, 140}, inode_ctime{12, 132}, inode_mtime{16, 136};
+constexpr InodeTimeField inode_crtime{144, 148};
+
 struct Inode {
-    uint8_t bytes[inode_bytes];
+    uint8_t bytes[max_inode_bytes];
     uint32_t number;
 
     operator uint8_t*() {
@@ -127,6 +133,14 @@ struct Inode {
     operator const uint8_t*() const {
         return bytes;
     }
+
+    bool fits(unsigned offset, unsigned size) const {
+        return offset + size <= inode_bytes + u16(bytes + inode_bytes);
+    }
+
+    Timestamp time(InodeTimeField field) const;
+    bool can_set_time(InodeTimeField field, Timestamp value) const;
+    void set_time(InodeTimeField field, Timestamp value);
 };
 
 struct Change {
@@ -156,7 +170,7 @@ bool validate_extent_tree(Volume&, const Inode& inode, bool allow_unwritten,
 struct Volume {
     Mount* mount;
     unsigned device, block_size, inode_size, group_count, change_count;
-    unsigned descriptor_bytes, metadata_range_count;
+    unsigned descriptor_bytes, metadata_range_count, new_inode_extra_size;
     uint32_t blocks, inodes, first, blocks_per_group, inodes_per_group, first_inode;
     uint32_t gdt, gdt_blocks, reserved_gdt, revision, compatible, readonly_features;
     uint32_t directory_hash_seed[4];
@@ -183,6 +197,30 @@ struct Volume {
 
     bool checksums() const {
         return (readonly_features & metadata_checksum_feature) != 0;
+    }
+
+    uint32_t block_count_flag() const {
+        return readonly_features & huge_file_feature ? huge_file_inode : 0;
+    }
+
+    uint64_t inode_sectors(const uint8_t* inode) const {
+        uint64_t count = u32(inode + 28);
+        if (readonly_features & huge_file_feature) {
+            count |= uint64_t(u16(inode + 116)) << 32;
+            if (u32(inode + 32) & huge_file_inode)
+                count *= block_size / sector_size;
+        }
+        return count;
+    }
+
+    bool fast_symlink(const Inode& inode) const {
+        return (u16(inode) & 0170000) == symlink && !has_extents(inode) &&
+               inode_sectors(inode) == (u32(inode + 104) ? block_size / sector_size : 0);
+    }
+
+    bool directory_can_omit_links(const Inode& inode) const {
+        return (readonly_features & directory_links_feature) &&
+               (u16(inode) & 0170000) == directory && (u32(inode + 32) & indexed_directory);
     }
 
     bool configure_checksums(const uint8_t* header, bool stored_seed);
@@ -336,20 +374,18 @@ struct Volume {
         if (!decode_inode(number, block + offset % block_size, data))
             return false;
         if (auto cached = canonical(number); cached && cached->atime_dirty)
-            set32(data + 8, cached->node.atime.sec);
+            data.set_time(inode_atime, cached->node.atime);
         return true;
     }
 
-    bool save_inode(uint32_t number, const uint8_t* data, bool clear = false) {
+    bool save_inode(uint32_t number, const Inode& data) {
         uint32_t index = number - 1;
         uint64_t offset = uint64_t(index % inodes_per_group) * inode_size;
         uint8_t block[max_block_size];
         if (!number || number > inodes ||
             !read_block(groups[index / inodes_per_group].inode_table + offset / block_size, block))
             return fail();
-        if (clear)
-            memset(block + offset % block_size, 0, inode_size);
-        memcpy(block + offset % block_size, data, inode_bytes);
+        memcpy(block + offset % block_size, data.bytes, inode_size);
         if (checksums())
             seal_inode(number, block + offset % block_size);
         if (!write_block(groups[index / inodes_per_group].inode_table + offset / block_size, block,
@@ -367,17 +403,17 @@ struct Volume {
         return true;
     }
 
-    void populate(Entry* entry, const uint8_t* data) {
+    void populate(Entry* entry, const Inode& data) {
         auto& node = entry->node;
         node.mode = u16(data);
         node.uid = u16(data + 2) | (uint32_t(u16(data + 120)) << 16);
         node.gid = u16(data + 24) | (uint32_t(u16(data + 122)) << 16);
         node.links = u16(data + 26);
         node.size = file_size(data);
-        node.allocated_blocks = u32(data + 28);
-        node.atime = {int32_t(u32(data + 8)), 0};
-        node.ctime = {int32_t(u32(data + 12)), 0};
-        node.mtime = {int32_t(u32(data + 16)), 0};
+        node.allocated_blocks = inode_sectors(data);
+        node.atime = data.time(inode_atime);
+        node.ctime = data.time(inode_ctime);
+        node.mtime = data.time(inode_mtime);
         entry->atime_dirty = false;
         if (!node.mode)
             entry->number = 0;
@@ -451,7 +487,7 @@ struct Volume {
     }
 
     Node* add_entry(Entry* entry, uint32_t number, Node* parent, const char* name,
-                    const uint8_t* inode) {
+                    const Inode& inode) {
         entry->number = number;
         entry->node.inode = number;
         entry->node.parent = parent;
@@ -574,10 +610,16 @@ struct Volume {
     }
 
     bool add_blocks(uint8_t* inode, int delta) {
-        int64_t count = int64_t(u32(inode + 28)) + int64_t(delta) * (block_size / sector_size);
-        if (count < 0 || count > UINT32_MAX)
+        bool wide = (readonly_features & huge_file_feature) != 0;
+        int64_t count = int64_t(inode_sectors(inode)) + int64_t(delta) * (block_size / sector_size);
+        // Every supported volume fits in the 48-bit sector-count field.
+        if (count < 0 || uint64_t(count) > (wide ? (uint64_t(1) << 48) - 1 : UINT32_MAX))
             return fail(-27);
         set32(inode + 28, count);
+        if (wide) {
+            set16(inode + 116, uint64_t(count) >> 32);
+            set32(inode + 32, u32(inode + 32) & ~huge_file_inode);
+        }
         return true;
     }
 
@@ -763,15 +805,15 @@ struct Volume {
 
     bool delete_inode(uint32_t number, Inode& inode) {
         bool dir = (u16(inode) & 0170000) == directory;
-        if (!fast_symlink(inode, block_size) && !size(inode, 0))
+        if (!fast_symlink(inode) && !size(inode, 0))
             return false;
         uint32_t block = u32(inode + 104), references;
         uint8_t data[max_block_size];
         if (block &&
             (!xattr_block(inode, data, references) || !release_xattr(block, data, references)))
             return false;
-        memset(inode, 0, inode_bytes);
-        return save_inode(number, inode, true) && free_number(number, true, dir);
+        memset(inode.bytes, 0, inode_size);
+        return save_inode(number, inode) && free_number(number, true, dir);
     }
 
     bool state(bool clean) {

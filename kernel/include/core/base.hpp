@@ -199,6 +199,7 @@ struct AddressSpace {
     bool map(uint64_t va, size_t len, int prot, uint64_t mapping_flags = page_private);
     bool move_anonymous_mapping(uint64_t source, size_t old_size, uint64_t destination,
                                 size_t new_size, int protection);
+    void move_prepared_pages(uint64_t source, uint64_t destination, size_t size);
 
     bool prepare_mapping(uint64_t va, size_t len);
 

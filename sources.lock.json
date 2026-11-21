@@ -1120,6 +1120,31 @@
       ]
     },
     {
+      "origin": "cairo",
+      "commit": "7fe77742880d49da1db854abd16e78073d538983",
+      "license": "LGPL-2.1-or-later OR MPL-1.1",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7fe77742880d49da1db854abd16e78073d538983/main/cairo/APKBUILD",
+      "recipe_sha256": "a260a789b50c165bb77e6ba7c514b783849b03ac8fdc9bcca4320742e398f16e",
+      "files": [
+        {
+          "name": "cairo-1.18.4.tar.bz2",
+          "sha512": "27b98a17510b4d6f0187fcb280fea1b47ae31243f6999081a7ac94f8cf3c789c05fa6eb0fe65844808ef9ac11bcd29a4c3688c871a6950d888667840385acf9b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cairo-1.18.4.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7fe77742880d49da1db854abd16e78073d538983/main/cairo/cairo-1.18.4.tar.bz2"
+          ]
+        },
+        {
+          "name": "musl-stacksize.patch",
+          "sha512": "86f26fe41deb5e14f553c999090d1ec1d92a534fa7984112c9a7f1d6c6a8f1b7bb735947e8ec3f26e817f56410efe8cc46c5e682f6a278d49b40a683513740e0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/musl-stacksize.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7fe77742880d49da1db854abd16e78073d538983/main/cairo/musl-stacksize.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "dbus",
       "commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac",
       "license": "AFL-2.1 OR GPL-2.0-or-later",
@@ -1454,6 +1479,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/table-validation-modules.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/2d656868790548d7f0d43f6caf59c2b2e43eb251/main/freetype/table-validation-modules.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "fribidi",
+      "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/fribidi/APKBUILD",
+      "recipe_sha256": "67b9164f03baece87be553ff3d3ac6298318f4c5183577994ae51d03d6c2f2ff",
+      "files": [
+        {
+          "name": "fribidi-1.0.16.tar.xz",
+          "sha512": "e3a56f36155f6813e3609473639fc533de742309f561c463012dc90b412a1ac7694b765d92669b2cbfaee973ca0e92fa5e926e68a1a078921f26ef17d82ab651",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/fribidi-1.0.16.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/fribidi/fribidi-1.0.16.tar.xz"
           ]
         }
       ]
@@ -1796,6 +1838,80 @@
       ]
     },
     {
+      "origin": "gettext",
+      "commit": "215a26431d1b09c56cb2a9ffe10175feb9518fd8",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/215a26431d1b09c56cb2a9ffe10175feb9518fd8/main/gettext/APKBUILD",
+      "recipe_sha256": "a6698f155bd8e11b06cc8692093af70870508a54e1082a43cac961b5d8851217",
+      "files": [
+        {
+          "name": "gettext-0.24.1.tar.xz",
+          "sha512": "53d5c54105598cc6156b940ff82d9754f4b7cdeafcd2400206c975db9412012511b60a7ebefcd31068a0bc2d99173ecd93a66844c7f3a9772df69d53b3cebeb5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gettext-0.24.1.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/215a26431d1b09c56cb2a9ffe10175feb9518fd8/main/gettext/gettext-0.24.1.tar.xz"
+          ]
+        },
+        {
+          "name": "cwd.patch",
+          "sha512": "31796534e40c1569b08cf48e25375ca1d0f439df8aa0d24283769d52a290e28522760128f11f5bd04217605974ae1fdee9557ec189ed32b11b2a45b4af3b0f4a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cwd.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/215a26431d1b09c56cb2a9ffe10175feb9518fd8/main/gettext/cwd.patch"
+          ]
+        },
+        {
+          "name": "skip-tests-musl.patch",
+          "sha512": "a16963f804ce4abe8480da211228f7b24a0715d6ef3ff7d5e5c58a1387d6c4260ee237864081b05b164f082ef199a592494ce691dd0c96c61978e4c451707c7a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/skip-tests-musl.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/215a26431d1b09c56cb2a9ffe10175feb9518fd8/main/gettext/skip-tests-musl.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "glib",
+      "commit": "9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed/main/glib/APKBUILD",
+      "recipe_sha256": "57117549e5b219e2d8a79754b0e35debc6f923001225abc00278f5a2ddb4de0e",
+      "files": [
+        {
+          "name": "glib-2.84.4.tar.xz",
+          "sha512": "2de9b2f7376c0e5f6ee585087090675d597c474199a10d04aad18df688b6ca77d17e93a86ec07482898663f51c82121992272496318138f77ca5ad2c340a4bd3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/glib-2.84.4.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed/main/glib/glib-2.84.4.tar.xz"
+          ]
+        },
+        {
+          "name": "gobject-introspection-1.82.0.tar.xz",
+          "sha512": "e139fadb4174c72b648914f3774d89fc0e5eaee45bba0c13edf05de883664dad8276dbc34006217bb09871ed4bad23adab51ff232a17b9eb131329b2926cafb7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gobject-introspection-1.82.0.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed/main/glib/gobject-introspection-1.82.0.tar.xz"
+          ]
+        },
+        {
+          "name": "tests-machine-id.patch",
+          "sha512": "4f561bfede4a559b314195aa4b7b5923a52c62063e6dd33b4933ad53b29c32ef789d69b9f7b17d8d701323006366e6b7acbb083a68674c1c535c185d35cc5d1f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/tests-machine-id.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed/main/glib/tests-machine-id.patch"
+          ]
+        },
+        {
+          "name": "flaky-tests.patch",
+          "sha512": "268cf6f089274f29285242f1e29bf5650e85f9fcb5744df884deb139493cc25792ad78487113732665f1c5393c94b2f76f97093a1a003e3caaf65c07960a1bf9",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/flaky-tests.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed/main/glib/flaky-tests.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "gmp",
       "commit": "187e3f7791d3390e18bc06969a5f34c385fd883e",
       "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
@@ -1808,6 +1924,48 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/gmp-6.3.0.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/187e3f7791d3390e18bc06969a5f34c385fd883e/main/gmp/gmp-6.3.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "graphite2",
+      "commit": "33283848034c9885d984c8e8697c645c57324938",
+      "license": "LGPL-2.1-or-later OR MPL-1.1",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/33283848034c9885d984c8e8697c645c57324938/main/graphite2/APKBUILD",
+      "recipe_sha256": "a2dd09e52b4cf89cf64384d0168a36d2641999a937af2df24aa6fb76505bb4db",
+      "files": [
+        {
+          "name": "graphite2-1.3.14.tar.gz",
+          "sha512": "49d127964d3f5c9403c7aecbfb5b18f32f25fe4919a81c49e0534e7123fe845423e16b0b8c8baaae21162b1150ab3e0f1c22c344e07d4364b6b8473c40a0822c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/graphite2-1.3.14.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/33283848034c9885d984c8e8697c645c57324938/main/graphite2/graphite2-1.3.14.tar.gz"
+          ]
+        },
+        {
+          "name": "cmake.patch",
+          "sha512": "729fb5ce0b012dca27cda10ec2b8cdf90029394915072f3a11ee4a3ec1b62aa5d810ca118a428419ac88d0dd316b07de557601d1ce079d3f96bfff4be271addb",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cmake.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/33283848034c9885d984c8e8697c645c57324938/main/graphite2/cmake.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "harfbuzz",
+      "commit": "c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83/main/harfbuzz/APKBUILD",
+      "recipe_sha256": "baaceb04d1c8cb57695bc0437c729df4c7744090a478f369f99f2bebba79e33c",
+      "files": [
+        {
+          "name": "harfbuzz-11.2.1.tar.xz",
+          "sha512": "56d4819f63d6040bff008e64a0d5b597c1cfa105047f7970b1dae2894aeed27a92d0c0780fee0beda53685767d86cb864256d6388cb4439e7d51a7ee717a0bd7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/harfbuzz-11.2.1.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83/main/harfbuzz/harfbuzz-11.2.1.tar.xz"
           ]
         }
       ]
@@ -1932,6 +2090,31 @@
       ]
     },
     {
+      "origin": "libeconf",
+      "commit": "1e0aa723fba50417893fe5f6cf72f76d044b8192",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/1e0aa723fba50417893fe5f6cf72f76d044b8192/main/libeconf/APKBUILD",
+      "recipe_sha256": "becee768655f39c7b1649446f09ea60d3a4c7994e387e79d537c3158cd4fd6dc",
+      "files": [
+        {
+          "name": "libeconf-0.6.3.tar.gz",
+          "sha512": "6a177474efa03d4933c1fff85eaf159837b9c803d3be8a8e8a23c271bbcd38f5513bc30df37592721c1d139c36a698fb224be012fa947595c0e90904e22fdadb",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libeconf-0.6.3.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1e0aa723fba50417893fe5f6cf72f76d044b8192/main/libeconf/libeconf-0.6.3.tar.gz"
+          ]
+        },
+        {
+          "name": "musl-tests.patch",
+          "sha512": "28431c1f80ee7815991584ef6307dabe593b4da58b9406e6f1a9cb30bfba3e925a48c83b0d3824427631bede5b1249b0c87e0d9fb55971d4ecf90805076b25dd",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/musl-tests.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1e0aa723fba50417893fe5f6cf72f76d044b8192/main/libeconf/musl-tests.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libedit",
       "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
       "license": "BSD-3-Clause",
@@ -2034,6 +2217,23 @@
       ]
     },
     {
+      "origin": "libinput",
+      "commit": "9f3fdac88413f807dcd43098fe26dc6e15ba2561",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/9f3fdac88413f807dcd43098fe26dc6e15ba2561/community/libinput/APKBUILD",
+      "recipe_sha256": "bc0137c88330421e0b1769e08f9fd9f8e8e9ccb655d529c4cfc08bfbd11342e3",
+      "files": [
+        {
+          "name": "libinput-1.28.1.tar.gz",
+          "sha512": "b8c75f64ff9f14bbaa27997e6abd47142d5e8843609dba08813c4dc75ee513b6f1fc13cdff53df953a7417f13b10c172ef99735153cb2e0729423233ed6340ef",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libinput-1.28.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9f3fdac88413f807dcd43098fe26dc6e15ba2561/community/libinput/libinput-1.28.1.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libisoburn",
       "commit": "2b5b2aa3acf10c1b41986a304c027b9af03dadb9",
       "license": "GPL-2.0-or-later",
@@ -2063,6 +2263,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libisofs-1.5.6.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/372ae9fed6e6faf79958d42ef05e11951d19469b/main/libisofs/libisofs-1.5.6.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libjpeg-turbo",
+      "commit": "a78c772b57d3dd6b70cdfd239493112b396a0485",
+      "license": "BSD-3-Clause AND IJG AND Zlib",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a78c772b57d3dd6b70cdfd239493112b396a0485/main/libjpeg-turbo/APKBUILD",
+      "recipe_sha256": "b2a6bad69a251f26cbcf9dcdba513955b46c1d89194bc54d30082cd88a3944a7",
+      "files": [
+        {
+          "name": "libjpeg-turbo-3.1.0.tar.gz",
+          "sha512": "63231854529f59a95814cf2414fe384360a4ed96c572764fabc535c3770c559d26943e129c905a63d5949088fa79138b1ffdb175b817f2f4d36329a3cbb23ea7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libjpeg-turbo-3.1.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a78c772b57d3dd6b70cdfd239493112b396a0485/main/libjpeg-turbo/libjpeg-turbo-3.1.0.tar.gz"
           ]
         }
       ]
@@ -2147,6 +2364,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libSM-1.2.5.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/b1ad94dc4022b4397665817e1dabc08afe2773e2/main/libsm/libSM-1.2.5.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libwebp",
+      "commit": "5494fdecea7831c01f277cf8ca80719d02f47771",
+      "license": "BSD-3-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/5494fdecea7831c01f277cf8ca80719d02f47771/main/libwebp/APKBUILD",
+      "recipe_sha256": "e383cf3ff287a0995124eb265eae42dd52dc0958ca2bc04bc8ddb6ac95cb933d",
+      "files": [
+        {
+          "name": "libwebp-1.5.0.tar.gz",
+          "sha512": "7a39594cf5585428f82d555b05e78aa63758a56841a313c0b74dfb4996afe37dddf92498d6123ff2a949a7209fb9097927f10ee75b5a38b481f110c892e5302b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libwebp-1.5.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/5494fdecea7831c01f277cf8ca80719d02f47771/main/libwebp/libwebp-1.5.0.tar.gz"
           ]
         }
       ]
@@ -2317,6 +2551,31 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libXi-1.8.2.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/c8f6e25cf06e780fa669e89d6b1468edeac5714b/main/libxi/libXi-1.8.2.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libxkbcommon",
+      "commit": "0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9",
+      "license": "MIT AND MIT-open-group AND HPND AND HPND-sell-variant AND LicenseRef-digital-equipment-corporation",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9/main/libxkbcommon/APKBUILD",
+      "recipe_sha256": "7553e19d18919ce20fdf121900345ae1822b27063330cf4c3dbec8c25d31ce1f",
+      "files": [
+        {
+          "name": "xkbcommon-1.8.1.tar.gz",
+          "sha512": "a11b8563b11bd085b909753fa99e5b2129343363a05d4fac44a46b334b644dbdd57c356021926e9fdcc2bf6855b90283af93e74c471c3d5677c2ed1bf19427c2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/xkbcommon-1.8.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9/main/libxkbcommon/xkbcommon-1.8.1.tar.gz"
+          ]
+        },
+        {
+          "name": "allow-skip-test.patch",
+          "sha512": "77e4c1e6e370dd26a6dfa7914a2df5a5e78ccd42752694ff473b44317db242367ec815e43c979ad952ff475228d5ce9e788b670bb513e63df4d55bc3691aa0a7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/allow-skip-test.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9/main/libxkbcommon/allow-skip-test.patch"
           ]
         }
       ]
@@ -2950,6 +3209,152 @@
       ]
     },
     {
+      "origin": "pango",
+      "commit": "7072d5b4762ad6280669406526c5f391e444800e",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7072d5b4762ad6280669406526c5f391e444800e/main/pango/APKBUILD",
+      "recipe_sha256": "d6515a70eec16690f88d9db1ecdd3c85bdef64b1967bb9e9aad437878b5c48c6",
+      "files": [
+        {
+          "name": "pango-1.56.3.tar.xz",
+          "sha512": "adb5aa66ea0c45f7bb112867a77f25d31d39bbb18fd8d41df0c1fd329714def874aa3cb8a49847561a75b0824c2abf8ce09a610d088e88d7de015c36a1536ac0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pango-1.56.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7072d5b4762ad6280669406526c5f391e444800e/main/pango/pango-1.56.3.tar.xz"
+          ]
+        },
+        {
+          "name": "disable-broken-test.patch",
+          "sha512": "966b3e194edbe328ae29f722af1f3d130b1e5e8880b915a6fc622f0e2a5d3abe9ab92a21de104c40d9d40b56562941a49a9be1635b7bf102100f772d03e29381",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/disable-broken-test.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7072d5b4762ad6280669406526c5f391e444800e/main/pango/disable-broken-test.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "pcre2",
+      "commit": "f5ca111ded52f3c1f4298b09e118af54fba80aa1",
+      "license": "BSD-3-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/APKBUILD",
+      "recipe_sha256": "ea0af67eade2fd13e6dd591e7890bf8ffac521e2b3e7eb4dbe9997f6bde41ea4",
+      "files": [
+        {
+          "name": "pcre2-10.46.tar.bz2",
+          "sha512": "795b0d74efb898347990c29fefc85f37ac81e7795f9d6a5598d1169a03c547df7ff7eac280f708b1fef68d3e7686e0d4cd55f0c6364e287ff2a983bbd1a3c334",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.46.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.46.tar.bz2"
+          ]
+        },
+        {
+          "name": "pcre2-10.47-Fix-for-callback.patch",
+          "sha512": "a2277c5ea7ae773047daf87f31056352939f71bd2825c3fc2be0a6240fe9655cde087dd9c53fb5bf089f69906593fb9707157183b7e7367ddd06112576244efd",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.47-Fix-for-callback.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.47-Fix-for-callback.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Write-serialization-padding.patch",
+          "sha512": "8a80e87d9ffa14d82fd0c4ad196aa380fcf16b98a714fa0cb706dff21fc74399398341127e9d8b604cecb0ec5167a083299672f2c8bf3deaa2142091ec83fc81",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Write-serialization-padding.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Write-serialization-padding.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-character-list-generator.patch",
+          "sha512": "934afacd7f49c1298a222af3edda263cfdba4207857e90977245bd37728a90ea0d038d840aa9514d921f6413976adb722d31923ca03cce2c5a6356168e73f486",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-character-list-generator.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-character-list-generator.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-scan-prefix-repeat-reset.patch",
+          "sha512": "23c611fa258e12e376d4bf78b38984798dccb29829929da046d703b322913f64a80dc0651ffbe28f28d4bc6411971125e9ce1c1eae64551539486be1660665da",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-scan-prefix-repeat-reset.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-scan-prefix-repeat-reset.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-JIT-STR_END.patch",
+          "sha512": "59c5cd2b6cfd63277b36b960372e44b3d7da2f56860bafcdd0f469ca883ad9408e65fa6a75aacef6a73ad574b16156f4b042a6f8e698b99c48e69ea424ca6337",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-JIT-STR_END.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-JIT-STR_END.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-JIT-match-context-reuse.patch",
+          "sha512": "efacdc5175fb7d11d4fdc3052d3b327ad24fe9501c9d02a243803ea2364b484750a88f4fdc9300d1079a9c1386aec7c655b463d89b5e43efd823f63cb1e8475a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-JIT-match-context-reuse.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-JIT-match-context-reuse.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Check-JIT-mode-before-validation.patch",
+          "sha512": "29ace309d60988e0e4ae37c89672fc66b265b0c4044bcf8396bdc79b689eb6102fb9927842df3fa44cd64981e869853491e1c5c7685388ac027e2f5bd70e923e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Check-JIT-mode-before-validation.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Check-JIT-mode-before-validation.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-allocation-byte-sizing.patch",
+          "sha512": "11496ea52782f0ef8044d15c37533042f6e877b9d9b939d6e704776255e573feb176962165473806b0df62a17c62742945858dc256069d6dc0eb8206daf8bd8c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-allocation-byte-sizing.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-allocation-byte-sizing.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-invalid-UTF-backwards-scans.patch",
+          "sha512": "519ef519e58acb1ac461156ac1987ee042e38b32a81b2351c5a80da3de238f64a9c167da6153575e5be543a381b1d94888d06283c2b83e7fbb23902081545723",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-invalid-UTF-backwards-scans.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-invalid-UTF-backwards-scans.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-compiler-integer-overflows.patch",
+          "sha512": "5b65a1ffd8222e5954ccd2900bea092068035036d639016d532d9f267ba7a999ea426969b23b7b751936c91396412fb9baae07b73f9fda15983462cc47e1c2d7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-compiler-integer-overflows.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-compiler-integer-overflows.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.48-Fix-DFA-workspace-overflows.patch",
+          "sha512": "7f09655ed5fbe243abb2977e361a66833299c720f72195f93a35d48bbd7b17008616acb5702b51e7e908e76082dc82e643bb143fe2938a9f09381466da3cd936",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.48-Fix-DFA-workspace-overflows.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.48-Fix-DFA-workspace-overflows.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.49-Fix-large-stack-allocation.patch",
+          "sha512": "5e0062afd9c0ff5a50cf7e9d4ce58915433b7326c8efa60f578c32a3d82d979bf8dedf9765012732b413c489b9d63d6db1b80212a4e05e46642a68c55619e7ed",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.49-Fix-large-stack-allocation.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.49-Fix-large-stack-allocation.patch"
+          ]
+        },
+        {
+          "name": "pcre2-10.49-Fix-large-stack-allocation_tests",
+          "sha512": "dea8557e8cae9d11db9fe1f6c95d7dabc3d65cf3e167910028c3d822ad524fd6a1ee46b46092231222891a79420f571270dfef3a33dc7162dbf1b49f1cf04e3e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcre2-10.49-Fix-large-stack-allocation_tests",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f5ca111ded52f3c1f4298b09e118af54fba80aa1/main/pcre2/pcre2-10.49-Fix-large-stack-allocation_tests"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "pixman",
       "commit": "43db2f639237fba90ef09320e83f847561d9b0fc",
       "license": "MIT",
@@ -3199,7 +3604,7 @@
     {
       "origin": "util-linux",
       "commit": "b91fb14e28957c6f5a13c02eb9ec136c82ebd50e",
-      "license": "BSD-3-Clause",
+      "license": "LGPL-2.1-or-later",
       "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/b91fb14e28957c6f5a13c02eb9ec136c82ebd50e/main/util-linux/APKBUILD",
       "recipe_sha256": "3eeded801c50298402ebf99548f6824bb01090f5b32d33cd3caebd2a7a702598",
       "files": [
@@ -3299,6 +3704,40 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/wayland-1.23.1.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/4abf33c74f2d6576e60fa01507040e9137709fc1/main/wayland/wayland-1.23.1.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "wayland-utils",
+      "commit": "ed7878b68bdb989e8ba7135d598435c86833da8b",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/ed7878b68bdb989e8ba7135d598435c86833da8b/community/wayland-utils/APKBUILD",
+      "recipe_sha256": "1f03d6b57cb653c6dac50bc9fff558cff3316fb7458806549310f80efe2e8a5f",
+      "files": [
+        {
+          "name": "wayland-utils-1.2.0.tar.xz",
+          "sha512": "dc69a2d88215b54486954bd9f6e91cd158b0c0b94dccd2c863477cf6b1e83a83db4466f0718aa7d2be4de8d06484c0672c79318bc5c2b1f082f893fe795c2c00",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wayland-utils-1.2.0.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/ed7878b68bdb989e8ba7135d598435c86833da8b/community/wayland-utils/wayland-utils-1.2.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "weston",
+      "commit": "562e4595bac9444c612bef30c22371b45fbadd18",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/562e4595bac9444c612bef30c22371b45fbadd18/community/weston/APKBUILD",
+      "recipe_sha256": "a5cf9024077b7bbc3d4f4bd2c68f0e328f4a033a5ea06f9a05116fb844cc79f3",
+      "files": [
+        {
+          "name": "weston-14.0.2.tar.xz",
+          "sha512": "e8214ec893e6c3ae94eb3c92feba104b0201843e9143f726a3e9a4d396d02523c94da706c1348cf934bc339fb1a4bc1fecdb865f0ea914115fd346d9eda091f5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/weston-14.0.2.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/562e4595bac9444c612bef30c22371b45fbadd18/community/weston/weston-14.0.2.tar.xz"
           ]
         }
       ]

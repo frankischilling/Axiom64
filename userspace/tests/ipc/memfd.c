@@ -410,6 +410,53 @@ static void file_transfers(void) {
     puts("MEMFD_CASE file-transfers");
 }
 
+static void mapping_resize(void) {
+    for (int shared = 0; shared <= 1; ++shared) {
+        int fd = memory_file();
+        CHECK(ftruncate(fd, 4 * page) == 0);
+        CHECK(pwrite(fd, "ABC", 1, page) == 1 && pwrite(fd, "B", 1, 2 * page) == 1 &&
+              pwrite(fd, "C", 1, 3 * page) == 1);
+        const int rw = PROT_READ | PROT_WRITE;
+        const int anon = MAP_PRIVATE | MAP_ANONYMOUS;
+        char* alias = mmap(NULL, 4 * page, rw, MAP_SHARED, fd, 0);
+        char* hold = mmap(NULL, 5 * page, PROT_NONE, anon, -1, 0);
+        CHECK(alias != MAP_FAILED && hold != MAP_FAILED);
+        char* source = hold + page;
+        char* blocker = source + 2 * page;
+        int kind = shared ? MAP_SHARED : MAP_PRIVATE;
+        CHECK(mmap(source, page, rw, kind | MAP_FIXED, fd, page) == source);
+        CHECK(munmap(source + page, page) == 0);
+        CHECK(mprotect(blocker, page, rw) == 0);
+        blocker[0] = 'Z';
+        CHECK(source[0] == 'A');
+        source[0] = 'X';
+        CHECK(mremap(source, page, 2 * page, 0) == source);
+        CHECK(source[page] == 'B' && alias[page] == (shared ? 'X' : 'A'));
+        CHECK(mremap(source, 2 * page, 3 * page, 0) == MAP_FAILED && errno == ENOMEM);
+        struct rlimit saved, limit;
+        CHECK(getrlimit(RLIMIT_AS, &saved) == 0);
+        limit = (struct rlimit){1, saved.rlim_max};
+        CHECK(setrlimit(RLIMIT_AS, &limit) == 0);
+        CHECK(mremap(source, 2 * page, 3 * page, MREMAP_MAYMOVE) == MAP_FAILED && errno == ENOMEM);
+        CHECK(setrlimit(RLIMIT_AS, &saved) == 0);
+        CHECK(source[0] == 'X' && source[page] == 'B' && blocker[0] == 'Z');
+        char* moved = mremap(source, 2 * page, 3 * page, MREMAP_MAYMOVE);
+        CHECK(moved != MAP_FAILED && moved != source);
+        CHECK(moved[0] == 'X' && moved[page] == 'B' && moved[2 * page] == 'C');
+        moved[2 * page] = 'Y';
+        CHECK(alias[3 * page] == (shared ? 'Y' : 'C') && blocker[0] == 'Z');
+        CHECK(mmap(source, 2 * page, rw, anon | MAP_FIXED_NOREPLACE, -1, 0) == source);
+        CHECK(ftruncate(fd, 2 * page) == 0);
+        expect_fault(moved + 2 * page, SIGBUS);
+        CHECK(close(fd) == 0);
+        CHECK(mremap(moved, 3 * page, page, 0) == moved && moved[0] == 'X');
+        CHECK(mmap(moved + page, 2 * page, rw, anon | MAP_FIXED_NOREPLACE, -1, 0) == moved + page);
+        CHECK(munmap(moved, 3 * page) == 0 && munmap(hold, 5 * page) == 0 &&
+              munmap(alias, 4 * page) == 0);
+    }
+    puts("MEMFD_CASE mapping-resize");
+}
+
 static void executable_seals(int legacy) {
     int fd = memfd_create("noexec", MFD_NOEXEC_SEAL);
     if (legacy) {
@@ -468,6 +515,7 @@ int main(int argc, char** argv) {
     pinned_pages();
     preallocation_and_punch();
     file_transfers();
+    mapping_resize();
     executable_seals(legacy);
     printf("MEMFD_PASS uid=%u\n", (unsigned)getuid());
     return 0;

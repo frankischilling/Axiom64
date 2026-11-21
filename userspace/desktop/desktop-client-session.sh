@@ -35,10 +35,11 @@ trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
 seed_desktop() {
     test -n "${HOME:-}" || return 0
-    state="$HOME/.local/share/axiom64/desktop-shortcuts"
+    state="$HOME/.local/share/axiom64/$1"
+    shift
     test ! -e "$state" || return 0
     mkdir -p "$HOME/Desktop" "${state%/*}" || return
-    for entry in /etc/skel/Desktop/*.desktop; do
+    for entry in "$@"; do
         test -f "$entry" || continue
         target="$HOME/Desktop/${entry##*/}"
         if test ! -e "$target" && test ! -L "$target"; then
@@ -47,7 +48,10 @@ seed_desktop() {
     done
     : > "$state"
 }
-seed_desktop || printf '%s\n' 'Could not install the desktop shortcuts.' >&2
+seed_desktop desktop-shortcuts /etc/skel/Desktop/freedoom-*.desktop ||
+    printf '%s\n' 'Could not install the Freedoom shortcuts.' >&2
+seed_desktop weston-shortcut /etc/skel/Desktop/weston-nested.desktop ||
+    printf '%s\n' 'Could not install the Weston shortcut.' >&2
 /usr/bin/twm -f /etc/X11/system.twmrc &
 twm=$!
 sleep .2

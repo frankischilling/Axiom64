@@ -86,6 +86,18 @@
       "source_commit": "2e97d754a30d558f15524b8e422303c8a96832df"
     },
     {
+      "name": "cairo",
+      "version": "1.18.4-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/cairo-1.18.4-r0.apk",
+      "archive": "cairo-1.18.4-r0.apk",
+      "sha256": "78f365d0cbddbb0e2f5a9b3c57d97a7a3a6ea75edbae83e5f6c45ec7b248328e",
+      "license": "LGPL-2.1-or-later OR MPL-1.1",
+      "upstream": "https://cairographics.org/",
+      "origin": "cairo",
+      "source_commit": "7fe77742880d49da1db854abd16e78073d538983"
+    },
+    {
       "name": "dbus",
       "version": "1.16.2-r1",
       "repository": "main",
@@ -219,6 +231,18 @@
       "source_commit": "2d656868790548d7f0d43f6caf59c2b2e43eb251"
     },
     {
+      "name": "fribidi",
+      "version": "1.0.16-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/fribidi-1.0.16-r1.apk",
+      "archive": "fribidi-1.0.16-r1.apk",
+      "sha256": "13558f6f63c9f7e056af0d60275799de40f7b57a3f3df6644b04f9ad6b1fb520",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://github.com/fribidi/fribidi",
+      "origin": "fribidi",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
+    },
+    {
       "name": "g++",
       "version": "14.2.0-r6",
       "repository": "main",
@@ -243,6 +267,18 @@
       "source_commit": "fbf60319be3bbaf6dd32ef55cc6fb7189e05c266"
     },
     {
+      "name": "glib",
+      "version": "2.84.4-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/glib-2.84.4-r0.apk",
+      "archive": "glib-2.84.4-r0.apk",
+      "sha256": "f9ec9e7d1f348fe2a87a124261f560909d1a4ac3020964c4ec372ff50f8ffad5",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://developer.gnome.org/glib/",
+      "origin": "glib",
+      "source_commit": "9a0d606dfb2af556b9b96a9e8bb511b2bd0ddbed"
+    },
+    {
       "name": "gmp",
       "version": "6.3.0-r3",
       "repository": "main",
@@ -253,6 +289,30 @@
       "upstream": "https://gmplib.org/",
       "origin": "gmp",
       "source_commit": "187e3f7791d3390e18bc06969a5f34c385fd883e"
+    },
+    {
+      "name": "graphite2",
+      "version": "1.3.14-r6",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/graphite2-1.3.14-r6.apk",
+      "archive": "graphite2-1.3.14-r6.apk",
+      "sha256": "db5d9cdd91a430b475f11cf316ef479232f5b64e137ff85a8d69aa27ecde5267",
+      "license": "LGPL-2.1-or-later OR MPL-1.1",
+      "upstream": "https://graphite.sil.org/",
+      "origin": "graphite2",
+      "source_commit": "33283848034c9885d984c8e8697c645c57324938"
+    },
+    {
+      "name": "harfbuzz",
+      "version": "11.2.1-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/harfbuzz-11.2.1-r0.apk",
+      "archive": "harfbuzz-11.2.1-r0.apk",
+      "sha256": "6540e2ce562f3b1a3a4e1b8780b8fd1de892d34a57e95d971963e66d5db2e9d5",
+      "license": "MIT",
+      "upstream": "https://harfbuzz.github.io/",
+      "origin": "harfbuzz",
+      "source_commit": "c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83"
     },
     {
       "name": "hwdata-pci",
@@ -301,6 +361,18 @@
       "upstream": "https://gcc.gnu.org",
       "origin": "gcc",
       "source_commit": "fbf60319be3bbaf6dd32ef55cc6fb7189e05c266"
+    },
+    {
+      "name": "libblkid",
+      "version": "2.41.6-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libblkid-2.41.6-r1.apk",
+      "archive": "libblkid-2.41.6-r1.apk",
+      "sha256": "ab85cd837c906979c24e5a006a81789ae9715e6e913c421c71950bdf1450164c",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://git.kernel.org/cgit/utils/util-linux/util-linux.git",
+      "origin": "util-linux",
+      "source_commit": "b91fb14e28957c6f5a13c02eb9ec136c82ebd50e"
     },
     {
       "name": "libbsd",
@@ -361,6 +433,18 @@
       "upstream": "https://gitlab.freedesktop.org/mesa/drm",
       "origin": "libdrm",
       "source_commit": "b8caec52f2b5014431a3ac8e53e37414ec9836e4"
+    },
+    {
+      "name": "libeconf",
+      "version": "0.6.3-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libeconf-0.6.3-r0.apk",
+      "archive": "libeconf-0.6.3-r0.apk",
+      "sha256": "fe4fbf324f84f7c8b475cfc708c5505aa630bced7b5f6289bf5ca36d9b587829",
+      "license": "MIT",
+      "upstream": "https://github.com/openSUSE/libeconf",
+      "origin": "libeconf",
+      "source_commit": "1e0aa723fba50417893fe5f6cf72f76d044b8192"
     },
     {
       "name": "libedit",
@@ -483,6 +567,30 @@
       "source_commit": "d4941e833167c30aa1172e6d8420d084698254ab"
     },
     {
+      "name": "libinput-libs",
+      "version": "1.28.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libinput-libs-1.28.1-r0.apk",
+      "archive": "libinput-libs-1.28.1-r0.apk",
+      "sha256": "d3ab768958462161be7fbc959e75c28c99f0cd5b64f5bbd950b82ee6f1c5efe6",
+      "license": "MIT",
+      "upstream": "https://www.freedesktop.org/wiki/Software/libinput",
+      "origin": "libinput",
+      "source_commit": "9f3fdac88413f807dcd43098fe26dc6e15ba2561"
+    },
+    {
+      "name": "libintl",
+      "version": "0.24.1-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libintl-0.24.1-r0.apk",
+      "archive": "libintl-0.24.1-r0.apk",
+      "sha256": "1e9900a63a851e790b28d201d5c11872a5ff74322fd998c06ac952c6a2ed1ce4",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.gnu.org/software/gettext/gettext.html",
+      "origin": "gettext",
+      "source_commit": "215a26431d1b09c56cb2a9ffe10175feb9518fd8"
+    },
+    {
       "name": "libisoburn",
       "version": "1.5.6-r0",
       "repository": "main",
@@ -507,6 +615,18 @@
       "source_commit": "372ae9fed6e6faf79958d42ef05e11951d19469b"
     },
     {
+      "name": "libjpeg-turbo",
+      "version": "3.1.0-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libjpeg-turbo-3.1.0-r0.apk",
+      "archive": "libjpeg-turbo-3.1.0-r0.apk",
+      "sha256": "3b7230030b8876e966a11238144a9a08e89f72cfec9b99789acdca5d1ee9c78a",
+      "license": "BSD-3-Clause AND IJG AND Zlib",
+      "upstream": "https://libjpeg-turbo.org/",
+      "origin": "libjpeg-turbo",
+      "source_commit": "a78c772b57d3dd6b70cdfd239493112b396a0485"
+    },
+    {
       "name": "libmd",
       "version": "1.1.0-r0",
       "repository": "main",
@@ -517,6 +637,18 @@
       "upstream": "https://www.hadrons.org/software/libmd/",
       "origin": "libmd",
       "source_commit": "73e716067b9edc32c4cc7818cb7d206e57fdde15"
+    },
+    {
+      "name": "libmount",
+      "version": "2.41.6-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libmount-2.41.6-r1.apk",
+      "archive": "libmount-2.41.6-r1.apk",
+      "sha256": "722dfd3d977054b9b9af218ba89f980630e07d21122299a98dbcf617fdc3d015",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://git.kernel.org/cgit/utils/util-linux/util-linux.git",
+      "origin": "util-linux",
+      "source_commit": "b91fb14e28957c6f5a13c02eb9ec136c82ebd50e"
     },
     {
       "name": "libncursesw",
@@ -553,6 +685,18 @@
       "upstream": "http://www.libpng.org",
       "origin": "libpng",
       "source_commit": "e95748873fa2f7e0e54cf27557fe0deff27b6c80"
+    },
+    {
+      "name": "libsharpyuv",
+      "version": "1.5.0-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libsharpyuv-1.5.0-r0.apk",
+      "archive": "libsharpyuv-1.5.0-r0.apk",
+      "sha256": "1e37cbd7c033c612aaa8130249393ef38085e7c4e03e7e30286cf37b195668c7",
+      "license": "BSD-3-Clause",
+      "upstream": "https://developers.google.com/speed/webp",
+      "origin": "libwebp",
+      "source_commit": "5494fdecea7831c01f277cf8ca80719d02f47771"
     },
     {
       "name": "libsm",
@@ -601,6 +745,30 @@
       "upstream": "https://git.kernel.org/cgit/utils/util-linux/util-linux.git",
       "origin": "util-linux",
       "source_commit": "b91fb14e28957c6f5a13c02eb9ec136c82ebd50e"
+    },
+    {
+      "name": "libwebp",
+      "version": "1.5.0-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libwebp-1.5.0-r0.apk",
+      "archive": "libwebp-1.5.0-r0.apk",
+      "sha256": "207f2af4875ae1ab4c529d8c735e1242fff36a8f7a07424468cdc96648fd07b6",
+      "license": "BSD-3-Clause",
+      "upstream": "https://developers.google.com/speed/webp",
+      "origin": "libwebp",
+      "source_commit": "5494fdecea7831c01f277cf8ca80719d02f47771"
+    },
+    {
+      "name": "libweston",
+      "version": "14.0.2-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libweston-14.0.2-r1.apk",
+      "archive": "libweston-14.0.2-r1.apk",
+      "sha256": "450396b0d7f54f46b73255ab926ffb1e9c40ae4bf5b6c2d797b8336aeb4aef8b",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org/",
+      "origin": "weston",
+      "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
     },
     {
       "name": "libx11",
@@ -721,6 +889,18 @@
       "upstream": "https://www.x.org",
       "origin": "libxi",
       "source_commit": "c8f6e25cf06e780fa669e89d6b1468edeac5714b"
+    },
+    {
+      "name": "libxkbcommon",
+      "version": "1.8.1-r2",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxkbcommon-1.8.1-r2.apk",
+      "archive": "libxkbcommon-1.8.1-r2.apk",
+      "sha256": "8b7424f706e47e9e1123acb625323816191499334fcfc2ecae2d1a03805866b7",
+      "license": "MIT AND MIT-open-group AND HPND AND HPND-sell-variant AND LicenseRef-digital-equipment-corporation",
+      "upstream": "https://xkbcommon.org/",
+      "origin": "libxkbcommon",
+      "source_commit": "0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9"
     },
     {
       "name": "libxkbfile",
@@ -1019,6 +1199,30 @@
       "source_commit": "d1a58b83bd3186946ce6c0d5e1ee2bf9a8592bec"
     },
     {
+      "name": "pango",
+      "version": "1.56.3-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/pango-1.56.3-r0.apk",
+      "archive": "pango-1.56.3-r0.apk",
+      "sha256": "c7d0e67a543942e79d8eaa86a57017ca8cb6bcd883042c55cc27dee2965e8ded",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.pango.org/",
+      "origin": "pango",
+      "source_commit": "7072d5b4762ad6280669406526c5f391e444800e"
+    },
+    {
+      "name": "pcre2",
+      "version": "10.46-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/pcre2-10.46-r1.apk",
+      "archive": "pcre2-10.46-r1.apk",
+      "sha256": "e0e0e3c5f3b4a37a77799a7367bb40dd38596be55f56f3bc60f2cb4b584f842c",
+      "license": "BSD-3-Clause",
+      "upstream": "https://pcre.org/",
+      "origin": "pcre2",
+      "source_commit": "f5ca111ded52f3c1f4298b09e118af54fba80aa1"
+    },
+    {
       "name": "pixman",
       "version": "0.46.4-r0",
       "repository": "main",
@@ -1176,6 +1380,18 @@
       "source_commit": "4abf33c74f2d6576e60fa01507040e9137709fc1"
     },
     {
+      "name": "wayland-libs-cursor",
+      "version": "1.23.1-r3",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/wayland-libs-cursor-1.23.1-r3.apk",
+      "archive": "wayland-libs-cursor-1.23.1-r3.apk",
+      "sha256": "8f579a499aee8b42ee7fbc1ad906b10e6fd8fa7828b1fbff0d8fd5e8c863f9c8",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org",
+      "origin": "wayland",
+      "source_commit": "4abf33c74f2d6576e60fa01507040e9137709fc1"
+    },
+    {
       "name": "wayland-libs-server",
       "version": "1.23.1-r3",
       "repository": "main",
@@ -1186,6 +1402,78 @@
       "upstream": "https://wayland.freedesktop.org",
       "origin": "wayland",
       "source_commit": "4abf33c74f2d6576e60fa01507040e9137709fc1"
+    },
+    {
+      "name": "wayland-utils",
+      "version": "1.2.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/wayland-utils-1.2.0-r0.apk",
+      "archive": "wayland-utils-1.2.0-r0.apk",
+      "sha256": "dcade47eba652ef323ac1894589617723fad643acddca81ee74b6a755d194433",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org",
+      "origin": "wayland-utils",
+      "source_commit": "ed7878b68bdb989e8ba7135d598435c86833da8b"
+    },
+    {
+      "name": "weston",
+      "version": "14.0.2-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/weston-14.0.2-r1.apk",
+      "archive": "weston-14.0.2-r1.apk",
+      "sha256": "d7dbd5f79e3f68d2ef509f45a0005f4f5b80d494c4387e20e4449993976404be",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org/",
+      "origin": "weston",
+      "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
+    },
+    {
+      "name": "weston-backend-x11",
+      "version": "14.0.2-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/weston-backend-x11-14.0.2-r1.apk",
+      "archive": "weston-backend-x11-14.0.2-r1.apk",
+      "sha256": "a9b3ff5c3e70da5fac76a1f52773cea44be1224a0ee5e84e68ef9d1721cf3a61",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org/",
+      "origin": "weston",
+      "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
+    },
+    {
+      "name": "weston-clients",
+      "version": "14.0.2-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/weston-clients-14.0.2-r1.apk",
+      "archive": "weston-clients-14.0.2-r1.apk",
+      "sha256": "66df46f087e2d0a6ec1b7463b97bdc7d463cb9ff49f729e306b0c262255505ba",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org/",
+      "origin": "weston",
+      "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
+    },
+    {
+      "name": "weston-shell-desktop",
+      "version": "14.0.2-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/weston-shell-desktop-14.0.2-r1.apk",
+      "archive": "weston-shell-desktop-14.0.2-r1.apk",
+      "sha256": "603f9ceb672dc824da8d49dc5a8d8054d6be4b48ce179fbe36bfa9fc747476ca",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org/",
+      "origin": "weston",
+      "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
+    },
+    {
+      "name": "weston-terminal",
+      "version": "14.0.2-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/weston-terminal-14.0.2-r1.apk",
+      "archive": "weston-terminal-14.0.2-r1.apk",
+      "sha256": "ff2749e36a787673173edce2c51694943bbd30710f91ae1ebc0fe6799e675bbd",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org/",
+      "origin": "weston",
+      "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
     },
     {
       "name": "xeyes",

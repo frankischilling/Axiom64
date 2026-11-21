@@ -42,15 +42,29 @@ void release_mapping(FileMapping& mapping) {
         close_handle(mapping.description);
     release(&mapping);
 }
-} // namespace
 
-void attach_file_mapping(FileMapping& mapping) {
+void insert_range(FileMapping& mapping) {
     auto link = &mapping.space->file_mappings;
     while (*link && (*link)->start < mapping.start)
         link = &(*link)->next;
     mapping.next = *link;
     *link = &mapping;
+}
+} // namespace
+
+void attach_file_mapping(FileMapping& mapping) {
+    insert_range(mapping);
     retain_backing(mapping);
+}
+
+void move_file_mapping(FileMapping& mapping, uint64_t start, size_t length) {
+    auto link = &mapping.space->file_mappings;
+    while (*link != &mapping)
+        link = &(*link)->next;
+    *link = mapping.next;
+    mapping.start = start;
+    mapping.end = start + length;
+    insert_range(mapping);
 }
 
 int unmap_file_mappings(AddressSpace& space, uint64_t base, size_t length) {

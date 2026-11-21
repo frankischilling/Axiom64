@@ -507,6 +507,15 @@ uint64_t memfd_page_protection(uint64_t entry, int prot) {
     return pte_permissions(entry);
 }
 
+uint64_t memfd_unpopulated_page(const FileMapping& map, int prot) {
+    uint64_t flags = page_file | 4;
+    if (!map.shared)
+        flags |= page_private | page_file_cow;
+    else if (!map.may_write)
+        flags |= deny_write;
+    return memfd_page_protection(flags, prot);
+}
+
 int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t offset, int prot,
               bool shared, bool replace) {
     if (offset > INT64_MAX || length - 1 > uint64_t(INT64_MAX) - offset)
@@ -528,13 +537,6 @@ int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t
         }
     }
     bool may_write = shared && !sealed && (handle.flags & 3) == 2;
-    uint64_t flags = page_file | 4;
-    if (!shared)
-        flags |= page_private | page_file_cow;
-    if (shared && !may_write)
-        flags |= deny_write;
-    for (uint64_t va = base; va < base + length; va += page_size)
-        *space->entry(va) = memfd_page_protection(flags, prot);
     *map = {.space = space,
             .start = base,
             .end = base + length,
@@ -542,6 +544,9 @@ int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t
             .memory_file = &memory.node,
             .shared = shared,
             .may_write = may_write};
+    uint64_t initial = memfd_unpopulated_page(*map, prot);
+    for (uint64_t va = base; va < base + length; va += page_size)
+        *space->entry(va) = initial;
     attach_file_mapping(*map);
     return 0;
 }

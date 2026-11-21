@@ -23,7 +23,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
 | `kernel/net/netlink/` | Link/address inventories, IPv6 link-generation controls, route/address message validation, owned replies, and control socket lifecycle |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
-| `kernel/drivers/block/` | Virtio block I/O, partition decoding, volume bounds and overlapping filesystem claims |
+| `kernel/drivers/block/` | Virtio block I/O, partition decoding, volume bounds, overlapping filesystem claims and read-through buffers |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |
 | `kernel/drivers/random/` | Virtio entropy input, completion validation and source lifetime |
 | `kernel/drivers/virtio/` | Shared PCI transport and split queues |

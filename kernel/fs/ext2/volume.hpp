@@ -34,7 +34,7 @@
 
 namespace ax::ext2_detail {
 constexpr size_t max_block_size = 4096, inode_bytes = 128, inode_block_bytes = 15 * 4;
-constexpr unsigned max_changes = 4096, cached_blocks = 128;
+constexpr unsigned max_changes = 4096;
 
 inline uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -107,12 +107,6 @@ struct Change {
     uint8_t data[max_block_size];
 };
 
-struct CachedBlock {
-    uint32_t block;
-    bool valid;
-    uint8_t data[max_block_size];
-};
-
 struct Volume {
     Mount* mount;
     unsigned device, block_size, inode_size, group_count, change_count;
@@ -122,7 +116,6 @@ struct Volume {
     Group* groups;
     Change* changes;
     EntryCache entries;
-    CachedBlock* cache;
     Journal* journal;
     uint32_t* journal_map;
     uint32_t journal_blocks;
@@ -170,21 +163,9 @@ struct Volume {
                 memcpy(data, change->data, block_size);
                 return true;
             }
-        auto cached = cache ? &cache[block % cached_blocks] : nullptr;
-        if (cached && cached->valid && cached->block == block) {
-            memcpy(data, cached->data, block_size);
-            return true;
-        }
-        int result = block_read(device, uint64_t(block) * (block_size / sector_size), data,
-                                block_size / sector_size);
-        if (result)
-            return fail(result);
-        if (cached) {
-            cached->block = block;
-            cached->valid = true;
-            memcpy(cached->data, data, block_size);
-        }
-        return true;
+        int result = block_read_cached(device, uint64_t(block) * (block_size / sector_size), data,
+                                       block_size / sector_size);
+        return result ? fail(result) : true;
     }
 
     bool write_block(uint32_t block, const void* data, unsigned rank) {
@@ -348,14 +329,8 @@ struct Volume {
             if (!writes)
                 return fail(-12);
             unsigned index = 0;
-            for (auto change = changes; change; change = change->next) {
+            for (auto change = changes; change; change = change->next)
                 writes[index++] = {change->block, change->data};
-                if (cache) {
-                    auto& cached = cache[change->block % cached_blocks];
-                    if (cached.block == change->block)
-                        cached.valid = false;
-                }
-            }
             int result = journal_commit(journal, writes, change_count);
             release(writes);
             if (result)
@@ -366,13 +341,6 @@ struct Volume {
         for (unsigned rank = 0; rank <= 5; rank++)
             for (auto change = changes; change; change = change->next)
                 if (change->rank == rank) {
-                    // Invalidate before submission, including failed or partial writes.
-                    // Pending changes take precedence until their flush completes.
-                    if (cache) {
-                        auto& cached = cache[change->block % cached_blocks];
-                        if (cached.block == change->block)
-                            cached.valid = false;
-                    }
                     int result =
                         block_write(device, uint64_t(change->block) * (block_size / sector_size),
                                     change->data, block_size / sector_size, this);

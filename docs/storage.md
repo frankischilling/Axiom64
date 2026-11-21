@@ -45,15 +45,33 @@ Block nodes support these Linux x86-64 operations:
 | `fsync`, `fdatasync`, `BLKFLSBUF` | Wait for a virtio flush completion when supported |
 | `O_SYNC`, `O_DSYNC` | Flush completed writes before reporting success |
 
-Reads at or beyond capacity return EOF. A write that crosses the end returns the completed prefix; a write starting at the end returns `ENOSPC`. Opening a read-only disk for writing returns `EROFS`. Device truncation and unsupported `O_DIRECT` return `EINVAL`; unsupported ioctls return `ENOTTY`. Raw I/O is uncached; mounted ext2 volumes have a bounded [filesystem read cache](ext2.md#write-and-error-behavior). If flush was not negotiated, the driver relies on the virtio writethrough contract.
+Reads at or beyond capacity return EOF. A write that crosses the end returns the completed prefix. A write starting at the end returns `ENOSPC`. Opening a read-only disk for writing returns `EROFS`. Device truncation and unsupported `O_DIRECT` return `EINVAL`. Unsupported ioctls return `ENOTTY`. If flush was not negotiated, the driver relies on the virtio writethrough contract.
 
-Syscalls run on one CPU with interrupts masked, which serializes queue access and partial-sector writes. Boot attempts to initialize up to eight devices. Concurrent kernel callers, hotplug, capacity changes, IOMMU support, and general block caching and writeback remain in development. See [the filesystem roadmap](ext2.md) for advanced filesystems and recovery.
+Syscalls run on one CPU with interrupts masked, which serializes queue access and partial-sector writes. Boot attempts to initialize up to eight devices. Concurrent kernel callers, hotplug, capacity changes, and IOMMU support remain in development. See [the filesystem roadmap](ext2.md) for advanced filesystems and recovery.
+
+## Buffer cache
+
+A filesystem can enable a read-through cache after claiming and validating a volume. Each cache holds up to 128 aligned blocks of 512, 1,024, 2,048, or 4,096 bytes, with one block size per claim. Collisions replace an entry. Cache misses go to the device and only successful complete reads fill the cache. Raw reads, mount validation, and journal recovery can read the device directly.
+
+Writes go through to the device. They invalidate all overlapping cached blocks before submission, including writes that later fail. An explicit flush retains its device semantics. Caches hold clean data only. Releasing the claim drops the cache, and `sysinfo.bufferram` accounts for all active cache allocations. Overlapping writable aliases are excluded while the claim is held. Disjoint partitions retain independent caches.
+
+## Format an image inside Axiom64
+
+On a writable guest filesystem with at least 32 MiB free, create a new image with the installed BusyBox applets.
+
+```sh
+test ! -e guest.ext2 && busybox truncate -s 32M guest.ext2 &&
+    busybox mke2fs -F -b 4096 -I 128 -L GUESTMEDIA guest.ext2
+```
+
+After a clean shutdown, export the file and attach it as a virtio disk on the next boot. When it is the first disk, mount it with `mount -t ext2 /dev/vda /mnt/data`. The guest can write through that mount and reopen the same image on a later boot.
 
 ## Verification
 
 ```sh
 make test-storage
 make test-partitions
+make test-block-cache test-guest-media
 python3 scripts/storage_test.py --firmware bios --transport modern
 ```
 
@@ -69,5 +87,7 @@ Every boot also checks an independent read-only second disk, Linux block metadat
 The harness creates its own fixtures under `build/` and takes no user disk path. Evidence is in `build/storage-*.log`, the error-phase QEMU traces, and `build/storage-results.json`, including host-verified SHA-256 hashes. The normal ABI, native toolchain, and desktop tests remain separate regression checks. The [root I/O tests](disk-root.md#verification) exercise delayed successful flushes and an expired request through actual virtio disks. Malformed completions are not fault-injected by this raw-disk matrix.
 
 `make test-partitions-native` runs the production scanner under ASan and UBSan with valid, malformed, and unreadable tables. `make test-partitions` adds BIOS and UEFI runs with modern and legacy virtio. The guest writes and remounts GPT, MBR logical, and nested BSD partitions, checks overlapping claims and partition boundaries, and verifies files after reboot. The host checks both ext2 volumes with `e2fsck`, reads their files with `debugfs`, and checks the bytes outside those volumes.
+
+`make test-block-cache` checks alignment, replacement, and write invalidation under ASan and UBSan. The partition test also checks that a disjoint mount acquires and releases its cache. `make test-guest-media` formats an image on the guest's scratch filesystem, exports the exact bytes, and boots twice more to write and recover a file. Every BIOS/UEFI and modern/legacy pairing checks the image with host `e2fsck` and confirms the read-only boot leaves it byte-identical.
 
 The transport follows the [OASIS virtio 1.2 specification](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html). The backend failure tests use [QEMU's blkdebug rules](https://www.qemu.org/docs/master/devel/testing/blkdebug.html).

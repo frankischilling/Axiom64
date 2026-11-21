@@ -36,6 +36,7 @@ import zlib
 
 from disk_root import bootstrap, populate
 from fetch import ROOT
+from guest_storage_boot import boot
 
 SECTOR = 512
 SECTORS = 72000
@@ -191,30 +192,8 @@ def image(directory, name, root):
     return path
 
 
-def boot(directory, iso, disks, firmware, transport, markers, success):
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
-               "-boot", "order=d", "-cdrom", str(iso), "-display", "none", "-serial", "stdio",
-               "-monitor", "none", "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
-    mode = "disable-legacy=on" if transport == "modern" else "disable-modern=on"
-    for index, path in enumerate(disks):
-        command += ["-drive", f"if=none,id=d{index},format=raw,file={path}",
-                    "-device", f"virtio-blk-pci,drive=d{index},{mode},addr={5 + index}"]
-    if firmware == "uefi":
-        variables = directory / "VARS.fd"
-        shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
-        command += ["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
-                    "-drive", f"if=pflash,format=raw,file={variables}"]
-    with (directory / (iso.stem + ".log")).open("wb") as log:
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log,
-                                stderr=subprocess.STDOUT, timeout=70)
-    output = (directory / (iso.stem + ".log")).read_text(errors="replace")
-    lines = {line.strip() for line in output.splitlines()}
-    expected = [f"Firmware: {firmware.upper()}", f"AXIOM64_EXIT status={int(not success)}", *markers]
-    failures = ["FAULT ", "PANIC:", "PARTITIONS_FAIL", "FILESYSTEM_SHUTDOWN_FAIL"]
-    failures.extend(["BOOT_ROOT_FAIL"] if success else ["VFS_ROOT_PASS", "Entering userspace"])
-    if (result.returncode != (1 if success else 3) or any(line not in lines for line in expected) or
-            any(token in output for token in failures)):
-        raise RuntimeError("\n".join(output.splitlines()[-35:]))
+def partition_boot(directory, iso, disks, firmware, transport, markers, success):
+    boot(directory, iso, disks, firmware, transport, markers, success)
     print(f"PARTITION_BOOT_PASS {directory.name} {iso.stem}", flush=True)
 
 
@@ -269,9 +248,9 @@ def guest(directory, firmware, transport):
                 disks = [blank, disk] if shifted else [disk]
                 for phase, root in [("write", first_root), ("reboot", second_root)]:
                     iso = image(work, f"{work.name}-{phase}", root)
-                    boot(work, iso, disks, fw, bus,
-                         [f"VFS_ROOT_PASS filesystem=ext2 device={root} readonly=0",
-                          f"PARTITIONS_{phase.upper()}_PASS"], True)
+                    partition_boot(work, iso, disks, fw, bus,
+                                   [f"VFS_ROOT_PASS filesystem=ext2 device={root} readonly=0",
+                                    f"PARTITIONS_{phase.upper()}_PASS"], True)
                     check_disk(work, disk, seed, phase)
                 if name == "gpt":
                     bad = work / "bad.raw"
@@ -282,7 +261,7 @@ def guest(directory, firmware, transport):
                          "root-device errno=76"),
                     ]:
                         iso = image(work, f"{work.name}-{case}", selected)
-                        boot(work, iso, attached, fw, bus, [f"BOOT_ROOT_FAIL stage={err}"], False)
+                        partition_boot(work, iso, attached, fw, bus, [f"BOOT_ROOT_FAIL stage={err}"], False)
 
 
 def main():

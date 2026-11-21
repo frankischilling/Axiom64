@@ -16,7 +16,7 @@ Plan all service and reliability work: supervision, logging, time synchronizatio
 
 [Commit ba768b4](https://github.com/frankischilling/Axiom64/commit/ba768b40b8d55e1abae43b331f931bfff1bec4e2) has [successful CI evidence](https://github.com/frankischilling/Axiom64/actions/runs/37607497820) for BIOS/UEFI boot, static/dynamic musl, IPC, signals, BusyBox, Bash, zsh, native GNU C/C++ tools, Xorg drawing, a window manager, and emulated input into interactive Bash. [Current limits](architecture.md#current-limits) remain part of the compatibility contract. This evidence does not prove disk, network, thread, or complete Linux support.
 
-The inventory date is 2026-10-07. `partial` means some behavior exists and the detailed scope lists what remains. `planned` means the required capability has not been demonstrated. `excluded` records a non-Linux personality removed by the 2026-10-09 scope decision. The inventory retains 34 in-scope feature areas and three excluded historical areas. A catalog entry is not a claim that a driver or application works.
+The inventory date is 2026-10-07. `complete` means the listed scope has test evidence. `partial` means some behavior exists and the detailed scope lists what remains. `planned` means the required capability has not been demonstrated. `excluded` records a non-Linux personality removed by the 2026-10-09 scope decision. The inventory retains 34 in-scope feature areas and three excluded historical areas.
 
 ## Milestones
 
@@ -38,7 +38,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | ID | Feature | State | Milestone | Dependencies |
 | --- | --- | --- | --- | --- |
 | F01 | [Firmware, buses, and interrupt routing](https://github.com/frankischilling/Axiom64/issues/1) | partial | M1 | Across all tracks |
-| F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | partial | M1 | F01 |
+| F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | complete | M1 | F01 |
 | F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | partial | M1 | F02 |
 | F04 | [VFS, mounts, and pseudo filesystems](https://github.com/frankischilling/Axiom64/issues/4) | partial | M1 | F02 |
 | F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | partial | M2 | F04 |
@@ -107,7 +107,7 @@ Acceptance evidence:
 
 ### F02. Block layer and virtio disk
 
-Modern and legacy virtio block devices provide persistent sector I/O, explicit flushes, and exclusive filesystem claims. [Partition discovery](storage.md#partitions) supports GPT, MBR, and BSD disklabels with bounded block nodes. [Root selection](disk-root.md#boot-selection) accepts partition IDs and GPT names. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. Ext2 has a bounded [read cache](ext2.md#write-and-error-behavior). General block caching and writeback and guest-owned disk image creation remain in development.
+Modern and legacy virtio block devices provide persistent sector I/O, explicit flushes, and exclusive filesystem claims. [Partition discovery](storage.md#partitions) supports GPT, MBR, and BSD disklabels with bounded block nodes. [Root selection](disk-root.md#boot-selection) accepts partition IDs and GPT names. Ext2 uses the bounded [block cache](storage.md#buffer-cache). Axiom64 can [format a disk image](storage.md#format-an-image-inside-axiom64) and recover files from it after a fresh boot. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors.
 
 Required work:
 

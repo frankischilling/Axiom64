@@ -51,6 +51,13 @@ int block_find(const char* selection);
 // Buffers are kernel addresses; DMA uses private buffers owned by the implementation.
 int block_read(unsigned device, uint64_t sector, void* data, size_t count);
 
+// The claim owns the cache. Reads that do not match its block geometry bypass it.
+int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* owner);
+
+int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count);
+
+uint64_t block_buffer_bytes();
+
 int block_write(unsigned device, uint64_t sector, const void* data, size_t count,
                 const void* owner = nullptr);
 

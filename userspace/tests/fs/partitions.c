@@ -33,6 +33,7 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
@@ -45,6 +46,12 @@
     } while (0)
 
 static const char payload[] = "Axiom64 partition persistence\n";
+
+static uint64_t buffer_bytes(void) {
+    struct sysinfo info;
+    CHECK(sysinfo(&info) == 0);
+    return (uint64_t)info.bufferram * info.mem_unit;
+}
 
 static void persisted(const char* path, int verify) {
     int fd = open(path, verify ? O_RDONLY : O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -98,12 +105,17 @@ int main(void) {
         CHECK(pwrite(rawfd, "q", 1, end) == -1 && errno == ENOSPC);
         CHECK(fsync(rawfd) == 0);
     }
+    uint64_t before = buffer_bytes();
+    CHECK(before >= 512 * 1024);
     CHECK(mount(sibling, "/mnt", "ext2", 0, NULL) == 0);
+    uint64_t mounted = buffer_bytes();
+    CHECK(mounted >= before + 512 * 1024 && mounted < before + 520 * 1024);
     CHECK(pwrite(siblingfd, buffer, sizeof(buffer), 0) == -1 && errno == EBUSY);
     CHECK(mount(sibling, "/other", "ext2", 0, NULL) == -1 && errno == EBUSY);
     persisted("/persisted", verify);
     persisted("/mnt/persisted", verify);
     CHECK(umount("/mnt") == 0);
+    CHECK(buffer_bytes() == before);
     int reopened = open(sibling, O_WRONLY);
     CHECK(reopened >= 0 && close(reopened) == 0);
     CHECK(close(rawfd) == 0 && close(siblingfd) == 0 && close(diskfd) == 0);

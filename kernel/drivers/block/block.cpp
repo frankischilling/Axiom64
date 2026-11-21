@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/block/block.hpp"
+#include "drivers/block/cache.hpp"
 #include "drivers/block/partition.hpp"
 #include "drivers/virtio/pci.hpp"
 
@@ -44,6 +45,7 @@ struct Volume {
     uint64_t start = 0;
     const void* owner = nullptr;
     Volume* next_claim = nullptr;
+    BlockCache* cache = nullptr;
 };
 
 struct Disk {
@@ -63,6 +65,7 @@ struct Disk {
 static Disk candidates[max_disks];
 static Disk* disks[max_disks];
 static unsigned disk_count, attempts;
+static uint64_t buffer_bytes;
 
 static bool initialize(Disk& d, const PciFunction& pci) {
     if (!d.pci.open(pci, feature_ro | feature_flush, 8))
@@ -180,6 +183,8 @@ static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count
         return 0;
     if (write && info.readonly)
         return -30;
+    if (write && volume->cache)
+        volume->cache->invalidate(sector, count);
     auto& d = *disk_for(device);
     if (!d.live)
         return -5;
@@ -316,6 +321,41 @@ int block_read(unsigned device, uint64_t sector, void* data, size_t count) {
     return transfer(device, sector, data, count, false);
 }
 
+int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* owner) {
+    auto volume = volume_for(device);
+    if (!volume)
+        return -19;
+    if (!owner || volume->owner != owner || volume->cache)
+        return -16;
+    if (!sectors_per_block || sectors_per_block > BlockCache::max_sectors ||
+        (sectors_per_block & (sectors_per_block - 1)))
+        return -22;
+    auto cache = static_cast<BlockCache*>(alloc(sizeof(BlockCache)));
+    if (!cache)
+        return -12;
+    cache->initialize(sectors_per_block);
+    volume->cache = cache;
+    buffer_bytes += sizeof(BlockCache);
+    return 0;
+}
+
+int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count) {
+    auto volume = volume_for(device);
+    if (!volume)
+        return -19;
+    auto cache = volume->cache;
+    if (cache && cache->read(sector, data, count))
+        return 0;
+    int result = block_read(device, sector, data, count);
+    if (!result && cache)
+        cache->remember(sector, data, count);
+    return result;
+}
+
+uint64_t block_buffer_bytes() {
+    return buffer_bytes;
+}
+
 int block_claim(unsigned device, const void* owner) {
     auto volume = volume_for(device);
     if (!volume)
@@ -340,6 +380,11 @@ void block_unclaim(unsigned device, const void* owner) {
     while (*link != volume)
         link = &(*link)->next_claim;
     *link = volume->next_claim;
+    if (volume->cache) {
+        release(volume->cache);
+        buffer_bytes -= sizeof(BlockCache);
+        volume->cache = nullptr;
+    }
     volume->owner = nullptr;
     volume->next_claim = nullptr;
 }

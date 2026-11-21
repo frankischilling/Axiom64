@@ -1234,7 +1234,9 @@ static int64_t dispatch(Frame* f) {
             return -20;
         if ((error = node_access(n, 1)))
             return error;
+        auto previous = current->fs->cwd_node;
         current->fs->cwd_node = n;
+        node_reference_released(previous);
         inotify_reap_inodes();
         node_path(n, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
@@ -1248,7 +1250,9 @@ static int64_t dispatch(Frame* f) {
         int error = node_access(h->node, 1);
         if (error)
             return error;
+        auto previous = current->fs->cwd_node;
         current->fs->cwd_node = h->node;
+        node_reference_released(previous);
         inotify_reap_inodes();
         node_path(h->node, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
@@ -1621,7 +1625,9 @@ static int64_t dispatch(Frame* f) {
             return -20;
         if ((error = node_access(node, 1)))
             return error;
+        auto previous = current->fs->root_node;
         current->fs->root_node = node;
+        node_reference_released(previous);
         inotify_reap_inodes();
         return 0;
     }

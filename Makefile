@@ -23,7 +23,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-partitions test-partitions-native
 .PHONY: test-block-cache test-guest-media
 .PHONY: test-vm-journal
-.PHONY: test-ext2-index test-ext4-extents test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer test-ext4-large-truncate
+.PHONY: test-ext2-index test-ext4-extents test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer test-ext4-large-truncate test-ext2-last-reference
 test-ext4-extents:
 	$(PYTHON) -B scripts/ext4_extent_test.py
 test-ext4-orphans:
@@ -34,14 +34,14 @@ test-ext4-orphan-writer:
 	$(PYTHON) -B scripts/ext4_orphan_writer_test.py
 test-ext4-large-truncate:
 	$(PYTHON) -B scripts/ext4_large_truncate_test.py
+test-ext2-last-reference:
+	$(PYTHON) -B scripts/ext2_last_reference_test.py
 test-ext2-index:
 	$(PYTHON) -B scripts/ext2_index_test.py
 test-vm-journal:
 	$(PYTHON) -B scripts/vm_journal_test.py
-
 test-block-cache: build/block-cache-test
 	$<
-
 build/block-cache-test: kernel/tests/drivers/block_cache.cpp kernel/drivers/block/cache.cpp kernel/include/drivers/block/cache.hpp kernel/include/drivers/block/block.hpp
 	mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -fno-pie -no-pie -Ikernel/include $(filter %.cpp,$^) -o $@

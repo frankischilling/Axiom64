@@ -30,9 +30,9 @@
 namespace ax::ext2_detail {
 struct Entry {
     Node node;
-    Entry *next, *inode_next;
+    Entry *next, *inode_next, *reclaim_next;
     uint32_t number;
-    bool atime_dirty;
+    bool atime_dirty, reclaim_queued;
 };
 
 class EntryCache {

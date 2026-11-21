@@ -132,6 +132,8 @@ void socket_close(Socket* s) {
     s->datagram_send = nullptr;
     s->description = nullptr;
     s->used = false;
+    node_reference_released(s->bound_node);
+    s->bound_node = nullptr;
 }
 
 bool socket_ready(Socket* s, bool write) {

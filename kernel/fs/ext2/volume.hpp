@@ -186,6 +186,7 @@ struct Volume {
     MetadataRange* metadata_ranges;
     Change* changes;
     EntryCache entries;
+    Entry *reclaim_first, *reclaim_last;
     Journal* journal;
     uint32_t* journal_map;
     uint32_t journal_blocks;

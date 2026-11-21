@@ -653,6 +653,43 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
     return 0;
 }
 
+static int reap_inode(Volume& v, Inode& inode) {
+    return v.journal ? NativeOrphans(v).reap(inode.number)
+                     : v.finish(v.delete_inode(inode.number, inode));
+}
+
+static bool queue_reclaim(Node* node) {
+    auto& v = volume(node);
+    auto entry = static_cast<Entry*>(node->filesystem_data);
+    if (!entry->number || entry->reclaim_queued)
+        return false;
+    entry->reclaim_queued = true;
+    if (v.reclaim_last)
+        v.reclaim_last->reclaim_next = entry;
+    else
+        v.reclaim_first = entry;
+    v.reclaim_last = entry;
+    return true;
+}
+
+static void reclaim_queued(Mount* mount) {
+    auto& v = *static_cast<Volume*>(mount->data);
+    auto entry = v.reclaim_first;
+    v.reclaim_first = v.reclaim_last = nullptr;
+    while (entry) {
+        auto next = entry->reclaim_next;
+        entry->reclaim_next = nullptr;
+        entry->reclaim_queued = false;
+        if (entry->number && !entry->node.links && !node_referenced(&entry->node) && v.begin()) {
+            Inode inode;
+            if (entry->number && v.load_inode(entry->number, inode) && !u16(inode + 26))
+                // Sync also scans retired entries and can retry a failed cleanup.
+                reap_inode(v, inode);
+        }
+        entry = next;
+    }
+}
+
 static int sync(Mount* mount, Node*, bool) {
     auto& v = *static_cast<Volume*>(mount->data);
     if (!v.begin())
@@ -668,9 +705,7 @@ static int sync(Mount* mount, Node*, bool) {
         bool orphan = !u16(inode + 26) && !node_referenced(&entry->node);
         if (!orphan && !entry->atime_dirty)
             continue;
-        int result = orphan && v.journal ? NativeOrphans(v).reap(entry->number)
-                                         : v.finish(orphan ? v.delete_inode(entry->number, inode)
-                                                           : v.save_inode(entry->number, inode));
+        int result = orphan ? reap_inode(v, inode) : v.finish(v.save_inode(entry->number, inode));
         if (result)
             return result;
     }
@@ -719,8 +754,7 @@ static int prepare_unmount(Mount* mount) {
         if (!v.load_inode(entry->number, inode))
             return v.error;
         if (!u16(inode + 26)) {
-            int result = v.journal ? NativeOrphans(v).reap(entry->number)
-                                   : v.finish(v.delete_inode(entry->number, inode));
+            int result = reap_inode(v, inode);
             if (result)
                 return result;
         }
@@ -976,10 +1010,30 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
 
 } // namespace
 
-const FilesystemOps ext2_ops = {lookup,   create,     link,    remove,          rename,   read,
-                                write,    truncate,   setattr, readdir,         sync,     nullptr,
-                                stats,    destroy,    remount, prepare_unmount, getxattr, listxattr,
-                                setxattr, removexattr};
+const FilesystemOps ext2_ops = {
+    .lookup = lookup,
+    .create = create,
+    .link = link,
+    .remove = remove,
+    .rename = rename,
+    .read = read,
+    .write = write,
+    .truncate = truncate,
+    .setattr = setattr,
+    .readdir = readdir,
+    .sync = sync,
+    .map_shared = nullptr,
+    .stats = stats,
+    .destroy = destroy,
+    .remount = remount,
+    .prepare_unmount = prepare_unmount,
+    .getxattr = getxattr,
+    .listxattr = listxattr,
+    .setxattr = setxattr,
+    .removexattr = removexattr,
+    .queue_reclaim = queue_reclaim,
+    .reclaim_queued = reclaim_queued,
+};
 
 int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
     auto info = block_info(device->device_id);

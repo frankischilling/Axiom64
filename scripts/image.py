@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -17,11 +18,20 @@ parser.add_argument("--output-name", help="ISO filename under build/ for an isol
 parser.add_argument("--output-directory", type=Path, help="directory for the completed ISO")
 parser.add_argument("--initramfs", type=Path, help="explicit initramfs for an isolated fixture")
 parser.add_argument("--kernel", type=Path, help="explicit kernel ELF for an isolated fixture")
-parser.add_argument("--root-device", choices=[f"/dev/vd{letter}" for letter in "abcdefgh"])
+parser.add_argument("--root-device", help="/dev/vd disk or partition, PARTUUID=, or PARTLABEL=")
 parser.add_argument("--root-readonly", action="store_true")
 parser.add_argument("--root-recovery", action="store_true", help="validate a structurally consistent dirty ext2 root")
 parser.add_argument("--kernel-option", action="append", default=[], help="one additional kernel command-line token")
 args = parser.parse_args()
+if args.root_device is not None:
+    device = re.fullmatch(r"/dev/vd[a-h]([1-9][0-9]{0,2})?", args.root_device)
+    uuid = re.fullmatch(r"PARTUUID=(?:[\da-fA-F]{8}-[\da-fA-F]{2}|"
+                        r"[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12})",
+                        args.root_device, re.ASCII)
+    label = (args.root_device.startswith("PARTLABEL=") and 10 < len(args.root_device.encode()) < 119
+             and not any(character.isspace() for character in args.root_device))
+    if not (uuid or label or (device and int(device[1] or "0") <= 128)):
+        parser.error("--root-device must name a virtio disk, partition, PARTUUID, or PARTLABEL")
 if args.root_readonly and not args.root_device:
     parser.error("--root-readonly requires --root-device")
 if args.root_recovery and not args.root_device:

@@ -298,15 +298,18 @@ void devices_init() {
     tag("/dev/tty0", Device::vt);
     tag("/dev/tty1", Device::vt, 1);
     tag("/dev/ptmx", Device::ptmx);
-    for (unsigned i = 0; block_info(i); i++) {
-        char path[] = "/dev/vda";
-        path[7] += i;
+    for (unsigned i = 0; i < block_device_limit(); i++) {
+        auto info = block_info(i);
+        if (!info)
+            continue;
+        char path[block_name_size];
+        block_device_name(i, path);
         auto node = make_node(path, block_device | 0600);
         if (!node)
             panic("block device node");
         node->device = Device::block;
         node->device_id = i;
-        node->size = block_info(i)->sectors * sector_size;
+        node->size = info->sectors * sector_size;
     }
     if (!lookup("/dev/pts"))
         make_node("/dev/pts", directory | 0755);
@@ -340,7 +343,7 @@ void devices_init() {
 uint64_t device_number(Node* node) {
     switch (node->device) {
     case Device::block:
-        return 0xfc00 | (node->device_id * 16);
+        return block_device_number(node->device_id);
     case Device::serial:
         return node->device_id;
     case Device::tty:

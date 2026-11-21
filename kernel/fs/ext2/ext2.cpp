@@ -29,8 +29,6 @@ namespace ax {
 namespace {
 using namespace ext2_detail;
 
-static uint64_t ext2_cache_bytes;
-
 static Volume& volume(Node* node) {
     return *static_cast<Volume*>(node->mount->data);
 }
@@ -659,9 +657,6 @@ static void destroy(Mount* mount) {
     if (v->claimed)
         block_unclaim(v->device, v);
     release(v->groups);
-    if (v->cache)
-        ext2_cache_bytes -= sizeof(CachedBlock) * cached_blocks;
-    release(v->cache);
     journal_close(v->journal);
     release(v->journal_map);
     release(v);
@@ -677,11 +672,6 @@ static int journal_read(void* context, uint32_t block, void* data) {
 
 static int journal_write(void* context, uint32_t block, const void* data) {
     auto& v = *static_cast<Volume*>(context);
-    if (v.cache) {
-        auto& cached = v.cache[block % cached_blocks];
-        if (cached.block == block)
-            cached.valid = false;
-    }
     return block_write(v.device, uint64_t(block) * (v.block_size / sector_size), data,
                        v.block_size / sector_size, &v);
 }
@@ -858,10 +848,6 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
 
 } // namespace
 
-uint64_t ext2_buffer_bytes() {
-    return ext2_cache_bytes;
-}
-
 const FilesystemOps ext2_ops = {lookup,   create,     link,    remove,          rename,   read,
                                 write,    truncate,   setattr, readdir,         sync,     nullptr,
                                 stats,    destroy,    remount, prepare_unmount, getxattr, listxattr,
@@ -900,15 +886,8 @@ int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
             mount->root = v->add_entry(root, 2, nullptr, "", inode);
     }
     // Validate the disk through actual backend reads before enabling the cache.
-    if (!result) {
-        v->cache = (CachedBlock*)alloc(sizeof(CachedBlock) * cached_blocks);
-        if (!v->cache)
-            result = -12;
-        else {
-            memset(v->cache, 0, sizeof(CachedBlock) * cached_blocks);
-            ext2_cache_bytes += sizeof(CachedBlock) * cached_blocks;
-        }
-    }
+    if (!result)
+        result = block_enable_cache(v->device, v->block_size / sector_size, v);
     if (!result && !mount->readonly) {
         set16(header + 58, u16(header + 58) & ~1u);
         if (v->journal)

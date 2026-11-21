@@ -1,6 +1,6 @@
 # Ext2 root boot
 
-Axiom64 can start Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop from a whole virtio disk with a classic ext2 filesystem. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. Writable ext2 data mounts use the same backend and can run alongside the disk root.
+Axiom64 mounts a classic ext2 root on a whole virtio disk or a partition. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. The full disk-root image contains Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop. Writable ext2 data mounts can run alongside the disk root.
 
 ## Build and boot
 
@@ -26,12 +26,15 @@ Limine's kernel command line selects the root:
 | --- | --- |
 | No `root`, or `root=ramfs` | Use the supplied initramfs |
 | `root=/dev/vda` through `/dev/vdh` | Mount that whole virtio disk as the root |
+| `root=/dev/vda1` | Mount the named partition as root |
+| `root=PARTUUID=<id>` | Select a GPT partition GUID or an MBR disk signature and hexadecimal partition number, such as `13572468-05` |
+| `root=PARTLABEL=<name>` | Select a GPT partition name in UTF-8. The name is case-sensitive and must fit in one command-line token. |
 | `rootfstype=ext2` | Select the supported disk filesystem; omission also selects ext2 |
 | `rootflags=rw` | Writable root; also the default for a selected disk |
 | `rootflags=ro` | Read-only root; use `readonly=on` on QEMU's drive to enforce it in hardware too |
 | `rootflags=rw,recovery=check` or `ro,recovery=check` | Check a dirty root through the complete ext2 validation scan; writable checks can reconcile free counters, while read-only checks require consistent counters |
 
-Empty, duplicate, oversized, and unsupported root options fail with a `BOOT_ROOT_FAIL` diagnostic naming the stage and Linux errno. Filesystem type or flags require a disk selection. A missing disk or rejected ext2 volume also stops boot; the kernel does not silently use the bootstrap as a successful disk root. Device names follow PCI discovery order and are not stable disk identifiers.
+Empty, duplicate, oversized, and unsupported root options fail with a `BOOT_ROOT_FAIL` diagnostic naming the stage and Linux errno. An absent device, ambiguous partition identifier, or rejected ext2 volume also stops boot. Device paths follow PCI discovery order. Use a unique partition ID or GPT name for stable selection. These selectors refer to the partition table. The ext2 filesystem UUID and label are separate metadata.
 
 For a generated recovery boot image, pass `--root-recovery` with `--root-device` to `scripts/image.py`. This selects the checked policy above. The ordinary image keeps the default clean-volume requirement. [Ext2 recovery limits](ext2.md#supported-format-and-operations) explain counter reconciliation and structural rejection.
 
@@ -45,7 +48,7 @@ Use `/bin/busybox poweroff -f` from the guest serial shell for a clean stop. The
 
 Ordinary boots on QEMU's `pc` machine discover the enabled PIIX4 power-management I/O block through PCI and request soft power off with a 16-bit PM1 control write. The register mapping and sleep type follow [QEMU's PIIX4 implementation](https://github.com/qemu/qemu/blob/v8.2.2/hw/acpi/piix4.c) and [ACPI control implementation](https://github.com/qemu/qemu/blob/v8.2.2/hw/acpi/core.c). This platform path is verified under BIOS and UEFI. General ACPI table discovery, hardware-specific sleep types, restart, and suspend remain planned; an unavailable power block leaves the CPU halted after filesystem shutdown.
 
-The [ext2 validation and error policy](ext2.md) applies to the root. A backend failure can leave a volume marked unclean. An explicit writable checked mount can reconcile free counters when the complete structural scan succeeds; other damage requires a filesystem checker. A failed shutdown is not persistence evidence. Broader power-loss recovery, ext4, partitions, stable root identifiers, and a disk installer remain separate roadmap work.
+The [ext2 validation and error policy](ext2.md) applies to the root. A backend failure can leave a volume marked unclean. An explicit writable checked mount can reconcile free counters when the complete structural scan succeeds. Other damage requires a filesystem checker. Broader power-loss recovery, ext4, and a disk installer remain in development.
 
 Block requests, including mount-time flushes, have a 30-second deadline. A host flush can cover the copied full image even when the guest changed only a small amount of metadata. Device-reset acknowledgement keeps its separate two-second limit. An expired request is logged with its type, sector, length, and timeout errno, then the device is reset and quarantined.
 
@@ -72,4 +75,4 @@ The full disk-root boot suite separately requires the complete ABI, thread, IPC,
 
 Logs and screenshots use `build/disk-root-*`; results are `build/disk-root-results.json`, `disk-root-modern-boot-results.json`, `disk-root-legacy-boot-results.json`, and the corresponding interactive result files. The harness takes no user disk path. Existing RAM-root, data-volume, raw-disk, virtio-transport, sanitizer, formatting, and source-bundle checks remain required.
 
-CI also checks reproduction of the full toolchain fixture and publishes `axiom64-disk-root` with `axiom64-disk.iso` and `root-disk.raw`. Disk-root tests use separate ISO names so the normal RAM-root image remains available in `axiom64-boot`.
+The local root suite checks reproduction of the full toolchain fixture. Disk-root tests use separate ISO names so the normal RAM-root image remains available.

@@ -20,6 +20,24 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
+.PHONY: test-partitions test-partitions-native
+.PHONY: test-block-cache test-guest-media
+test-block-cache: build/block-cache-test
+	$<
+
+build/block-cache-test: kernel/tests/drivers/block_cache.cpp kernel/drivers/block/cache.cpp kernel/include/drivers/block/cache.hpp kernel/include/drivers/block/block.hpp
+	mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -fno-pie -no-pie -Ikernel/include $(filter %.cpp,$^) -o $@
+
+test-guest-media:
+	$(PYTHON) -B scripts/guest_media_test.py
+
+test-partitions:
+	$(PYTHON) -B scripts/partition_test.py
+
+test-partitions-native:
+	$(PYTHON) -B scripts/partition_test.py --native-only
+
 .PHONY: test-timerfd test-timerfd-native
 .PHONY: test-signalfd test-signalfd-native
 .PHONY: test-system-v-semaphores test-system-v-semaphores-native

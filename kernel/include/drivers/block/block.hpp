@@ -28,6 +28,7 @@
 
 namespace ax {
 constexpr size_t sector_size = 512;
+constexpr size_t block_name_size = sizeof("/dev/vdh128");
 
 struct BlockInfo {
     uint64_t sectors;
@@ -38,9 +39,24 @@ void block_init();
 
 const BlockInfo* block_info(unsigned device);
 
+unsigned block_device_limit();
+
+void block_device_name(unsigned device, char (&name)[block_name_size]);
+
+uint64_t block_device_number(unsigned device);
+
+int block_find(const char* selection);
+
 // Whole-sector, synchronous transfers. Validate the complete range before I/O.
 // Buffers are kernel addresses; DMA uses private buffers owned by the implementation.
 int block_read(unsigned device, uint64_t sector, void* data, size_t count);
+
+// The claim owns the cache. Reads that do not match its block geometry bypass it.
+int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* owner);
+
+int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count);
+
+uint64_t block_buffer_bytes();
 
 int block_write(unsigned device, uint64_t sector, const void* data, size_t count,
                 const void* owner = nullptr);

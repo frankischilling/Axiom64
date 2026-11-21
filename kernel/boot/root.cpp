@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/root.hpp"
+#include "drivers/block/partition.hpp"
 #include "fs/vfs.hpp"
 
 namespace ax {
@@ -113,11 +114,13 @@ static void descriptor_links() {
 } // namespace
 
 void boot_root_init(const char* command) {
-    char root[32]{}, type[16]{}, flags[32]{};
+    char root[sizeof("PARTLABEL=") - 1 + partition_label_size]{}, type[16]{}, flags[32]{};
     int selected = option(command, "root=", root, sizeof(root));
     int filesystem = option(command, "rootfstype=", type, sizeof(type));
     int policy = option(command, "rootflags=", flags, sizeof(flags));
     if (selected < 0 || filesystem < 0 || policy < 0)
+        failure("configuration", -22);
+    if (strlen(root) >= 32 && memcmp(root, "PARTUUID=", 9) && memcmp(root, "PARTLABEL=", 10))
         failure("configuration", -22);
     if (!selected || !strcmp(root, "ramfs")) {
         if (filesystem || policy)
@@ -128,8 +131,9 @@ void boot_root_init(const char* command) {
         descriptor_links();
         return;
     }
-    if (strlen(root) != 8 || memcmp(root, "/dev/vd", 7) || root[7] < 'a' || root[7] > 'h')
-        failure("root-device", -19);
+    int device = block_find(root);
+    if (device < 0)
+        failure("root-device", device);
     if (filesystem && strcmp(type, "ext2"))
         failure("rootfstype", -19);
     bool checked =
@@ -137,7 +141,7 @@ void boot_root_init(const char* command) {
     if (policy && strcmp(flags, "ro") && strcmp(flags, "rw") && !checked)
         failure("rootflags", -22);
     bool readonly = policy && (!strcmp(flags, "ro") || !strcmp(flags, "ro,recovery=check"));
-    int error = vfs_disk_root(unsigned(root[7] - 'a'), readonly, checked);
+    int error = vfs_disk_root(unsigned(device), readonly, checked);
     if (error)
         failure(root, error);
     required("/sbin/init", regular_file, true);

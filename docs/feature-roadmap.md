@@ -53,7 +53,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F14 | [DHCP, DNS, and network configuration](https://github.com/frankischilling/Axiom64/issues/14) | partial | M3 | F09, F10, F13 |
 | F15 | [IPC and event notification](https://github.com/frankischilling/Axiom64/issues/15) | partial | M2 | F05 |
 | F16 | [Clocks, timers, and power management](https://github.com/frankischilling/Axiom64/issues/16) | partial | M6 | F01, F03, F05 |
-| F17 | [AHCI, NVMe, and other storage devices](https://github.com/frankischilling/Axiom64/issues/17) | planned | M6 | F02, F03, F19 |
+| F17 | [AHCI, NVMe, and other storage devices](https://github.com/frankischilling/Axiom64/issues/17) | partial | M6 | F02, F03, F19 |
 | F18 | [Additional filesystems and host sharing](https://github.com/frankischilling/Axiom64/issues/18) | planned | M6 | F02, F04, F13 |
 | F19 | [USB controllers and devices](https://github.com/frankischilling/Axiom64/issues/19) | planned | M6 | F01, F09 |
 | F20 | [Terminals, input, and framebuffer console](https://github.com/frankischilling/Axiom64/issues/20) | partial | M5 | F05, F19 |
@@ -466,7 +466,10 @@ Acceptance evidence:
 
 ### F17. AHCI, NVMe, and other storage devices
 
-The guest currently has no disk-controller drivers.
+PCI IDE compatibility disks use programmed I/O. The primary ISA floppy
+controller supports channel 2 DMA and ext2 data volumes. AHCI SATA disks use
+polled DMA, support cache flush and port recovery, and boot ext2 roots by
+device path or PARTUUID on QEMU i440fx and Q35. [Storage drivers](storage.md)
 
 Required work:
 

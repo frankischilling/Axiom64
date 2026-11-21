@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # @file    scripts/legacy_ata_test.py
-# @brief   Verify legacy ATA I/O in QEMU.
+# @brief   Verify legacy ATA and AHCI SATA I/O in QEMU.
 # @author  frankischilling
 # @date    2026-11-21
 #
-# Boots PCI compatibility disks and checks on-disk bytes outside the guest.
+# Boots PCI compatibility disks or AHCI SATA disks and checks bytes outside the guest.
 #
 # Copyright (C) 2026 frankischilling
 #
@@ -22,8 +22,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://gnu.org/licenses/>.
 
-"""Exercise legacy ATA compatibility channels and an ext2 root."""
+"""Exercise ATA compatibility channels or AHCI SATA and an ext2 root."""
 import argparse
+from itertools import product
 from pathlib import Path
 import json
 import shutil
@@ -75,19 +76,27 @@ def image(output, initramfs, root=None, *, name="ata-data.iso"):
     return iso
 
 
-def run(directory, firmware, iso, drives, marker, root_marker=None, *, virtio=None):
+def run(directory, firmware, iso, drives, marker, root_marker=None, *, virtio=None, ahci=False,
+        machine="pc", pata=None):
     directory.mkdir()
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "384M",
+    command = ["qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "384M",
                "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot",
                "-nic", "none", "-boot", "order=d,strict=on",
                "-device", "isa-debug-exit,iobase=0xf4,iosize=4", "-cdrom", iso]
+    if ahci and machine == "pc":
+        command += ["-device", "ich9-ahci,id=sata"]
     for slot, path in drives.items():
+        bus = f"{'sata' if machine == 'pc' else 'ide'}.{slot}" if ahci else f"ide.{slot // 2}"
+        unit = 0 if ahci else slot % 2
         command += ["-drive", f"if=none,id=ata{slot},format=raw,cache=writeback,file={path}",
-                    "-device", f"ide-hd,drive=ata{slot},bus=ide.{slot // 2},unit={slot % 2},"
+                    "-device", f"ide-hd,drive=ata{slot},bus={bus},unit={unit},"
                                "rerror=report,werror=report"]
     if virtio:
         command += ["-drive", f"if=none,id=virtio,format=raw,file={virtio}",
                     "-device", "virtio-blk-pci,drive=virtio,disable-legacy=on"]
+    if pata:
+        command += ["-drive", f"if=none,id=pata,format=raw,file={pata}",
+                    "-device", "ide-hd,drive=pata,bus=ide.0,unit=0"]
     if firmware == "uefi":
         variables = directory / "VARS.fd"
         shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
@@ -97,12 +106,23 @@ def run(directory, firmware, iso, drives, marker, root_marker=None, *, virtio=No
     with log.open("wb") as serial:
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=serial,
                                 stderr=subprocess.STDOUT, timeout=90)
-    lines = set(log.read_text(errors="replace").splitlines())
+    lines = log.read_text(errors="replace").splitlines()
     expected = {f"Firmware: {firmware.upper()}", marker, "AXIOM64_EXIT status=0"}
     if root_marker:
         expected.add(root_marker)
-    if result.returncode != 1 or not expected <= lines:
-        raise RuntimeError(f"{directory.name} failed: missing {expected - lines}, see {log}")
+    if pata:
+        expected.add("AHCI_MIXED_NAMES_PASS")
+    if ahci:
+        if not any(line.startswith("ahci: controller reset complete ports=") for line in lines):
+            raise RuntimeError(f"{directory.name}: AHCI reset was not observed in {log}")
+        if marker == "ATA_BLOCK_PASS":
+            expected.add("AHCI_MULTISECTOR_PASS")
+            recovered = "ahci: port=0 command errno=5 recovery=ready"
+            if lines.count(recovered) != 2:
+                raise RuntimeError(f"{directory.name}: expected two recovered I/O faults in {log}")
+    missing = expected.difference(lines)
+    if result.returncode != 1 or missing:
+        raise RuntimeError(f"{directory.name} failed: missing {missing}, see {log}")
     print(f"{directory.name}: passed", flush=True)
     return {"name": directory.name, "serial_sha256": digest(log)}
 
@@ -117,12 +137,14 @@ def compare(path, offset, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/legacy-ata")
+    parser.add_argument("--ahci", action="store_true", help="exercise AHCI SATA on i440fx and Q35")
     opts = parser.parse_args()
     output = opts.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     subprocess.run(["make", "-j2", "build/axiom64.elf"], cwd=ROOT, check=True)
     init = output / "init"
-    subprocess.run(["musl-gcc", "-static", "-Wall", "-Wextra", "-Werror",
+    test_flags = ["-DAXIOM64_AHCI_TEST"] if opts.ahci else []
+    subprocess.run(["musl-gcc", "-static", "-Wall", "-Wextra", "-Werror", *test_flags,
                     ROOT / "userspace/tests/fs/legacy-ata.c", "-o", init], check=True)
     cpio = output / "data.cpio"
     write_cpio(cpio, {"dev": (0o40755, b""), "sbin": (0o40755, b""),
@@ -150,32 +172,37 @@ def main():
     faults.write_text(''.join(f'[inject-error]\nevent = "{direction}_aio"\niotype = "{direction}"\n'
                               f'sector = "{sector}"\nerrno = "5"\nonce = "off"\n\n'
                               for direction, sector in (("read", 3131), ("write", 3133))))
-    for firmware in ("bios", "uefi"):
-        primary = primary_disk(output / f"{firmware}-primary.raw")
-        slave = disk(output / f"{firmware}-slave.raw", BOUNDARY + 64 * SECTOR)
-        secondary = disk(output / f"{firmware}-secondary.raw", 4096 * SECTOR, b"ATA-SEC2")
-        virtio = disk(output / f"{firmware}-virtio.raw", 4096 * SECTOR, b"VIO-SEED")
-        cases.append(run(output / f"{firmware}-data", firmware, data_iso,
+    machines = ("pc", "q35") if opts.ahci else ("pc",)
+    for machine, firmware in product(machines, ("bios", "uefi")):
+        prefix = f"{machine}-{firmware}" if opts.ahci else firmware
+        transport = dict(ahci=opts.ahci, machine=machine)
+        primary = primary_disk(output / f"{prefix}-primary.raw")
+        slave = disk(output / f"{prefix}-slave.raw", BOUNDARY + 64 * SECTOR)
+        secondary = disk(output / f"{prefix}-secondary.raw", 4096 * SECTOR, b"ATA-SEC2")
+        virtio = disk(output / f"{prefix}-virtio.raw", 4096 * SECTOR, b"VIO-SEED")
+        cases.append(run(output / f"{prefix}-data", firmware, data_iso,
                          {0: f"blkdebug:{faults}:{primary}", 1: slave, 3: secondary},
-                         "ATA_BLOCK_PASS", virtio=virtio))
+                         "ATA_BLOCK_PASS", virtio=virtio, **transport))
         compare(primary, 3133 * SECTOR, bytes(SECTOR))
         compare(primary, 3134 * SECTOR, PAYLOAD)
         compare(primary, 2048 * SECTOR, b"ATA" + PAYLOAD)
         compare(primary, 6144 * SECTOR - 3, PAYLOAD[:3] + b"outside-partition")
         compare(slave, BOUNDARY - 2 * SECTOR, bytes(SECTOR) + b"\xa5" * SECTOR +
                 b"\x6b" * SECTOR + bytes(SECTOR))
-        root = output / f"{firmware}-root.ext2"
+        if opts.ahci:
+            compare(secondary, 127 * SECTOR, bytes(SECTOR) + b"\xa7" * (33 * SECTOR) + bytes(SECTOR))
+        root = output / f"{prefix}-root.ext2"
         shutil.copyfile(root_image, root)
         mounted = "VFS_ROOT_PASS filesystem=ext2 device=/dev/sda readonly=0"
         for phase, marker in (("write", "ATA_ROOT_WRITE_PASS"), ("reboot", "ATA_ROOT_REBOOT_PASS")):
-            cases.append(run(output / f"{firmware}-root-{phase}", firmware, root_iso, {0: root},
-                             marker, mounted))
+            cases.append(run(output / f"{prefix}-root-{phase}", firmware, root_iso, {0: root},
+                             marker, mounted, **transport))
         subprocess.run(["e2fsck", "-fn", root], check=True)
         contents = subprocess.check_output(["debugfs", "-R", "cat /ata-written", root])
         if contents != PAYLOAD:
             raise RuntimeError(f"{root}: wrong data after reboot")
 
-        partition = output / f"{firmware}-partition.raw"
+        partition = output / f"{prefix}-partition.raw"
         with primary.open("rb") as stream:
             mbr = bytearray(stream.read(SECTOR))
         root_bytes = root.read_bytes()
@@ -185,8 +212,10 @@ def main():
             stream.seek(2048 * SECTOR)
             stream.write(root_bytes)
         mounted = f"VFS_ROOT_PASS filesystem=ext2 device={identified} readonly=0"
-        cases.append(run(output / f"{firmware}-partition-root", firmware, partition_iso,
-                         {1: partition}, "ATA_ROOT_REBOOT_PASS", mounted))
+        pata = (disk(output / f"{prefix}-pata.raw", 4096 * SECTOR, b"PATA-MIX")
+                if opts.ahci and machine == "pc" else None)
+        cases.append(run(output / f"{prefix}-partition-root", firmware, partition_iso,
+                         {1: partition}, "ATA_ROOT_REBOOT_PASS", mounted, pata=pata, **transport))
     (output / "results.json").write_text(json.dumps(
         {"kernel_sha256": digest(ROOT / "build/axiom64.elf"), "cases": cases}, indent=2) + "\n")
 

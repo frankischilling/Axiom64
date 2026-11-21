@@ -25,6 +25,7 @@
  */
 #include "drivers/block/ata.hpp"
 #include "core/time.hpp"
+#include "drivers/block/ata_identity.hpp"
 #include "drivers/platform/pci.hpp"
 
 namespace ax {
@@ -35,8 +36,6 @@ constexpr uint8_t fault = 0x20;
 constexpr uint8_t drq = 0x08;
 constexpr uint8_t error = 0x01;
 constexpr uint8_t disable_irq = 0x02;
-constexpr uint64_t lba28_limit = 1ull << 28;
-constexpr uint64_t lba48_limit = 1ull << 48;
 
 struct Channel {
     uint16_t base, control;
@@ -139,30 +138,16 @@ void identify(unsigned slot) {
     uint16_t words[256];
     input_words(channel, words);
     settle(channel);
-    if (await(channel, 0, drq, true) || (words[0] & 0x8000) || !(words[49] & 0x200))
-        return;
-
-    if ((words[106] & 0xd000) == 0x5000 && (words[117] != sector_size / 2 || words[118] != 0))
-        return;
-
-    const bool commands_valid = (words[83] & 0xc000) == 0x4000;
-    const bool extended = commands_valid && (words[83] & 0x0400);
-    uint64_t capacity = uint32_t(words[61]) << 16 | words[60];
-    if (extended) {
-        capacity = 0;
-        for (unsigned i = 0; i < 4; ++i)
-            capacity |= uint64_t(words[100 + i]) << (16 * i);
-    }
-    if (!capacity || capacity > (extended ? lba48_limit : lba28_limit))
+    AtaIdentity identity{};
+    if (await(channel, 0, drq, true) || !ata_identity(words, identity))
         return;
 
     // Only offer writes when a cache flush can be requested explicitly.
-    const uint8_t flush = commands_valid && extended && (words[83] & 0x2000) ? 0xea
-                          : commands_valid && (words[83] & 0x1000)           ? 0xe7
-                                                                             : 0;
-    drives[slot] = {{capacity, !flush, flush != 0}, flush};
+    const auto flush = identity.flush_command;
+    drives[slot] = {{identity.sectors, !flush, flush != 0}, flush};
     log("ata: disk=sd%c channel=%u unit=%u sectors=%u lba48=%u flush=%u\n", int('a' + slot),
-        uint64_t(slot / 2), uint64_t(slot & 1), capacity, uint64_t(extended), uint64_t(flush != 0));
+        uint64_t(slot / 2), uint64_t(slot & 1), identity.sectors, uint64_t(identity.extended),
+        uint64_t(flush != 0));
 }
 
 void taskfile(const Channel& channel, uint64_t sector, uint8_t count, bool extended) {

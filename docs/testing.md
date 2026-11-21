@@ -78,6 +78,14 @@ LBA28 limit, and recovery after injected read and write errors. It also
 boots a writable ext2 root twice and checks the saved file on the host.
 Results stay under `build/legacy-ata/`. The large-LBA test disks are sparse.
 
+`make test-suite SUITE=ahci` checks command encoding under sanitizers and
+boots SATA disks on i440fx and Q35 under BIOS and UEFI. It checks controller
+reset, recovery from injected read and write errors, a transfer larger than
+one DMA request, and I/O across the LBA28 boundary. Ext2 boots verify file
+contents across reboot and select an MBR partition by PARTUUID. The host
+checks the raw bytes and runs `e2fsck` on each ext2 root. Results stay under
+`build/ahci-test/`.
+
 `make test-suite SUITE=floppy` checks raw sector I/O, write protection, the
 DMA address range, write error recovery, and media replacement under BIOS
 and UEFI. It reboots and checks an ext2 data floppy with host `e2fsck`.

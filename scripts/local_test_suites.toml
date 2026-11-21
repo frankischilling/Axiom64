@@ -30,6 +30,7 @@ matrix = [
     "dma",
     "legacy-ports",
     "legacy-ata",
+    "ahci",
     "floppy",
     "network",
     "ipv4-source-filters",

@@ -4,11 +4,26 @@ The kernel discovers PCI virtio block devices at boot and exposes whole disks as
 
 PCI IDE compatibility channels also expose ATA disks as `/dev/sda` through
 `/dev/sdd`, in primary master, primary slave, secondary master and secondary
-slave order. Missing slots keep their names reserved. The driver uses
+slave order. Present IDE devices retain those names. The driver uses
 programmed I/O with 512-byte logical sectors, LBA28 and LBA48 addressing, and
 polled completion. Disks without an advertised flush command are read-only.
-The same partition scanner and filesystem layer handle both disk types.
 ATA DMA, optical ATAPI, and native PCI IDE channels remain in development.
+
+AHCI SATA disks also use `/dev/sd*`. They take the first free names after
+present IDE disks have claimed their usual letters. The driver probes the
+assigned PCI BAR, takes firmware ownership when the controller offers a
+handoff, and resets the controller before examining its ports. Each disk
+supports 512-byte logical sectors, LBA28 and LBA48, one polled command at a
+time, and contiguous DMA transfers of up to 32 sectors per command. The
+partition scanner, filesystem claims, and block cache work across all
+three disk transports.
+
+After failed SATA I/O, the driver resets the port and checks the disk's
+identity before accepting new commands. The failed operation returns its
+error to the caller. A port that fails recovery stays offline and keeps
+its DMA allocation. RAID-mode discovery, controller quirks, ATAPI, native
+command queuing, hotplug, and physical hardware qualification remain open.
+[Intel AHCI 1.3.1](https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/serial-ata-ahci-spec-rev1-3-1.pdf)
 
 The primary ISA floppy controller exposes 1.44 MB media detected at boot as
 `/dev/fd0` and `/dev/fd1`. These whole-media block nodes use major 2 and

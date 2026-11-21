@@ -21,7 +21,7 @@ sync
 umount /mnt/data
 ```
 
-Use `mount -t ext2 -o ro /dev/vda /mnt/data` for read-only access. An interrupted journaled volume can require recovery writes even for a read-only request, as described below. Writable mounting on read-only hardware returns `EROFS`. A mounted filesystem claims its whole disk: another mount and raw writes return `EBUSY`, including writes through an already-open raw descriptor. Raw reads remain available. Unmount releases the claim.
+Use `mount -t ext2 -o ro /dev/vda /mnt/data` for read-only access. Use a partition node such as `/dev/vda1` when the filesystem occupies a partition. An interrupted journaled volume can require recovery writes even for a read-only request. Writable mounts on read-only hardware return `EROFS`. A mounted filesystem claims its volume. Overlapping mounts and raw writes return `EBUSY`, including writes through an already-open raw descriptor. Raw reads and disjoint partitions remain available. Unmount releases the claim.
 
 ## Supported format and operations
 
@@ -71,7 +71,7 @@ Current focused guest checks recover an inode pointer whose allocation bitmap wa
 
 An operation must fit the available journal and the existing 4,096-block overlay bound. Journal sizing, larger-operation handling and modern journal features remain part of the storage roadmap. The format follows the Linux [journal documentation](https://docs.kernel.org/filesystems/ext4/journal.html) and [v6.17 JBD2 definitions](https://github.com/torvalds/linux/blob/v6.17/include/linux/jbd2.h); this implementation uses Axiom64's synchronous block interface.
 
-Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode index grows with the number of cached identities. Cache entries share allocator pages and retain their addresses until unmount, including after unlink. All ext2 mounts share an inode-cache budget of one eighth of managed physical memory, including entry pages and indexes. Unmount returns those pages to the allocator. The mount scan uses temporary memory proportional to filesystem block and inode counts. Allocation failures return `ENOMEM`. Filesystem calls are serialized on one CPU. Partitions, general block caching and writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain planned. Private mappings copy file bytes. Ext2 shared mappings return `ENODEV`.
+Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode index grows with the number of cached identities. Cache entries share allocator pages and retain their addresses until unmount, including after unlink. All ext2 mounts share an inode-cache budget of one eighth of managed physical memory, including entry pages and indexes. Unmount returns those pages to the allocator. The mount scan uses temporary memory proportional to filesystem block and inode counts. Allocation failures return `ENOMEM`. Filesystem calls are serialized on one CPU. General block caching and writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain planned. Private mappings copy file bytes. Ext2 shared mappings return `ENODEV`.
 
 ## Verification
 

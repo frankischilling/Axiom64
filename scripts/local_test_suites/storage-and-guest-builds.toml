@@ -30,6 +30,13 @@ python3 scripts/storage_test.py
 
 [[step]]
 suites = ["storage"]
+name = "Test partition decoding, ext2 partition boots, and stable root selection"
+run = '''
+make test-partitions
+'''
+
+[[step]]
+suites = ["storage"]
 name = "Test writable ext2 volumes and host fsck"
 run = '''
 python3 scripts/ext2_test.py

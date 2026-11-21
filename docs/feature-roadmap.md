@@ -107,7 +107,7 @@ Acceptance evidence:
 
 ### F02. Block layer and virtio disk
 
-Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. Ext2 volumes have a bounded [read cache](ext2.md#write-and-error-behavior). [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [Raw disks](storage.md) and [ext2 volumes](ext2.md) leave partitions, general block caching and writeback, and stable root identifiers for later work.
+Modern and legacy virtio block devices provide persistent sector I/O, explicit flushes, and exclusive filesystem claims. [Partition discovery](storage.md#partitions) supports GPT, MBR, and BSD disklabels with bounded block nodes. [Root selection](disk-root.md#boot-selection) accepts partition IDs and GPT names. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. Ext2 has a bounded [read cache](ext2.md#write-and-error-behavior). General block caching and writeback and guest-owned disk image creation remain in development.
 
 Required work:
 

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/block/block.hpp"
+#include "drivers/block/partition.hpp"
 #include "drivers/virtio/pci.hpp"
 
 namespace ax {
@@ -38,10 +39,19 @@ struct Request {
 
 static_assert(sizeof(Request) == 16);
 
+struct Volume {
+    BlockInfo info{};
+    uint64_t start = 0;
+    const void* owner = nullptr;
+    Volume* next_claim = nullptr;
+};
+
 struct Disk {
     VirtioPci pci;
     SplitQueue queue;
-    BlockInfo info{};
+    Volume volumes[max_partitions + 1];
+    PartitionTable partitions;
+    Volume* claims = nullptr;
     bool live = false;
     uint64_t request_physical = 0;
     Request* request = nullptr;
@@ -57,10 +67,11 @@ static unsigned disk_count, attempts;
 static bool initialize(Disk& d, const PciFunction& pci) {
     if (!d.pci.open(pci, feature_ro | feature_flush, 8))
         return false;
-    d.info.readonly = d.pci.features() & feature_ro;
-    d.info.flush_supported = d.pci.features() & feature_flush;
-    if (!d.pci.read_config(0, &d.info.sectors, sizeof(d.info.sectors)) || !d.info.sectors ||
-        d.info.sectors > uint64_t(INT64_MAX) / sector_size)
+    auto& info = d.volumes[0].info;
+    info.readonly = d.pci.features() & feature_ro;
+    info.flush_supported = d.pci.features() & feature_flush;
+    if (!d.pci.read_config(0, &info.sectors, sizeof(info.sectors)) || !info.sectors ||
+        info.sectors > uint64_t(INT64_MAX) / sector_size)
         return false;
     if (!d.pci.setup_queue(d.queue, 0, 256, 4))
         return false;
@@ -137,26 +148,42 @@ static void discover(const PciFunction& p) {
         return;
     }
     disks[disk_count] = &d;
+    const auto& info = d.volumes[0].info;
     log("virtio-blk: disk=%u transport=%s sectors=%u readonly=%u flush=%u\n", uint64_t(disk_count),
-        d.pci.modern() ? "modern" : "legacy", d.info.sectors, uint64_t(d.info.readonly),
-        uint64_t(d.info.flush_supported));
+        d.pci.modern() ? "modern" : "legacy", info.sectors, uint64_t(info.readonly),
+        uint64_t(info.flush_supported));
     log("virtio-queue: disk=%u id=0 size=%u\n", uint64_t(disk_count),
         uint64_t(d.queue.layout().size));
     disk_count++;
 }
 
+static Disk* disk_for(unsigned device) {
+    return disks[device % max_disks];
+}
+
+static Volume* volume_for(unsigned device) {
+    auto disk = disk_for(device);
+    unsigned part = device / max_disks;
+    if (!disk || part > max_partitions || !disk->volumes[part].info.sectors)
+        return nullptr;
+    return &disk->volumes[part];
+}
+
 static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count, bool write) {
-    if (device >= disk_count)
+    auto volume = volume_for(device);
+    if (!volume)
         return -19;
-    auto& d = *disks[device];
-    if (sector > d.info.sectors || count > d.info.sectors - sector)
+    const auto& info = volume->info;
+    if (sector > info.sectors || count > info.sectors - sector)
         return -22;
     if (!count)
         return 0;
-    if (write && d.info.readonly)
+    if (write && info.readonly)
         return -30;
+    auto& d = *disk_for(device);
     if (!d.live)
         return -5;
+    sector += volume->start;
     auto bytes = (uint8_t*)buffer;
     while (count) {
         size_t sectors = min(count, size_t(transfer_sectors)), length = sectors * sector_size;
@@ -173,56 +200,173 @@ static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count
     }
     return 0;
 }
+
+static int partition_sector(void* context, uint64_t sector, void* data) {
+    return transfer(*static_cast<unsigned*>(context), sector, data, 1, false);
+}
+
+static bool conflicts(const Disk& disk, const Volume& volume, const void* owner = nullptr) {
+    for (auto other = disk.claims; other; other = other->next_claim)
+        if ((other != &volume || other->owner != owner) &&
+            volume.start < other->start + other->info.sectors &&
+            other->start < volume.start + volume.info.sectors)
+            return true;
+    return false;
+}
+
+static char lowercase_hex(char c) {
+    return c >= 'A' && c <= 'F' ? static_cast<char>(c + ('a' - 'A')) : c;
+}
+
+static bool same_id(const char* left, const char* right) {
+    while (*left && lowercase_hex(*left) == *right) {
+        left++;
+        right++;
+    }
+    return !*left && !*right;
+}
 } // namespace
 
 void block_init() {
     pci_scan(discover);
+    for (unsigned i = 0; i < disk_count; i++) {
+        auto& disk = *disks[i];
+        const auto& info = disk.volumes[0].info;
+        int error = read_partition_table(info.sectors, partition_sector, &i, disk.partitions);
+        if (error) {
+            log("block: partition scan failed disk=%u errno=%d\n", uint64_t(i), int64_t(-error));
+            continue;
+        }
+        for (unsigned p = 0; p < max_partitions; p++) {
+            const auto& entry = disk.partitions.entries[p];
+            if (entry.sectors)
+                disk.volumes[p + 1] = {{entry.sectors, info.readonly, info.flush_supported},
+                                       entry.start};
+        }
+    }
 }
 
 const BlockInfo* block_info(unsigned device) {
-    return device < disk_count ? &disks[device]->info : nullptr;
+    auto volume = volume_for(device);
+    return volume ? &volume->info : nullptr;
+}
+
+unsigned block_device_limit() {
+    return max_disks * (max_partitions + 1);
+}
+
+void block_device_name(unsigned device, char (&name)[block_name_size]) {
+    memcpy(name, "/dev/vda", sizeof("/dev/vda"));
+    name[7] += device % max_disks;
+    unsigned part = device / max_disks, at = 8;
+    if (part >= 100)
+        name[at++] = '0' + part / 100;
+    if (part >= 10)
+        name[at++] = '0' + part / 10 % 10;
+    if (part)
+        name[at++] = '0' + part % 10;
+    name[at] = 0;
+}
+
+uint64_t block_device_number(unsigned device) {
+    unsigned disk = device % max_disks, part = device / max_disks;
+    if (part < 16)
+        return 0xfc00 | (disk * 16 + part);
+    uint64_t minor = disk * max_partitions + part - 16;
+    return (259 << 8) | (minor & 255) | ((minor & ~uint64_t(255)) << 12);
+}
+
+int block_find(const char* selection) {
+    constexpr char uuid[] = "PARTUUID=", label[] = "PARTLABEL=";
+    size_t length = strlen(selection);
+    bool by_id = length >= sizeof(uuid) && !memcmp(selection, uuid, sizeof(uuid) - 1);
+    bool by_label = length >= sizeof(label) && !memcmp(selection, label, sizeof(label) - 1);
+    if (by_id || by_label) {
+        const char* value = selection + (by_id ? sizeof(uuid) - 1 : sizeof(label) - 1);
+        int found = -19;
+        for (unsigned disk = 0; disk < disk_count; disk++) {
+            for (unsigned p = 0; p < max_partitions; p++) {
+                const auto& part = disks[disk]->partitions.entries[p];
+                if (!part.sectors ||
+                    !(by_id ? same_id(value, part.id) : !strcmp(value, part.label)))
+                    continue;
+                if (found >= 0)
+                    return -76; // ENOTUNIQ
+                found = disk + (p + 1) * max_disks;
+            }
+        }
+        return found;
+    }
+
+    if (length < 8 || length >= block_name_size || memcmp(selection, "/dev/vd", 7) ||
+        selection[7] < 'a' || selection[7] >= 'a' + int(max_disks) || selection[8] == '0')
+        return -19;
+    unsigned part = 0;
+    for (size_t i = 8; i < length; i++) {
+        if (selection[i] < '0' || selection[i] > '9')
+            return -19;
+        part = part * 10 + unsigned(selection[i] - '0');
+    }
+    if (part > max_partitions)
+        return -19;
+    return selection[7] - 'a' + part * max_disks;
 }
 
 int block_read(unsigned device, uint64_t sector, void* data, size_t count) {
     return transfer(device, sector, data, count, false);
 }
 
-static const void* block_owners[8];
-
 int block_claim(unsigned device, const void* owner) {
-    if (!block_info(device))
+    auto volume = volume_for(device);
+    if (!volume)
         return -19;
     if (!owner)
         return -22;
-    if (block_owners[device])
+    auto& disk = *disk_for(device);
+    if (conflicts(disk, *volume))
         return -16;
-    block_owners[device] = owner;
+    volume->owner = owner;
+    volume->next_claim = disk.claims;
+    disk.claims = volume;
     return 0;
 }
 
 void block_unclaim(unsigned device, const void* owner) {
-    if (device < 8 && block_owners[device] == owner)
-        block_owners[device] = nullptr;
+    auto volume = volume_for(device);
+    if (!volume || !owner || volume->owner != owner)
+        return;
+    auto& disk = *disk_for(device);
+    auto link = &disk.claims;
+    while (*link != volume)
+        link = &(*link)->next_claim;
+    *link = volume->next_claim;
+    volume->owner = nullptr;
+    volume->next_claim = nullptr;
 }
 
 bool block_claimed(unsigned device) {
-    return device < 8 && block_owners[device];
+    auto volume = volume_for(device);
+    return volume && conflicts(*disk_for(device), *volume);
 }
 
 int block_write(unsigned device, uint64_t sector, const void* data, size_t count,
                 const void* owner) {
-    if (device < 8 && block_owners[device] && block_owners[device] != owner)
+    auto volume = volume_for(device);
+    if (!volume)
+        return -19;
+    if (conflicts(*disk_for(device), *volume, owner))
         return -16;
     return transfer(device, sector, const_cast<void*>(data), count, true);
 }
 
 int block_flush(unsigned device) {
-    if (device >= disk_count)
+    auto volume = volume_for(device);
+    if (!volume)
         return -19;
-    auto& d = *disks[device];
+    auto& d = *disk_for(device);
     if (!d.live)
         return -5;
-    if (d.info.readonly || !d.info.flush_supported)
+    if (volume->info.readonly || !volume->info.flush_supported)
         return 0; // Unnegotiated FLUSH means writethrough.
     return request(d, 4, 0, 0);
 }

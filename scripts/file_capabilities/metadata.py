@@ -149,13 +149,21 @@ def malformed(output, linkage):
     target = output / ('malformed-' + linkage + '-unallocated-pointer.img')
     target.write_bytes(data)
     variants.append(('unallocated-pointer', target, 117))
-    inline = output / ('malformed-' + linkage + '-inline-layout.img')
-    volume(inline, inode=256)
+    inline_seed = output / ('seed-' + linkage + '-inline-layout.img')
+    volume(inline_seed, inode=256)
     client = ROOT / 'build' / ('file-capabilities-' + linkage)
-    debugfs(inline, f'write "{client}" /inline', write=True)
-    debugfs(inline, 'ea_set /inline user.inline ext4-layout', write=True)
-    fsck(inline, output, inline.stem + '-seed')
-    variants.append(('inline-layout', inline, 95))
+    debugfs(inline_seed, f'write "{client}" /inline', write=True)
+    debugfs(inline_seed, 'ea_set /inline user.inline ext4-layout', write=True)
+    fsck(inline_seed, output, inline_seed.stem)
+    data = bytearray(inline_seed.read_bytes())
+    inode = inode_offset(data, number(inline_seed, 'inline'))
+    header = inode + 128 + struct.unpack_from('<H', data, inode + 128)[0]
+    if struct.unpack_from('<I', data, header)[0] != 0xea020000:
+        raise ValueError('native seed did not store its attribute inside the inode')
+    struct.pack_into('<H', data, header + 6, 1)
+    inline = output / ('malformed-' + linkage + '-inline-value-offset.img')
+    inline.write_bytes(data)
+    variants.append(('inline-value-offset', inline, 117))
     return variants
 
 

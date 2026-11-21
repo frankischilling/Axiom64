@@ -26,10 +26,18 @@
 #include "fs/xattr.hpp"
 
 namespace ax {
+constexpr uint32_t ext_xattr_magic = 0xea020000;
 bool ext2_xattr_valid(const void*, size_t, uint32_t& references);
 bool ext2_xattr_supported(const void*, size_t);
 int64_t ext2_xattr_get(const void*, size_t, const XattrName&, void*, size_t);
 int64_t ext2_xattr_list(const void*, size_t, void*, size_t, bool trusted);
+int ext2_xattr_body_validate(const uint8_t*, size_t);
+int64_t ext2_xattr_body_get(const uint8_t*, size_t, const XattrName&, void*, size_t);
+int64_t ext2_xattr_body_list(const uint8_t*, size_t, void*, size_t, bool trusted);
+// Both regions must already be valid.
+bool ext2_xattr_regions_conflict(const uint8_t* body, const uint8_t* external);
+int ext2_xattr_body_change(const uint8_t*, size_t, const XattrName&, const void*, size_t,
+                           unsigned flags, bool remove, void*);
 // Build a complete private replacement block before the filesystem stages it.
 // The source and destination must be distinct; a null source means no attributes.
 int ext2_xattr_change(const void*, size_t, const XattrName&, const void*, size_t, unsigned flags,

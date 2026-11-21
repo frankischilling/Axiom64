@@ -35,6 +35,7 @@
 #include "process/task.hpp"
 #include "process/cpu.hpp"
 #include "mm/barrier.hpp"
+#include "mm/file_mapping.hpp"
 #include "mm/limits.hpp"
 #include "mm/remap.hpp"
 #include "mm/stack.hpp"
@@ -403,60 +404,73 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         int error = memfd_map(*current, *h, addr, len, off, prot, flags & 1, replace_existing);
         return error ? error : complete();
     }
-    if (h && (flags & 1)) {
-        uint64_t backing;
-        int error = node_map_shared(h->node, off, len, prot & 2, backing);
-        if (error)
+    auto& space = current->memory->space;
+    auto file = h ? static_cast<FileMapping*>(alloc(sizeof(FileMapping))) : nullptr;
+    if (h && !file)
+        return -12;
+    auto map_pages = [&]() -> int {
+        if (h && (flags & 1)) {
+            uint64_t backing;
+            if (int error = node_map_shared(h->node, off, len, prot & 2, backing))
+                return error;
+            if (int error = replace())
+                return error;
+            if (!space.map_physical(addr, backing, len, prot))
+                return -12;
+            if ((h->flags & 3) != 2 || node_readonly(h->node))
+                for (uint64_t page = addr; page < addr + len; page += page_size)
+                    *space.entry(page) |= 0x800; // Shared mapping may never gain write access.
+            if (h->node->mount->noexec)
+                for (uint64_t page = addr; page < addr + len; page += page_size)
+                    *space.entry(page) |= page_no_execute;
+            return 0;
+        }
+        if (int error = replace())
             return error;
-        error = replace();
-        if (error)
-            return error;
-        if (!current->memory->space.map_physical(addr, backing, len, prot))
+        uint64_t mapping_flags = private_mapping ? page_private : 0;
+        if (stack_mapping)
+            mapping_flags |= page_stack;
+        else if (private_mapping && (flags & 0x20))
+            mapping_flags |= page_anonymous;
+        if (!space.map(addr, len, 3, mapping_flags))
             return -12;
-        if ((h->flags & 3) != 2 || node_readonly(h->node))
-            for (uint64_t page = addr; page < addr + len; page += page_size)
-                *current->memory->space.entry(page) |=
-                    0x800; // Shared mapping may never gain write access.
-        if (h->node->mount->noexec)
-            for (uint64_t page = addr; page < addr + len; page += page_size)
-                *current->memory->space.entry(page) |= page_no_execute;
-        return complete();
-    }
-    int error = replace();
-    if (error)
-        return error;
-    uint64_t mapping_flags = private_mapping ? page_private : 0;
-    if (stack_mapping)
-        mapping_flags |= page_stack;
-    else if (private_mapping && (flags & 0x20))
-        mapping_flags |= page_anonymous;
-    if (!current->memory->space.map(addr, len, 3, mapping_flags))
-        return -12;
-    if ((flags & 0x21) == 0x21)
-        for (uint64_t page = addr; page < addr + len; page += page_size) {
-            uint64_t& entry = *current->memory->space.entry(page);
-            entry |= 0x400;
-            page_account_shared(entry & page_mask);
-        }
-    if (h && off < h->node->size) {
-        uint8_t buffer[4096];
-        size_t count = min(len, h->node->size - size_t(off));
-        for (size_t done = 0; done < count;) {
-            int64_t result =
-                node_read(h->node, off + done, buffer, min(sizeof(buffer), count - done));
-            if (result <= 0 ||
-                !current->memory->space.copy_out(addr + done, buffer, size_t(result))) {
-                current->memory->space.unmap(addr, len);
-                return result < 0 ? result : -5;
+        if ((flags & 0x21) == 0x21)
+            for (uint64_t page = addr; page < addr + len; page += page_size) {
+                uint64_t& entry = *space.entry(page);
+                entry |= 0x400;
+                page_account_shared(entry & page_mask);
             }
-            done += result;
+        if (h && off < h->node->size) {
+            uint8_t buffer[4096];
+            size_t count = min(len, h->node->size - size_t(off));
+            for (size_t done = 0; done < count;) {
+                int64_t result =
+                    node_read(h->node, off + done, buffer, min(sizeof(buffer), count - done));
+                if (result <= 0 || !space.copy_out(addr + done, buffer, size_t(result))) {
+                    space.unmap(addr, len);
+                    return result < 0 ? int(result) : -5;
+                }
+                done += result;
+            }
         }
+        if (h && h->node->mount->noexec)
+            for (uint64_t page = addr; page < addr + len; page += page_size)
+                *space.entry(page) |= page_no_execute;
+        if (!space.protect(addr, len, prot)) {
+            space.unmap(addr, len);
+            return -12;
+        }
+        return 0;
+    };
+    if (int error = map_pages()) {
+        release(file);
+        return error;
     }
-    if (h && h->node->mount->noexec)
-        for (uint64_t page = addr; page < addr + len; page += page_size)
-            *current->memory->space.entry(page) |= page_no_execute;
-    if (!current->memory->space.protect(addr, len, prot))
-        return -12;
+    if (file) {
+        *file = {
+            .space = &space, .start = addr, .end = addr + len, .offset = off, .description = h};
+        attach_file_mapping(*file);
+    }
     return complete();
 }
 

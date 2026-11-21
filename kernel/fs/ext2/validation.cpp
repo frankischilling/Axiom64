@@ -307,6 +307,9 @@ struct Validation {
                         return v.fail();
                     if (!ext2_xattr_supported(block, v.block_size))
                         return v.fail(-95);
+                    if (auto body = data.xattr_body(v.inode_size);
+                        body && ext2_xattr_regions_conflict(body, block))
+                        return v.fail();
                     if (++xattr_references[attribute] > actual)
                         return v.fail();
                     setbit(owners, attribute, true);

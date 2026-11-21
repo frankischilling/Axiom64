@@ -80,9 +80,10 @@ python3 scripts/ext2_journal_rejection_test.py
 
 [[step]]
 suites = ["storage-journal"]
-name = "Check native orphan records and interrupted cleanup"
+name = "Check orphan cleanup and inode-body attributes across interruption"
 run = '''
 make test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer test-ext4-large-truncate test-ext2-last-reference
+python3 -B scripts/ext4_inode_xattr_test.py
 '''
 
 [[step]]

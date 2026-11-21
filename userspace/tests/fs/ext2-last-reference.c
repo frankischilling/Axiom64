@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-21
  *
- * Exercises final descriptor, task, pathname, executable and Unix socket ownership.
+ * Exercises final descriptor, mapping, task, pathname, executable and socket ownership.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/socket.h>
@@ -78,6 +79,63 @@ static int separate_descriptions(void) {
 static int wait_success(pid_t child) {
     int status;
     REQUIRE(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    return 0;
+}
+
+static int split_mapping(size_t page) {
+    static const char path[] = TOP "/split-map";
+    int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+    REQUIRE(fd >= 0 && pwrite(fd, "a", 1, 0) == 1 && pwrite(fd, "b", 1, page) == 1 &&
+            pwrite(fd, "c", 1, 2 * page) == 1);
+    char* map = mmap(NULL, 3 * page, PROT_READ, MAP_PRIVATE, fd, 0);
+    REQUIRE(map != MAP_FAILED);
+    struct statfs held;
+    REQUIRE(unlink(path) == 0 && statfs(TOP, &held) == 0 && close(fd) == 0);
+    REQUIRE(free_delta(&held, 0, 0) == 0 && map[0] == 'a' && map[2 * page] == 'c');
+    REQUIRE(munmap(map + page, page) == 0 && free_delta(&held, 0, 0) == 0);
+    REQUIRE(mprotect(map + 2 * page, page, PROT_NONE) == 0);
+    REQUIRE(umount(TOP) == -1 && errno == EBUSY);
+    int memory = memfd_create("mapping-hole", MFD_CLOEXEC);
+    REQUIRE(memory >= 0 && ftruncate(memory, page) == 0 && write(memory, "m", 1) == 1);
+    char* middle = mmap(map + page, page, PROT_READ, MAP_SHARED | MAP_FIXED, memory, 0);
+    REQUIRE(middle == map + page && close(memory) == 0);
+
+    int gate[2];
+    REQUIRE(pipe(gate) == 0);
+    pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (!child) {
+        char command;
+        close(gate[1]);
+        _exit(read(gate[0], &command, 1) != 1 || command != 'r' ||
+              mprotect(map + 2 * page, page, PROT_READ) || map[0] != 'a' || *middle != 'm' ||
+              map[2 * page] != 'c');
+    }
+    REQUIRE(close(gate[0]) == 0);
+    char* replacement =
+        mmap(map + 2 * page, page, PROT_READ, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(replacement == map + 2 * page && !*replacement && free_delta(&held, 0, 0) == 0);
+    REQUIRE(munmap(map, 3 * page) == 0 && free_delta(&held, 0, 0) == 0);
+    REQUIRE(write(gate[1], "r", 1) == 1 && close(gate[1]) == 0 && wait_success(child) == 0);
+    REQUIRE(free_delta(&held, 1, 3) == 0);
+    return 0;
+}
+
+static int replace_mapping(size_t page) {
+    static const char path[] = TOP "/replaced-map";
+    int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+    REQUIRE(fd >= 0 && write(fd, "w", 1) == 1);
+    char* map = mmap(NULL, page, PROT_NONE, MAP_PRIVATE, fd, 0);
+    REQUIRE(map != MAP_FAILED);
+    struct statfs held;
+    REQUIRE(unlink(path) == 0 && statfs(TOP, &held) == 0 && close(fd) == 0);
+    REQUIRE(free_delta(&held, 0, 0) == 0);
+    REQUIRE(mmap(map, page, PROT_READ, MAP_PRIVATE | MAP_FIXED_NOREPLACE | MAP_ANONYMOUS, -1, 0) ==
+                MAP_FAILED &&
+            errno == EEXIST && free_delta(&held, 0, 0) == 0);
+    char* replacement = mmap(map, page, PROT_READ, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(replacement == map && !*replacement && free_delta(&held, 1, 1) == 0);
+    REQUIRE(munmap(replacement, page) == 0);
     return 0;
 }
 
@@ -167,33 +225,84 @@ static int bound_socket(void) {
     return 0;
 }
 
-static int executable(void) {
-    const char* path = TOP "/release-child";
-    struct stat info;
+static const char helper[] = TOP "/release-child";
+
+static void exec_waiting(int gate, int ready) {
+    char readfd[16], signal[16];
+    snprintf(readfd, sizeof(readfd), "%d", gate);
+    snprintf(signal, sizeof(signal), "%d", ready);
+    execl(helper, helper, "held-exec", readfd, signal, (char*)NULL);
+    _exit(127);
+}
+
+static int exec_releases_mapping(size_t page) {
+    static const char path[] = TOP "/exec-map";
+    int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+    REQUIRE(fd >= 0 && write(fd, "x", 1) == 1);
+    char* map = mmap(NULL, page, PROT_READ, MAP_PRIVATE, fd, 0);
+    REQUIRE(map != MAP_FAILED);
     struct statfs held;
+    REQUIRE(unlink(path) == 0 && statfs(TOP, &held) == 0 && close(fd) == 0);
     int ready[2], gate[2];
-    REQUIRE(stat(path, &info) == 0 && info.st_blocks && pipe(ready) == 0 && pipe(gate) == 0);
+    REQUIRE(pipe(ready) == 0 && pipe(gate) == 0);
     pid_t child = fork();
     REQUIRE(child >= 0);
     if (!child) {
-        char readfd[16], signal[16];
+        char command;
         close(ready[0]);
         close(gate[1]);
-        snprintf(readfd, sizeof(readfd), "%d", gate[0]);
-        snprintf(signal, sizeof(signal), "%d", ready[1]);
-        execl(path, path, "held-exec", readfd, signal, (char*)NULL);
-        _exit(127);
+        if (read(gate[0], &command, 1) != 1 || *map != 'x')
+            _exit(1);
+        exec_waiting(gate[0], ready[1]);
+    }
+    REQUIRE(close(ready[1]) == 0 && close(gate[0]) == 0);
+    REQUIRE(munmap(map, page) == 0 && free_delta(&held, 0, 0) == 0);
+    REQUIRE(write(gate[1], "x", 1) == 1);
+    char observed;
+    REQUIRE(read(ready[0], &observed, 1) == 1 && close(ready[0]) == 0 && observed == 'y');
+    REQUIRE(free_delta(&held, 1, 1) == 0);
+    REQUIRE(write(gate[1], "x", 1) == 1 && close(gate[1]) == 0 && wait_success(child) == 0);
+    return 0;
+}
+
+static int executable(void) {
+    struct stat info;
+    struct statfs held;
+    int ready[2], gate[2];
+    REQUIRE(stat(helper, &info) == 0 && info.st_blocks && pipe(ready) == 0 && pipe(gate) == 0);
+    pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (!child) {
+        close(ready[0]);
+        close(gate[1]);
+        exec_waiting(gate[0], ready[1]);
     }
     char observed;
     REQUIRE(close(ready[1]) == 0 && close(gate[0]) == 0);
     REQUIRE(read(ready[0], &observed, 1) == 1 && close(ready[0]) == 0 && observed == 'y');
-    REQUIRE(statfs(TOP, &held) == 0 && unlink(path) == 0 && free_delta(&held, 0, 0) == 0);
+    REQUIRE(statfs(TOP, &held) == 0 && unlink(helper) == 0 && free_delta(&held, 0, 0) == 0);
     REQUIRE(write(gate[1], "x", 1) == 1 && close(gate[1]) == 0 && wait_success(child) == 0);
     REQUIRE(free_delta(&held, 1, info.st_blocks / (held.f_bsize / 512)) == 0);
     return 0;
 }
 
 #ifndef NATIVE_TEST
+static int held_mapping_cut(void) {
+    static const char path[] = TOP "/victim";
+    static const char contents[] = "retained through close\n";
+    int fd = open(path, O_RDONLY);
+    REQUIRE(fd >= 0);
+    char* map = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0);
+    REQUIRE(map != MAP_FAILED);
+    struct statfs held;
+    REQUIRE(unlink(path) == 0 && statfs(TOP, &held) == 0 && close(fd) == 0);
+    REQUIRE(free_delta(&held, 0, 0) == 0 && !memcmp(map, contents, sizeof(contents) - 1));
+    puts("EXT2_LAST_REFERENCE_MAPPING_HELD");
+    fflush(stdout);
+    for (;;)
+        pause();
+}
+
 static int fault_close(const char* phase) {
     const char* path = TOP "/victim";
     struct statfs held;
@@ -227,16 +336,23 @@ int main(int argc, char** argv) {
     REQUIRE(mount("/dev/vda", TOP, "ext2", verify ? MS_RDONLY : 0, NULL) == 0);
 #endif
     if (!strcmp(phase, "write")) {
+        long page = sysconf(_SC_PAGESIZE);
+        REQUIRE(page > 0);
         REQUIRE(separate_descriptions() == 0);
         REQUIRE(inherited_description() == 0);
         REQUIRE(directory_pins() == 0);
         REQUIRE(passed_description() == 0);
         REQUIRE(bound_socket() == 0);
+        REQUIRE(split_mapping(page) == 0);
+        REQUIRE(replace_mapping(page) == 0);
+        REQUIRE(exec_releases_mapping(page) == 0);
         REQUIRE(executable() == 0);
     }
 #ifndef NATIVE_TEST
     else if (verify) {
         REQUIRE(access(TOP "/victim", F_OK) == -1 && errno == ENOENT);
+    } else if (!strcmp(phase, "mapping-held")) {
+        REQUIRE(held_mapping_cut() == 0);
     } else {
         REQUIRE(fault_close(phase) == 0);
     }

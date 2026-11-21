@@ -24,6 +24,7 @@
  */
 
 #include "fs/memfd.hpp"
+#include "mm/file_mapping.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "fs/vfs.hpp"
@@ -46,23 +47,12 @@ constexpr uint64_t new_preallocation = 1;
 
 struct MemoryFile {
     Node node;
-    MemfdMapping* mappings;
+    FileMapping* mappings;
     uint64_t pages;
     unsigned seals;
     unsigned descriptions;
 };
-} // namespace
 
-struct MemfdMapping {
-    MemoryFile* file;
-    AddressSpace* space;
-    MemfdMapping* next;
-    MemfdMapping* file_next;
-    uint64_t start, end, offset;
-    bool shared, may_write;
-};
-
-namespace {
 MemoryFile& file(Node* node) {
     return *static_cast<MemoryFile*>(node->filesystem_data);
 }
@@ -128,26 +118,6 @@ void collect(MemoryFile& memory) {
         return;
     discard_pages(memory, memory.pages, root_shift, 0, 0, UINT64_MAX);
     release(&memory);
-}
-
-void attach(MemfdMapping& mapping) {
-    auto link = &mapping.space->file_mappings;
-    while (*link && (*link)->start < mapping.start)
-        link = &(*link)->next;
-    mapping.next = *link;
-    *link = &mapping;
-    mapping.file_next = mapping.file->mappings;
-    mapping.file->mappings = &mapping;
-}
-
-void detach(MemfdMapping& mapping) {
-    auto& memory = *mapping.file;
-    auto link = &memory.mappings;
-    while (*link != &mapping)
-        link = &(*link)->file_next;
-    *link = mapping.file_next;
-    release(&mapping);
-    collect(memory);
 }
 
 uint64_t pte_permissions(uint64_t pte) {
@@ -546,7 +516,7 @@ int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t
     if (shared && (prot & 2) && sealed)
         return -1;
     auto space = &task.memory->space;
-    auto map = static_cast<MemfdMapping*>(alloc(sizeof(MemfdMapping)));
+    auto map = static_cast<FileMapping*>(alloc(sizeof(FileMapping)));
     if (!map || !space->prepare_mapping(base, length)) {
         release(map);
         return -12;
@@ -565,68 +535,30 @@ int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t
         flags |= deny_write;
     for (uint64_t va = base; va < base + length; va += page_size)
         *space->entry(va) = memfd_page_protection(flags, prot);
-    *map = {&memory, space, nullptr, nullptr, base, base + length, offset, shared, may_write};
-    attach(*map);
+    *map = {.space = space,
+            .start = base,
+            .end = base + length,
+            .offset = offset,
+            .memory_file = &memory.node,
+            .shared = shared,
+            .may_write = may_write};
+    attach_file_mapping(*map);
     return 0;
 }
 
-int memfd_unmap(AddressSpace& space, uint64_t base, size_t length) {
-    uint64_t end = base + length;
-    MemfdMapping* suffix = nullptr;
-    for (auto map = space.file_mappings; map && map->start < end; map = map->next)
-        if (map->start < base && map->end > end) {
-            suffix = static_cast<MemfdMapping*>(alloc(sizeof(MemfdMapping)));
-            if (!suffix)
-                return -12;
-            break;
-        }
-    auto link = &space.file_mappings;
-    while (auto map = *link) {
-        if (map->start >= end)
-            break;
-        if (map->end <= base) {
-            link = &map->next;
-            continue;
-        }
-        if (map->start >= base && map->end <= end) {
-            *link = map->next;
-            detach(*map);
-            continue;
-        }
-        if (map->start < base) {
-            if (map->end > end) {
-                *suffix = *map;
-                suffix->offset += end - map->start;
-                suffix->start = end;
-                attach(*suffix);
-            }
-            map->end = base;
-        } else {
-            map->offset += end - map->start;
-            map->start = end;
-        }
-        link = &map->next;
-    }
-    return 0;
+void memfd_link_mapping(FileMapping& mapping) {
+    auto& memory = file(mapping.memory_file);
+    mapping.file_next = memory.mappings;
+    memory.mappings = &mapping;
 }
 
-bool memfd_clone_mappings(AddressSpace& dest, const AddressSpace& source) {
-    for (auto map = source.file_mappings; map; map = map->next) {
-        auto copy = static_cast<MemfdMapping*>(alloc(sizeof(MemfdMapping)));
-        if (!copy)
-            return false;
-        *copy = *map;
-        copy->space = &dest;
-        attach(*copy);
-    }
-    return true;
-}
-
-void memfd_release_mappings(AddressSpace& space) {
-    while (auto map = space.file_mappings) {
-        space.file_mappings = map->next;
-        detach(*map);
-    }
+void memfd_unlink_mapping(FileMapping& mapping) {
+    auto& memory = file(mapping.memory_file);
+    auto link = &memory.mappings;
+    while (*link != &mapping)
+        link = &(*link)->file_next;
+    *link = mapping.file_next;
+    collect(memory);
 }
 
 MemfdFault memfd_fault(AddressSpace& space, uint64_t address, bool write, bool execute) {
@@ -640,9 +572,9 @@ MemfdFault memfd_fault(AddressSpace& space, uint64_t address, bool write, bool e
     auto map = space.file_mappings;
     while (map && map->end <= address)
         map = map->next;
-    if (!map || address < map->start)
+    if (!map || address < map->start || !map->memory_file)
         panic("memory file PTE without a mapping");
-    auto& memory = *map->file;
+    auto& memory = file(map->memory_file);
     uint64_t offset = align_down(address) - map->start + map->offset;
     if (offset >= memory.node.size)
         return MemfdFault::bus;

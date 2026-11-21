@@ -5,7 +5,7 @@
 # @author  frankischilling
 # @date    2026-11-21
 #
-# Checks guest and native free counts, journal retry and recovery after a final close.
+# Checks guest and native free counts, journal retry, and recovery around the final reference.
 #
 # Copyright (C) 2026 frankischilling
 #
@@ -37,7 +37,7 @@ from ext4_orphan_test import field, images
 from ext4_orphan_writer_test import BLOCK, check_inodes, read_block, records
 from fetch import ROOT
 from fixture_archive import sparse_copy_fixture
-from guest_storage_boot import boot, cut_after_write_fault, with_write_fault
+from guest_storage_boot import boot, cut_after_write_fault, stop_at_marker, with_write_fault
 
 PASS = "EXT2_LAST_REFERENCE_PASS"
 CLIENT = "userspace/tests/fs/ext2-last-reference.c"
@@ -85,6 +85,36 @@ def check_volume(directory, disk, number, orphan, label):
     check_inodes(directory, disk, [number], False, label)
 
 
+def recover_pair(directory, disk, number, orphan, iso, firmware, transport):
+    checker = clean_oracle(directory, disk)
+    check_volume(directory, checker, number, orphan, "native")
+    guest = directory / "guest.raw"
+    sparse_copy_fixture(disk, guest)
+    boot(directory, iso, [guest], firmware, transport, [PASS])
+    check_volume(directory, guest, number, orphan, "guest")
+    before = digest(guest)
+    reboot = directory / "reboot"
+    reboot.mkdir()
+    boot(reboot, iso, [guest], firmware, transport, [PASS])
+    assert digest(guest) == before
+    return {"native_sha256": digest(checker), "guest_sha256": before}
+
+
+def mapped_cut(directory, seed, boot_images, orphan, firmware, transport):
+    directory.mkdir()
+    number = field(seed, "stat /victim", rb"Inode:\s+(\d+)")
+    disk = directory / "cut.raw"
+    sparse_copy_fixture(seed, disk)
+    stop_at_marker(directory, boot_images["mapping-held"], disk, firmware, transport,
+                   "EXT2_LAST_REFERENCE_MAPPING_HELD")
+    assert records(disk, orphan) == (([], [number], True) if orphan else ([number], [], False))
+    check_inodes(directory, disk, [number], True, "mapped")
+    block = int(debug(seed, "bmap /victim 0"))
+    assert read_block(disk, block) == read_block(seed, block)
+    observed = recover_pair(directory, disk, number, orphan, boot_images["verify"], firmware, transport)
+    return {"inode": number, "interrupted_sha256": digest(disk), **observed}
+
+
 def fault(directory, seed, boot_images, orphan):
     directory.mkdir()
     number = field(seed, "stat /victim", rb"Inode:\s+(\d+)")
@@ -100,17 +130,7 @@ def fault(directory, seed, boot_images, orphan):
     observed = replay_only(directory, disk, "journal-only.raw")
     assert records(observed, orphan) == ([], [], bool(orphan))
     check_inodes(directory, observed, [number], False, "journal-only")
-    checker = clean_oracle(directory, disk)
-    check_volume(directory, checker, number, orphan, "native")
-    guest = directory / "guest.raw"
-    sparse_copy_fixture(disk, guest)
-    boot(directory, boot_images["verify"], [guest], "bios", "modern", [PASS])
-    check_volume(directory, guest, number, orphan, "guest")
-    before = digest(guest)
-    reboot = directory / "reboot"
-    reboot.mkdir()
-    boot(reboot, boot_images["verify"], [guest], "bios", "modern", [PASS])
-    assert digest(guest) == before
+    recovered = recover_pair(directory, disk, number, orphan, boot_images["verify"], "bios", "modern")
 
     retry = directory / "retry"
     retry.mkdir()
@@ -121,8 +141,7 @@ def fault(directory, seed, boot_images, orphan):
          disk_options=",cache=writethrough,werror=report")
     check_volume(retry, resumed, number, orphan, "same-mount")
     return {"inode": number, "checkpoint_sequence": sequence, "failed_home_block": block,
-            "interrupted_sha256": digest(disk), "guest_sha256": before,
-            "retry_sha256": digest(resumed), "native_sha256": digest(checker)}
+            "interrupted_sha256": digest(disk), "retry_sha256": digest(resumed), **recovered}
 
 
 def native_comparison(directory):
@@ -162,7 +181,7 @@ def main():
         parser.error("output must be under build/")
     out.mkdir(parents=True, exist_ok=False)
     boot_images, client = images(out, False, prefix="ext2-last-reference", source=CLIENT,
-                                 base_phases=("write", "verify", "pressure", "recovery"))
+                                 base_phases=("write", "verify", "pressure", "recovery", "mapping-held"))
     rows = []
     for name, filesystem, (firmware, transport) in PROFILES:
         if args.profile and name != args.profile:
@@ -177,6 +196,8 @@ def main():
         check_volume(directory, disk, child, orphan, "guest")
         row = dict(profile=name, firmware=firmware, transport=transport, sha256=digest(disk))
         if filesystem != "ext2":
+            row["mapped_cut"] = mapped_cut(directory / "mapped-cut", seed, boot_images, orphan,
+                                           firmware, transport)
             row["fault"] = fault(directory / "fault", seed, boot_images, orphan)
         rows.append(row)
         (out / "results.json").write_text(json.dumps(rows, indent=2) + "\n")

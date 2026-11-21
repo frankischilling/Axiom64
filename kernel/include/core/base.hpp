@@ -167,12 +167,12 @@ struct Frame {
 
 static_assert(sizeof(Frame) == 22 * 8);
 
-struct MemfdMapping;
+struct FileMapping;
 
 struct AddressSpace {
     uint64_t root = 0;
     uint64_t next_map = 0x100000000;
-    MemfdMapping* file_mappings = nullptr;
+    FileMapping* file_mappings = nullptr;
 
     bool create();
 

@@ -140,6 +140,12 @@ struct Inode {
         return offset + size <= inode_bytes + u16(bytes + inode_bytes);
     }
 
+    uint8_t* xattr_body(unsigned inode_size) {
+        unsigned offset = inode_bytes + u16(bytes + inode_bytes);
+        return offset + 4 <= inode_size && u32(bytes + offset) == ext_xattr_magic ? bytes + offset
+                                                                                  : nullptr;
+    }
+
     Timestamp time(InodeTimeField field) const;
     bool can_set_time(InodeTimeField field, Timestamp value) const;
     void set_time(InodeTimeField field, Timestamp value);

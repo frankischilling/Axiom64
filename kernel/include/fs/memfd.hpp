@@ -43,9 +43,8 @@ void memfd_reap(Node*);
 
 int memfd_map(Task&, Handle&, uint64_t base, size_t length, uint64_t offset, int prot, bool shared,
               bool replace);
-int memfd_unmap(AddressSpace&, uint64_t base, size_t length);
-bool memfd_clone_mappings(AddressSpace&, const AddressSpace&);
-void memfd_release_mappings(AddressSpace&);
+void memfd_link_mapping(FileMapping&);
+void memfd_unlink_mapping(FileMapping&);
 uint64_t memfd_page_protection(uint64_t entry, int prot);
 
 enum class MemfdFault { outside, protection, bus, resolved };

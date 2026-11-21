@@ -158,12 +158,6 @@ bool Volume::decode_inode(uint32_t number, const uint8_t* raw, Inode& inode) {
         unsigned extra = u16(raw + inode_bytes);
         if (extra > inode_size - inode_bytes || (extra & 3))
             return fail(-95);
-        unsigned attributes = inode_bytes + extra;
-        if (attributes + 4 <= inode_size && u32(raw + attributes) == 0xea020000) {
-            // Native tools can leave an empty in-inode list for external attributes.
-            if (attributes + 8 > inode_size || u32(raw + attributes + 4))
-                return fail(-95);
-        }
     }
     if (checksums() && (number >= first_inode || number == 2 || u16(raw))) {
         uint32_t checksum = inode_checksum(metadata_seed, number, raw, inode_size);
@@ -174,6 +168,12 @@ bool Volume::decode_inode(uint32_t number, const uint8_t* raw, Inode& inode) {
     memcpy(inode.bytes, raw, inode_size);
     if (inode_size == inode_bytes)
         set16(inode.bytes + inode_bytes, 0);
+    if (auto body = inode.xattr_body(inode_size)) {
+        if (int error = ext2_xattr_body_validate(body, inode_size - (body - inode.bytes)))
+            return fail(error);
+        if (u32(body + 4) && !(compatible & 8))
+            return fail();
+    }
     inode.number = number;
     return true;
 }

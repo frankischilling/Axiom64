@@ -517,7 +517,15 @@ static int64_t getxattr(Node* node, const XattrName& name, void* buffer, size_t 
     Inode inode;
     uint8_t block[max_block_size];
     uint32_t references;
-    if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, block, references))
+    if (!v.load_inode(node->inode, inode))
+        return v.error;
+    if (auto body = inode.xattr_body(v.inode_size)) {
+        int64_t result =
+            ext2_xattr_body_get(body, v.inode_size - (body - inode.bytes), name, buffer, size);
+        if (result != -61)
+            return result;
+    }
+    if (!v.xattr_block(inode, block, references))
         return v.error;
     return references ? ext2_xattr_get(block, v.block_size, name, buffer, size) : -61;
 }
@@ -530,7 +538,26 @@ static int64_t listxattr(Node* node, void* buffer, size_t size, bool trusted) {
     uint32_t references;
     if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, block, references))
         return v.error;
-    return references ? ext2_xattr_list(block, v.block_size, buffer, size, trusted) : 0;
+    auto body = inode.xattr_body(v.inode_size);
+    if (!body)
+        return references ? ext2_xattr_list(block, v.block_size, buffer, size, trusted) : 0;
+    size_t body_size = v.inode_size - (body - inode.bytes);
+    int64_t inline_count = ext2_xattr_body_list(body, body_size, nullptr, 0, trusted);
+    int64_t external_count =
+        references ? ext2_xattr_list(block, v.block_size, nullptr, 0, trusted) : 0;
+    if (inline_count < 0 || external_count < 0)
+        return inline_count < 0 ? inline_count : external_count;
+    size_t count = inline_count + external_count;
+    if (!size)
+        return count;
+    if (size < count)
+        return -34;
+    if (inline_count)
+        ext2_xattr_body_list(body, body_size, buffer, inline_count, trusted);
+    if (external_count)
+        ext2_xattr_list(block, v.block_size, static_cast<uint8_t*>(buffer) + inline_count,
+                        external_count, trusted);
+    return count;
 }
 
 static int change_xattr(Node* node, const XattrName& name, const void* value, size_t size,
@@ -543,7 +570,32 @@ static int change_xattr(Node* node, const XattrName& name, const void* value, si
     Inode inode;
     uint8_t old[max_block_size], replacement[max_block_size];
     uint32_t references;
-    if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, old, references))
+    if (!v.load_inode(node->inode, inode))
+        return v.finish(false);
+    if (auto body = inode.xattr_body(v.inode_size)) {
+        size_t body_size = v.inode_size - (body - inode.bytes);
+        int64_t present = ext2_xattr_body_get(body, body_size, name, nullptr, 0);
+        if (present >= 0) {
+            uint8_t updated[max_inode_bytes - inode_bytes];
+            int error =
+                ext2_xattr_body_change(body, body_size, name, value, size, flags, remove, updated);
+            if (!error) {
+                memcpy(body, updated, body_size);
+                inode.set_time(inode_ctime, node_now());
+                return v.finish(v.save_inode(node->inode, inode));
+            }
+            if (error != -28)
+                return v.finish(v.fail(error));
+            // A larger value can move to an external block in the same transaction.
+            error = ext2_xattr_body_change(body, body_size, name, nullptr, 0, 0, true, updated);
+            if (error)
+                return v.finish(v.fail(error));
+            memcpy(body, updated, body_size);
+            flags &= ~2u;
+        } else if (present != -61)
+            return v.finish(v.fail(present));
+    }
+    if (!v.xattr_block(inode, old, references))
         return v.finish(false);
     bool empty;
     int error = ext2_xattr_change(references ? old : nullptr, v.block_size, name, value, size,

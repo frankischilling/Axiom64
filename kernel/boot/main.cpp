@@ -117,6 +117,8 @@ extern "C" [[noreturn]] void kernel_main() {
         test_phase = "AXIOM64_PHASE=io";
     else if (word(cmd, "phase=pressure"))
         test_phase = "AXIOM64_PHASE=pressure";
+    else if (word(cmd, "phase=mapping-held"))
+        test_phase = "AXIOM64_PHASE=mapping-held";
     memory_init();
     arch_init();
     uint64_t rsdp = rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0;

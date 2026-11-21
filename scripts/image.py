@@ -1,4 +1,27 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/image.py
+# @brief   Assemble BIOS and UEFI boot images.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Packages the kernel and initramfs with the configured bootloader and test options.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Build an ISO that boots through the same Limine protocol on BIOS and UEFI."""
 import argparse
 import os
@@ -13,7 +36,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root", "network"], default="full")
-parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "recovery", "queue", "invalid", "full", "all", "cond", "io", "pressure", "cache"], default="verify")
+parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "recovery", "queue",
+                                       "invalid", "full", "all", "cond", "io", "pressure", "cache",
+                                       "mapping-held"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 parser.add_argument("--output-directory", type=Path, help="directory for the completed ISO")
 parser.add_argument("--initramfs", type=Path, help="explicit initramfs for an isolated fixture")

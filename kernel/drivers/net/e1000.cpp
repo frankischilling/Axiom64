@@ -27,6 +27,7 @@
 #include "drivers/platform/pci.hpp"
 #include "drivers/virtio/queue.hpp"
 #include "ipc/ipc.hpp"
+#include "mm/dma.hpp"
 
 namespace ax {
 namespace {
@@ -268,9 +269,9 @@ static bool initialize(Controller& device, const PciFunction& pci, uint32_t mode
     memcpy(device.adapter.info.mac + 4, &high, 2);
     for (unsigned i = 0; i < 128; i++)
         device.write(multicast + i * 4, 0);
-    device.rings = page_alloc(2);
-    device.receive = page_alloc(ring_size * buffer_size / page_size);
-    device.transmit = page_alloc(ring_size * buffer_size / page_size);
+    device.rings = Dma::allocate(2, Dma::pci);
+    device.receive = Dma::allocate(ring_size * buffer_size / page_size, Dma::pci);
+    device.transmit = Dma::allocate(ring_size * buffer_size / page_size, Dma::pci);
     if (!device.rings || !device.receive || !device.transmit)
         return false;
     memset(physical(device.rings), 0, 2 * page_size);

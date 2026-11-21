@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "mm/dma.hpp"
 #include "mm/file_mapping.hpp"
 #include "mm/mmio.hpp"
 #include "mm/stack.hpp"
@@ -37,7 +38,7 @@ static uint8_t shared_bitmap[max_pages / 8];
 static uint16_t page_references[max_pages];
 static size_t search_page = 1;
 static uint64_t kernel_root;
-static uint64_t mmio_limit;
+static uint64_t cpu_physical_limit;
 static Mmio::CacheLayout mmio_cache;
 static size_t total_pages, free_pages, shared_pages;
 
@@ -57,7 +58,7 @@ void memory_init() {
         panic("missing memory map");
     direct_map = boot_info.direct_offset;
     kernel_root = read_cr3() & page_mask;
-    mmio_limit = physical_address_limit();
+    cpu_physical_limit = physical_address_limit();
     uint32_t a = 1, b, c, d;
     asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
     const bool pat = d & (1u << 16);
@@ -90,7 +91,7 @@ void activate_kernel_memory() {
 
 void* map_mmio(uint64_t address, size_t length) {
     Mmio::Range range;
-    if (!Mmio::range(address, length, direct_map, mmio_limit, range) ||
+    if (!Mmio::range(address, length, direct_map, cpu_physical_limit, range) ||
         !Mmio::permits(range, boot_info))
         return nullptr;
     const Mmio::PageTables tables{
@@ -98,41 +99,37 @@ void* map_mmio(uint64_t address, size_t length) {
         [](void*) { return page_alloc(); }, [](void*, uint64_t page) { page_free(page); },
         [](void*, uint64_t va) { asm volatile("invlpg (%0)" ::"r"(va)
                                               : "memory"); }};
-    return Mmio::install(range, kernel_root, mmio_limit, mmio_cache, tables) ? physical(address)
-                                                                             : nullptr;
+    return Mmio::install(range, kernel_root, cpu_physical_limit, mmio_cache, tables)
+               ? physical(address)
+               : nullptr;
 }
 
-static uint64_t allocate_pages(size_t count, size_t ceiling) {
+static uint64_t allocate_pages(size_t count, size_t ceiling, size_t boundary_pages = 0) {
     if (!count || count > free_pages)
         return 0;
-    const size_t cursor = min(search_page, ceiling);
-    for (int pass = 0; pass < 2; pass++) {
-        size_t first = pass ? 1 : cursor, end = pass ? cursor : ceiling;
-        size_t run = 0;
-        for (size_t p = first; p < end; p++) {
-            run = used(p) ? 0 : run + 1;
-            if (run == count) {
-                size_t start = p - count + 1;
-                for (size_t k = start; k <= p; k++) {
-                    mark(k, true);
-                    page_references[k] = 1;
-                }
-                free_pages -= count;
-                search_page = p + 1;
-                memset(physical(start * page_size), 0, count * page_size);
-                return start * page_size;
-            }
-        }
+    const auto start = Dma::find_free_run(bitmap, ceiling, search_page, count, boundary_pages);
+    if (!start)
+        return 0;
+    for (size_t page = start; page < start + count; ++page) {
+        mark(page, true);
+        page_references[page] = 1;
     }
-    return 0;
+    free_pages -= count;
+    search_page = start + count;
+    const uint64_t address = start * page_size;
+    memset(physical(address), 0, count * page_size);
+    return address;
 }
 
 uint64_t page_alloc(size_t count) {
     return allocate_pages(count, max_pages);
 }
 
-uint64_t page_alloc_below(uint64_t limit) {
-    return allocate_pages(1, min(limit / page_size, uint64_t(max_pages)));
+uint64_t Dma::allocate(size_t count, Limits limits) {
+    if (limits.boundary && (!power_of_two(limits.boundary) || limits.boundary < page_size))
+        return 0;
+    const auto ceiling = min(min(limits.end, cpu_physical_limit) / page_size, uint64_t(max_pages));
+    return allocate_pages(count, ceiling, limits.boundary / page_size);
 }
 
 void page_account_shared(uint64_t p, size_t count) {

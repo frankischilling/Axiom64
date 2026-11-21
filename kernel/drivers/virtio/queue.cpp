@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/virtio/queue.hpp"
+#include "mm/dma.hpp"
 
 namespace ax {
 bool SplitQueue::create(uint16_t size) {
@@ -32,7 +33,7 @@ bool SplitQueue::create(uint16_t size) {
     size_t available_offset = size_t(size) * sizeof(Descriptor);
     size_t used_offset = align_up(available_offset + 6 + size_t(size) * 2);
     pages_ = align_up(used_offset + 6 + size_t(size) * sizeof(UsedEntry)) / page_size;
-    physical_ = page_alloc(pages_);
+    physical_ = Dma::allocate(pages_, Dma::pci);
     owners_ = (Owner*)alloc(size_t(size) * sizeof(Owner));
     if (!physical_ || !owners_) {
         release();
@@ -70,8 +71,7 @@ int SplitQueue::submit(const VirtioBuffer* buffers, unsigned count, uint64_t coo
     uint64_t bytes = 0;
     for (unsigned i = 0; i < count; i++) {
         const auto& b = buffers[i];
-        if (b.address >= (1ull << 52) || b.length > (1ull << 52) - b.address ||
-            (writable && !b.writable))
+        if (!Dma::fits(b.address, b.length, Dma::pci) || (writable && !b.writable))
             return -22;
         writable |= b.writable;
         bytes += b.length;

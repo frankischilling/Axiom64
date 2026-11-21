@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/block/floppy.hpp"
+#include "mm/dma.hpp"
 #include "core/time.hpp"
 
 namespace ax {
@@ -33,7 +34,7 @@ constexpr uint8_t awake = 0x0c;
 constexpr uint8_t rqm = 0x80, dio = 0x40, non_dma = 0x20;
 constexpr unsigned heads = 2, sectors_per_track = 18, cylinders = 80;
 constexpr unsigned capacity = heads * sectors_per_track * cylinders;
-constexpr uint64_t dma_limit = 1u << 24;
+constexpr Dma::Limits dma_limits{1u << 24, 1u << 16};
 constexpr uint8_t dma_channel = 2, dma_masked = 4 | dma_channel;
 constexpr uint16_t dma_mask = 0x0a, dma_flip_flop = 0x0c, dma_count = 0x05;
 static_assert(page_size >= sector_size && 0x10000 % page_size == 0);
@@ -259,7 +260,7 @@ void floppy_init() {
         return;
     if (in8(msr) == 0xff)
         return;
-    dma_page = page_alloc_below(dma_limit);
+    dma_page = Dma::allocate(1, dma_limits);
     if (!dma_page) {
         log("floppy: no ISA DMA page available\n");
         return;

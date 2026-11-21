@@ -42,6 +42,11 @@ page tables with address and undefined behavior sanitizers. It checks physical
 address limits, boot memory reservations, uncacheable mappings, existing
 permissions, and rollback on allocation failures or a conflicting page.
 
+`make test-suite SUITE=dma` compares contiguous page selection against a
+bitmap oracle, including runs that span the search cursor, apertures with
+too few pages, and the ISA 64 KiB boundary. `make test-virtqueue` checks that
+a descriptor crossing the PCI aperture leaves the ring unchanged.
+
 The i440fx link recovery boots in `make test-udp` use GDB to disable one
 PIIX routing byte after firmware setup. The host reads back the programmed
 IRQ, and the guest must report actual RX and TX interrupts. Serial, debugger,

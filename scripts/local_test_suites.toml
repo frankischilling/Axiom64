@@ -27,6 +27,7 @@ matrix = [
     "secondary-boot",
     "multiboot",
     "mmio",
+    "dma",
     "legacy-ports",
     "legacy-ata",
     "floppy",

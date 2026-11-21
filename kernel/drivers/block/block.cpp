@@ -29,6 +29,7 @@
 #include "drivers/block/floppy.hpp"
 #include "drivers/block/partition.hpp"
 #include "drivers/virtio/pci.hpp"
+#include "mm/dma.hpp"
 
 namespace ax {
 namespace {
@@ -84,7 +85,7 @@ static bool initialize(Disk& d, const PciFunction& pci) {
         return false;
     if (!d.pci.setup_queue(d.queue, 0, 256, 4))
         return false;
-    d.request_physical = page_alloc(1 + transfer_sectors * sector_size / page_size);
+    d.request_physical = Dma::allocate(1 + transfer_sectors * sector_size / page_size, Dma::pci);
     if (!d.request_physical)
         return false;
     d.request = (Request*)physical(d.request_physical);

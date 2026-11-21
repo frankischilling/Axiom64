@@ -74,6 +74,7 @@ suites = ["storage-journal"]
 name = "Recover committed journals and verify guest persistence across all profiles"
 run = '''
 make test-ext2-journal
+python3 scripts/ext2_journal_checksums_test.py --native-directory build/ext2-journal-native
 python3 scripts/ext2_journal_rejection_test.py
 '''
 

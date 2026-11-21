@@ -416,10 +416,10 @@ build/ext2-xattr-codec-test: kernel/tests/fs/ext2_xattr.cpp kernel/fs/ext2/xattr
 test-ext2-xattr-codec: build/ext2-xattr-codec-test
 	ASAN_OPTIONS=detect_leaks=1 $(PYTHON) scripts/tests/ext2_xattr_codec_test.py
 .PHONY: test-ext2-journal-native test-ext2-journal test-ext2-journal-lifetime
-build/ext2-journal-core-native: kernel/tests/fs/ext2_journal.cpp kernel/fs/ext2/journal.cpp kernel/fs/ext2/volume.hpp kernel/include/fs/ext2/journal.hpp kernel/include/core/base.hpp
+build/ext2-journal-core-native: kernel/tests/fs/ext2_journal.cpp kernel/fs/ext2/journal.cpp kernel/fs/ext2/volume.hpp kernel/include/fs/ext2/journal.hpp kernel/include/core/base.hpp kernel/include/core/crc.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/ext2_journal.cpp kernel/fs/ext2/journal.cpp -o $@
-build/ext2-journal-volume-native: kernel/tests/fs/ext2_journal_volume.cpp kernel/fs/ext2/journal.cpp kernel/include/fs/ext2/journal.hpp kernel/include/core/base.hpp
+build/ext2-journal-volume-native: kernel/tests/fs/ext2_journal_volume.cpp kernel/fs/ext2/journal.cpp kernel/include/fs/ext2/journal.hpp kernel/include/core/base.hpp kernel/include/core/crc.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/ext2_journal_volume.cpp kernel/fs/ext2/journal.cpp -o $@
 test-ext2-journal-native: build/ext2-journal-core-native build/ext2-journal-volume-native
@@ -427,6 +427,9 @@ test-ext2-journal-native: build/ext2-journal-core-native build/ext2-journal-volu
 	ASAN_OPTIONS=detect_leaks=1 $(PYTHON) scripts/ext2_journal_native_test.py
 test-ext2-journal:
 	$(PYTHON) scripts/ext2_journal_test.py
+.PHONY: test-ext2-journal-checksums
+test-ext2-journal-checksums:
+	$(PYTHON) -B scripts/ext2_journal_checksums_test.py
 test-ext2-journal-lifetime:
 	$(PYTHON) scripts/ext2_journal_lifetime_test.py
 build/credentials-native: userspace/tests/security/credentials.c

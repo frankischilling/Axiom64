@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <unistd.h>
@@ -51,36 +52,52 @@ static void all(int fd, const unsigned char* data, size_t length) {
     }
 }
 
-int main(int argc, char** argv) {
-    CHECK(argc == 2 && !getuid() && !geteuid());
+static void exercise(const char* mode) {
+    CHECK(!getuid() && !geteuid());
     CHECK(mkdir("/mnt", 0755) == 0 || errno == EEXIST);
     CHECK(mkdir("/mnt/journal", 0755) == 0);
-    CHECK(mount("/dev/vda", "/mnt/journal", "ext2", 0, NULL) == 0);
+    int verify = !strcmp(mode, "verify"), cut_replay = !strcmp(mode, "readonly");
+    int discard = !strcmp(mode, "recovery"), fault = !strcmp(mode, "error");
+    int readonly = verify || cut_replay;
+    int mounted = mount("/dev/vda", "/mnt/journal", "ext2", readonly ? MS_RDONLY : 0, NULL);
+    if (!strcmp(mode, "invalid")) {
+        CHECK(mounted == -1 && errno == EUCLEAN);
+        puts("EXT2_JOURNAL_CHECKSUM_REJECT_PASS");
+        return;
+    }
+    CHECK(mounted == 0);
     struct statfs filesystem;
     CHECK(statfs("/mnt/journal", &filesystem) == 0 && filesystem.f_type == 0xef53 &&
           (filesystem.f_bsize == 1024 || filesystem.f_bsize == 2048 || filesystem.f_bsize == 4096));
     size_t size = (size_t)filesystem.f_bsize;
-    size_t historical = 9 * size - 128, length = historical + 448;
-    int fd = open("/mnt/journal/seed", O_RDWR | O_CLOEXEC);
+    size_t historical = 9 * size - 128, length = historical + (discard ? 0 : 448);
+    size_t extra = 2 * size + 37, expected = length + (readonly ? extra : 0);
+    int fd = open("/mnt/journal/seed", (readonly ? O_RDONLY : O_RDWR) | O_CLOEXEC);
     struct stat value;
-    CHECK(fd >= 0 && fstat(fd, &value) == 0 && value.st_size == (off_t)length &&
+    CHECK(fd >= 0 && fstat(fd, &value) == 0 && value.st_size == (off_t)expected &&
           S_ISREG(value.st_mode) && value.st_uid == 0 && value.st_gid == 0 && value.st_nlink == 1);
-    unsigned char* data = malloc(length + 2 * size + 37);
+    unsigned char* data = malloc(length + extra);
     CHECK(data != NULL);
     size_t done = 0;
-    while (done < length) {
-        ssize_t count = read(fd, data + done, length - done);
+    while (done < expected) {
+        ssize_t count = read(fd, data + done, expected - done);
         CHECK(count > 0);
         done += (size_t)count;
     }
     for (size_t index = 0; index < historical; index++)
         CHECK(data[index] == (unsigned char)(index * 31 + 17));
-    for (size_t index = 0; index < 448; index++)
+    for (size_t index = 0; index < length - historical; index++)
         CHECK(data[historical + index] == (unsigned char)(index * 13 + 9));
-    if (!strcmp(argv[1], "write")) {
-        size_t extra = 2 * size + 37;
+    if (!strcmp(mode, "write") || fault) {
         for (size_t index = 0; index < extra; index++)
             data[length + index] = (unsigned char)(index * 7 + 3);
+        if (fault) {
+            CHECK(write(fd, data + length, extra) == -1 && errno == EIO);
+            puts("EXT2_JOURNAL_HOME_WRITE_FAULT");
+            fflush(stdout);
+            for (;;)
+                pause();
+        }
         all(fd, data + length, extra);
         CHECK(fsync(fd) == 0);
         CHECK(mkdir("/mnt/journal/work", 0700) == 0);
@@ -91,12 +108,35 @@ int main(int argc, char** argv) {
         CHECK(rename("/mnt/journal/work/new", "/mnt/journal/work/final") == 0);
         int parent = open("/mnt/journal/work", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         CHECK(parent >= 0 && fsync(parent) == 0 && close(parent) == 0);
-    } else
-        CHECK(!strcmp(argv[1], "read"));
+    } else if (readonly) {
+        for (size_t index = 0; index < extra; index++)
+            CHECK(data[length + index] == (unsigned char)(index * 7 + 3));
+        if (verify) {
+            int created = open("/mnt/journal/work/final", O_RDONLY | O_CLOEXEC);
+            CHECK(created >= 0);
+            unsigned char* copy = malloc(size + 97);
+            CHECK(copy && read(created, copy, size + 97) == (ssize_t)(size + 97));
+            CHECK(!memcmp(copy, data, size + 97) && close(created) == 0);
+            free(copy);
+        }
+    } else {
+        CHECK(discard || !strcmp(mode, "read"));
+    }
     CHECK(close(fd) == 0);
     free(data);
     CHECK(umount("/mnt/journal") == 0);
-    printf("EXT2_JOURNAL_PASS mode=%s block_size=%zu historical_bytes=%zu\n", argv[1], size,
+    printf("EXT2_JOURNAL_PASS mode=%s block_size=%zu historical_bytes=%zu\n", mode, size,
            historical);
+}
+
+int main(int argc, char** argv) {
+    const char* mode = argc == 2 ? argv[1] : argc == 1 ? getenv("AXIOM64_PHASE") : NULL;
+    CHECK(mode);
+    exercise(mode);
+    if (argc == 1) {
+        fflush(stdout);
+        reboot(RB_POWER_OFF);
+        return 1;
+    }
     return 0;
 }

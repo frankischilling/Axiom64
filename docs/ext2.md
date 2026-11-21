@@ -72,9 +72,9 @@ Volumes without a journal use the development write path above. Its overlay does
 
 ## Internal journals
 
-Journal support accepts a classic internal JBD2 v2 journal in reserved inode 8, with 32-bit block numbers and no journal checksums. The journal inode may use either classic block pointers or an extent tree. External journals, checksum variants, asynchronous commits, fast commits, and orphan chains return `EOPNOTSUPP` before writes.
+The driver accepts internal JBD2 version-2 superblocks with no checksums or with the v1, v2, or v3 checksum format. Version 1 checks each transaction. Versions 2 and 3 check the journal superblock, descriptors, revocations, commits, and each logged block. The 64-bit journal record format is supported when the block numbers fit the volume's 32-bit filesystem geometry. The journal inode may use classic block pointers or an extent tree. External journals, asynchronous commits, fast commits, and orphan chains return `EOPNOTSUPP` before writes.
 
-The journal module stages committed records into the mount overlay. The filesystem then verifies allocation, ownership, namespace, journal identity and unchanged geometry before checkpointing. Journal records cannot overwrite journal storage. Revocations suppress earlier records, escaped magic values are restored, and incomplete transactions leave their home blocks untouched. Writable operations log their complete changed blocks, including data, before committing and writing home locations. A failed operation retains its full overlay for an identical retry. A read-only mount may perform required journal recovery on writable hardware; hardware read-only recovery returns `EROFS`.
+The journal module stages committed records into the mount overlay. Checksum failure in a committed transaction rejects the mount before writes. A descriptor can reach disk before its payload. If the commit record is absent, recovery discards the incomplete transaction. The filesystem verifies allocation, ownership, namespace, journal identity and geometry before checkpointing. Journal records cannot overwrite journal storage. Revocations suppress earlier records, and replay restores escaped magic values. Writable operations log their complete changed blocks, including data, before committing and writing home locations. A failed operation retains its full overlay for an identical retry. A read-only mount can perform required journal recovery on writable hardware. Hardware read-only recovery returns `EROFS`.
 
 After an interrupted journaled mount, validated deletion-marked inodes with no directory references can be reclaimed automatically. This handles files, symlinks and empty directories that were removed while descriptions remained open. Allocation maps, free counters, block and attribute ownership, directory contents and ancestry must all validate first; a strict second scan checks the staged result before it is journaled. Automatic cleanup keeps counter mismatches and named retirement records as errors. The broader `recovery=check` policy remains explicit. A read-only request can complete this cleanup on writable hardware, while hardware read-only recovery fails without writes. Clean-state volumes stay strict. Linux [orphan lists and orphan files](https://docs.kernel.org/filesystems/ext4/orphan.html) remain separate, unsupported formats.
 
@@ -90,6 +90,7 @@ Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode 
 make test-ext2
 make test-ext2-index
 make test-ext4-extents
+make test-ext2-journal-checksums
 make test-vm-journal
 python3 scripts/ext2_test.py --quick --firmware bios --transport modern
 python3 scripts/ext2_test.py --checks errors --firmware uefi --transport legacy
@@ -100,6 +101,8 @@ python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recove
 `make test-ext2-index` tests six hash and signedness combinations on indexed ext2 and ext3 volumes. An ext4 profile exercises directories that use both HTree indexes and extent mapping. The tests verify guest conversion, index growth, collision lookup across leaves, rename, links, enumeration, and read-only reboot. Host filesystem tools check the trees and compare exported names and contents. Three damaged indexes must be rejected without changing the image.
 
 `make test-ext4-extents` runs journaled and unjournaled profiles across BIOS and UEFI, both virtio transports, and all three block sizes. It compares guest writes with host file exports and checks sparse ranges, unwritten blocks, truncation, depth-two growth, and read-only reboots. A full-disk control leaves one free block to verify rollback when an extent split needs two. Malformed trees and an unsupported checksum feature must leave the disk unchanged.
+
+`make test-ext2-journal-checksums` boots six journal profiles and checks replay, writes, and fresh read-only boots. The v2 and v3 profiles include journals generated independently by `debugfs` with a committed revocation. A damaged committed record must leave the disk unchanged, and a damaged payload in an incomplete transaction must be discarded. The v3 64-bit profile interrupts a guest write after commit and before the affected home block reaches disk. Both a fresh guest and a separate host checker copy recover the same bytes.
 
 `make test-vm-journal` exercises the normal launch command on BIOS and UEFI. An administrator signs in, creates a file, and syncs it before the test cuts the VM. A fresh boot reopens the same disk, authenticates the same account, and reads the file. Host checks verify the recovery flag before reboot, the file bytes after reboot, and a clean filesystem after shutdown. Separate journal fault tests cover interruption during a transaction.
 

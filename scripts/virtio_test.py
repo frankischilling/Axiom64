@@ -14,14 +14,24 @@ def main():
     parser.add_argument("--firmware", choices=["bios", "uefi", "both"], default="both")
     parser.add_argument("--transport", choices=["modern", "legacy", "both"], default="both")
     parser.add_argument("--timeout", type=int, default=90)
+    parser.add_argument("--initramfs", type=Path, help="use an existing desktop test initramfs")
     args = parser.parse_args()
-    subprocess.run(["make", "-j2", "build/axiom64.elf", "build/rootfs-desktop.cpio"], cwd=ROOT, check=True)
+    targets = ["build/axiom64.elf"]
+    image_options = []
+    if args.initramfs:
+        if not args.initramfs.is_file():
+            parser.error("--initramfs must be an existing file")
+        image_options = ["--initramfs", str(args.initramfs.resolve())]
+    else:
+        targets.append("build/rootfs-desktop.cpio")
+    subprocess.run(["make", "-j2", *targets], cwd=ROOT, check=True)
     images = {}
     for phase in ["queue", "verify"]:
         name = f"virtio-{phase}.iso"
         with (ROOT / "build" / f"virtio-image-{phase}.log").open("w") as output:
             subprocess.run([sys.executable, str(ROOT / "scripts" / "image.py"), "--test", "--suite", "storage",
-                            "--phase", phase, "--output-name", name], check=True, stdout=output, stderr=subprocess.STDOUT)
+                            "--phase", phase, "--output-name", name, *image_options],
+                           check=True, stdout=output, stderr=subprocess.STDOUT)
         images[phase] = ROOT / "build" / name
     configurations = [
         {"size": 4, "queues": 1, "features": "off", "packed": "off"},

@@ -240,10 +240,14 @@ static bool initialize(Controller& device, const PciFunction& pci, uint32_t mode
     device.pci = pci;
     device.model = model;
     device.adapter = {{}, poll, send, stop, &device};
+    constexpr size_t register_bytes = 0x20000;
+    PciBar registers;
     uint64_t address;
-    if (pci.read8(0x0b) != 2 || pci.read8(0x0a) != 0 || !pci.memory_bar(0, address))
+    if (pci.read8(0x0b) != 2 || pci.read8(0x0a) != 0 ||
+        pci.probe_bar(0, PciBarSpace::memory, registers) != PciBarStatus::valid ||
+        !registers.range(0, register_bytes, address))
         return false;
-    device.registers = static_cast<volatile uint32_t*>(map_mmio(address, 0x20000));
+    device.registers = static_cast<volatile uint32_t*>(map_mmio(address, register_bytes));
     if (!device.registers)
         return false;
     pci.write16(4, pci.read16(4) | 0x406);

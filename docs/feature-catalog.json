@@ -72,6 +72,8 @@
         "kernel/boot/multiboot.cpp",
         "scripts/multiboot_test.py",
         "kernel/drivers/platform/pci.cpp",
+        "kernel/include/drivers/platform/pci_bar.hpp",
+        "kernel/tests/drivers/platform/pci_interrupts.cpp",
         "kernel/drivers/platform/isa_pnp.cpp",
         "scripts/legacy_ports_test.py",
         "kernel/mm/memory.cpp",

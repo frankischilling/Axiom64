@@ -25,7 +25,7 @@ A malformed completion stops new submissions. The queue checks do not prove a de
 
 ## Registers and limits
 
-The module uses assigned 32/64-bit BAR decoding, bounded capability walks, supervisor uncached mappings, register alignment, configuration generations, and notification bounds. MSI and INTx are masked. MSI-X is optional for modern devices. The PCI layer sizes the table BAR with decoding disabled and validates the full table span before touching entries. Bound queues share one vector and request used-buffer notifications. Polling queues suppress those notifications. Stopping a device masks MSI-X and retires its vector before resetting the transport. PIT channel 2 calibrates the TSC. Reset acknowledgement uses two seconds; the block driver allows 30 seconds per request, including flushes. Iteration bounds apply only when calibration fails, so fast polling cannot shorten a calibrated deadline.
+The transport sizes each assigned BAR it uses with decoding and bus mastering disabled. It verifies restoration and checks each modern capability's register span against the BAR before mapping it uncacheable. Legacy I/O and device configuration also stay within the assigned BAR. MSI and INTx are masked. For modern MSI-X, discovery saves the table BAR and IRQ setup validates the full table span before touching entries. Bound queues share one vector and request used-buffer notifications. Polling queues suppress those notifications. Stopping a device masks MSI-X and retires its vector before resetting the transport. PIT channel 2 calibrates the TSC. Reset acknowledgement uses two seconds. The block driver allows 30 seconds per request, including flushes. Iteration bounds apply only when calibration fails, so fast polling cannot shorten a calibrated deadline.
 
 Callers currently run on one CPU. SMP synchronization, packed/indirect/event-index rings, individual queue reset, hotplug, and IOMMU support remain planned. See the remaining requirements for [firmware and interrupt routing](feature-roadmap.md#f01-firmware-buses-and-interrupt-routing), [block storage](storage.md), and [Ethernet](network.md).
 
@@ -41,6 +41,8 @@ make test-ext2
 The sanitizer host test runs the production queue with a simulated device observing only the wire layout. It covers full queues, concurrent chains, out-of-order completion, descriptor reuse, corrupted IDs/counts/links, allocation failures, sizes up to 32768, and 70000 requests across index rollover. This verifies queue logic; actual guest tests cover register access and disk DMA.
 
 The real-device matrix runs 24 boots across BIOS/UEFI, modern/legacy, and offered sizes 4, 128, and 1024. Each write boot checks both disks, unaligned/end-of-disk I/O, flushes, and 2052 reads across ring slots; a fresh boot recovers the written data. The host compares every disk byte after each boot. Variants change optional feature offers and device queue count. Modern size 1024 selects 256; legacy retains 1024. Evidence is `build/storage-*-q*.log` and `build/virtio-results.json`.
+
+For kernel-only checks, `python3 scripts/virtio_test.py --initramfs PATH` takes an existing desktop test initramfs and builds the test images with the current kernel.
 
 The existing 16-boot raw-disk matrix retains 65540-request rollover, read-only, reboot, and backend-error checks. The 68-boot ext2 matrix and full/thread/normal desktop suites remain required regressions. Reset refusal, malformed PCI capabilities, and malicious DMA completions are not fault-injected on real devices; sanitizer cases do not replace those future tests.
 

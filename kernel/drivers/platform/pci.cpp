@@ -174,52 +174,8 @@ uint8_t PciFunction::find_capability(uint8_t id, unsigned* boundary) const {
     return found;
 }
 
-bool PciFunction::memory_bar(unsigned index, uint64_t& address) const {
-    if (index >= 6 || (read8(0x0e) & 0x7f) != 0)
-        return false;
-    for (unsigned i = 0; i < index; i++)
-        if ((read32(0x10 + i * 4) & 7) == 4) {
-            if (++i == index)
-                return false;
-        }
-    uint32_t bar = read32(0x10 + index * 4);
-    if ((bar & 1) || (bar & 6) == 2 || (bar & 6) == 6)
-        return false;
-    address = bar & ~15u;
-    if ((bar & 6) == 4) {
-        if (index == 5)
-            return false;
-        address |= uint64_t(read32(0x14 + index * 4)) << 32;
-    }
-    return address != 0;
-}
-
-bool PciFunction::memory_bar_size(unsigned index, uint64_t& address, uint64_t& length) const {
-    if (!memory_bar(index, address))
-        return false;
-    uint16_t offset = 0x10 + index * 4;
-    uint32_t low = read32(offset);
-    bool wide = (low & 6) == 4;
-    uint32_t high = wide ? read32(offset + 4) : 0;
-    uint16_t command = read16(4);
-    write16(4, command & ~7u); // Disable decoding and bus mastering during the probe.
-    if (read16(4) & 7u) {
-        write16(4, command);
-        return false;
-    }
-    write32(offset, UINT32_MAX);
-    if (wide)
-        write32(offset + 4, UINT32_MAX);
-    uint64_t mask = read32(offset) & ~15u;
-    if (wide)
-        mask |= uint64_t(read32(offset + 4)) << 32;
-    write32(offset, low);
-    if (wide)
-        write32(offset + 4, high);
-    write16(4, command);
-
-    length = wide ? -mask : uint32_t(-mask);
-    return length && !(length & (length - 1)) && !(address & (length - 1));
+PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const {
+    return PciBarProbe::probe(*this, index, space, physical_address_limit(), resource);
 }
 
 bool PciMsi::start(const PciFunction& pci, Irq::Handler handler, void* context) {
@@ -290,8 +246,8 @@ void PciMsi::stop(const PciFunction& pci) {
     capability_ = mask_ = vector_ = 0;
 }
 
-bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, Irq::Handler handler,
-                      void* context) {
+bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, const PciBar& bar,
+                      Irq::Handler handler, void* context) {
     if (vector_ || capability < 0x40 || capability > 0xf4 || (capability & 3) ||
         pci.read8(capability) != 0x11)
         return false;
@@ -300,11 +256,8 @@ bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, Irq::Handler h
     uint32_t location = pci.read32(capability + 4);
     uint32_t offset = location & ~7u;
     size_t bytes = entries * 16;
-    uint64_t address, length;
-    uint64_t limit = physical_address_limit();
-    if (!pci.memory_bar_size(location & 7, address, length) || offset > length ||
-        bytes > length - offset || address >= limit || offset > limit - address ||
-        bytes > limit - address - offset)
+    uint64_t address;
+    if ((location & 7) != bar.index || !bar.range(offset, bytes, address))
         return false;
 
     Irq::Message message{};
@@ -312,7 +265,7 @@ bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, Irq::Handler h
         return false;
     capability_ = capability;
     vector_ = message.vector;
-    table_ = static_cast<volatile uint32_t*>(map_mmio(address + offset, bytes));
+    table_ = static_cast<volatile uint32_t*>(map_mmio(address, bytes));
     if (table_) {
         pci.write16(capability + 2, control | msix_enable | msix_function_mask);
         if ((pci.read16(capability + 2) & (msix_enable | msix_function_mask)) ==

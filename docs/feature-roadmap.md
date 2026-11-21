@@ -93,6 +93,8 @@ The boot-time device mapper checks the CPU's physical address width, rejects pag
 
 The direct DMA allocator applies a 32-bit address limit to PCI driver buffers and a 24-bit limit with a 64 KiB boundary to floppy channel 2. Virtio rejects any descriptor that crosses the PCI limit before publishing it. [DMA and device mappings](architecture.md)
 
+Virtio register regions and Intel Ethernet MMIO must fit their firmware-assigned PCI BARs. Virtio also bounds legacy port I/O and validates the MSI-X table using the BAR measured before the device starts.
+
 The [boot media tools](build.md#raw-disk-and-network-boot) package the same kernel and initramfs for optical, raw GPT, and PXE boot under BIOS and UEFI. The [Multiboot wrapper](build.md#multiboot-and-direct-qemu-boot) adds direct QEMU loading, BIOS and UEFI GRUB, and BIOS floppy boot. Local tests reach an alternate PID 1 and verify its reads from the initramfs or a virtio disk root.
 
 Required work:

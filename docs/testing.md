@@ -37,6 +37,10 @@ from both chipsets under BIOS and UEFI. The native comparison exercises
 invalid flag handling before descriptor lookup. Use a Linux 7.0 VM if the
 host kernel reports `EBADF` for that case.
 
+The PCI sanitizer checks cover 32-bit and 64-bit memory BARs, port BARs,
+out-of-range register spans, malformed masks, and refused config restoration.
+Use `make test-virtio` to exercise modern and legacy BARs with real disk I/O.
+
 `make test-suite SUITE=mmio` runs the boot-time mapper against simulated
 page tables with address and undefined behavior sanitizers. It checks physical
 address limits, boot memory reservations, uncacheable mappings, existing

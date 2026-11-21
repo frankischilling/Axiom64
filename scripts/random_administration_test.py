@@ -77,7 +77,7 @@ def fixture(directory, linkage, mode, *, program='random-admin', options=(), bef
         shutil.copyfile(source, target)
     files['etc/net-test.sh'] = (0o100755, (
         f'#!/bin/sh\nset -e\n{before}\n/bin/{program} {mode}\necho AXIOM64_TESTS_PASS\n').encode())
-    cpio = ROOT / 'build/rootfs-network.cpio'
+    cpio = directory / 'root.cpio'
     with cpio.open('wb') as output:
         entries = [*sorted(files.items()), ('TRAILER!!!', (0, b''))]
         for inode, (name, (permissions, data)) in enumerate(entries, 1):
@@ -89,14 +89,15 @@ def fixture(directory, linkage, mode, *, program='random-admin', options=(), bef
             output.write(bytes(-output.tell() % 4))
     image_name = f'axiom64-{program}-{linkage}-{mode}.iso'
     command = ['python3', 'scripts/image.py', '--test', '--suite', 'network',
-               '--output-name', image_name]
+               '--output-name', image_name, '--initramfs', str(cpio.resolve())]
     if mode != 'ready':
         command += ['--kernel-option', 'random.trust_cpu=off']
     for option in options:
         command += ['--kernel-option', option]
     subprocess.run(command, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+    products_record['root.cpio'] = fingerprint(cpio)
     for name, source in [('image.iso', ROOT / 'build' / image_name),
-                         ('kernel.elf', ROOT / 'build/axiom64.elf'), ('root.cpio', cpio)]:
+                         ('kernel.elf', ROOT / 'build/axiom64.elf')]:
         shutil.copyfile(source, directory / name)
         products_record[name] = fingerprint(directory / name)
     (directory / 'products.json').write_text(json.dumps(products_record, indent=2) + '\n')

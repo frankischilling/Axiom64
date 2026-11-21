@@ -32,7 +32,7 @@
 #include "core/random/primitives.hpp"
 
 namespace ax {
-static limine_framebuffer* framebuffer;
+static const BootFramebuffer* framebuffer;
 static Pty ptys[32];
 static Terminal console_terminal{0x500,  5, 0xbf,
                                  0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
@@ -260,12 +260,10 @@ static bool controller_wait(bool output) {
 }
 
 void devices_init() {
-    auto response = framebuffer_request.response;
-    if (response && response->framebuffer_count)
-        framebuffer = response->framebuffers[0];
+    framebuffer = boot_info.framebuffer.address ? &boot_info.framebuffer : nullptr;
     if (framebuffer) {
         tag("/dev/fb0", Device::framebuffer);
-        // Limine's boot framebuffer is exposed by our platform framebuffer driver.
+        // Expose the firmware framebuffer through the platform device interface.
         const char* paths[] = {"/sys",
                                "/sys/class",
                                "/sys/class/graphics",

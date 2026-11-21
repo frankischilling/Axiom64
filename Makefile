@@ -13,7 +13,6 @@ rwildcard = $(foreach entry,$(wildcard $1*),$(call rwildcard,$(entry)/,$2) $(fil
 KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.h *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern))) scripts/tests/native_icmp_budget.c scripts/tests/native_icmp_stagger_regression.c scripts/tests/native_source_guard_regression.c scripts/tests/native_ipv6_barrier.c scripts/tests/clock_wall_boundary_shim.c
-
 FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
@@ -617,6 +616,8 @@ build/kernel/arch/x86_64/entry.o: kernel/arch/x86_64/entry.asm
 	$(NASM) -f elf64 -g -F dwarf $< -o $@
 build/axiom64.elf: $(KERNEL_OBJECTS) kernel/arch/x86_64/linker.ld
 	ld -nostdlib -static -z max-page-size=0x1000 -T kernel/arch/x86_64/linker.ld $(KERNEL_OBJECTS) -o $@
+build/axiom64-multiboot.elf: build/axiom64.elf scripts/multiboot_image.py kernel/arch/x86_64/multiboot.asm kernel/arch/x86_64/multiboot.ld
+	$(PYTHON) -B scripts/multiboot_image.py $< $@ --nasm "$(NASM)"
 build/abi-static: userspace/tests/abi/abi.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@

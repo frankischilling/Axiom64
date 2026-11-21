@@ -73,6 +73,65 @@ again alongside existing results, use `python3 scripts/boot_media_test.py --outp
 
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 
+## Multiboot and direct QEMU boot
+
+After `make image`, build the Multiboot wrapper and use the original
+uncompressed initramfs. Direct loading uses QEMU's BIOS Multiboot 1 path and
+the serial console.
+
+```sh
+make build/axiom64-multiboot.elf
+qemu-system-x86_64 -m 2G -display none -serial stdio \
+    -kernel build/axiom64-multiboot.elf -initrd build/rootfs.cpio
+```
+
+Pass kernel arguments with `-append`. The first module supplies the early
+filesystem. Use `root=` to switch to a [disk root](disk-root.md) after storage
+discovery. Use QEMU's monitor or a guest shutdown command to stop the VM.
+
+GRUB loads the same wrapper through Multiboot 2 under BIOS and UEFI. Copy
+`build/axiom64-multiboot.elf` and `build/rootfs.cpio` to the ISO staging tree as
+`boot/kernel.elf` and `boot/rootfs.cpio`. Put this entry in `boot/grub/grub.cfg`.
+
+```text
+insmod all_video
+set gfxmode=auto
+menuentry "Axiom64" {
+    multiboot2 /boot/kernel.elf
+    module2 /boot/rootfs.cpio
+}
+```
+
+Install `grub-common`, `grub-pc-bin`, and `grub-efi-amd64-bin`, then run
+`grub-mkrescue -o build/axiom64-grub.iso path/to/staging-tree`. The wrapper
+requests a 1024x768, 32-bit framebuffer for the desktop when available.
+BIOS GRUB also accepts `multiboot` and
+`module` for a Multiboot 1 boot.
+
+Install `busybox-static` for the test disk. Run `make test-suite SUITE=multiboot`
+for fresh i440fx and Q35 boots, framebuffer access from Ring 3, a virtio root, and
+missing-module failures.
+
+### BIOS floppy boot
+
+`scripts/floppy_image.py` builds a 1,474,560-byte image using the Multiboot
+wrapper and the installed GRUB BIOS files. Install `grub-common`,
+`grub-pc-bin`, `dosfstools`, `mtools`, and `fdisk` to build the image. Use
+`--initramfs` for a small RAM root. The full userspace fits on a separate disk.
+With an existing Axiom64 VM root, use:
+
+```sh
+make build/axiom64-multiboot.elf
+python3 scripts/floppy_image.py build/axiom64-floppy.raw --root-device /dev/vda
+qemu-system-x86_64 -m 2G -serial stdio -boot order=a,strict=on \
+    -drive if=floppy,format=raw,readonly=on,file=build/axiom64-floppy.raw \
+    -drive if=none,id=root,format=raw,snapshot=on,file=.local/vm/root.ext2 \
+    -device virtio-blk-pci,drive=root,disable-legacy=on
+```
+
+The Multiboot suite boots both floppy layouts and checks that the builder
+rejects oversized payloads and preserves existing images.
+
 On the host, `make test-thread-io` runs the focused BIOS/UEFI [blocking I/O tests](io.md#verification-and-limits). `make test-threads` and `make test` include those tests alongside their broader suites.
 
 Concurrent builds share one download owner per archive. Its lock covers the

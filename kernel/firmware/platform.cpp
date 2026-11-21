@@ -29,21 +29,18 @@
 
 namespace ax {
 const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
-    auto map = memmap_request.response;
-    if (!map || !length || length > Acpi::max_definition_bytes ||
+    if (!boot_info.memory_at || !length || length > Acpi::max_definition_bytes ||
         address > UINT64_MAX - direct_map || length - 1 > UINT64_MAX - direct_map - address)
         return nullptr;
-    for (size_t i = 0; i < map->entry_count; i++) {
-        auto entry = map->entries[i];
-        if (address < entry->base || address - entry->base > entry->length ||
-            length > entry->length - (address - entry->base))
+    for (size_t i = 0; i < boot_info.memory_count; i++) {
+        auto entry = boot_info.memory_at(boot_info.memory_context, i);
+        if (address < entry.base || address - entry.base > entry.length ||
+            length > entry.length - (address - entry.base))
             continue;
-        // Base revision 3 does not directly map reserved/ACPI regions.
-        if (entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE)
+        if (entry.kind == BootMemoryKind::retained)
             return static_cast<const uint8_t*>(physical(address));
-        if (entry->type == LIMINE_MEMMAP_RESERVED || entry->type == LIMINE_MEMMAP_ACPI_NVS ||
-            entry->type == LIMINE_MEMMAP_ACPI_RECLAIMABLE ||
-            entry->type == LIMINE_MEMMAP_RESERVED_MAPPED)
+        if (entry.kind == BootMemoryKind::reserved || entry.kind == BootMemoryKind::firmware ||
+            entry.kind == BootMemoryKind::mapped_reserved)
             return static_cast<const uint8_t*>(map_mmio(address, length));
     }
     return nullptr;

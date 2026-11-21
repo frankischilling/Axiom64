@@ -25,6 +25,7 @@
  */
 #include "drivers/platform/devices.hpp"
 #include "drivers/block/block.hpp"
+#include "fs/ext2/ext2.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
@@ -1562,13 +1563,13 @@ static int64_t dispatch(Frame* f) {
             if (!current->memory->space.string(e, options, sizeof(options)))
                 return -14;
             if (options[0]) {
-                if (strcmp(type, "ext2") || (d & 32) || strcmp(options, "recovery=check"))
+                if (!ext_volume_type(type) || (d & 32) || strcmp(options, "recovery=check"))
                     return -22;
                 check_dirty = true;
             }
         }
         Path source;
-        if (!(d & 32) && !strcmp(type, "ext2") && !path_at(-100, a, source))
+        if (!(d & 32) && ext_volume_type(type) && !path_at(-100, a, source))
             return source.error;
         return mount_filesystem(path, source, type, d, check_dirty);
     }

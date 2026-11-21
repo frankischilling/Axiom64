@@ -183,7 +183,7 @@ def invalid_volumes(prefix):
     original = base.read_bytes()
     variants = [("magic", 22), ("capacity", 117), ("bitmap-location", 117),
                 ("free-count", 117), ("metadata-bit", 117), ("duplicate-block", 117),
-                ("directory-record", 117), ("directory-inode", 117), ("extents", 95),
+                ("directory-record", 117), ("directory-inode", 117), ("inline-data", 95),
                 ("journal", 95), ("checksum", 95), ("inode-flags", 95), ("acl", 95),
                 ("ea-pointer", 117),
                 ("block-size", 95), ("inode-size", 95), ("duplicate-name", 117),
@@ -210,7 +210,7 @@ def invalid_volumes(prefix):
             struct.pack_into("<H" if name == "directory-record" else "<I", data,
                              root_block * 1024 + (4 if name == "directory-record" else 0),
                              7 if name == "directory-record" else 0xffffffff)
-        elif name == "extents": struct.pack_into("<I", data, 1024 + 96, 0x42)
+        elif name == "inline-data": struct.pack_into("<I", data, 1024 + 96, 0x8002)
         elif name == "journal": struct.pack_into("<I", data, 1024 + 92, 0x3c)
         elif name == "checksum": struct.pack_into("<I", data, 1024 + 100, 0x403)
         elif name == "inode-flags": struct.pack_into("<I", data, inode_offset(data, seed_number) + 32, 0x80000)

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/fs/ext2/ext2.hpp
- * @brief   Ext2 volume interface.
+ * @brief   Ext-family volume interface.
  * @author  frankischilling
  * @date    2026-11-18
  *
- * Declares ext2 discovery, mount setup, and volume operations used by the VFS.
+ * Declares mount setup and volume operations used by the VFS.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -27,6 +27,10 @@
 
 namespace ax {
 extern const FilesystemOps ext2_ops;
+
+inline bool ext_volume_type(const char* type) {
+    return type && (!strcmp(type, "ext2") || !strcmp(type, "ext3") || !strcmp(type, "ext4"));
+}
 
 int ext2_mount(Mount*, Node* device, bool check_dirty = false);
 } // namespace ax

@@ -44,12 +44,13 @@ CONVERTED = 50
 COLLISION_NAMES = (1, 3, 41574, 59571, 0)
 HASH_VERSIONS = {"legacy": 0, "half_md4": 1, "tea": 2}
 PROFILES = (
-    ("legacy", False, 1024, "bios", "modern", False),
-    ("half_md4", True, 1024, "uefi", "modern", True),
-    ("tea", False, 2048, "bios", "legacy", False),
-    ("tea", True, 4096, "uefi", "legacy", True),
-    ("legacy", True, 2048, "bios", "modern", False),
-    ("half_md4", False, 4096, "uefi", "modern", True),
+    ("legacy", False, 1024, "bios", "modern", "ext2"),
+    ("half_md4", True, 1024, "uefi", "modern", "ext3"),
+    ("tea", False, 2048, "bios", "legacy", "ext2"),
+    ("tea", True, 4096, "uefi", "legacy", "ext3"),
+    ("legacy", True, 2048, "bios", "modern", "ext2"),
+    ("half_md4", False, 4096, "uefi", "modern", "ext3"),
+    ("half_md4", True, 1024, "uefi", "legacy", "ext4"),
 )
 
 
@@ -68,7 +69,7 @@ def debug(disk, command, write=False):
                                    stderr=subprocess.PIPE)
 
 
-def fixture(directory, disk, block_size, algorithm, unsigned, journal):
+def fixture(directory, disk, block_size, algorithm, unsigned, filesystem):
     with tempfile.TemporaryDirectory(prefix="ext2-index-") as source:
         root = Path(source)
         (root / "index").mkdir()
@@ -78,9 +79,11 @@ def fixture(directory, disk, block_size, algorithm, unsigned, journal):
         with disk.open("wb") as output:
             output.truncate(48 * 1024 * 1024)
         features = "none,filetype,sparse_super,large_file,dir_index"
-        if journal:
+        if filesystem != "ext2":
             features += ",has_journal"
-        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext3" if journal else "ext2",
+        if filesystem == "ext4":
+            features += ",extent"
+        subprocess.run(["mke2fs", "-q", "-F", "-t", filesystem,
                         "-b", str(block_size), "-I", "128", "-N", "4096", "-O", features,
                         "-E", "hash_seed=01234567-89ab-cdef-0123-456789abcdef,root_owner=0:0",
                         "-d", root, disk], check=True)
@@ -189,11 +192,11 @@ def main():
     rows = []
     selected = range(len(PROFILES)) if args.profile is None else (args.profile,)
     for profile in selected:
-        algorithm, unsigned, block_size, firmware, transport, journal = PROFILES[profile]
+        algorithm, unsigned, block_size, firmware, transport, filesystem = PROFILES[profile]
         case = directory / f"{profile}-{algorithm}"
         case.mkdir()
         disk = case / "disk.raw"
-        before, _ = fixture(case, disk, block_size, algorithm, unsigned, journal)
+        before, _ = fixture(case, disk, block_size, algorithm, unsigned, filesystem)
         if profile == 0:
             if before:
                 raise RuntimeError("root promotion fixture already has indirect index nodes")
@@ -202,8 +205,13 @@ def main():
         after, root_entries = inspect_index(disk, "/target/index", case / "guest-index.log",
                                             algorithm)
         inspect_index(disk, "/target/converted", case / "converted-index.log", algorithm)
-        if profile == 0 and (after != 1 or root_entries < 2):
+        if (profile == 0 or filesystem == "ext4") and (after != 1 or root_entries < 2):
             raise RuntimeError("guest growth did not promote the index root and split a child")
+        if filesystem == "ext4":
+            for path in ("/target/index", "/target/converted"):
+                flags = re.search(rb"Flags: 0x([\da-f]+)", debug(disk, "stat " + path))
+                if not flags or int(flags[1], 16) & 0x81000 != 0x81000:
+                    raise RuntimeError(f"{disk}: {path} must retain indexed extent mapping")
         if profile == 0:
             collision = debug(disk, "htree_dump /target/collision")
             (case / "collision-index.log").write_bytes(collision)
@@ -215,7 +223,8 @@ def main():
         boot(case, boot_images["verify"], [disk], firmware, transport, ["EXT2_INDEX_REBOOT_PASS"])
         if digest(disk) != written:
             raise RuntimeError("read-only reboot changed filesystem bytes")
-        rows.append(dict(profile=profile, hash=algorithm, unsigned=unsigned, journal=journal,
+        rows.append(dict(profile=profile, hash=algorithm, unsigned=unsigned, filesystem=filesystem,
+                         journal=filesystem != "ext2",
                          block_size=block_size, firmware=firmware, transport=transport,
                          initial_depth=before, final_depth=after, root_entries=root_entries,
                          disk_sha256=written))

@@ -222,6 +222,9 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     set32(inode + 8, node_now().sec);
     set32(inode + 12, node_now().sec);
     set32(inode + 16, node_now().sec);
+    if (v.extent_enabled && (dir || (mode & 0170000) == regular_file ||
+                             (target && strlen(target) >= inode_block_bytes)))
+        init_extent_tree(inode);
     bool success = number != 0;
     if (success && dir) {
         uint32_t block;
@@ -361,7 +364,7 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
 
 static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t length) {
     auto& v = volume(node);
-    if (offset > UINT64_MAX - length || offset + length > v.capacity())
+    if (offset > UINT64_MAX - length)
         return -27;
     if (!v.begin())
         return v.error;
@@ -685,9 +688,9 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
         return false;
     if ((u16(inode) & 0170000) != regular_file || u16(inode + 26) != 1 || u16(inode + 2) ||
         u16(inode + 24) || u16(inode + 120) || u16(inode + 122) || u32(inode + 20) ||
-        u32(inode + 32) || u32(inode + 104) || u32(inode + 108) || !file_size(inode) ||
-        file_size(inode) % v.block_size || file_size(inode) / v.block_size < 1024 ||
-        file_size(inode) / v.block_size > v.blocks)
+        (u32(inode + 32) & ~(v.extent_enabled ? extent_inode : 0u)) || u32(inode + 104) ||
+        u32(inode + 108) || !file_size(inode) || file_size(inode) % v.block_size ||
+        file_size(inode) / v.block_size < 1024 || file_size(inode) / v.block_size > v.blocks)
         return v.fail(-95);
     v.journal_blocks = file_size(inode) / v.block_size;
     v.journal_map = static_cast<uint32_t*>(alloc(uint64_t(v.journal_blocks) * sizeof(uint32_t)));
@@ -738,6 +741,8 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
     uint8_t replayed[inode_bytes];
     if (!v.load_inode(8, replayed) || memcmp(inode, replayed, sizeof(inode)))
         return v.fail();
+    if (has_extents(replayed) && !unchanged_extent_nodes(v, replayed))
+        return false;
     for (uint32_t index = 0; index < v.journal_blocks; index++) {
         uint32_t block;
         if (!v.map_block(replayed, index, false, block, 0) || block != v.journal_map[index])
@@ -771,8 +776,9 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     v.unsigned_directory_hash = (u32(header + 352) & 2) != 0;
     v.default_directory_hash_version = header[252];
     v.typed_entries = incompatible & 2;
-    if ((v.compatible & ~0x3cu) || (incompatible & ~6u) || (v.readonly_features & ~3u) ||
-        (v.inode_size != 128 && v.inode_size != 256))
+    v.extent_enabled = incompatible & extent_feature;
+    if ((v.compatible & ~0x3cu) || (incompatible & ~(6u | extent_feature)) ||
+        (v.readonly_features & ~3u) || (v.inode_size != 128 && v.inode_size != 256))
         return v.fail(-95);
     v.reserved_gdt = v.compatible & 16 ? u16(header + 206) : 0;
     if (v.first_inode != 11 || ((v.compatible & 16) && !(v.readonly_features & 1)))

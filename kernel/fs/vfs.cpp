@@ -778,7 +778,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         return -1;
     if (flags & ~uint64_t(1 | 2 | 4 | 8 | 32 | 32768)) // MS_SILENT is used by mount.
         return -22;
-    if (check_dirty && ((flags & 32) || !type || strcmp(type, "ext2")))
+    bool disk = ext_volume_type(type);
+    if (check_dirty && ((flags & 32) || !disk))
         return -22;
     Node* point = nullptr;
     int error = resolve_path(path, point);
@@ -809,7 +810,7 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
     bool queues = type && !strcmp(type, "mqueue");
     if (queues && posix_queue_mounted())
         return -16;
-    bool ram = queues || (type && !strcmp(type, "ramfs")), disk = type && !strcmp(type, "ext2");
+    bool ram = queues || (type && !strcmp(type, "ramfs"));
     bool proc = type && !strcmp(type, "proc");
     if (!ram && !disk && !proc)
         return -19;

@@ -284,6 +284,9 @@ struct Validation {
                     type == directory && (v.compatible & directory_index_feature)
                         ? indexed_directory
                         : 0;
+                if (v.extent_enabled && !resize &&
+                    (type == regular_file || type == directory || type == symlink))
+                    accepted_flags |= extent_inode;
                 // Other inode flags and fragments need separate policy/layout support.
                 if ((u32(data + 32) & ~accepted_flags) || u32(data + 112) || u16(data + 116) ||
                     (type != regular_file && u32(data + 108)))
@@ -309,8 +312,8 @@ struct Validation {
                     setbit(owners, attribute, true);
                     count++;
                 }
-                if (length > v.capacity() || (type == regular_file && length > INT32_MAX &&
-                                              (v.revision == 0 || !(v.readonly_features & 2))))
+                if (length > v.capacity(data) || (type == regular_file && length > INT32_MAX &&
+                                                  (v.revision == 0 || !(v.readonly_features & 2))))
                     return v.fail();
                 if (type == directory && (!length || length % v.block_size ||
                                           length > uint64_t(v.blocks) * v.block_size))
@@ -330,7 +333,11 @@ struct Validation {
                 bool fast_link = fast_symlink(data, v.block_size);
                 if (fast_link && length > inode_block_bytes)
                     return v.fail();
-                if (!fast_link) {
+                if (has_extents(data)) {
+                    if (!validate_extent_tree(v, data, type == regular_file && !journal,
+                                              {block_bits, owners, count, leaves}))
+                        return false;
+                } else if (!fast_link) {
                     uint64_t base = 0, limit = (length + v.block_size - 1) / v.block_size;
                     for (unsigned slot = 0; slot < 15; slot++) {
                         unsigned depth = slot < 12 ? 0 : slot - 11;
@@ -346,6 +353,9 @@ struct Validation {
                 if (count * (v.block_size / sector_size) != u32(data + 28))
                     return v.fail();
                 if (type == directory && leaves != length / v.block_size)
+                    return v.fail();
+                if (type == symlink && has_extents(data) &&
+                    leaves != (length + v.block_size - 1) / v.block_size)
                     return v.fail();
                 if (!reserved) {
                     bool removed = !u16(data + 26) && u32(data + 20);

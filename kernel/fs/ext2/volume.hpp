@@ -36,6 +36,8 @@ namespace ax::ext2_detail {
 constexpr size_t max_block_size = 4096, inode_bytes = 128, inode_block_bytes = 15 * 4;
 constexpr unsigned max_changes = 4096;
 constexpr uint32_t indexed_directory = 0x1000, directory_index_feature = 0x20;
+constexpr uint32_t extent_inode = 0x80000, extent_feature = 0x40;
+constexpr uint64_t extent_logical_limit = UINT32_MAX;
 
 inline uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -71,8 +73,12 @@ inline uint64_t file_size(const uint8_t* inode) {
            ((u16(inode) & 0170000) == regular_file ? uint64_t(u32(inode + 108)) << 32 : 0);
 }
 
+inline bool has_extents(const uint8_t* inode) {
+    return (u32(inode + 32) & extent_inode) != 0;
+}
+
 inline bool fast_symlink(const uint8_t* inode, unsigned block_size) {
-    return (u16(inode) & 0170000) == symlink &&
+    return (u16(inode) & 0170000) == symlink && !has_extents(inode) &&
            u32(inode + 28) == (u32(inode + 104) ? block_size / sector_size : 0);
 }
 
@@ -108,6 +114,23 @@ struct Change {
     uint8_t data[max_block_size];
 };
 
+struct Volume;
+void init_extent_tree(uint8_t* inode);
+bool map_extent(Volume&, uint8_t* inode, uint64_t logical, bool create, uint32_t& result,
+                unsigned preferred);
+bool prune_extents(Volume&, uint8_t* inode, uint64_t keep);
+bool unchanged_extent_nodes(Volume&, const uint8_t* inode);
+
+struct ExtentOwnership {
+    const uint8_t* allocated;
+    uint8_t* owned;
+    uint64_t& blocks;
+    uint64_t& leaves;
+};
+
+bool validate_extent_tree(Volume&, const uint8_t* inode, bool allow_unwritten,
+                          const ExtentOwnership&);
+
 struct Volume {
     Mount* mount;
     unsigned device, block_size, inode_size, group_count, change_count;
@@ -116,7 +139,7 @@ struct Volume {
     uint32_t directory_hash_seed[4];
     uint8_t default_directory_hash_version;
     bool unsigned_directory_hash;
-    bool typed_entries, claimed, writable_safe;
+    bool typed_entries, extent_enabled, claimed, writable_safe;
     Group* groups;
     Change* changes;
     EntryCache entries;
@@ -477,7 +500,32 @@ struct Volume {
         return write_block(bitmap_block, bitmap, 4) && counts(index, inode, 1, dir ? -1 : 0);
     }
 
-    uint64_t capacity() const {
+    bool free_blocks(uint32_t number, unsigned remaining) {
+        if (!number || number < first || number >= blocks || remaining > blocks - number)
+            return fail();
+        while (remaining) {
+            unsigned index = (number - first) / blocks_per_group;
+            const auto& group = groups[index];
+            unsigned offset = number - group.first, length = min(remaining, group.blocks - offset);
+            uint8_t bitmap[max_block_size];
+            if (!read_block(group.block_bitmap, bitmap))
+                return false;
+            for (unsigned i = 0; i < length; i++) {
+                if (metadata(number + i) || !bit(bitmap, offset + i))
+                    return fail();
+                setbit(bitmap, offset + i, false);
+            }
+            if (!write_block(group.block_bitmap, bitmap, 4) || !counts(index, false, length))
+                return false;
+            number += length;
+            remaining -= length;
+        }
+        return true;
+    }
+
+    uint64_t capacity(const uint8_t* inode) const {
+        if (has_extents(inode))
+            return extent_logical_limit * block_size;
         uint64_t n = block_size / 4;
         return (12 + n + n * n + n * n * n) * block_size;
     }
@@ -492,6 +540,8 @@ struct Volume {
 
     bool map_block(uint8_t* inode, uint64_t logical, bool create, uint32_t& result,
                    unsigned preferred) {
+        if (has_extents(inode))
+            return map_extent(*this, inode, logical, create, result, preferred);
         uint64_t n = block_size / 4, index = logical, span = 1;
         unsigned slot, depth;
         if (index < 12) {
@@ -601,7 +651,7 @@ struct Volume {
     }
 
     bool size(uint8_t* inode, uint64_t length) {
-        if (length > capacity() || int64_t(length) < 0)
+        if (length > capacity(inode))
             return fail(-27);
         if (length > INT32_MAX) {
             if (revision == 0)
@@ -614,7 +664,10 @@ struct Volume {
                 return false;
         }
         uint64_t old = file_size(inode), keep = (length + block_size - 1) / block_size;
-        if (length < old) {
+        if (has_extents(inode)) {
+            if (length <= old && !prune_extents(*this, inode, keep))
+                return false;
+        } else if (length < old) {
             uint64_t base = 0;
             for (unsigned slot = 0; slot < 15; slot++) {
                 unsigned depth = slot < 12 ? 0 : slot - 11;

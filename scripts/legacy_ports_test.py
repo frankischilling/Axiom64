@@ -116,7 +116,45 @@ def attach_fixture(guest, socket, script, transcript):
                 debugger.terminate()
 
 
-def boot_pnp(case, firmware, machine, image, kernel, valid):
+def check_configuration(observations, scenario):
+    inactive = scenario in ("activate", "range-conflict", "probe-failure")
+    success = scenario == "activate"
+    stored = scenario == "probe-failure"
+    checks = [0, 1] if inactive else [0, 0]
+    original = [0x3e8, 0x3bc]
+    ports = [0x2f8, 0x278]
+    original_irq = [3, 5]
+    writes, reads = [], []
+    if inactive:
+        for function, (base, width, saved) in enumerate(zip(ports, (8, 3), checks)):
+            for mode, value in ((saved, 0xff), (3, 0x55), (2, 0xaa), (saved, 0xff)):
+                if mode == 2 and scenario == "range-conflict":
+                    reads.append([function, base + width - 1, mode, 0xff])
+                    break
+                reads.extend([function, port, mode, value] for port in reversed(range(base, base + width)))
+            writes.extend([function, register, value] for register, value in (
+                (0x60, base >> 8), (0x61, base & 255), (0x31, 3), (0x31, 2), (0x31, saved)))
+            if success or stored:
+                writes.extend(([function, 0x70, 0], [function, 0x30, 1]))
+            if stored:
+                writes.extend(([function, 0x30, 0], [function, 0x70, original_irq[function]]))
+            if not success:
+                writes.extend(([function, 0x60, original[function] >> 8],
+                               [function, 0x61, original[function] & 255]))
+    expected = {
+        "serial_reads": 288, "resource_bytes": 28 if inactive else 22, "card_numbers": [1],
+        "logical_devices": [0, 1, 0, 1] if inactive else ([] if scenario == "bad-checksum" else [0, 1]),
+        "card_number_resets": 1, "programming": writes, "range_reads": reads,
+        "bases": original if inactive and not success else ports,
+        "active": [success or not inactive] * 2,
+        "checks": checks, "irq": [0, 0] if success else original_irq,
+    }
+    if observations != expected:
+        fields = [field for field, value in expected.items() if observations.get(field) != value]
+        raise RuntimeError(f"{scenario}: unexpected configuration fields: {fields}")
+
+
+def boot_pnp(case, firmware, machine, image, kernel, scenario):
     port = case / "printer.bin"
     serial = case / "serial.log"
     receipt = case / "config.json"
@@ -137,7 +175,7 @@ set confirm off
 target remote {socket}
 python
 exec(compile(open({str(fixture)!r}, "rb").read(), {str(fixture)!r}, "exec"))
-bus = ConfigBus({str(receipt)!r}, {valid!r})
+bus = ConfigBus({str(receipt)!r}, {scenario!r})
 end
 hbreak *0x{callbacks[0]}
 commands
@@ -156,15 +194,19 @@ continue
         command = ["qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
                    "-display", "none", "-monitor", "none", "-nic", "none", "-no-reboot",
                    "-serial", "none", "-parallel", "none",
-                   "-chardev", "stdio,id=uart,signal=off",
-                   "-device", "isa-serial,chardev=uart,index=1,iobase=0x2f8,irq=3",
-                   "-chardev", f"file,id=printer,path={port}",
-                   "-device", "isa-parallel,chardev=printer,index=1,iobase=0x278,irq=5",
                    "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
                    "-S", "-chardev", f"socket,id=debug,path={socket},server=on,wait=off",
                    "-gdb", "chardev:debug", "-cdrom", image]
+        if scenario == "probe-failure":
+            port.touch()
+        else:
+            command += ["-chardev", "stdio,id=uart,signal=off",
+                        "-device", "isa-serial,chardev=uart,index=1,iobase=0x2f8,irq=3",
+                        "-chardev", f"file,id=printer,path={port}",
+                        "-device", "isa-parallel,chardev=printer,index=1,iobase=0x278,irq=5"]
         add_firmware(command, case, firmware)
         (case / "command.json").write_text(json.dumps(command, default=str, indent=2) + "\n")
+        valid = scenario in ("active", "activate")
         if valid:
             status = exchange_serial(command, serial,
                                      lambda guest: attach_fixture(guest, socket, script, case / "gdb.log"))
@@ -184,15 +226,16 @@ continue
                        b"LEGACY_PORTS_PASS uart=1 printer=1", b"AXIOM64_EXIT status=0"):
             if marker + b"\r\n" not in log:
                 raise RuntimeError(f"{case.name}: missing {marker!r}, see {serial}")
+        activated = b"ISA PnP: 2 devices activated for polling\r\n" in log
+        if activated != (scenario == "activate"):
+            raise RuntimeError(f"{case.name}: incorrect activation marker, see {serial}")
     elif b"LEGACY_UART_PAYLOAD" in log:
         raise RuntimeError(f"{case.name}: invalid resources bound a UART")
     expected = b"A\0\xff\n\r\x7fB" if valid else b""
     if status != 1 or port.read_bytes() != expected:
         raise RuntimeError(f"{case.name}: device transfer failed, see {serial}")
     observations = json.loads(receipt.read_text())
-    if observations != {"serial_reads": 288, "resource_bytes": 22, "card_numbers": [1],
-                        "logical_devices": [0, 1] if valid else [], "card_number_resets": 1}:
-        raise RuntimeError(f"{case.name}: unexpected configuration traffic: {observations}")
+    check_configuration(observations, scenario)
     return {"case": case.name, "iso_sha256": digest(image), "serial_sha256": digest(serial),
             "printer_sha256": digest(port), "config_sha256": digest(receipt), "exit": status}
 
@@ -233,11 +276,12 @@ def main():
                 case.mkdir()
                 cases.append(boot(case, firmware, machine, image, uart, printer))
                 print(f"{case.name}: passed", flush=True)
-        for valid in (True, False):
-            suffix = "pnp" if valid else "pnp-bad-checksum"
+        for scenario in ("active", "bad-checksum", "activate", "range-conflict", "probe-failure"):
+            valid = scenario in ("active", "activate")
+            suffix = "pnp" if scenario == "active" else f"pnp-{scenario}"
             case = output / f"{firmware}-{board}-{suffix}"
             case.mkdir()
-            cases.append(boot_pnp(case, firmware, machine, images[valid, valid], kernel, valid))
+            cases.append(boot_pnp(case, firmware, machine, images[valid, valid], kernel, scenario))
             print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps(
         {"kernel_sha256": digest(kernel), "cases": cases}, indent=2) + "\n")

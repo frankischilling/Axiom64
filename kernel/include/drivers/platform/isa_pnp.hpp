@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-21
  *
- * Returns verified firmware-assigned ports for supported legacy devices.
+ * Returns verified firmware-assigned or newly activated legacy ports.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -26,6 +26,8 @@
 #include <stdint.h>
 
 namespace ax::IsaPnp {
+enum class Device { uart, printer };
+
 struct Bus {
     void* context;
     uint8_t (*read)(void*, uint16_t);
@@ -33,13 +35,23 @@ struct Bus {
     bool (*delay)(void*, unsigned);
 };
 
+struct Activation {
+    bool uart = false;
+    bool printer = false;
+    bool (*probe)(void*, Device, uint16_t) = nullptr;
+};
+
 struct Ports {
     uint16_t uart = 0;
     uint16_t printer = 0;
     unsigned cards = 0;
     unsigned rejected = 0;
+    unsigned enabled = 0;
+    bool rollback_failed = false;
+    bool uart_probed = false;
+    bool printer_probed = false;
 };
 
-// Assign card select numbers without resetting logical-device assignments.
-Ports discover(const Bus&);
+// Preserve firmware-active devices. Optionally activate a polled device.
+Ports discover(const Bus&, const Activation& = {});
 } // namespace ax::IsaPnp

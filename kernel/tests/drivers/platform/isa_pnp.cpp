@@ -41,12 +41,15 @@ constexpr std::array<uint8_t, 9> serial_b{0x41, 0xd0, 0x80, 2, 4, 3, 2, 1, 0x18}
 struct Function {
     uint16_t base;
     bool active;
+    uint8_t ranges = 0;
+    uint8_t irq = 0, second_irq = 0;
+    unsigned width = 8;
 };
 
 struct Card {
     const std::array<uint8_t, 9> serial;
     const Bytes resources;
-    const std::vector<Function> functions;
+    std::vector<Function> functions;
     unsigned number = 0;
 };
 
@@ -60,6 +63,9 @@ struct Model {
     uint16_t port = 0;
     uint8_t reg = 0;
     Card* active = nullptr;
+    uint16_t occupied = 0, damaged_check = 0;
+    bool fail_probe = false, fail_deactivate = false, fail_disable_check = false;
+    unsigned config_writes = 0, probes = 0;
 
     void address(uint8_t byte) {
         if (configured) {
@@ -101,13 +107,14 @@ struct Model {
             }
             break;
         case 3:
-            assert(!byte);
             active = nullptr;
             cursor = serial_reads = logical = 0;
             data_ready = false;
             for (auto& card : cards)
-                if (!card.number) {
+                if (card.number == byte) {
                     active = &card;
+                    if (byte)
+                        cursor = card.resources.size();
                     break;
                 }
             break;
@@ -121,13 +128,48 @@ struct Model {
             assert(byte < active->functions.size());
             logical = byte;
             break;
-        default:
-            assert(false); // Discovery never writes Activate or resource registers.
+        default: {
+            assert(active && active->number && logical < active->functions.size());
+            auto& fn = active->functions[logical];
+            ++config_writes;
+            if (reg == 0x30) {
+                assert(byte <= 1 && !(fn.ranges & 2));
+                if (byte || !fail_deactivate)
+                    fn.active = byte;
+            } else {
+                assert(!fn.active);
+                if (reg == 0x31) {
+                    if ((byte & 2) || !fail_disable_check)
+                        fn.ranges = byte;
+                } else if (reg == 0x60)
+                    fn.base = (fn.base & 0xff) | (uint16_t(byte) << 8);
+                else if (reg == 0x61)
+                    fn.base = (fn.base & 0xff00) | byte;
+                else if (reg == 0x70)
+                    fn.irq = byte;
+                else if (reg == 0x72)
+                    fn.second_irq = byte;
+                else
+                    assert(false);
+            }
+        }
         }
     }
 
     uint8_t read(uint16_t target) {
-        assert(configured && target == port);
+        assert(configured);
+        if (target != port) {
+            assert(active && logical < active->functions.size());
+            const auto& fn = active->functions[logical];
+            if (target == occupied)
+                return 0;
+            if ((fn.ranges & 2) && target >= fn.base && unsigned(target - fn.base) < fn.width) {
+                if (target == damaged_check && fn.ranges == 2)
+                    return 0xff;
+                return fn.ranges & 1 ? 0x55 : 0xaa;
+            }
+            return 0xff;
+        }
         if (!active || target != listening)
             return 0xff;
         if (reg == 1) {
@@ -153,16 +195,22 @@ struct Model {
             return logical;
         case 0x30:
             return active->functions[logical].active;
+        case 0x31:
+            return active->functions[logical].ranges;
         case 0x60:
             return active->functions[logical].base >> 8;
         case 0x61:
             return active->functions[logical].base & 0xff;
+        case 0x70:
+            return active->functions[logical].irq;
+        case 0x72:
+            return active->functions[logical].second_irq;
         }
         assert(false);
         return 0;
     }
 
-    ax::IsaPnp::Ports run() {
+    ax::IsaPnp::Ports run(bool configure = false) {
         const ax::IsaPnp::Bus bus{
             this, [](void* ctx, uint16_t port) { return static_cast<Model*>(ctx)->read(port); },
             [](void* ctx, uint16_t port, uint8_t value) {
@@ -172,9 +220,20 @@ struct Model {
                 static_cast<Model*>(ctx)->delays += us;
                 return true;
             }};
-        auto ports = ax::IsaPnp::discover(bus);
+        const ax::IsaPnp::Activation activation{
+            configure, configure, [](void* ctx, ax::IsaPnp::Device, uint16_t base) {
+                auto& model = *static_cast<Model*>(ctx);
+                const auto& fn = model.active->functions[model.logical];
+                assert(fn.active && fn.base == base && !(fn.ranges & 2) && !fn.irq &&
+                       !fn.second_irq);
+                ++model.probes;
+                return !model.fail_probe;
+            }};
+        auto ports = ax::IsaPnp::discover(bus, configure ? activation : ax::IsaPnp::Activation{});
         assert(!configured && !active && waits == csn_resets * 2);
         assert(key_count == csn_resets * 2);
+        if (!configure)
+            assert(!config_writes);
         return ports;
     }
 };
@@ -197,6 +256,69 @@ const auto uart = checksum({
 });
 
 const auto printer = checksum({0x15, 0x41, 0xd0, 0x04, 0x00, 0, 0x4b, 0x78, 0x02, 3});
+
+const auto configurable_uart = checksum({
+    0x15, 0x41, 0xd0, 0x05, 0x01, 2,    // Advertises I/O range check.
+    0x22, 0x18, 0,    0x22, 0x20, 0,    // Advertises two IRQ registers.
+    0x30, 0x4b, 0xf8, 0x03, 8,          // COM1 alternative.
+    0x30, 0x4b, 0xf8, 0x02, 8,    0x38, // COM2 alternative.
+});
+
+void activation_cases() {
+    Model enabled{{{serial_a, configurable_uart, {{0, false, 0, 3, 5}}}}};
+    enabled.occupied = 0x3f8;
+    auto ports = enabled.run(true);
+    assert(ports.uart == 0x2f8 && ports.enabled == 1 && ports.uart_probed && enabled.probes == 1);
+    assert(!ports.rollback_failed && enabled.cards[0].functions[0].active);
+
+    Model prefer_active{{{serial_a, configurable_uart, {{0, false, 0, 3, 5}}},
+                         {serial_b, configurable_uart, {{0x2f8, true}}}}};
+    ports = prefer_active.run(true);
+    assert(ports.uart == 0x2f8 && !ports.enabled && !prefer_active.config_writes);
+
+    Model wrong_pattern{{{serial_a, configurable_uart, {{0x3e8, false, 1, 3, 5}}}}};
+    wrong_pattern.occupied = 0x3f8;
+    wrong_pattern.damaged_check = 0x2ff;
+    ports = wrong_pattern.run(true);
+    const auto& untouched = wrong_pattern.cards[0].functions[0];
+    assert(!ports.uart && !ports.rollback_failed && !wrong_pattern.probes);
+    assert(untouched.base == 0x3e8 && untouched.ranges == 1 && untouched.irq == 3 &&
+           untouched.second_irq == 5 && !untouched.active);
+
+    Model stuck_check{{{serial_a, configurable_uart, {{0x3e8, false, 0, 3, 5}}}}};
+    stuck_check.occupied = 0x3f8;
+    stuck_check.fail_disable_check = true;
+    ports = stuck_check.run(true);
+    const auto& stopped = stuck_check.cards[0].functions[0];
+    assert(!ports.uart && ports.rollback_failed && !stuck_check.probes);
+    assert(!stopped.active && stopped.base == 0x2f8 && stopped.ranges == 2 && stopped.irq == 3 &&
+           stopped.second_irq == 5);
+
+    for (bool restore_fails : {false, true}) {
+        Model failed{{{serial_a, configurable_uart, {{0x3e8, false, 0, 3, 5}}}}};
+        failed.occupied = 0x3f8;
+        failed.fail_probe = true;
+        failed.fail_deactivate = restore_fails;
+        ports = failed.run(true);
+        assert(!ports.uart && failed.probes == 1 && ports.rollback_failed == restore_fails);
+        const auto& final = failed.cards[0].functions[0];
+        if (!restore_fails)
+            assert(!final.active && final.base == 0x3e8 && final.irq == 3 && final.second_irq == 5);
+        else
+            assert(final.active && final.base == 0x2f8);
+    }
+
+    auto needs_dma = configurable_uart;
+    needs_dma.resize(needs_dma.size() - 2);
+    needs_dma.insert(needs_dma.end(), {0x2a, 0x04, 0x00});
+    Model unsupportable{{{serial_a, checksum(needs_dma), {{0, false}}}}};
+    ports = unsupportable.run(true);
+    assert(!ports.uart && !unsupportable.config_writes);
+
+    Model absent_range_check{{{serial_a, printer, {{0, false}}}}};
+    ports = absent_range_check.run(true);
+    assert(!ports.printer && !absent_range_check.config_writes);
+}
 } // namespace
 
 int main() {
@@ -248,6 +370,7 @@ int main() {
     Model ambiguous{{{serial_a, printer, {{0x278, true}}}, {serial_b, printer, {{0x278, true}}}}};
     ports = ambiguous.run();
     assert(ports.cards == 2 && !ports.rejected && !ports.printer);
+    activation_cases();
     std::puts("ISA_PNP_PASS empty isolation fallback compatibility alternatives active checksum "
-              "bounds timeout ambiguity");
+              "bounds timeout ambiguity range-check activation rollback");
 }

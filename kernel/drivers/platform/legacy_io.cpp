@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-21
  *
- * Probes standard and firmware-assigned ports and bounds device polling.
+ * Probes fixed and configured ports and bounds device polling.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -42,7 +42,7 @@ constexpr uint8_t printer_idle = 0x0c;        // Selected, with INIT deasserted.
 constexpr uint8_t printer_status_mask = 0xb8; // Not busy, no paper-out, selected, no error.
 constexpr uint8_t printer_ready = 0x98;
 
-uint16_t uart_port, printer_port, firmware_printer;
+uint16_t uart_port, printer_port;
 
 uint8_t pnp_port_read(void*, uint16_t port) {
     return in8(port);
@@ -118,6 +118,10 @@ bool probe_parallel(uint16_t port) {
         out8(port + 2, printer_idle);
     return present;
 }
+
+bool probe_pnp(void*, IsaPnp::Device device, uint16_t port) {
+    return device == IsaPnp::Device::uart ? probe_uart(port) : probe_parallel(port);
+}
 } // namespace
 
 void serial_init() {
@@ -125,13 +129,23 @@ void serial_init() {
 }
 
 void legacy_pnp_init() {
-    const auto ports = IsaPnp::discover({nullptr, pnp_port_read, pnp_port_write, pnp_delay});
-    if (!uart_port && ports.uart && probe_uart(ports.uart))
+    printer_port = probe_parallel(lpt1) ? lpt1 : 0;
+    const auto ports = IsaPnp::discover({nullptr, pnp_port_read, pnp_port_write, pnp_delay},
+                                        {!uart_port, !printer_port, probe_pnp});
+    if (!uart_port && ports.uart && (ports.uart_probed || probe_uart(ports.uart)))
         uart_port = ports.uart;
+    if (!printer_port && ports.printer &&
+        (ports.printer_probed || (ports.printer != lpt1 && probe_parallel(ports.printer))))
+        printer_port = ports.printer;
     if (ports.cards)
         log("ISA PnP: %u cards, %u malformed, UART=%x printer=%x\n", uint64_t(ports.cards),
             uint64_t(ports.rejected), uint64_t(ports.uart), uint64_t(ports.printer));
-    firmware_printer = ports.printer;
+    if (ports.enabled)
+        log("ISA PnP: %u devices activated for polling\n", uint64_t(ports.enabled));
+    if (ports.rollback_failed)
+        log("ISA PnP: could not restore device configuration\n");
+    if (printer_port)
+        log("ISA: parallel printer at 0x%x\n", uint64_t(printer_port));
 }
 
 bool serial_present() {
@@ -149,14 +163,7 @@ int serial_read() {
     return status != 0xff && (status & data_ready) ? in8(uart_port) : -1;
 }
 
-bool parallel_init() {
-    printer_port = 0;
-    if (probe_parallel(lpt1))
-        printer_port = lpt1;
-    else if (firmware_printer && firmware_printer != lpt1 && probe_parallel(firmware_printer))
-        printer_port = firmware_printer;
-    if (printer_port)
-        log("ISA: parallel printer at 0x%x\n", uint64_t(printer_port));
+bool parallel_present() {
     return printer_port != 0;
 }
 

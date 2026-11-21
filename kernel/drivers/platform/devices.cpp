@@ -292,7 +292,7 @@ void devices_init() {
     tag("/dev/tty", Device::tty);
     if (serial_present())
         tag("/dev/ttyS0", Device::serial, 0x440);
-    if (parallel_init())
+    if (parallel_present())
         tag("/dev/lp0", Device::parallel);
     tag("/dev/null", Device::null);
     tag("/dev/zero", Device::zero);

@@ -27,13 +27,14 @@ import subprocess
 import time
 
 
-def boot(directory, iso, disks, firmware, transport, markers, success=True):
+def boot(directory, iso, disks, firmware, transport, markers, success=True, *, hardware_readonly=False):
     command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
                "-boot", "order=d", "-cdrom", str(iso), "-display", "none", "-serial", "stdio",
                "-monitor", "none", "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
     mode = "disable-legacy=on" if transport == "modern" else "disable-modern=on"
+    access = ",readonly=on" if hardware_readonly else ""
     for index, path in enumerate(disks):
-        command += ["-drive", f"if=none,id=d{index},format=raw,file={path}",
+        command += ["-drive", f"if=none,id=d{index},format=raw,file={path}{access}",
                     "-device", f"virtio-blk-pci,drive=d{index},{mode},addr={5 + index}"]
     if firmware == "uefi":
         variables = directory / "VARS.fd"

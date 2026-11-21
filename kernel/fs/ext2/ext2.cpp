@@ -742,7 +742,8 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
     v.journal = journal_open(storage, header + 104, error);
     if (!v.journal)
         return v.fail(error);
-    if (disk.readonly && (journal_pending(v.journal) || (u32(header + 96) & 4)))
+    if (disk.readonly &&
+        (journal_pending(v.journal) || (u32(header + 96) & 4) || native_orphans_pending(header)))
         return v.fail(-30);
     error = journal_stage(v.journal, journal_overlay, &v);
     if (error)
@@ -753,16 +754,19 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
     // the geometry, feature interpretation or identity of its own journal.
     uint8_t normalized[1024];
     memcpy(normalized, header, sizeof(normalized));
-    constexpr unsigned counters[] = {12, 16, 44, 48}, state_fields[] = {52, 58};
-    for (unsigned offset : counters)
+    constexpr unsigned mutable_words[] = {12, 16, 44, 48, last_orphan_offset, 376, 380};
+    constexpr unsigned state_fields[] = {52, 58};
+    for (unsigned offset : mutable_words)
         set32(normalized + offset, u32(original_header + offset));
     for (unsigned offset : state_fields)
         set16(normalized + offset, u16(original_header + offset));
     if (v.checksums())
         set32(normalized + 1020, u32(original_header + 1020));
+    uint32_t orphan_flag = v.orphan_inode ? orphan_present_feature : 0;
+    uint32_t old_readonly = u32(original_header + 100) & ~orphan_flag;
+    uint32_t new_readonly = u32(header + 100) & ~orphan_flag;
     if ((u32(header + 96) & ~4u) != (u32(original_header + 96) & ~4u) ||
-        (u32(header + 100) != u32(original_header + 100) &&
-         u32(header + 100) != (u32(original_header + 100) | 2)))
+        (new_readonly != old_readonly && new_readonly != (old_readonly | 2)))
         return v.fail();
     set32(normalized + 96, u32(original_header + 96));
     set32(normalized + 100, u32(original_header + 100));
@@ -815,13 +819,20 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     v.default_directory_hash_version = header[252];
     v.typed_entries = incompatible & 2;
     v.extent_enabled = incompatible & extent_feature;
-    if ((v.compatible & ~0x3cu) ||
+    if ((v.compatible & ~(0x3cu | orphan_file_feature)) ||
         (incompatible & ~(6u | extent_feature | checksum_seed_feature | wide_descriptor_feature |
                           flex_group_feature)) ||
-        (v.readonly_features & ~(3u | huge_file_feature | directory_links_feature |
-                                 extra_inode_size_feature | metadata_checksum_feature)) ||
+        (v.readonly_features &
+         ~(3u | huge_file_feature | directory_links_feature | extra_inode_size_feature |
+           metadata_checksum_feature | orphan_present_feature)) ||
         (v.inode_size != inode_bytes && v.inode_size != max_inode_bytes))
         return v.fail(-95);
+    if (v.compatible & orphan_file_feature) {
+        v.orphan_inode = u32(header + orphan_inode_offset);
+        if (!(v.compatible & 4) || v.orphan_inode < v.first_inode || v.orphan_inode > v.inodes)
+            return v.fail();
+    } else if (v.readonly_features & orphan_present_feature)
+        return v.fail();
     if (!v.configure_checksums(header, incompatible & checksum_seed_feature))
         return false;
     if ((v.readonly_features & extra_inode_size_feature) && v.inode_size > inode_bytes) {
@@ -883,12 +894,17 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
         !open_journal(v, header, disk))
         return false;
     unsigned state = u16(header + 58);
-    v.writable_safe =
-        (state == 1 || ((check_dirty || v.journal) && state == 0)) && !u32(header + 232);
+    bool native_pending = native_orphans_pending(header);
+    v.writable_safe = (state == 1 || ((check_dirty || v.journal) && state == 0)) &&
+                      (!native_pending || v.journal);
     if ((v.journal || check_dirty || !v.mount->readonly) && !v.writable_safe)
         return v.fail();
     auto recovery = Recovery::none;
-    if (state == 0) {
+    if (native_pending && v.journal) {
+        if (disk.readonly)
+            return v.fail(-30);
+        recovery = Recovery::journal;
+    } else if (state == 0) {
         if (check_dirty && !v.mount->readonly)
             recovery = Recovery::checked;
         else if (v.journal && !disk.readonly)

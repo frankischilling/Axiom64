@@ -37,6 +37,7 @@ constexpr uint32_t unknown_directory_links = UINT32_MAX;
 struct Validation {
     Volume& v;
     Recovery recovery;
+    NativeOrphans orphans;
     bool reconcile_counts;
     uint16_t *group_free_blocks = nullptr, *group_free_inodes = nullptr;
     uint64_t free_block_total = 0, free_inode_total = 0;
@@ -51,7 +52,7 @@ struct Validation {
     uint32_t cached_table = UINT32_MAX;
 
     explicit Validation(Volume& value, Recovery mode)
-        : v(value), recovery(mode), reconcile_counts(mode == Recovery::checked) {
+        : v(value), recovery(mode), orphans(value), reconcile_counts(mode == Recovery::checked) {
     }
 
     bool recovering() const {
@@ -265,6 +266,8 @@ struct Validation {
                 bool reserved = number < v.first_inode && number != 2;
                 bool resize = number == 7 && (v.compatible & 16);
                 bool journal = number == 8 && v.journal;
+                bool orphan_file = number == v.orphan_inode;
+                bool orphan = orphans.contains(number);
                 if (reserved && !resize && !journal) {
                     if (mode || file_size(data) || v.inode_sectors(data) || u32(data + 104))
                         return v.fail(-95);
@@ -311,10 +314,11 @@ struct Validation {
                 if (length > v.capacity(data) || (type == regular_file && length > INT32_MAX &&
                                                   (v.revision == 0 || !(v.readonly_features & 2))))
                     return v.fail();
-                if (type == directory && (!length || length % v.block_size ||
-                                          length > uint64_t(v.blocks) * v.block_size))
+                if (type == directory &&
+                    ((!length && !(orphan && !u16(data + 26))) || length % v.block_size ||
+                     length > uint64_t(v.blocks) * v.block_size))
                     return v.fail();
-                if (type == symlink && (!length || length > 4095))
+                if (type == symlink && ((!length && !(orphan && !u16(data + 26))) || length > 4095))
                     return v.fail();
                 if ((type == fifo || type == 0140000) &&
                     (length || v.inode_sectors(data) != count * (v.block_size / sector_size)))
@@ -330,11 +334,13 @@ struct Validation {
                 if (fast_link && length > inode_block_bytes)
                     return v.fail();
                 if (has_extents(data)) {
-                    if (!validate_extent_tree(v, data, type == regular_file && !journal,
-                                              {block_bits, owners, count, leaves}))
+                    if (!validate_extent_tree(v, data,
+                                              type == regular_file && !journal && !orphan_file,
+                                              {block_bits, owners, count, leaves}, orphan))
                         return false;
                 } else if (!fast_link) {
-                    uint64_t base = 0, limit = (length + v.block_size - 1) / v.block_size;
+                    uint64_t base = 0, limit = orphan ? v.capacity(data) / v.block_size
+                                                      : (length + v.block_size - 1) / v.block_size;
                     for (unsigned slot = 0; slot < 15; slot++) {
                         unsigned depth = slot < 12 ? 0 : slot - 11;
                         if (!tree(u32(data + 40 + slot * 4), depth, resize, base, limit, count,
@@ -348,16 +354,16 @@ struct Validation {
                 }
                 if (count * (v.block_size / sector_size) != v.inode_sectors(data))
                     return v.fail();
-                if (type == directory && leaves != length / v.block_size)
+                if (type == directory && !orphan && leaves != length / v.block_size)
                     return v.fail();
-                if (type == symlink && has_extents(data) &&
+                if (type == symlink && has_extents(data) && !orphan &&
                     leaves != (length + v.block_size - 1) / v.block_size)
                     return v.fail();
-                if (!reserved) {
-                    bool removed = !u16(data + 26) && u32(data + 20);
+                if (!reserved && !orphan_file) {
+                    bool removed = !u16(data + 26) && (orphan || u32(data + 20));
                     if (removed && recovering() && number >= v.first_inode)
                         setbit(deleted_bits, number, true);
-                    else if (!u16(data + 26) || u32(data + 20))
+                    else if (!u16(data + 26) || (!orphan && u32(data + 20)))
                         return v.fail();
                     modes[number] = mode;
                     links[number] = u16(data + 26);
@@ -396,6 +402,9 @@ struct Validation {
         uint8_t data[max_block_size];
         if (!inode(number, disk_inode))
             return false;
+        // Linux clears i_size when removing a directory, before freeing its blocks.
+        if (detached && orphans.contains(number) && !file_size(disk_inode))
+            return true;
         if ((u32(disk_inode + 32) & indexed_directory) && !validate_directory_index(v, disk_inode))
             return false;
         size_t slots = 8;
@@ -506,7 +515,7 @@ struct Validation {
         for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
             if (!deleted(number))
                 continue;
-            if (!reconcile_counts && references[number])
+            if ((!reconcile_counts || orphans.contains(number)) && references[number])
                 return v.fail();
             if ((modes[number] & 0170000) != ax::directory || !references[number])
                 continue;
@@ -549,6 +558,8 @@ struct Validation {
                 uint32_t parent = number;
                 unsigned depth = 0;
                 while (deleted(parent)) {
+                    if (!dotdots[parent] && orphans.contains(parent))
+                        break;
                     if (++depth > v.inodes || !dotdots[parent] ||
                         (modes[dotdots[parent]] & 0170000) != ax::directory)
                         return v.fail();
@@ -572,7 +583,8 @@ struct Validation {
     bool reclaim_deleted(uint8_t* header) {
         if (!deleted_bits)
             return true;
-        bool any = false;
+        bool native_pending = native_orphans_pending(header);
+        bool any = native_pending;
         for (uint32_t number = v.first_inode; number <= v.inodes; number++)
             any |= deleted(number);
         if (!any)
@@ -593,11 +605,17 @@ struct Validation {
                 return false;
         }
         for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
-            if (!deleted(number))
+            if (!deleted(number) && !orphans.contains(number))
                 continue;
             if (!v.load_inode(number, data))
                 return false;
-            if (references[number]) {
+            if (orphans.contains(number) && u16(data + 26)) {
+                if (!v.fast_symlink(data) && !v.size(data, file_size(data), true))
+                    return false;
+                set32(data + 20, 0);
+                if (!v.save_inode(number, data))
+                    return false;
+            } else if (references[number]) {
                 set16(data + 26, references[number]);
                 set32(data + 20, 0);
                 if (!v.save_inode(number, data))
@@ -607,9 +625,12 @@ struct Validation {
         }
         if (!v.super(header))
             return false;
+        if (native_pending && !orphans.clear(header))
+            return false;
         // Validate the complete proposed disk image before mount can commit it.
         Validation result{v, Recovery::none};
-        return result.allocate() && result.bitmaps(header) && result.inode_maps() &&
+        return result.allocate() && result.bitmaps(header) &&
+               result.orphans.collect(header, result.inode_bits) && result.inode_maps() &&
                result.directories();
     }
 };
@@ -617,8 +638,9 @@ struct Validation {
 
 bool validate_volume(Volume& v, uint8_t* header, Recovery recovery) {
     Validation check{v, recovery};
-    if (!(check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories() &&
-          check.reconcile(header) && check.reclaim_deleted(header)))
+    if (!(check.allocate() && check.bitmaps(header) &&
+          check.orphans.collect(header, check.inode_bits) && check.inode_maps() &&
+          check.directories() && check.reconcile(header) && check.reclaim_deleted(header)))
         return false;
     if (v.journal) {
         int error = journal_checkpoint(v.journal);

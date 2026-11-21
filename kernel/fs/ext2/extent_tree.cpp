@@ -405,9 +405,10 @@ void init_extent_tree(uint8_t* inode) {
 }
 
 bool validate_extent_tree(Volume& v, const Inode& inode, bool allow_unwritten,
-                          const ExtentOwnership& ownership) {
+                          const ExtentOwnership& ownership, bool allow_past_eof) {
     ExtentPage page;
-    uint64_t file_blocks = (file_size(inode) + v.block_size - 1) / v.block_size;
+    uint64_t file_blocks = allow_past_eof ? extent_logical_limit
+                                          : (file_size(inode) + v.block_size - 1) / v.block_size;
     return load_root(v, inode, page) &&
            validate(v, inode, page, extent_logical_limit, file_blocks, allow_unwritten, ownership);
 }

@@ -43,6 +43,8 @@ constexpr uint32_t metadata_checksum_feature = 0x400, checksum_seed_feature = 0x
 constexpr uint32_t wide_descriptor_feature = 0x80, flex_group_feature = 0x200;
 constexpr uint32_t huge_file_feature = 0x8, directory_links_feature = 0x20;
 constexpr uint32_t extra_inode_size_feature = 0x40, huge_file_inode = 0x40000;
+constexpr uint32_t orphan_file_feature = 0x1000, orphan_present_feature = 0x10000;
+constexpr unsigned last_orphan_offset = 232, orphan_inode_offset = 640;
 constexpr unsigned ext4_link_max = 65000;
 constexpr unsigned classic_descriptor_bytes = 32, wide_descriptor_bytes = 64;
 constexpr unsigned max_descriptor_bytes = 1024;
@@ -164,8 +166,8 @@ struct ExtentOwnership {
     uint64_t& leaves;
 };
 
-bool validate_extent_tree(Volume&, const Inode& inode, bool allow_unwritten,
-                          const ExtentOwnership&);
+bool validate_extent_tree(Volume&, const Inode& inode, bool allow_unwritten, const ExtentOwnership&,
+                          bool allow_past_eof = false);
 
 struct Volume {
     Mount* mount;
@@ -185,6 +187,7 @@ struct Volume {
     Journal* journal;
     uint32_t* journal_map;
     uint32_t journal_blocks;
+    uint32_t orphan_inode;
     uint32_t touched[64];
     unsigned touched_count;
     int error;
@@ -735,7 +738,7 @@ struct Volume {
         return !changed || write_block(pointer, data, 1);
     }
 
-    bool size(Inode& inode, uint64_t length) {
+    bool size(Inode& inode, uint64_t length, bool recovery = false) {
         if (length > capacity(inode))
             return fail(-27);
         if (length > INT32_MAX) {
@@ -752,7 +755,7 @@ struct Volume {
         if (has_extents(inode)) {
             if (length <= old && !prune_extents(*this, inode, keep))
                 return false;
-        } else if (length < old) {
+        } else if (length < old || recovery) {
             uint64_t base = 0;
             for (unsigned slot = 0; slot < 15; slot++) {
                 unsigned depth = slot < 12 ? 0 : slot - 11;
@@ -805,7 +808,7 @@ struct Volume {
 
     bool delete_inode(uint32_t number, Inode& inode) {
         bool dir = (u16(inode) & 0170000) == directory;
-        if (!fast_symlink(inode) && !size(inode, 0))
+        if (!fast_symlink(inode) && !size(inode, 0, true))
             return false;
         uint32_t block = u32(inode + 104), references;
         uint8_t data[max_block_size];
@@ -896,6 +899,34 @@ inline bool directory_block(Volume& v, Inode& inode, uint64_t offset, uint32_t& 
 }
 
 enum class Recovery { none, checked, journal };
+
+inline bool native_orphans_pending(const uint8_t* header) {
+    return u32(header + last_orphan_offset) || (u32(header + 100) & orphan_present_feature);
+}
+
+class NativeOrphans {
+    Volume& v;
+    uint8_t* pending = nullptr;
+
+    bool mark(uint32_t number, const uint8_t* allocated, Inode& inode);
+    bool check_file(const uint8_t* header, const uint8_t* allocated, bool clear);
+
+  public:
+    explicit NativeOrphans(Volume& volume) : v(volume) {
+    }
+
+    ~NativeOrphans() {
+        release(pending);
+    }
+
+    bool contains(uint32_t number) const {
+        return pending && bit(pending, number);
+    }
+
+    bool collect(const uint8_t* header, const uint8_t* allocated);
+    bool clear(uint8_t* header);
+};
+
 bool validate_volume(Volume&, uint8_t* header, Recovery);
 uint32_t directory_hash(const uint8_t* name, unsigned length, unsigned version,
                         const uint32_t* seed, bool unsigned_bytes);

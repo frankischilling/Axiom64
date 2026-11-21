@@ -52,16 +52,6 @@ Acpi::PciPinRoutes pin_routes;
 Acpi::PciBridges bridges;
 uint32_t sci_gsi;
 
-uint64_t physical_limit() {
-    uint32_t a = 0x80000000, b, c, d;
-    asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
-    if (a < 0x80000008)
-        return 1ull << 36;
-    a = 0x80000008;
-    asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
-    return 1ull << min(a & 0xff, 52u);
-}
-
 bool ecam_allowed(const Acpi::EcamRegion& region, uint64_t limit) {
     uint64_t start = region.bus_address(region.first_bus);
     uint64_t end = region.bus_address(region.last_bus + 1);
@@ -98,7 +88,7 @@ uint32_t selector(const PciFunction& p, uint16_t offset) {
 } // namespace
 
 void pci_configure_ecam(const Acpi::Mcfg& mcfg) {
-    uint64_t limit = physical_limit();
+    uint64_t limit = physical_address_limit();
     for (unsigned i = 0; i < mcfg.count; ++i) {
         const auto& region = mcfg.regions[i];
         if (!ecam_allowed(region, limit)) {
@@ -311,7 +301,7 @@ bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, Irq::Handler h
     uint32_t offset = location & ~7u;
     size_t bytes = entries * 16;
     uint64_t address, length;
-    uint64_t limit = physical_limit();
+    uint64_t limit = physical_address_limit();
     if (!pci.memory_bar_size(location & 7, address, length) || offset > length ||
         bytes > length - offset || address >= limit || offset > limit - address ||
         bytes > limit - address - offset)

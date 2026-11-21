@@ -100,6 +100,17 @@ inline uint32_t in32(uint16_t p) {
     return v;
 }
 
+inline uint64_t physical_address_limit() {
+    uint32_t a = 0x80000000, b, c, d;
+    asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
+    if (a < 0x80000008)
+        return 1ull << 36;
+    a = 0x80000008;
+    asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
+    const auto bits = a & 0xff;
+    return 1ull << (bits < 32 ? 32 : (bits > 52 ? 52 : bits));
+}
+
 inline uint64_t rdmsr(uint32_t m) {
     uint32_t a, d;
     asm volatile("rdmsr" : "=a"(a), "=d"(d) : "c"(m));

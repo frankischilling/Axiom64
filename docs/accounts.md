@@ -73,6 +73,14 @@ Recovery validates the complete directory inventory and a canonical, checksummed
 
 The strict graphical acceptance matrix passes ten BIOS/UEFI RAM/ext2 boots across modern and legacy block transports, with fifty authenticated sessions and eight host filesystem checks. Every session verifies actual X11 authorization, pixels, keyboard input and ordinary identity. It retains 110 framebuffer captures, sixty black login screens and 320 retired-process checks. Every boot has a distinct kernel UUID and meets the unchanged 180-second deadline. Integration with every existing desktop/service gate and wider persistent crash recovery remain required.
 
+## D-Bus
+
+Each authenticated graphical session starts its own D-Bus daemon as the signed-in user. Graphical programs inherit its address and can activate services installed under the standard D-Bus session service directories. The daemon authenticates peers with Unix socket credentials. A parent-death signal stops it if the session leader crashes. Its randomized abstract socket disappears with the last daemon socket reference. Serial shells can start a separate bus with `dbus-run-session -- bash`.
+
+Normal boot prepares `/etc/machine-id` on a writable root. It saves the ID across persistent boots and serves the system bus at `/run/dbus/system_bus_socket` after the account store is provisioned. Init runs the foreground daemon and retries after one second when it exits. The daemon starts as root to bind the socket, then switches to the locked `messagebus` account with UID and GID 81 and no supplementary groups. If those IDs or account names are in conflicting use, startup fails until the conflict is resolved. Existing users and groups keep their IDs.
+
+Clients use the shipped upstream system-bus policy. Privileged system-service activation, a service shutdown sequence, and a shared per-user runtime directory are still pending. The daemon uses the current kernel descriptor limit when the requested 65,536-descriptor limit is unavailable.
+
 ## Session journals and login records
 
 `logbook.c` owns an exclusive root transaction in a mode-0755 directory. Its journal, lock, failed-login records and text audit log have mode 0600; public utmp/wtmp projections have mode 0644. Every file must be root-owned, regular and single-link. The journal retains full-width timestamps, identities, sequence numbers and random session tokens. Versioned frames use the [CRC-32 polynomial](https://www.rfc-editor.org/rfc/rfc1952) for accidental-corruption detection. Root ownership supplies authorization. A partial final write is repaired only after all complete frames validate; corrupt complete frames and inconsistent session relationships fail closed.

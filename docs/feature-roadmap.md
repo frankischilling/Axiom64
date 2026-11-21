@@ -632,14 +632,14 @@ Acceptance evidence:
 
 ### F25. Init, login, and system services
 
-Init reaps children and independently supervises the authenticated console and normal network manager with one-second restart delays. Normal startup creates an administrator privately on a fresh disk, then requires login across persistent reboots. Local [account checks](accounts.md) cover provisioning, login, elevation, logout and killed-console recovery. The published [network-manager baseline](network-manager-acceptance.md) retains crash/recovery and desktop-startup evidence; authenticated graphical startup remains under integration. General service ordering, daemons and complete clean shutdown remain required.
+Init reaps children and independently supervises the authenticated console, network manager and system D-Bus daemon with one-second restart delays. Normal startup creates an administrator privately on a fresh disk, then requires login across persistent reboots. Local [account checks](accounts.md) cover provisioning, login, elevation, logout and killed-console recovery. The [D-Bus checks](testing.md) exercise policy, service activation, descriptor passing, restart and session cleanup. General service ordering, additional daemons and clean shutdown remain required.
 
 Required work:
 
 - Minimal init, ordered startup, service supervision, restart, and clean shutdown.
 - Logging/syslog, time synchronization, cron/at/batch, and accounting.
 - SSH, controlled inetd/telnet compatibility, HTTP server, and network daemons.
-- DHCP/network setup, device discovery, RPC/rpcbind, and D-Bus.
+- DHCP and network setup, device discovery, RPC/rpcbind, and privileged D-Bus service activation.
 - Desktop login greeter, ly as the preferred display manager, LightDM/LXDM alternatives, sessions and logout.
 - Service privilege separation, configuration, dependency ordering, and persistent state.
 

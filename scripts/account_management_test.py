@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/account_management_test.py
+# @brief   Test native account administration.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Checks real executable behavior and protected account generations.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Exercise account administration with real executables, passwords and native metadata."""
 import argparse
 import json
@@ -148,6 +170,20 @@ def native(directory, fixtures):
                 assert value.st_mode & 0o7777 == mode and value.st_uid == uid and value.st_gid == gid
             run('bootstrap-again', ['bootstrap', 'other', str(root / 'home/other'), '/bin/sh', '--password-fd', '0'],
                 expected=1, secret=SECRET, unchanged=True)
+            run('service-id-collision', ['group-add', 'reserved', '81'])
+            run('service-collision-rejected', ['ensure-messagebus'], expected=1, unchanged=True)
+            run('service-id-release', ['group-delete', 'reserved'])
+            run('service-ordinary-denied', ['ensure-messagebus'], expected=1, ordinary=True, unchanged=True)
+            run('service-create', ['ensure-messagebus'])
+            state = payloads(database)
+            assert b'messagebus:x:81:81:System message bus:/dev/null:/bin/nologin\n' in state['passwd']
+            assert b'messagebus:x:81:\n' in state['group'] and b'messagebus:!:' in state['shadow']
+            generation = (database / 'current').readlink()
+            run('service-reuse', ['ensure-messagebus'], unchanged=True)
+            assert (database / 'current').readlink() == generation
+            run('service-extra-group', ['member-add', 'sudo', 'messagebus'])
+            run('service-unsafe-membership', ['ensure-messagebus'], expected=1, unchanged=True)
+            run('service-remove-extra-group', ['member-delete', 'sudo', 'messagebus'])
             run('group-add', ['group-add', 'bob', '1001'])
             bob_home = root / 'home/bob'
             run('user-add', ['user-add', 'bob', '1001', 'bob', str(bob_home), '/bin/sh'])

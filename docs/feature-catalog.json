@@ -3401,10 +3401,11 @@
     {
       "name": "dbus",
       "kind": "port",
-      "state": "planned",
+      "state": "demonstrated",
       "owner": "F25",
       "issue": "https://github.com/frankischilling/Axiom64/issues/25",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "current": "D-Bus 1.16.2 ships in both profiles. Normal boot runs a supervised system bus under a locked service account. Graphical logins use separate authenticated buses with guest service activation and Unix descriptor passing.",
+      "acceptance": "Verify boot policy, system-bus recovery, persistent machine ID, ordinary desktop service activation and descriptor passing, foreign-user rejection and logout cleanup. Privileged system-service activation remains open."
     },
     {
       "name": "disasterparty",

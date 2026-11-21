@@ -693,7 +693,7 @@ Run `make test-storage` for the complete disk matrix. The harness creates and ov
 
 Run `make test-ext2` for the complete filesystem matrix. [Ext2 verification](ext2.md#verification) describes supported layouts, host `debugfs`/`e2fsck` checks, failure injection, and remaining limits. The harness creates its own disk images under `build/` and accepts no user disk path.
 
-Run `python3 scripts/ext2_test.py --checks cache` to exercise the inode cache on its own. Each BIOS and UEFI boot scans 73,728 files twice, checks that a held file and a previously cached hard-link alias keep their inode after the index grows, and unmounts the read-only volume. The host checks that the disk bytes stayed the same and runs `e2fsck`.
+Run `python3 scripts/ext2_test.py --checks cache` to exercise the inode cache on its own. Each BIOS and UEFI boot scans 73,728 files twice, checks that a held file and a previously cached hard-link alias keep their inode after the index grows, and unmounts the read-only volume. This case gives the guest 640 MiB so the desktop initramfs and UEFI reservations leave enough room under the shared inode-cache limit. The other ext2 cases use 512 MiB. The host checks that the disk bytes stayed the same and runs `e2fsck`.
 
 Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle, and guest-compiled C++ suite. [Thread verification](threads.md#verification) describes coverage and evidence files; complete POSIX threading and SMP remain planned.
 

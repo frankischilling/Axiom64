@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Weston
+Comment=Open a Wayland desktop in an X11 window
+Exec=/usr/bin/weston-nested
+Icon=/usr/share/weston/wayland.png
+Terminal=false
+Categories=System;

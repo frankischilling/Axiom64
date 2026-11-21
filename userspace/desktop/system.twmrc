@@ -23,6 +23,7 @@ Button1 = : root : f.menu "main"
 Menu "main" {
     "Axiom64" f.title
     "Terminal" f.exec "xterm -e /bin/bash -i &"
+    "Weston" f.exec "/usr/bin/weston-nested &"
     "Games" f.menu "games"
     "Raise" f.raise
     "Move" f.move

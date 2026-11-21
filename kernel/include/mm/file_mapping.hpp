@@ -44,6 +44,7 @@ struct FileMapping {
 };
 
 void attach_file_mapping(FileMapping&);
+void move_file_mapping(FileMapping&, uint64_t start, size_t length);
 // Unmap the pages and trim or release every intersecting file range.
 int unmap_file_mappings(AddressSpace&, uint64_t base, size_t length);
 bool clone_file_mappings(AddressSpace&, const AddressSpace&);

@@ -49,3 +49,7 @@ build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 
 image: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py
+
+.PHONY: test-weston
+test-weston: build/axiom64.elf build/rootfs-desktop.cpio
+	$(PYTHON) scripts/weston_test.py $(WESTON_TEST_FLAGS)

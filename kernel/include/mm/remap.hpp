@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/mm/remap.hpp
- * @brief   Private anonymous mapping resize interface.
+ * @brief   Linux virtual mapping resize interface.
  * @author  frankischilling
  * @date    2026-11-20
  *
- * Declares the Linux mremap handler for ordinary private anonymous mappings.
+ * Declares the handler for resizing anonymous and memory-file mappings.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -29,6 +29,5 @@
 namespace ax {
 struct Task;
 
-int64_t remap_anonymous(Task& task, uint64_t address, size_t old_size, size_t new_size,
-                        uint64_t flags);
+int64_t remap_memory(Task&, uint64_t address, size_t old_size, size_t new_size, uint64_t flags);
 } // namespace ax

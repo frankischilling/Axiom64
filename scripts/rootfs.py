@@ -119,6 +119,20 @@ for notice in sorted((ROOT / "build" / "licenses").rglob("*")):
         directory(path)
 
 # Packages are data inputs. Their install hooks never run on the host or guest.
+# Select Weston's CPU-rendered X11 backend and desktop shell. The Alpine
+# packages also contain modules for transports and renderers that need separate
+# kernel interfaces and dependencies.
+weston_payloads = {
+    "weston": (
+        "usr/bin/weston", "usr/lib/weston/libexec_weston.so.0*",
+        "usr/libexec/weston-desktop-shell", "usr/libexec/weston-keyboard",
+        "usr/libexec/weston-simple-im", "usr/share/weston/*",
+    ),
+    "libweston": ("usr/lib/libweston-14.so.0*",),
+    "weston-backend-x11": ("usr/lib/libweston-14/x11-backend.so",),
+    "weston-shell-desktop": ("usr/lib/weston/desktop-shell.so",),
+    "weston-clients": ("usr/bin/weston-simple-shm",),
+}
 for package, archive in packages():
     if package.get("build_only", False):
         continue
@@ -132,7 +146,7 @@ for package, archive in packages():
     }:
         continue
     with tarfile.open(archive, "r:gz", ignore_zeros=True) as stream:
-        overlay_tar(files, stream)
+        overlay_tar(files, stream, include=weston_payloads.get(package["name"]))
 
 # Override both the installed interpreter and native development libc after APK imports.
 for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **download_files(),
@@ -157,9 +171,10 @@ shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',
 files['etc/shells'] = (0o100644, ('\n'.join(shells) + '\n').encode())
 regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
 regular("usr/bin/freedoom", ROOT / "userspace/desktop/freedoom.sh")
+regular("usr/bin/weston-nested", ROOT / "userspace/desktop/weston-nested.sh")
 for path in ("usr/share/applications", "etc/skel", "etc/skel/Desktop"):
     files.setdefault(path, (0o40755, b""))
-for entry in sorted((ROOT / "userspace/desktop/launchers").glob("freedoom-*.desktop")):
+for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')

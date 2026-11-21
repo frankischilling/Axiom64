@@ -402,14 +402,18 @@ bool AddressSpace::move_anonymous_mapping(uint64_t source, size_t old_size, uint
         discard_empty_tables(*this, destination, destination + new_size);
         return false;
     }
-    // Transfer the old pages only after every allocation has succeeded.
-    for (size_t offset = 0; offset < old_size; offset += page_size) {
+    move_prepared_pages(source, destination, old_size);
+    return true;
+}
+
+void AddressSpace::move_prepared_pages(uint64_t source, uint64_t destination, size_t size) {
+    // The destination has empty page-table slots and needs no more allocation.
+    for (size_t offset = 0; offset < size; offset += page_size) {
         auto& old = *entry(source + offset);
         *entry(destination + offset) = old;
         old = 0;
     }
-    discard_empty_tables(*this, source, source + old_size);
-    return true;
+    discard_empty_tables(*this, source, source + size);
 }
 
 bool AddressSpace::prepare_mapping(uint64_t va, size_t len) {

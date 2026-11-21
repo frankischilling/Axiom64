@@ -546,7 +546,7 @@ Acceptance evidence:
 
 ### F21. X11 and Wayland display servers
 
-Xorg fbdev, twm, xterm, and rendered pixels have BIOS/UEFI guest evidence.
+Xorg fbdev, twm and xterm run on both firmware paths. The optional Weston desktop runs inside Xorg with Pixman software rendering. Wayland clients use a private socket, share buffers and receive keyboard events from Xorg. Standalone KMS output and Xwayland remain open. See [the Weston guest checks](testing.md).
 
 Required work:
 

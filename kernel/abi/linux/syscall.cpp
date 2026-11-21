@@ -1056,7 +1056,7 @@ static int64_t dispatch(Frame* f) {
     case 24:
         return 0;
     case 25:
-        return remap_anonymous(*current, a, b, c, d);
+        return remap_memory(*current, a, b, c, d);
     case 26:
         if (a % page_size || (c & ~7) || (c & 5) == 5)
             return -22;

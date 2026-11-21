@@ -237,7 +237,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `viewres` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `vim` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `wayland` | bundled | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
-| `weston` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
+| `weston` | demonstrated with the X11 backend and Pixman | [F21](feature-roadmap.md#f21-x11-and-wayland-display-servers) |
 | `wget` | demonstrated | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
 | `x11perf` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
 | `xauth` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |

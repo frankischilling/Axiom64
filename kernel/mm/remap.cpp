@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/mm/remap.cpp
- * @brief   Private anonymous mremap implementation.
+ * @brief   Resize private anonymous and memory-file mappings.
  * @author  frankischilling
  * @date    2026-11-20
  *
- * Resizes ordinary anonymous mappings and relocates their pages when needed.
+ * Keeps existing pages and backing references when a mapping changes address.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -23,15 +23,46 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "mm/remap.hpp"
+#include "fs/memfd.hpp"
+#include "mm/file_mapping.hpp"
 #include "mm/limits.hpp"
 #include "process/task.hpp"
 
 namespace ax {
-int64_t remap_anonymous(Task& task, uint64_t address, size_t old_size, size_t new_size,
-                        uint64_t flags) {
+namespace {
+FileMapping* memory_file_range(AddressSpace& space, uint64_t start, uint64_t end) {
+    auto map = space.file_mappings;
+    while (map && map->end <= start)
+        map = map->next;
+    return map && map->start == start && map->end == end && map->memory_file ? map : nullptr;
+}
+
+bool grow_file_mapping(FileMapping& map, uint64_t destination, size_t new_size, int protection) {
+    auto& space = *map.space;
+    size_t old_size = map.end - map.start;
+    bool moved = destination != map.start;
+    uint64_t tail = destination + old_size;
+    if (!space.prepare_mapping(moved ? destination : tail, moved ? new_size : new_size - old_size))
+        return false;
+
+    // Reserve the new range before moving resident pages. New pages fault
+    // against the original file, preserving its offsets, EOF and seal checks.
+    uint64_t initial = memfd_unpopulated_page(map, protection);
+    for (uint64_t page = tail; page < destination + new_size; page += page_size)
+        *space.entry(page) = initial;
+    if (moved) {
+        space.move_prepared_pages(map.start, destination, old_size);
+        move_file_mapping(map, destination, new_size);
+    } else
+        map.end += new_size - old_size;
+    return true;
+}
+} // namespace
+
+int64_t remap_memory(Task& task, uint64_t address, size_t old_size, size_t new_size,
+                     uint64_t flags) {
     constexpr uint64_t may_move = 1, fixed = 2, dont_unmap = 4;
     constexpr uint64_t nx = 1ull << 63;
-    constexpr uint64_t access = 1 | 2 | nx;
 
     if ((flags & ~(may_move | fixed | dont_unmap)) ||
         ((flags & (fixed | dont_unmap)) && !(flags & may_move)) || address % page_size ||
@@ -50,13 +81,24 @@ int64_t remap_anonymous(Task& task, uint64_t address, size_t old_size, size_t ne
 
     auto& space = task.memory->space;
     uint64_t end = address + old_size;
+    auto first = space.entry(address);
+    if (!first || !(*first & (page_mask | page_file)))
+        return -14;
+    bool file_backed = *first & page_file;
+    auto file = file_backed ? memory_file_range(space, address, end) : nullptr;
+    if (file_backed && !file)
+        return -14;
+    uint64_t readable = file ? page_file_access : 1;
+    uint64_t writable = file ? page_file_write : 2;
+    uint64_t access = readable | writable | nx;
     uint64_t protection_bits = 0;
     for (uint64_t page = address; page < end; page += page_size) {
         auto entry = space.entry(page);
         if (!entry || !(*entry & (page_mask | page_file)))
             return -14;
-        if ((*entry & (page_private | page_anonymous | page_file)) !=
-            (page_private | page_anonymous))
+        if (file ? !(*entry & page_file)
+                 : (*entry & (page_private | page_anonymous | page_file)) !=
+                       (page_private | page_anonymous))
             return -38;
         if (page == address)
             protection_bits = *entry & access;
@@ -65,26 +107,40 @@ int64_t remap_anonymous(Task& task, uint64_t address, size_t old_size, size_t ne
     }
 
     if (new_size <= old_size) {
-        if (new_size < old_size)
-            space.unmap(address + new_size, old_size - new_size);
+        if (new_size < old_size) {
+            if (file) {
+                if (int error = unmap_file_mappings(space, address + new_size, old_size - new_size))
+                    return error;
+            } else
+                space.unmap(address + new_size, old_size - new_size);
+        }
         return address;
     }
 
     size_t growth = new_size - old_size;
-    int protection = (protection_bits & 1 ? 1 : 0) | (protection_bits & 2 ? 2 : 0) |
+    int protection = (protection_bits & readable ? 1 : 0) | (protection_bits & writable ? 2 : 0) |
                      (protection_bits & nx ? 0 : 4);
+    if (file && new_size - 1 > uint64_t(INT64_MAX) - file->offset)
+        return -75;
     if (!memory_growth_allowed(task, end, growth) ||
-        ((protection & 2) && !data_growth_allowed(task, end, growth)))
+        ((protection & 2) && (!file || !file->shared) && !data_growth_allowed(task, end, growth)))
         return -12;
-    if (growth <= user_limit - end && !space.mapped_size(end, growth))
+    if (growth <= user_limit - end && !space.mapped_size(end, growth)) {
+        if (file)
+            return grow_file_mapping(*file, address, new_size, protection) ? int64_t(address) : -12;
         return space.map(end, growth, protection, page_private | page_anonymous) ? int64_t(address)
                                                                                  : -12;
+    }
     if (!(flags & may_move))
         return -12;
 
     uint64_t destination = space.find_unmapped(new_size);
-    if (!destination ||
-        !space.move_anonymous_mapping(address, old_size, destination, new_size, protection))
+    if (!destination)
+        return -12;
+    bool moved =
+        file ? grow_file_mapping(*file, destination, new_size, protection)
+             : space.move_anonymous_mapping(address, old_size, destination, new_size, protection);
+    if (!moved)
         return -12;
     space.next_map = destination + new_size + page_size;
     return destination;

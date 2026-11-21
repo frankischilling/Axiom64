@@ -95,6 +95,21 @@ static unsigned char* response(int fd, unsigned char header[32], size_t* length)
     return data;
 }
 
+static uint32_t x11_atom(int fd, const char* name) {
+    size_t size = strlen(name);
+    uint32_t request[18] = {0};
+    CHECK(size && size <= sizeof(request) - 8);
+    size_t units = 2 + (size + 3) / 4;
+    request[0] = (uint32_t)(units << 16) | 16u;
+    request[1] = (uint32_t)size;
+    memcpy(request + 2, name, size);
+    transfer(fd, request, units * 4, 1);
+    unsigned char reply[32];
+    size_t length;
+    free(response(fd, reply, &length));
+    return u32(reply + 8);
+}
+
 static uint32_t find_window(int fd, uint32_t window, uint32_t atom, const char* value, int exact,
                             int depth) {
     unsigned char reply[32];
@@ -194,6 +209,8 @@ int main(int argc, char** argv) {
     int exact = argc == 3 && !strcmp(argv[1], "--focus-title-exact");
     if (argc == 3 && (exact || !strcmp(argv[1], "--focus-title"))) {
         uint32_t window = find_window(fd, root, 39, argv[2], exact, 0); // XA_WM_NAME
+        if (!window)
+            window = find_window(fd, root, x11_atom(fd, "_NET_WM_NAME"), argv[2], exact, 0);
         if (window) {
             uint32_t set[] = {3u << 16 | 2u << 8 | 42u, window, 0};
             transfer(fd, set, sizeof(set), 1);

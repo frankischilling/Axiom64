@@ -46,6 +46,7 @@ int memfd_map(Task&, Handle&, uint64_t base, size_t length, uint64_t offset, int
 void memfd_link_mapping(FileMapping&);
 void memfd_unlink_mapping(FileMapping&);
 uint64_t memfd_page_protection(uint64_t entry, int prot);
+uint64_t memfd_unpopulated_page(const FileMapping&, int prot);
 
 enum class MemfdFault { outside, protection, bus, resolved };
 MemfdFault memfd_fault(AddressSpace&, uint64_t address, bool write, bool execute);

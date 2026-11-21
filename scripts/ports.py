@@ -1,7 +1,31 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/ports.py
+# @brief   Resolve and verify guest package archives.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Assembles package file data without executing distribution install hooks.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Resolve and fetch musl packages for the guest; never execute package scripts."""
 import argparse
 import fcntl
+from fnmatch import fnmatchcase
 import hashlib
 import io
 import json
@@ -97,7 +121,7 @@ def resolve(names):
     return sorted(selected.values(), key=lambda package: package["name"])
 
 
-def overlay_tar(files, stream):
+def overlay_tar(files, stream, *, include=None):
     """Merge package file data without executing installation hooks."""
     for member in stream:
         path = member.name.rstrip("/")
@@ -105,6 +129,8 @@ def overlay_tar(files, stream):
             continue
         if path.startswith("/") or ".." in Path(path).parts:
             raise RuntimeError(f"unsafe package path: {path}")
+        if include is not None and not any(fnmatchcase(path, item) for item in include):
+            continue
         for parent in reversed(Path(path).parents):
             if str(parent) != ".":
                 files.setdefault(str(parent), (0o40755, b""))

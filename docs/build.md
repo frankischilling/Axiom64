@@ -20,6 +20,8 @@ The VM keeps its root in `.local/vm/root.ext2`. New roots use the classic ext3 f
 
 After authentication, normal startup launches Xorg, twm, xeyes and an ordinary-user terminal alongside the private serial shell. A fresh private X11 cookie controls display access. Local BIOS/UEFI RAM/ext2 checks cover input, logout and display/console failure; complete service and crash-recovery integration remains required. See [authenticated desktop sessions](accounts.md#authenticated-desktop).
 
+Choose **Weston** from the X11 menu or run `weston-nested` in the graphical terminal to open a Wayland desktop inside Xorg. Open a terminal from the Weston panel and run `wayland-info` or `weston-simple-shm`. To start a Wayland application with the compositor, run `weston-nested -- COMMAND` from the X11 terminal. Close the outer Weston window to end the session.
+
 On WSL, the graphical command requires a working WSLg display. `make run-serial` starts the same image with a hidden framebuffer and exposes the serial console.
 
 To boot the same persistent VM through UEFI:

@@ -4746,18 +4746,20 @@
     {
       "name": "wayland",
       "kind": "port",
-      "state": "bundled",
+      "state": "demonstrated",
       "owner": "F23",
       "issue": "https://github.com/frankischilling/Axiom64/issues/23",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "current": "Wayland client and server libraries run in the nested Weston desktop with shared-memory buffers and a private Unix socket.",
+      "acceptance": "Verify rendered shared memory, keyboard delivery and client isolation through the guest. Standalone display and Xwayland remain open."
     },
     {
       "name": "weston",
       "kind": "port",
-      "state": "planned",
+      "state": "demonstrated",
       "owner": "F23",
       "issue": "https://github.com/frankischilling/Axiom64/issues/23",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "current": "Weston 14.0.2 runs as an optional X11-hosted desktop using Pixman and ships a terminal, shared-memory demo and Wayland inspection tool.",
+      "acceptance": "Verify BIOS and UEFI guest rendering, physical input, ordinary-user socket isolation and session teardown. Native KMS and accelerated backends remain open."
     },
     {
       "name": "x11perf",

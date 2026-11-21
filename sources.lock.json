@@ -3072,6 +3072,57 @@
       ]
     },
     {
+      "origin": "sdl2",
+      "commit": "af8a1d285ff6a0fb2de048e17b1b66d63f17104b",
+      "license": "Zlib",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/af8a1d285ff6a0fb2de048e17b1b66d63f17104b/community/sdl2/APKBUILD",
+      "recipe_sha256": "f13bb3f38844ad29483ad3a2793d761f6ab52f5aef0082edb87dc74db174bf9a",
+      "files": [
+        {
+          "name": "SDL2-2.32.8.tar.gz",
+          "sha512": "484c33638e7bd1002815bb1f6a47a292d1eaf0b963598dde65f4a3e077dfe75ee35b9ea4b3b767365b3ef4f613c4d69ce55b5e96675de562994344e83a978272",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/SDL2-2.32.8.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/af8a1d285ff6a0fb2de048e17b1b66d63f17104b/community/sdl2/SDL2-2.32.8.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "sdl2_mixer",
+      "commit": "83e2bc96975a8e1cedb1018ac0390c8883a91f29",
+      "license": "Zlib",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/83e2bc96975a8e1cedb1018ac0390c8883a91f29/community/sdl2_mixer/APKBUILD",
+      "recipe_sha256": "171518a4455efb9ba2075f1988128c4a0433fa458b14e98632174155c06bbde6",
+      "files": [
+        {
+          "name": "sdl2_mixer-2.8.1.tar.gz",
+          "sha512": "653ec1f0af0b749b9ed0acd3bfcaa40e1e1ecf34af3127eb74019502ef42a551de226daef4cc89e6a51715f013e0ba0b1e48ae17d6aeee931271f2d10e82058a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/sdl2_mixer-2.8.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/83e2bc96975a8e1cedb1018ac0390c8883a91f29/community/sdl2_mixer/sdl2_mixer-2.8.1.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "sdl2_net",
+      "commit": "fa7e44444e9acb8d7541a5e25de3ccf200a7baf4",
+      "license": "Zlib",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/fa7e44444e9acb8d7541a5e25de3ccf200a7baf4/community/sdl2_net/APKBUILD",
+      "recipe_sha256": "2a971dbed3cadad5cbc11860abebb1a7e2b6564988abcd2b6d5f2d152f1e9ae6",
+      "files": [
+        {
+          "name": "SDL2_net-2.2.0.tar.gz",
+          "sha512": "fa22f1a2c777aac6932551b5adc925288c424dc1af46a974fdb2e3579205b40b204db01d2a8c4048aa333a200efc241f784b9bc9276277e8ab4d23edb023ab69",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/SDL2_net-2.2.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/fa7e44444e9acb8d7541a5e25de3ccf200a7baf4/community/sdl2_net/SDL2_net-2.2.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "twm",
       "commit": "08d1ffc551bf57e4526f392d3a14a344a2fecb7c",
       "license": "MIT",

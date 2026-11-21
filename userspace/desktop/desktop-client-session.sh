@@ -33,6 +33,21 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
+seed_desktop() {
+    test -n "${HOME:-}" || return 0
+    state="$HOME/.local/share/axiom64/desktop-shortcuts"
+    test ! -e "$state" || return 0
+    mkdir -p "$HOME/Desktop" "${state%/*}" || return
+    for entry in /etc/skel/Desktop/*.desktop; do
+        test -f "$entry" || continue
+        target="$HOME/Desktop/${entry##*/}"
+        if test ! -e "$target" && test ! -L "$target"; then
+            cp "$entry" "$target" || return
+        fi
+    done
+    : > "$state"
+}
+seed_desktop || printf '%s\n' 'Could not install the desktop shortcuts.' >&2
 /usr/bin/twm -f /etc/X11/system.twmrc &
 twm=$!
 sleep .2

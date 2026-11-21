@@ -23,8 +23,14 @@ Button1 = : root : f.menu "main"
 Menu "main" {
     "Axiom64" f.title
     "Terminal" f.exec "xterm -e /bin/bash -i &"
+    "Games" f.menu "games"
     "Raise" f.raise
     "Move" f.move
     "Resize" f.resize
     "Close" f.delete
+}
+Menu "games" {
+    "Games" f.title
+    "Freedoom Phase 1" f.exec "/usr/bin/freedoom 1 &"
+    "Freedoom Phase 2" f.exec "/usr/bin/freedoom 2 &"
 }

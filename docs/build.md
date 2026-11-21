@@ -4,7 +4,7 @@ Use Ubuntu 24.04 x86-64, directly or through WSL Ubuntu. Static userspace and Bu
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 \
+sudo apt-get install -y g++ make cmake musl-tools linux-libc-dev nasm python3 \
     xorriso qemu-system-x86 qemu-utils ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python gdb
 make -j2 image
 make run

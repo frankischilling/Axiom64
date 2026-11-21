@@ -1431,19 +1431,23 @@
       "title": "Shells, window managers, and desktop environments",
       "milestone": "M5",
       "state": "partial",
-      "current": "BusyBox ash, Bash, zsh, twm, xterm, and xeyes work.",
+      "current": "BusyBox ash, Bash, zsh, twm, xterm, and xeyes work. Chocolate Doom and both Freedoom campaigns ship with a Games submenu and desktop entries.",
       "scope": [
         "Bash as the default interactive shell while retaining ash and zsh",
         "Lightweight FVWM/Openbox-style window manager next",
         "Additional window managers: ctwm and matwm2",
-        "CDE, TDE and KDE desktop environments in the wider roadmap",
+        "KDE Plasma as the default desktop with KWin, panel, application launcher, settings and runtime dependencies, with CDE and TDE as alternate sessions",
+        "Start menu entries and default desktop shortcuts for every vendored user-facing program, including terminal launchers for command-line tools",
+        "Bundle a file manager, terminal, editor, archive manager, image viewer, screenshot utility, and system monitor alongside Plasma",
         "X11 tools, fonts, fontconfig, locale/input support, and session selection",
         "GTK/Motif/Tk/SDL applications and desktop application catalog"
       ],
       "acceptance": [
         "Start Bash from normal serial and desktop sessions with job control",
         "Open, move, resize, close, and restart windows in each claimed manager",
-        "Run a smoke scenario for every claimed desktop/application rather than treating package presence as proof"
+        "Run a smoke scenario for every claimed desktop/application rather than treating package presence as proof",
+        "Reach Plasma by default as an ordinary user and start an alternate session",
+        "Verify both launch paths for every vendored user-facing program on a fresh desktop image and check Freedoom input, audio, and clean exit"
       ],
       "dependencies": [
         "F20",
@@ -1452,7 +1456,8 @@
       "evidence": [
         "userspace/init/main.c",
         "userspace/desktop/startx.sh",
-        "userspace/desktop/system.twmrc"
+        "userspace/desktop/system.twmrc",
+        "scripts/doom_test.py"
       ],
       "branch": "feature/f23-shells-window-managers-and-desktop-environments",
       "issue": "https://github.com/frankischilling/Axiom64/issues/23"

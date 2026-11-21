@@ -11,6 +11,7 @@ from build_curl import runtime_files as download_files
 from ca_bundle import runtime_files as trust_files
 from build_libxcrypt import runtime_files as password_files
 from build_accounts import runtime_files as account_files
+from build_doom import runtime_files as doom_files
 import tarfile
 import argparse
 import tempfile
@@ -96,6 +97,8 @@ for notice in sorted((ROOT / "build" / "licenses").rglob("*")):
 
 # Packages are data inputs. Their install hooks never run on the host or guest.
 for package, archive in packages():
+    if package.get("build_only", False):
+        continue
     # This image uses fbdev with GLX disabled; no Mesa or LLVM payload is needed.
     if package["name"] in {"mesa", "llvm20-libs", "spirv-tools"}:
         continue
@@ -110,7 +113,7 @@ for package, archive in packages():
 
 # Override both the installed interpreter and native development libc after APK imports.
 for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **download_files(),
-                    **trust_files(), **password_files(), **account_files()}.items():
+                    **trust_files(), **password_files(), **account_files(), **doom_files()}.items():
     for parent in reversed(Path(path).parents):
         if str(parent) != '.':
             files.setdefault(str(parent), (0o40755, b''))
@@ -130,6 +133,12 @@ shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',
           if path.lstrip('/') in files]
 files['etc/shells'] = (0o100644, ('\n'.join(shells) + '\n').encode())
 regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
+regular("usr/bin/freedoom", ROOT / "userspace/desktop/freedoom.sh")
+for path in ("usr/share/applications", "etc/skel", "etc/skel/Desktop"):
+    files.setdefault(path, (0o40755, b""))
+for entry in sorted((ROOT / "userspace/desktop/launchers").glob("freedoom-*.desktop")):
+    regular("usr/share/applications/" + entry.name, entry, 0o100644)
+    regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
 for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)

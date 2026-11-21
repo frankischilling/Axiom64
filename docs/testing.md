@@ -111,6 +111,13 @@ fixture supplies samples from a file with a bounded ALSA buffer and runs the
 codec in callback mode. It requires no host sound card. Logs, audio files,
 and image digests stay under `build/pcm-test/`.
 
+`make test-suite SUITE=freedoom` uses the regular desktop image's installed
+engine, IWADs, and launch commands. The isolated X11 fixture runs the game
+as an ordinary user with access to `/dev/dsp`. QEMU sends physical
+keyboard input. The host checks changed gameplay pixels and captured
+audio, and the guest checks a clean exit. The script's `--verify-image`
+mode checks only the package contents and desktop registrations.
+
 `make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
 client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
 modern/legacy PCI profiles. Two workers share immutable images. Original

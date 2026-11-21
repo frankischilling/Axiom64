@@ -95,15 +95,19 @@ static unsigned char* response(int fd, unsigned char header[32], size_t* length)
     return data;
 }
 
-static uint32_t terminal_window(int fd, uint32_t window, uint32_t class_atom, int depth) {
+static uint32_t find_window(int fd, uint32_t window, uint32_t atom, const char* value, int exact,
+                            int depth) {
     unsigned char reply[32];
     size_t length;
-    uint32_t property[] = {6u << 16 | 20u, window, class_atom, 0, 0, 256};
+    uint32_t property[] = {6u << 16 | 20u, window, atom, 0, 0, 256};
     transfer(fd, property, sizeof(property), 1);
-    unsigned char* value = response(fd, reply, &length);
-    int terminal = length >= 5 && memmem(value, length, "XTerm", 5);
-    free(value);
-    if (terminal) {
+    unsigned char* property_value = response(fd, reply, &length);
+    size_t size = strlen(value);
+    int matches =
+        exact ? u32(reply + 16) == size && length >= size && !memcmp(property_value, value, size)
+              : memmem(property_value, length, value, size) != NULL;
+    free(property_value);
+    if (matches) {
         uint32_t attributes[] = {2u << 16 | 3u, window};
         transfer(fd, attributes, sizeof(attributes), 1);
         free(response(fd, reply, &length));
@@ -119,7 +123,7 @@ static uint32_t terminal_window(int fd, uint32_t window, uint32_t class_atom, in
     CHECK(length >= count * 4);
     uint32_t found = 0;
     for (unsigned i = 0; i < count && !found; ++i)
-        found = terminal_window(fd, u32(children + i * 4), class_atom, depth + 1);
+        found = find_window(fd, u32(children + i * 4), atom, value, exact, depth + 1);
     free(children);
     return found;
 }
@@ -187,6 +191,21 @@ int main(int argc, char** argv) {
         free(setup);
         return 0;
     }
+    int exact = argc == 3 && !strcmp(argv[1], "--focus-title-exact");
+    if (argc == 3 && (exact || !strcmp(argv[1], "--focus-title"))) {
+        uint32_t window = find_window(fd, root, 39, argv[2], exact, 0); // XA_WM_NAME
+        if (window) {
+            uint32_t set[] = {3u << 16 | 2u << 8 | 42u, window, 0};
+            transfer(fd, set, sizeof(set), 1);
+            transfer(fd, focus, sizeof(focus), 1);
+            free(response(fd, reply, &length));
+            CHECK(u32(reply + 8) == window);
+            printf("X11_FOCUS_PASS window=%u\n", window);
+        }
+        close(fd);
+        free(setup);
+        return window ? 0 : 2;
+    }
     if (argc > 1 && !strcmp(argv[1], "--desktop")) {
         uint32_t attributes[] = {2u << 16 | 3u, root};
         int managed = 0;
@@ -207,7 +226,7 @@ int main(int argc, char** argv) {
         free(response(fd, reply, &length));
         uint32_t class_atom = u32(reply + 8), terminal = 0;
         for (int attempt = 0; attempt < 20 && !terminal; ++attempt) {
-            terminal = terminal_window(fd, root, class_atom, 0);
+            terminal = find_window(fd, root, class_atom, "XTerm", 0, 0);
             if (!terminal)
                 usleep(100000);
         }

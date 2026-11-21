@@ -79,5 +79,41 @@
     "signature_url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz.asc",
     "signature_sha256": "bdccf2057a7c4ae377b40e832cb8c632ae8b532d4fb64cc7b843066eee748f89",
     "signing_primary_fingerprint": "B146647E45A7B33947AB226B2A2C87D161692D40"
+  },
+  "chocolate_doom": {
+    "version": "3.1.1",
+    "revision": "410d96855b5df5410ff591a90efeafa889119224",
+    "license": "GPL-2.0-or-later",
+    "archive": "chocolate-doom-410d968.tar.gz",
+    "url": "https://codeload.github.com/chocolate-doom/chocolate-doom/tar.gz/410d96855b5df5410ff591a90efeafa889119224",
+    "sha256": "a25c51c8ad67d43652a051a7cb615a5781f806c1d4d6aca4f87e082c9a656b95",
+    "patches": {
+      "software-texture-limit.patch": "7037986489db2c230360f0002d345827ada7462db21a4ce8f03fbe69b3bf4415",
+      "x11-navigation-keys.patch": "99cb9bc03a3428d30eca4844fba218e19343df6ad982e7cb962a535b500be8f6"
+    }
+  },
+  "freedoom": {
+    "version": "0.13.0",
+    "revision": "cfb8644b1a8dc7d7d2177e6a892ccaa2922bdaae",
+    "license": "BSD-3-Clause",
+    "archive": "freedoom-0.13.0.zip",
+    "sha256": "3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59",
+    "url": "https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip",
+    "release_fingerprint": "90BB5F797B0ED14D310F90BE39B3786A18C93DAD",
+    "checksum": {
+      "archive": "freedoom-0.13.0-CHECKSUM",
+      "url": "https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0-CHECKSUM",
+      "sha256": "01a627fa0c80b7446f4f435df6fffef8f354a9987b23870bc5ea5464ca82e977"
+    },
+    "release_key": {
+      "archive": "freedoom-release-key.asc",
+      "url": "https://keys.openpgp.org/vks/v1/by-fingerprint/90BB5F797B0ED14D310F90BE39B3786A18C93DAD",
+      "sha256": "1531205206b017e18320b0758c537845b95a9c902292d8f76c15a337d1e6b232"
+    },
+    "source": {
+      "archive": "freedoom-source-0.13.0.tar.gz",
+      "url": "https://codeload.github.com/freedoom/freedoom/tar.gz/cfb8644b1a8dc7d7d2177e6a892ccaa2922bdaae",
+      "sha256": "ddf1643de0c97fea805640ac3dcc3497a9e8fd388aed2f4685ec1cd671eb8178"
+    }
   }
 }

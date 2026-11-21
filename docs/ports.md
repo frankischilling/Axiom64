@@ -52,6 +52,23 @@ The account generation store now has a small transaction interface under `usersp
 
 Login-record verification uses a [portable GNU reader kit](../vendor/gnu-utmp-reader/README.md) with its own pinned inputs. Its Ubuntu package and source URLs use the dated archive snapshot from 8 November 2026 so package rotation does not remove required inputs. Exact versions, sizes and checksums remain pinned. It stages GNU libc headers and static libraries, GCC runtime inputs and exact Linux errno headers without ambient host libraries. The kit records the actual compilation/link inputs and includes its application object and a relink script. Moved-kit relinking reproduces the reader bytes, and source bundling preserves the upstream archives, required notices and kit. This reader establishes GNU login-record interoperability; wider source-built glibc and NSS support remain planned.
 
+The desktop image includes Chocolate Doom 3.1.1 and both Freedoom 0.13.0
+campaigns. The engine builds against the pinned musl toolchain and the
+locked Alpine SDL2, SDL2_mixer, and SDL2_net packages. SDL2 headers stay in
+the build sysroot. The engine's local patches handle SDL's unlimited
+software texture dimensions and X11 navigation keys with mismatched
+scancodes. The builder verifies the signed Freedoom checksum before
+installing the original IWADs and preserves the engine license and
+Freedoom credits.
+
+Launch either campaign from the X11 Games menu or with
+`freedoom 1` and `freedoom 2`. Both have desktop entries under
+`/usr/share/applications`. The authenticated desktop seeds matching
+shortcuts in a user's `Desktop` directory and preserves existing files.
+With an Intel HD Audio device present, the user needs write access to
+`/dev/dsp` to use SDL's OSS backend. For a regular account, an
+administrator can grant membership in the audio group with GID 29.
+
 The image includes copyright and license notices under `/usr/share/licenses`, plus port and source manifests. Produce the companion source bundle with:
 
 ```sh

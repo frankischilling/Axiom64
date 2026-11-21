@@ -1,0 +1,23 @@
+Keep the upscale texture when SDL reports no size limit.
+
+The SDL software renderer reports zero for its maximum texture dimensions.
+Only clamp a dimension when the renderer reports a positive limit.
+
+--- a/src/i_video.c
++++ b/src/i_video.c
+@@ -561,11 +561,13 @@ static void LimitTextureSize(int *w_upscale, int *h_upscale)
+                 SDL_GetError());
+     }
+
+-    while (*w_upscale * SCREENWIDTH > rinfo.max_texture_width)
++    while (rinfo.max_texture_width > 0 &&
++           *w_upscale * SCREENWIDTH > rinfo.max_texture_width)
+     {
+         --*w_upscale;
+     }
+-    while (*h_upscale * SCREENHEIGHT > rinfo.max_texture_height)
++    while (rinfo.max_texture_height > 0 &&
++           *h_upscale * SCREENHEIGHT > rinfo.max_texture_height)
+     {
+         --*h_upscale;
+     }

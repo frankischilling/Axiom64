@@ -66,6 +66,14 @@ python3 -B scripts/pcm_test.py
 '''
 
 [[step]]
+suites = ["freedoom"]
+name = "Boot the installed Freedoom campaigns with physical game input and audio"
+run = '''
+make -j2 build/axiom64.elf build/rootfs-desktop.cpio
+python3 -B scripts/doom_test.py
+'''
+
+[[step]]
 suites = ["storage"]
 name = "Test virtio disks and reboot persistence"
 run = '''

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Freedoom Phase 2
+Comment=Play Freedoom Phase 2 in Chocolate Doom
+Exec=/usr/bin/freedoom 2
+Icon=applications-games
+Categories=Game;ActionGame;
+Terminal=false

@@ -338,8 +338,10 @@ it checks companion traffic, actual address inventories and ownership fences
 separately. Shared native/guest execution and image/product/source ownership
 remain in the existing TCP6 harness.
 
-`scripts/local_validation.py` runs the selected commands in
-`scripts/local_test_suites.toml`. Storage matrix choices come from
+`scripts/local_validation.py` runs the selected suite. The suite list and
+the order of its command files are in `scripts/local_test_suites.toml`.
+The command files in `scripts/local_test_suites/` group the steps by subsystem.
+Storage matrix choices come from
 `scripts/account_storage_ci.py`. The local coverage suite reopens the original
 administration and rotation indexes and verifies their complete case unions.
 

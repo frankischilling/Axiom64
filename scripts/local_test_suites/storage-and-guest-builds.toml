@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/local_test_suites/storage-and-guest-builds.toml
+# @brief   Test disk filesystems, normal init, and guest builds.
+# @author  frankischilling
+# @date    2026-11-20
+#
+# Defines ordered commands run locally by the suite dispatcher.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
+[[step]]
+suites = ["storage"]
+name = "Test virtio disks and reboot persistence"
+run = '''
+python3 scripts/storage_test.py
+'''
+
+[[step]]
+suites = ["storage"]
+name = "Test writable ext2 volumes and host fsck"
+run = '''
+python3 scripts/ext2_test.py
+'''
+
+[[step]]
+suites = ["storage"]
+name = "Test whole-volume observation and checked deleted-inode recovery"
+run = '''
+python3 scripts/tests/ext2_inspection_test.py
+python3 scripts/tests/ext2_recovery_inspection_test.py
+python3 scripts/tests/ext2_named_retirement_inspection_test.py
+python3 scripts/tests/ext2_directory_retirement_inspection_test.py
+python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recovery
+'''
+
+[[step]]
+suites = ["storage-journal"]
+name = "Test native journal crash recovery and Linux format interoperability"
+run = '''
+make test-ext2-journal-native
+'''
+
+[[step]]
+suites = ["storage-journal"]
+name = "Recover committed journals and verify guest persistence across all profiles"
+run = '''
+make test-ext2-journal
+python3 scripts/ext2_journal_rejection_test.py
+'''
+
+[[step]]
+suites = ["storage-journal-lifetime-bios-modern", "storage-journal-lifetime-bios-legacy", "storage-journal-lifetime-uefi-modern", "storage-journal-lifetime-uefi-legacy"]
+name = "Recover open descriptions after VM interruption and reject damaged metadata"
+run = '''
+python3 scripts/tests/journal_lifetime_boundary_test.py
+case "$SUITE" in storage-journal-lifetime-bios-modern|storage-journal-lifetime-bios-legacy|storage-journal-lifetime-uefi-modern|storage-journal-lifetime-uefi-legacy) ;; *) exit 1 ;; esac
+configuration=${SUITE#storage-journal-lifetime-}
+firmware=${configuration%-*}
+transport=${configuration#*-}
+python3 scripts/ext2_journal_lifetime_test.py --firmware "$firmware" --transport "$transport" --directory "build/${SUITE}"
+'''
+
+[[step]]
+suites = ["root"]
+name = "Test ext2 root, data mounts, rejection, and reboot persistence"
+run = '''
+make test-disk-root
+'''
+
+[[step]]
+suites = ["root", "root-userspace"]
+name = "Build reproducible full ext2 root"
+run = '''
+make disk-root
+'''
+
+[[step]]
+suites = ["root"]
+name = "Test delayed root flushes and bounded request timeout"
+run = '''
+python3 scripts/root_io_test.py
+python3 scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
+'''
+
+[[step]]
+suites = ["root-userspace"]
+name = "Test full userspace from ext2 root"
+run = '''
+python3 scripts/boot_test.py --disk-root --transport modern --firmware both --timeout 900
+python3 scripts/boot_test.py --disk-root --transport legacy --firmware both --timeout 900
+'''
+
+[[step]]
+suites = ["root-userspace"]
+name = "Test normal desktop startup from ext2 root"
+run = '''
+python3 scripts/boot_test.py --disk-root --interactive --transport modern --firmware both --timeout 180
+python3 scripts/boot_test.py --disk-root --interactive --transport legacy --firmware both --timeout 180
+'''
+
+[[step]]
+suites = ["root-userspace", "guest-system"]
+name = "Build a test system inside Axiom64 and boot the exported ISO"
+run = '''
+make test-guest-system GUEST_KERNEL_FLAGS=--accelerator=auto
+'''
+
+[[step]]
+suites = ["guest-binutils"]
+name = "Build GNU binutils in Axiom64 and link programs after reboot"
+run = '''
+make test-guest-binutils
+'''
+
+[[step]]
+suites = ["normal-init-bios", "normal-init-uefi"]
+name = "Verify normal init recovery with the same desktop and console"
+run = '''
+firmware=${SUITE#normal-init-}
+case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+python3 scripts/tests/normal_manager_records_test.py
+python3 scripts/normal_manager_peer_test.py 2>&1 | tee build/normal-init-peer.log
+mkdir -p build/ci-normal-workers
+python3 scripts/ci/paired_network.py --suite "$SUITE" \
+  --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" \
+  --temporary-parent "$PWD/build/ci-normal-workers"
+'''

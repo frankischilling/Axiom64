@@ -1,0 +1,566 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/local_test_suites/prepare.toml
+# @brief   Prepare build inputs and run host checks.
+# @author  frankischilling
+# @date    2026-11-20
+#
+# Defines ordered commands run locally by the suite dispatcher.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
+[[step]]
+suites = ["prepare"]
+name = "Test pinned dependency mirror fallback and cache integrity"
+run = '''
+python3 -B scripts/tests/fetch_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify essential boot sources before dependency builds"
+run = '''
+python3 scripts/fetch.py limine busybox
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify locked userspace packages before dependency builds"
+run = '''
+python3 scripts/ports.py fetch
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test crypto cache input invalidation and complete product retention"
+run = '''
+python3 scripts/tests/crypto_cache_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify concurrent cold downloads and interrupted transfer ownership"
+run = '''
+python3 -B scripts/tests/ports_download_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay network capture boundaries and retained output"
+run = '''
+python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
+python3 -B scripts/tests/tcp6_source_handshake_test.py -v
+sudo -n python3 -B scripts/tests/tcp_icmp_port_ownership_test.py -v
+python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
+sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
+sudo -n python3 -B scripts/tests/ipv4_lifetime_capture_binding_test.py
+python3 -B scripts/tests/ipv4_lifetime_arp_test.py -v
+python3 -B scripts/tests/ipv4_lifetime_observation_test.py -v
+python3 -B scripts/tests/manager_link_startup_test.py -v
+python3 -B scripts/tests/network_window_test.py -v
+python3 -B scripts/tests/ipv6_owner_pair_test.py -v
+python3 -B scripts/tests/ipv6_owner_retry_test.py -v
+python3 -B scripts/tests/ipv4_send_capture_test.py -v
+python3 -B scripts/tests/udp_kernel_error_test.py -v
+python3 -B scripts/tests/http_download_image_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test authenticated Ubuntu index identity and retained download failures"
+run = '''
+python3 scripts/tests/host_glibc_sources_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Fingerprint crypto recipes and actual host toolchain inputs"
+run = '''
+python3 scripts/ci/crypto_cache.py --report build/crypto-cache/inputs.json
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Check C and C++ formatting"
+run = '''
+make check-format
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test QEMU accelerator selection and actual monitor evidence"
+run = '''
+python3 scripts/tests/qemu_acceleration_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test init supervision observes complete serial records"
+run = '''
+python3 scripts/tests/normal_manager_events_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay authenticated console prompts and command return ordering"
+run = '''
+python3 scripts/tests/normal_login_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay actual kernel-interrupted ordinary Bash prompts"
+run = '''
+python3 scripts/tests/console_prompt_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Check complete and focused input archive boundaries"
+run = '''
+python3 scripts/tests/ci_inputs_test.py -v
+python3 scripts/tests/ci_tools_test.py -v
+python3 scripts/tests/tcp6_source_inputs_test.py -v
+make test-ipv6-error-record
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Run prompt verification from exported corresponding-source inputs"
+run = '''
+python3 scripts/tests/source_bundle_inputs_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test seed supervision observes complete ordinary-console records"
+run = '''
+python3 scripts/tests/random_installed_records_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test actual init seed records stay framed at every input-echo boundary"
+run = '''
+python3 scripts/tests/random_seed_records_producer_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test copied fixture executables retain Linux execution permissions"
+run = '''
+python3 scripts/tests/random_executable_copy_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay actual RTC firmware writes and reject damaged calendar observations"
+run = '''
+python3 scripts/tests/clock_wall_observer_test.py -v
+python3 scripts/tests/clock_wall_boundary_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Require complete and unaltered storage target shard unions"
+run = '''
+python3 scripts/tests/account_storage_shards_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Require every rotation variant, target and actual fault mode"
+run = '''
+python3 scripts/tests/account_rotation_coverage_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay retained account generation selection through a separate Linux journal oracle"
+run = '''
+python3 scripts/tests/account_generation_oracle_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Classify retained rotation retirement after journal-only observation"
+run = '''
+python3 scripts/tests/account_rotation_journal_oracle_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay actual QMP startup notifications within the negotiation deadline"
+run = '''
+python3 scripts/tests/qmp_greeting_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Preserve actual administration disks and reap interrupted observation children"
+run = '''
+python3 scripts/tests/account_management_storage_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Reject unproven provisional rotation archives"
+run = '''
+python3 scripts/tests/account_rotation_storage_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay actual kernel-interrupted rotation exports without changing captured bytes"
+run = '''
+python3 scripts/tests/account_rotation_serial_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify bounded rotation device storage"
+run = '''
+python3 scripts/tests/account_rotation_disk_test.py -v
+python3 scripts/tests/nbd_startup_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Require exact allocation-map evidence for bounded counter recovery"
+run = '''
+python3 scripts/tests/ext2_counter_inspection_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Require every administration variant, concurrency phase and storage fault"
+run = '''
+python3 scripts/tests/account_management_coverage_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Require complete bounded CI storage matrices"
+run = '''
+python3 scripts/tests/account_storage_ci_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Publish root-created storage evidence through an ordinary runner"
+run = '''
+sudo -n python3 scripts/tests/account_storage_publication_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test manager runtime hint provenance and explicit invalidation with sanitizers"
+run = '''
+make test-manager-runtime-native
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test actual desktop image readiness and bounded uniform-image rejection"
+run = '''
+python3 scripts/tests/desktop_visual_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test Xauthority records against an isolated real X server and ordinary users"
+run = '''
+sudo -n python3 scripts/tests/desktop_authority_test.py --isolated
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test the selected shell starts only on a private owned foreground PTY"
+run = '''
+sudo -n python3 scripts/tests/desktop_terminal_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test desktop recovery ownership and saved process identity"
+run = '''
+mkdir -p build/accounts-policy
+sudo -n python3 scripts/tests/desktop_seat_test.py 2>&1 | tee build/accounts-policy/seat.log
+sudo -n python3 scripts/tests/desktop_seat_test.py --sanitize 2>&1 | tee build/accounts-policy/seat-sanitize.log
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test process identity and exec capture failures with sanitizers"
+run = '''
+make test-proc-identity-policy test-exec-arguments-policy 2>&1 | tee build/accounts-policy/process.log
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Compare process resource-limit policy with native Linux under sanitizers"
+run = '''
+make test-process-limits-policy
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify the portable GNU login-record reader and its pinned inputs"
+run = '''
+python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-controls
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Build all maintained OpenSSL providers from their pinned inputs"
+run = '''
+python3 scripts/build_openssl.py --provider all
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify completed OpenSSL fingerprints and reject changed inputs and products"
+run = '''
+python3 scripts/tests/openssl_inputs_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Build authenticated curl and libcurl with all explicit libc providers"
+run = '''
+python3 scripts/build_curl.py --provider all
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify the dated public CA bundle against its offline Mozilla conversion"
+run = '''
+python3 scripts/ca_bundle.py
+python3 scripts/tests/ca_bundle_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Verify every completed crypto product is retained by the cache"
+run = '''
+python3 scripts/ci/crypto_cache.py --check --report build/crypto-cache/products.json
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Build maintained password providers and account programs"
+run = '''
+python3 scripts/build_libxcrypt.py --provider all
+python3 scripts/build_accounts.py --provider all --linkage all
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Build secure-random lifecycle and cryptographic prerequisite clients"
+run = '''
+make -j2 build/random-admin-native build/random-admin-static build/random-admin-dynamic
+make -j2 build/random-seed-native build/random-seed-static build/random-seed-dynamic
+make -j2 build/random-seed-probe-native build/random-seed-probe-static build/random-seed-probe-dynamic
+make -j2 build/random-seed-fault-static build/random-seed-fault-dynamic
+make -j2 build/random-seed-stop-static build/random-seed-stop-dynamic
+make -j2 build/random-seed-crash-static build/random-seed-crash-dynamic
+make -j2 build/random-seed-recovery-static build/random-seed-recovery-dynamic
+make -j2 build/random-snapshot-static build/random-snapshot-dynamic
+make -j2 build/generation-exec-static build/generation-exec-dynamic
+make -j2 build/crypto-wait-native build/crypto-wait-static build/crypto-wait-dynamic
+make -j2 build/clock-wall-native build/clock-wall-static build/clock-wall-dynamic
+make -j2 build/netlink-inventory-native build/netlink-inventory-static build/netlink-inventory-dynamic
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test entropy, generation, calendar and inventory policies with sanitizers"
+run = '''
+make test-random-native test-random-virtio-native test-random-generation-native
+make test-rtc-codec test-netlink-inventory-codec
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Bundle corresponding sources"
+run = '''
+make sources
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Execute and relink the GNU reader extracted from this run's public source artifact"
+run = '''
+python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-public-controls --source-archive build/axiom64-sources.tar
+python3 - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+kit = Path('build/gnu-reader-public-controls/moved-kit')
+manifest = json.loads((kit / 'manifest.json').read_text())
+assert hashlib.sha256((kit / 'application.c').read_bytes()).hexdigest() == manifest['source_sha256']
+print('GNU_UTMP_READER_PUBLIC_SOURCE_BINDING_PASS')
+PY
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Build standalone image and both userspace profiles"
+run = '''
+make -j2 image
+make build/rootfs-desktop.cpio
+make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests build/manager-protocol build/manager-link
+sudo python3 scripts/address_query_test.py
+make -j2 build/random-static build/random-dynamic
+make -j2 build/dns-static build/dns-dynamic
+make -j2 build/dns-tcp-static build/dns-tcp-dynamic
+make -j2 build/normal-dns-static build/normal-dns-dynamic
+make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
+make -j2 build/file-capabilities-native build/file-capabilities-static build/file-capabilities-dynamic
+python3 scripts/build_libcap.py --provider all
+make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
+make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
+make -j2 build/ipv4-address-lifetimes-native build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic build/ipv4-lifetime-wire-native build/ipv4-lifetime-wire-static build/ipv4-lifetime-wire-dynamic
+make -j2 build/tcp6-fault-native build/tcp6-fault-static build/tcp6-fault-dynamic
+make -j2 build/tcp6-scoped-native build/tcp6-scoped-static build/tcp6-scoped-dynamic
+make -j2 build/tcp6-replies-native build/tcp6-replies-static build/tcp6-replies-dynamic
+make -j2 build/tcp6-isolation-native build/tcp6-isolation-static build/tcp6-isolation-dynamic
+make -j2 build/tcp6-source-lifetime-native build/tcp6-source-lifetime-static build/tcp6-source-lifetime-dynamic
+make -j2 build/tcp6-pending-source-native build/tcp6-pending-source-static build/tcp6-pending-source-dynamic
+make -j2 build/tcp6-source-expiry-native build/tcp6-source-expiry-static build/tcp6-source-expiry-dynamic
+make -j2 build/tcp6-scoped-source-native build/tcp6-scoped-source-static build/tcp6-scoped-source-dynamic
+make -j2 build/tcp6-zone-route-native build/tcp6-zone-route-static build/tcp6-zone-route-dynamic
+make -j2 build/tcp6-zone-source-route-native build/tcp6-zone-source-route-static build/tcp6-zone-source-route-dynamic
+make -j2 build/tcp6-controls-ipv6-native build/tcp6-controls-ipv6-static build/tcp6-controls-ipv6-dynamic
+make -j2 build/tcp6-controls-mapped-native build/tcp6-controls-mapped-static build/tcp6-controls-mapped-dynamic
+make -j2 build/tcp6-controls-ipv4-native build/tcp6-controls-ipv4-static build/tcp6-controls-ipv4-dynamic
+make -j2 build/tcp6-pmtu-native build/tcp6-pmtu-static build/tcp6-pmtu-dynamic
+make -j2 build/tcp6-errors-native build/tcp6-errors-static build/tcp6-errors-dynamic
+make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
+make -j2 build/tcp-malformed-native build/tcp-malformed-static build/tcp-malformed-dynamic
+make -j2 build/tcp-device-native build/tcp-device-static build/tcp-device-dynamic
+make -j2 build/tcp-window-native build/tcp-window-static build/tcp-window-dynamic
+make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
+make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
+make -j2 build/tcp-icmp-native build/tcp-icmp-static build/tcp-icmp-dynamic
+make -j2 build/tcp-pmtu-native build/tcp-pmtu-static build/tcp-pmtu-dynamic
+make -j2 build/tcp-pressure-native build/tcp-pressure-static build/tcp-pressure-dynamic
+make -j2 build/tcp-reconnect-native build/tcp-reconnect-static build/tcp-reconnect-dynamic
+make -j2 build/tcp-recovery-native build/tcp-recovery-static build/tcp-recovery-dynamic
+make build/init-supervision
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test split-queue ownership with sanitizers"
+run = '''
+make test-virtqueue
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test credential policy ownership and allocation failures with sanitizers"
+run = '''
+make test-credentials-policy
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test bounded file-capability policy, xattr allocation and actual ext2 EA codecs"
+run = '''
+make test-file-capabilities-policy test-xattr-store test-ext2-xattr-codec
+python3 scripts/tests/file_capabilities_disk_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test TCP wire, sender and connection policies with sanitizers"
+run = '''
+mkdir -p build/tcp-policy
+make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp test-tcp-pmtu 2>&1 | tee build/tcp-policy/host.log
+python3 scripts/tests/tcp_input_libraries_test.py
+python3 scripts/tests/tcp_reconnect_clock_test.py -v 2>&1 | tee build/tcp-policy/reconnect-clock.log
+python3 scripts/tests/tcp_reconnect_observer_test.py -v 2>&1 | tee build/tcp-policy/reconnect-observer.log
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test IPv4 fragment ownership and reassembly with sanitizers"
+run = '''
+mkdir -p build/ipv4-policy
+python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
+python3 scripts/tests/ipv6_configuration_test.py 2>&1 | tee build/ipv4-policy/ipv6-configuration.log
+python3 scripts/tests/ipv6_router_capture_test.py 2>&1 | tee build/ipv4-policy/ipv6-router-capture.log
+python3 scripts/tests/tcp_capture_lifecycle_test.py -v 2>&1 | tee build/ipv4-policy/capture-lifecycle.log
+python3 scripts/tests/ipv6_dad_policy_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-dad-policy.log
+python3 scripts/tests/ipv6_dad_launch_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-dad-launch.log
+python3 scripts/tests/ipv6_dad_inventory_test.py --directory build/ipv4-policy/ipv6-dad-inventory -v 2>&1 | tee build/ipv4-policy/ipv6-dad-inventory.log
+python3 scripts/tests/ipv6_dad_capture_test.py --archive build/ipv4-policy/ipv6-dad-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-dad-capture.log
+python3 scripts/tests/ipv6_owner_peer_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-owner-peer.log
+python3 scripts/tests/ipv6_owner_launch_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-owner-launch.log
+python3 scripts/tests/ipv6_owner_capture_test.py --archive build/ipv4-policy/ipv6-owner-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-owner-capture.log
+python3 scripts/tests/ipv6_device_capture_test.py --archive build/ipv4-policy/ipv6-device-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-capture.log
+python3 scripts/tests/ipv6_device_pending_capture_test.py --archive build/ipv4-policy/ipv6-device-pending-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-capture.log
+python3 -B scripts/tests/native_ipv6_timers_test.py -v 2>&1 | tee build/ipv4-policy/native-ipv6-timers.log
+python3 scripts/tests/ipv6_device_pending_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-record.log
+python3 scripts/tests/qemu_capture_delivery_test.py -v 2>&1 | tee build/ipv4-policy/qemu-capture-delivery.log
+python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
+python3 scripts/tests/packet_administrative_test.py -v 2>&1 | tee build/ipv4-policy/packet-administrative.log
+python3 scripts/tests/packet_protocol_test.py -v 2>&1 | tee build/ipv4-policy/packet-protocol.log
+python3 scripts/tests/packet_protocol_observation_test.py --archive build/ipv4-policy/packet-protocol-observation-damaged.zip -v 2>&1 | tee build/ipv4-policy/packet-protocol-observation.log
+python3 scripts/tests/tcp_icmp_observer_clock_test.py --archive build/ipv4-policy/icmp-observer-clock-damaged.zip -v 2>&1 | tee build/ipv4-policy/icmp-observer-clock.log
+python3 scripts/tests/udp_capture_fixture_test.py --archive build/ipv4-policy/udp-wire-damaged.zip -v 2>&1 | tee build/ipv4-policy/udp-wire.log
+python3 scripts/tests/administrative_flags_test.py -v 2>&1 | tee build/ipv4-policy/administrative-flags.log
+python3 scripts/tests/manager_link_state_test.py -v 2>&1 | tee build/ipv4-policy/manager-link-state.log
+python3 scripts/tests/ipv6_device_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-record.log
+python3 scripts/tests/dns_fixture_test.py 2>&1 | tee build/ipv4-policy/dns-fixture.log
+python3 scripts/tests/ipv4_aliases_test.py 2>&1 | tee build/ipv4-policy/aliases.log
+python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
+python3 scripts/tests/ipv4_fragment_diagnostics_test.py --directory build/ipv4-policy/fragment-diagnostics -v 2>&1 | tee build/ipv4-policy/fragment-diagnostics.log
+python3 scripts/tests/ipv4_expiry_damage_test.py -v 2>&1 | tee build/ipv4-policy/expiry-damage.log
+make test-ipv6-wire test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths test-ipv4-options-model test-ipv4-multicast test-ipv4-source-filter test-ipv4-source-aggregate test-ipv4-multicast-source-host test-ipv4-source-reports test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries build/ipv4-source-route-host build/ipv4-configuration-host 2>&1 | tee build/ipv4-policy/host.log
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Replay legal source-report interleavings and reject invented retries"
+run = '''
+python3 -B scripts/tests/ipv4_multicast_source_overlap_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Retain both source cohorts and stop orphaned worker descendants"
+run = '''
+python3 -B scripts/tests/ipv4_source_window_test.py -v
+python3 -B scripts/tests/ipv4_source_artifacts_test.py -v
+python3 -B scripts/tests/ipv4_kernel_reply_test.py -v
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test paired network workspace isolation and failure evidence"
+run = '''
+python3 scripts/tests/fixture_storage_test.py -v
+python3 scripts/tests/paired_network_test.py
+'''
+
+[[step]]
+suites = ["prepare"]
+name = "Test PCI removal preserves interrupted guest reads"
+run = '''
+python3 scripts/manager_link_peer_test.py
+python3 scripts/tests/manager_link_hardware_test.py
+'''

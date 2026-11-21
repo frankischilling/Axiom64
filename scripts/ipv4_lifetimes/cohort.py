@@ -15,6 +15,7 @@ from fetch import ROOT
 from ipv4_lifetimes.reader import decode, require
 from ipv4_lifetimes.wire_evidence import source
 from ipv4_lifetimes import wire_protected
+from local_validation import plan_sources
 from tcp6.inputs import digest, freeze, write
 
 CONTROL_NATIVE = 'ipv4-address-lifetimes-native-controls'
@@ -84,8 +85,9 @@ def verify(directory):
             all(type(row['returncode']) is int and row['returncode'] == 0 and row['timed_out'] is False and
                 row['log_sha256'] == digest(directory / (row['name'] + '.log')) for row in index['commands']), 'every complete finite-address cohort command passed')
     inputs = source(directory, index['source'])
-    require(all(inputs[name] == digest(ROOT / name) for name in
-                ('scripts/ipv4_lifetimes/cohort.py', 'scripts/local_test_suites.toml', 'Makefile')), 'same complete test orchestration and build inputs')
+    require(all(inputs.get(name) == digest(ROOT / name) for name in
+                ('scripts/ipv4_lifetimes/cohort.py', *plan_sources(), 'Makefile')),
+            'same complete test orchestration and build inputs')
     export = directory.parent / AUDIT / 'wire'
     require(inputs == decode((export / 'artifacts/source/source-inputs.json').read_text()), 'every cohort and runtime source byte matches')
     proof = wire_protected.verify(export)

@@ -13,6 +13,7 @@ import time
 from ci.paired_network import capture, stop
 from fetch import ROOT
 from ipv4_source_route.controls import require
+from local_validation import plan_sources
 from tcp6.inputs import digest, write
 
 
@@ -45,8 +46,8 @@ def run(directory, commands=None):
             filters=[sys.executable, '-B', '-m', 'ipv4_multicast.source_matrix', 'build/ipv4-source-evidence', '--produce'],
             routing=[sys.executable, '-B', '-m', 'ipv4_source_route.window', '--directory', str(directory), '--routing-only'])
     require(set(commands) == {'filters', 'routing'}, 'both complete source cohort workers')
-    source = {name: digest(ROOT / name) for name in ('scripts/ipv4_source_route/window.py',
-                                                   'scripts/local_test_suites.toml')}
+    names = ('scripts/ipv4_source_route/window.py', *plan_sources())
+    source = {name: digest(ROOT / name) for name in names}
     records, processes, threads, failures = {}, {}, [], []
     lock = threading.Lock()
     def observe(name, process):

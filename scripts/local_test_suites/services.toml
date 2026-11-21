@@ -1,0 +1,366 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/local_test_suites/services.toml
+# @brief   Test downloads, resource limits, accounts, and randomness.
+# @author  frankischilling
+# @date    2026-11-20
+#
+# Defines ordered commands run locally by the suite dispatcher.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
+[[step]]
+suites = ["downloads-native"]
+name = "Compare ordinary-user HTTP and authenticated HTTPS downloads with native Linux"
+run = '''
+sudo -n python3 scripts/http_download_test.py --native --output build/http-downloads
+sudo -n python3 scripts/tests/http_host_network_test.py --directory build/http-downloads/host-network-controls
+sudo -n python3 scripts/http_download_failure_native_test.py --output build/http-downloads/normal-native
+sudo -n python3 scripts/http_download_wget_native_test.py --output build/http-downloads/native-wget
+'''
+
+[[step]]
+suites = ["downloads-bios-modern", "downloads-bios-legacy", "downloads-uefi-modern", "downloads-uefi-legacy"]
+name = "Download real HTTP and authenticated HTTPS fixtures on both guest adapters"
+run = '''
+firmware="${SUITE#downloads-}"
+firmware="${firmware%-*}"
+transport="${SUITE##*-}"
+python3 scripts/http_download_test.py --firmware "$firmware" --transport "$transport" --output build/http-downloads
+'''
+
+[[step]]
+suites = ["downloads-bios-modern", "downloads-bios-legacy", "downloads-uefi-modern", "downloads-uefi-legacy"]
+name = "Independently read actual download sources, products and complete captures"
+run = '''
+firmware="${SUITE#downloads-}"
+firmware="${firmware%-*}"
+transport="${SUITE##*-}"
+python3 scripts/http_download_verify.py build/http-downloads --firmware "$firmware" --transport "$transport" --source-root . --negative-controls build/http-download-controls --report build/http-downloads/actual-evidence.json
+'''
+
+[[step]]
+suites = ["downloads-bios-modern", "downloads-bios-legacy", "downloads-uefi-modern", "downloads-uefi-legacy"]
+name = "Verify normal authenticated downloads and persistent reboots"
+run = '''
+firmware="${SUITE#downloads-}"
+firmware="${firmware%-*}"
+transport="${SUITE##*-}"
+sudo -n python3 scripts/http_download_normal_test.py --firmware "$firmware" --transport "$transport" --output build/http-download-normal
+sudo -n python3 scripts/http_download_normal_verify.py build/http-download-normal --firmware "$firmware" --transport "$transport" --source-root . --output build/http-download-normal-audit --negative-controls build/http-download-normal-audit/controls
+'''
+
+[[step]]
+suites = ["downloads-native", "downloads-bios-modern", "downloads-bios-legacy", "downloads-uefi-modern", "downloads-uefi-legacy"]
+name = "Give the runner ownership of completed download evidence"
+after_failure = true
+run = '''
+if ((EUID != 0)); then
+    sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" build/http-downloads build/http-download-controls build/http-download-normal build/http-download-normal-audit
+fi
+'''
+
+[[step]]
+suites = ["resource-limits-native"]
+name = "Check actual joined-thread quota reclamation on separate native CPUs"
+run = '''
+sudo -n python3 scripts/tests/resource_thread_retirement_test.py
+'''
+
+[[step]]
+suites = ["resource-limits-native"]
+name = "Compare resource quotas, signals and memory admission with native Linux"
+run = '''
+sudo -n python3 scripts/resource_limits_test.py --native --retain-host-source --directory build/resource-limits-native
+'''
+
+[[step]]
+suites = ["resource-limits"]
+name = "Verify resource quotas and stack-aware exec across both libc providers and firmware modes"
+run = '''
+python3 scripts/resource_limits_test.py --directory build/resource-limits-guest
+'''
+
+[[step]]
+suites = ["resource-limits-storage"]
+name = "Verify resource quotas and durable ext2 bytes across both virtio transports"
+run = '''
+python3 scripts/resource_limits_storage_test.py --directory build/resource-limits-storage
+'''
+
+[[step]]
+suites = ["accounts-native-storage"]
+name = "Compare account database publication and updates with native Linux"
+run = '''
+sudo -n python3 scripts/account_store_test.py --fixtures "$AXIOM64_NATIVE_FIXTURES/account-store"
+sudo -n python3 scripts/account_database_test.py --native --directory build/account-database-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-database"
+sudo -n python3 scripts/account_update_test.py --native --directory build/account-update-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-update"
+sudo -n python3 scripts/account_update_test.py --native --sanitize --directory build/account-update-sanitize --fixtures "$AXIOM64_NATIVE_FIXTURES/account-update-sanitize"
+sudo -n python3 scripts/rename_test.py --native --directory build/account-rename-native --fixtures "$AXIOM64_NATIVE_FIXTURES/rename"
+sudo -n python3 scripts/account_home_test.py --native --directory build/account-home-native --fixtures "$AXIOM64_NATIVE_FIXTURES/home"
+sudo -n python3 scripts/account_home_test.py --native --sanitize --directory build/account-home-sanitize --fixtures "$AXIOM64_NATIVE_FIXTURES/home-sanitize"
+sudo -n python3 scripts/account_transaction_test.py --native --directory build/account-transaction-native --fixtures "$AXIOM64_NATIVE_FIXTURES/transaction"
+sudo -n python3 scripts/account_transaction_test.py --native --sanitize --directory build/account-transaction-sanitize --fixtures "$AXIOM64_NATIVE_FIXTURES/transaction-sanitize"
+'''
+
+[[step]]
+suites = ["accounts-native-auth"]
+name = "Compare account management, password hashing and authentication with native Linux"
+run = '''
+python3 scripts/password_library_test.py
+sudo -n python3 scripts/account_management_test.py --fixtures "$AXIOM64_NATIVE_FIXTURES/account-management"
+sudo -n python3 scripts/account_management_ext2.py --native --directory build/account-management-command-native --fixtures "$AXIOM64_NATIVE_FIXTURES/management-command-native"
+sudo -n python3 scripts/account_auth_test.py --native --directory build/account-auth-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-auth"
+sudo -n python3 scripts/account_secret_test.py --native --directory build/account-secret-native
+'''
+
+[[step]]
+suites = ["accounts-native-session"]
+name = "Compare session credentials, leases and login-record projections with native Linux"
+run = '''
+sudo -n python3 scripts/account_session_test.py --native --directory build/account-session-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-session"
+sudo -n python3 scripts/account_logbook_test.py --native --directory build/account-logbook-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-logbook"
+'''
+
+[[step]]
+suites = ["accounts-native-frontends"]
+name = "Compare login, su, sudo, passwd and console recovery with native Linux"
+run = '''
+sudo -n python3 scripts/account_access_test.py --native --directory build/account-access-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-access"
+sudo -n python3 scripts/account_console_test.py --native --directory build/account-console-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-console"
+'''
+
+[[step]]
+suites = ["accounts-guest-storage"]
+name = "Verify account database publication and updates in fresh guest kernels"
+run = '''
+python3 scripts/account_store_guest.py
+python3 scripts/account_database_test.py
+python3 scripts/account_update_test.py
+python3 scripts/rename_test.py --directory build/account-rename-guest
+python3 scripts/account_home_test.py --directory build/account-home-guest
+python3 scripts/account_home_reboot_test.py --directory build/account-home-reboot
+python3 scripts/account_transaction_test.py --directory build/account-transaction-guest
+python3 scripts/account_transaction_reboot_test.py --directory build/account-transaction-reboot
+'''
+
+[[step]]
+suites = ["accounts-store-ext2"]
+name = "Verify account generation transactions through persistent ext2 reboot pairs"
+run = '''
+python3 scripts/account_store_ext2.py
+'''
+
+[[step]]
+suites = ["accounts-guest-auth"]
+name = "Verify password hashing, account management and authentication in fresh guest kernels"
+run = '''
+python3 scripts/password_library_guest.py
+python3 scripts/account_management_guest.py
+python3 scripts/account_auth_test.py
+python3 scripts/account_secret_test.py
+'''
+
+[[step]]
+suites = ["accounts-guest-session"]
+name = "Verify session credentials, leases and GNU login-record interoperability in fresh guest kernels"
+run = '''
+python3 scripts/account_session_test.py
+python3 scripts/account_logbook_test.py
+'''
+
+[[step]]
+suites = ["accounts-guest-frontends"]
+name = "Verify login aliases, elevation and console recovery in fresh guest kernels"
+run = '''
+python3 scripts/account_access_test.py
+python3 scripts/account_console_test.py
+'''
+
+[[step]]
+suites = ["accounts-process-native"]
+name = "Compare terminal ownership, parent death, signal waits, waitid, procfs and exec with native Linux"
+run = '''
+sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
+sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
+make test-sysinfo-native test-membarrier-native
+sudo -n python3 scripts/proc_retirement_test.py
+sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
+sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
+sudo -n python3 scripts/terminal_flush_test.py --native --sanitize --directory build/terminal-flush-sanitize
+'''
+
+[[step]]
+suites = ["accounts-process-guest"]
+name = "Verify terminal ownership, parent death, signal waits, waitid, procfs and exec in fresh guest kernels"
+run = '''
+make test-pty-security test-parent-death test-signal-wait
+make test-waitid test-proc-identity test-exec-arguments test-sysinfo test-membarrier
+python3 scripts/proc_test.py
+python3 scripts/terminal_flush_test.py
+'''
+
+[[step]]
+suites = ["accounts-record-native"]
+name = "Compare POSIX and OFD record locks with actual native process lifetimes"
+run = '''
+sudo -n python3 scripts/record_lock_test.py --native --directory build/record-locks-native --fixtures "$AXIOM64_NATIVE_FIXTURES/record-locks"
+sudo -n make test-record-lock-lifecycle-native
+'''
+
+[[step]]
+suites = ["accounts-record-bios-modern", "accounts-record-bios-legacy", "accounts-record-uefi-modern", "accounts-record-uefi-legacy"]
+name = "Verify POSIX and OFD record-lock lifetime and ext2 reboot persistence"
+run = '''
+case "$SUITE" in
+  accounts-record-bios-modern) firmware=bios; transport=modern ;;
+  accounts-record-bios-legacy) firmware=bios; transport=legacy ;;
+  accounts-record-uefi-modern) firmware=uefi; transport=modern ;;
+  accounts-record-uefi-legacy) firmware=uefi; transport=legacy ;;
+  *) exit 2 ;;
+esac
+python3 scripts/record_lock_lifecycle_test.py --directory build/record-lock-lifecycle --firmware "$firmware" --transport "$transport"
+'''
+
+[[step]]
+suites = ["accounts-record-bios-modern"]
+name = "Preserve the original complete record-lock regression matrix"
+run = '''
+python3 scripts/record_lock_test.py --directory build/record-locks
+'''
+
+[[step]]
+suites = ["accounts-rotation-native"]
+name = "Verify native journal rotation at every publication, short-write and expiry boundary"
+run = '''
+sudo -n python3 scripts/account_logbook_rotation_test.py --native --directory build/account-rotation-native --fixtures "$AXIOM64_NATIVE_FIXTURES/account-rotation"
+sudo -n python3 scripts/account_logbook_rotation_guest.py --native --directory build/account-rotation-observer-native
+python3 scripts/tests/account_projection_write_test.py --directory build/account-projection-write
+python3 scripts/tests/account_projection_write_test.py --directory build/account-projection-write-sanitize --provider native --linkage dynamic --sanitize
+'''
+
+[[step]]
+suites = ["accounts-rotation-bios-modern", "accounts-rotation-bios-legacy", "accounts-rotation-uefi-modern", "accounts-rotation-uefi-legacy"]
+name = "Verify journal rotation, active sessions, retention and exact disk projections in real guest kernels"
+run = '''
+case "$SUITE" in
+  accounts-rotation-bios-modern) firmware=bios; transport=modern; default= ;;
+  accounts-rotation-bios-legacy) firmware=bios; transport=legacy; default=--skip-default ;;
+  accounts-rotation-uefi-modern) firmware=uefi; transport=modern; default=--skip-default ;;
+  accounts-rotation-uefi-legacy) firmware=uefi; transport=legacy; default=--skip-default ;;
+  *) exit 2 ;;
+esac
+sudo -n python3 scripts/account_logbook_rotation_guest.py --directory build/account-rotation-guest --firmware "$firmware" --transport "$transport" $default
+sudo -n python3 scripts/account_logbook_default_ext2.py --directory build/account-rotation-default-ext2 --firmware "$firmware" --transport "$transport"
+'''
+
+[[step]]
+suites = ["accounts-desktop-bios", "accounts-desktop-uefi"]
+name = "Verify authenticated graphical sessions and recovery on RAM and persistent roots"
+run = '''
+firmware=${SUITE#accounts-desktop-}
+case "$firmware" in bios|uefi) ;; *) exit 2 ;; esac
+python3 scripts/account_normal_test.py --directory build/account-desktop --graphical --firmware "$firmware"
+'''
+
+[[step]]
+suites = ["accounts-console-full"]
+name = "Verify authenticated full-profile console, persistence and reboot recovery"
+run = '''
+python3 scripts/account_normal_test.py --directory build/account-normal-full --profile full
+'''
+
+[[step]]
+suites = ["accounts-vm-state"]
+name = "Verify disposable persistent VM setup, concurrent denial and authenticated reboot"
+run = '''
+python3 scripts/vm_test.py
+'''
+
+[[step]]
+suites = ["random-devices"]
+name = "Compare randomness administration and validate complete entropy-device and memory-restore matrices"
+run = '''
+mkdir -p build/random-lifecycle
+sudo -n python3 scripts/random_administration_test.py --native --output build/random-lifecycle/admin-native
+python3 scripts/random_administration_test.py --output build/random-lifecycle/admin-guest
+python3 scripts/random_virtio_test.py --output build/random-lifecycle/virtio
+python3 scripts/random_virtio_test.py --case trusted --linkage static --reseed --timeout 150 --output build/random-lifecycle/virtio-reseed
+python3 scripts/random_snapshot_test.py --output build/random-lifecycle/snapshot
+python3 scripts/random_generation_exec_test.py --output build/random-lifecycle/generation-exec
+'''
+
+[[step]]
+suites = ["random-seeds-native"]
+name = "Compare persisted seed ownership and actual ext2 process crashes with three native libc profiles"
+run = '''
+mkdir -p build/random-lifecycle
+sudo -n python3 scripts/random_seed_native.py --output build/random-lifecycle/seed-native
+sudo -n unshare --mount --propagation private python3 scripts/random_seed_crash_test.py --native --output build/random-lifecycle/crash-native
+'''
+
+[[step]]
+suites = ["random-seeds-bios-modern", "random-seeds-bios-legacy", "random-seeds-uefi-modern", "random-seeds-uefi-legacy"]
+name = "Verify seed reboot, device errors, full disks, real VM crashes and checked recovery"
+run = '''
+configuration=${SUITE#random-seeds-}
+firmware=${configuration%-*}
+transport=${configuration##*-}
+case "$configuration" in bios-modern|bios-legacy|uefi-modern|uefi-legacy) ;; *) exit 1 ;; esac
+python3 scripts/random_seed_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/seed
+python3 scripts/random_seed_fault_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/fault
+python3 scripts/random_seed_crash_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/crash
+python3 scripts/random_seed_recovery_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/recovery
+'''
+
+[[step]]
+suites = ["random-crypto-native"]
+name = "Compare actual OpenSSL key, signature, certificate and TLS clients with native Linux"
+run = '''
+python3 scripts/random_crypto_test.py --native --output build/random-lifecycle/crypto-native
+python3 scripts/random_crypto_wait_test.py --native --output build/random-lifecycle/crypto-wait-native
+'''
+
+[[step]]
+suites = ["random-crypto-bios", "random-crypto-uefi"]
+name = "Verify guest TLS, key generation, signatures and actual cryptographic initialization waits"
+run = '''
+firmware=${SUITE#random-crypto-}
+case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+python3 scripts/tests/random_crypto_wait_observer_test.py
+python3 scripts/random_crypto_test.py --firmware "$firmware" --output build/random-lifecycle/crypto
+python3 scripts/random_crypto_wait_test.py --firmware "$firmware" --output build/random-lifecycle/crypto-wait
+'''
+
+[[step]]
+suites = ["random-crypto-prerequisites"]
+name = "Compare and verify real UTC clocks and libc interface inventories needed by crypto clients"
+run = '''
+mkdir -p build/random-lifecycle
+sudo -n python3 scripts/netlink_inventory_test.py --native --output build/random-lifecycle/inventory-native
+python3 scripts/netlink_inventory_test.py --output build/random-lifecycle/inventory-guest
+python3 scripts/clock_wall_test.py --native --output build/random-lifecycle/calendar-native
+python3 scripts/clock_wall_test.py --output build/random-lifecycle/calendar-guest
+'''
+
+[[step]]
+suites = ["random-installed-bios", "random-installed-uefi"]
+name = "Verify ordinary init seed supervision, installed crypto tools and fresh disk-root rotation"
+run = '''
+firmware=${SUITE#random-installed-}
+case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+python3 scripts/tests/fixture_archive_test.py
+python3 scripts/random_installed_test.py --firmware "$firmware" --output build/random-lifecycle/installed
+'''

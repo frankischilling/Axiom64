@@ -1,0 +1,615 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/local_test_suites/network-and-platform.toml
+# @brief   Test Ethernet, address configuration, and platform interfaces.
+# @author  frankischilling
+# @date    2026-11-20
+#
+# Defines ordered commands run locally by the suite dispatcher.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
+[[step]]
+suites = ["ipv6-expiry"]
+name = "Test delayed IPv6 datagrams and isolated expiry campaign control"
+run = '''
+python3 scripts/tests/ipv6_expiry_peer_test.py
+python3 scripts/tests/ipv6_expiry_neighbor_test.py -v
+python3 scripts/tests/ipv6_expiry_controller_test.py -v
+'''
+
+[[step]]
+suites = ["ipv6-expiry"]
+name = "Observe real ten-minute IPv6 path MTU expiry in all eleven profiles"
+run = '''
+sudo -n python3 scripts/ipv6_expiry_test.py
+'''
+
+[[step]]
+suites = ["ipv6-expiry"]
+name = "Give the runner ownership of IPv6 expiry evidence"
+after_failure = true
+run = '''
+if test -d build/ipv6-expiry; then
+  sudo -n chown -R "$(id -u):$(id -g)" build/ipv6-expiry
+fi
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test virtio and e1000 Ethernet with packet sockets"
+run = '''
+python3 -B scripts/ci/network_window.py run
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare gateway routing with three native Linux linkages"
+run = '''
+sudo -n make test-ipv4-gateways-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test gateway routing across eight static and dynamic guest profiles"
+run = '''
+make test-ipv4-gateways
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test IPv6 proc, netlink and socket controls on both firmware paths and three adapters"
+run = '''
+make test-ipv6-configuration test-ipv6-link-configuration test-ipv6-socket-configuration
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare IPv6 configuration with three isolated Linux linkages"
+run = '''
+sudo -n make test-ipv6-configuration-native test-ipv6-link-configuration-native test-ipv6-socket-configuration-native
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test IPv6 router discovery and finite SLAAC across both firmware paths and three adapters"
+run = '''
+make test-ipv6-router
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare controlled IPv6 router discovery with three isolated Linux linkages"
+run = '''
+sudo -n make test-native-address-worker test-ipv6-router-native
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Verify IPv6 stable DAD conflicts and prefix ownership on real guest adapters"
+run = '''
+python3 scripts/ipv6_dad_test.py --directory build/ipv6-dad-wire
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare IPv6 DAD conflicts with three isolated native Linux linkages"
+run = '''
+sudo -n python3 scripts/ipv6_dad_test.py --native --directory build/ipv6-dad-native
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Verify IPv6 address ownership across both firmware paths and three adapters"
+run = '''
+make test-ipv6-ownership
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare IPv6 address ownership with three isolated native Linux linkages"
+run = '''
+sudo -n make test-ipv6-ownership-native
+'''
+
+[[step]]
+suites = ["ipv6-expiry"]
+name = "Verify IPv6 DAD states across administrative, carrier and MTU transitions"
+run = '''
+make test-ipv6-device
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare IPv6 device DAD states with three isolated native Linux linkages"
+run = '''
+sudo -n make test-native-bridge-ready test-ipv6-device-native
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Verify link inventories across administrative and invalid-MTU transitions"
+run = '''
+make test-ipv6-device-inventory
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare device inventories with three isolated native Linux linkages"
+run = '''
+sudo -n make test-ipv6-device-inventory-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 address control, DAD, neighbor discovery and echo on both adapters"
+run = '''
+make test-ipv6-host
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 host behavior with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-host-native
+make test-ipv6-lifetimes-contract
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 raw and UDP socket traffic on both adapters"
+run = '''
+make test-ipv6-sockets
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 raw and UDP sockets with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-sockets-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv4 receive controls, faults and description lifetime with Linux"
+run = '''
+sudo -n make test-ipv4-receive-controls
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv4 option syscalls and local packets with Linux"
+run = '''
+sudo -n make test-ipv4-options
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv4 Ethernet receive metadata and queued route/address ownership"
+run = '''
+sudo -n make test-ipv4-receive-wire
+'''
+
+[[step]]
+suites = ["ipv4-source-filters"]
+name = "Compare IPv4 send controls and error ordering with Linux"
+run = '''
+sudo -n make test-ipv4-send-controls
+'''
+
+[[step]]
+suites = ["ipv4-source-filters"]
+name = "Compare IPv4 Ethernet output and sleeping route ownership with Linux"
+run = '''
+sudo -n make test-ipv4-send-wire
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 receive metadata and copy faults on both adapters"
+run = '''
+make test-ipv6-controls
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 receive metadata with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-controls-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare every local IPv6 receive-control and result-copy observation"
+run = '''
+sudo -n make test-ipv6-controls-contract
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 source fragmentation and output policy on both adapters"
+run = '''
+make test-ipv6-output
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 source output with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-output-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 per-message output controls and fault ordering"
+run = '''
+sudo -n make test-ipv6-output-contract
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 learned path MTU and quoted errors on both adapters"
+run = '''
+make test-ipv6-pmtu
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 path MTU and quoted errors with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-pmtu-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 copied error queues and receive fault ordering on both adapters"
+run = '''
+make test-ipv6-errors
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 error queues with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-errors-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 error metadata and protected result copies"
+run = '''
+sudo -n make test-ipv6-errors-contract
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv6 fragment delivery and real sixty-second expiry on both adapters"
+run = '''
+make test-ipv6-fragments
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv6 fragments with three native Linux linkages"
+run = '''
+sudo -n make test-ipv6-fragments-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets"
+run = '''
+make test-ipv4 IPV4_WORKERS=4
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare IPv4 fragment receive behavior with three native Linux linkages"
+run = '''
+python3 -B scripts/ci/network_window.py audit
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare labelled IPv4 address ownership with native Linux"
+run = '''
+sudo -n python3 scripts/ipv4_alias_native.py
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test IPv4 UDP traffic, failed-device sockets, and PCI interrupt delivery"
+run = '''
+sudo -n python3 -B scripts/tests/ipv4_multicast_fixture_owner_test.py
+make test-udp
+sudo -n python3 -B scripts/ipv4_multicast_test.py --matrix --directory build/ipv4-multicast-evidence
+sudo -n python3 -B scripts/ipv4_multicast_evidence.py build/ipv4-multicast-evidence --output build/ipv4-multicast-audit
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare common UDP socket behavior with native Linux"
+run = '''
+./build/udp-tests
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare actual musl DNS with native Linux in private namespaces"
+run = '''
+sudo -n python3 scripts/tests/dns_packet_observer_test.py
+sudo -n make test-dns-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test musl DNS queries, search rules, retries, and deadlines on both adapters"
+run = '''
+make test-dns
+python3 scripts/tests/dns_capture_test.py --matrix-results build/dns-results.json
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare actual patched musl DNS TCP framing with native glibc"
+run = '''
+sudo -n make test-dns-tcp-native
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test actual DNS TCP fallback, independently decoded captures and synchronized damage"
+run = '''
+make test-dns-tcp
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test route message validation with sanitizers"
+run = '''
+make test-netlink-codec
+python3 scripts/tests/netlink_peer_test.py
+'''
+
+[[step]]
+suites = ["network"]
+name = "Test NETLINK_ROUTE ownership, lifetime, limits, and routed packets"
+run = '''
+make test-netlink
+'''
+
+[[step]]
+suites = ["network"]
+name = "Compare route socket behavior with native Linux"
+run = '''
+make build/netlink-native
+sudo python3 scripts/netlink_native.py
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test IPv4 address message validation with sanitizers"
+run = '''
+make test-address-codec
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test complete IPv4 addresses and configuration recovery"
+run = '''
+make test-configuration
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare configuration ownership with three native Linux linkages"
+run = '''
+make -j3 build/configuration-native build/configuration-tests build/configuration-dynamic
+sudo -n python3 scripts/configuration_native.py
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Reopen original IPv4 configuration journals, source and execution products"
+run = '''
+python3 scripts/configuration_evidence.py build/configuration-wire --complete
+python3 scripts/configuration_evidence.py build/configuration-native-evidence --complete
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test DHCP codecs, lease state, and profiles with sanitizers"
+run = '''
+make test-dhcp-codec
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test private saved files with sanitizers and musl under ordinary/root UIDs"
+run = '''
+make -j2 build/profile-privacy-host build/profile-privacy-tests build/profile-privacy-dynamic
+sudo python3 scripts/profile_native.py
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test private saved profiles on guest RAM and ext2"
+run = '''
+make test-profiles
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test singleton ownership with native processes and both musl linkages"
+run = '''
+sudo make test-ownership-native
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test singleton ownership on guest RAM and ext2"
+run = '''
+make test-ownership
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test DHCP modules in Ring 3"
+run = '''
+make test-dhcp-modules
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test DHCP acquisition, renewal, rebinding, and owned configuration"
+run = '''
+make test-dhcp-transport
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test resolver metadata and publication failures with sanitizers"
+run = '''
+make test-resolver-native
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test resolver metadata, manual settings, and ownership recovery in Ring 3"
+run = '''
+make test-resolver
+'''
+
+[[step]]
+suites = ["manager-bios-modern"]
+name = "Test static address transitions and checked completion with sanitizers"
+run = '''
+make test-static-address
+'''
+
+[[step]]
+suites = ["random"]
+name = "Test cryptographic vectors and random source transitions with sanitizers"
+run = '''
+make test-random-native 2>&1 | tee build/random-native.log
+'''
+
+[[step]]
+suites = ["random"]
+name = "Test initialized and early random interfaces with both musl linkages"
+run = '''
+python3 scripts/random_test.py --reseed --timeout 150
+'''
+
+[[step]]
+suites = ["random"]
+name = "Test saved manager hints across independent ext2-root kernel boots"
+run = '''
+python3 scripts/manager_reboot_test.py
+'''
+
+[[step]]
+suites = ["manager-bios-modern"]
+name = "Test peer release validation across process and lease lifetimes"
+run = '''
+python3 scripts/manager_peer_test.py
+'''
+
+[[step]]
+suites = ["manager-bios-modern", "manager-bios-legacy", "manager-uefi-modern", "manager-uefi-legacy"]
+name = "Test actual concurrent manager processes, wire exchanges, and publication/teardown failures"
+run = '''
+case "$SUITE" in
+  manager-bios-modern) firmware=bios; transport=modern ;;
+  manager-bios-legacy) firmware=bios; transport=legacy ;;
+  manager-uefi-modern) firmware=uefi; transport=modern ;;
+  manager-uefi-legacy) firmware=uefi; transport=legacy ;;
+  *) exit 2 ;;
+esac
+python3 scripts/manager_test.py --firmware "$firmware" --transport "$transport"
+'''
+
+[[step]]
+suites = ["protocol-bios-modern-lane0", "protocol-bios-modern-lane1", "protocol-bios-legacy-lane0", "protocol-bios-legacy-lane1", "protocol-uefi-modern-lane0", "protocol-uefi-modern-lane1", "protocol-uefi-legacy-lane0", "protocol-uefi-legacy-lane1"]
+name = "Test protocol peer packet shapes and serial controller barriers"
+run = '''
+python3 scripts/manager_protocol_peer_test.py 2>&1 | tee build/manager-protocol-peer.log
+'''
+
+[[step]]
+suites = ["protocol-bios-modern-lane0", "protocol-bios-modern-lane1", "protocol-bios-legacy-lane0", "protocol-bios-legacy-lane1", "protocol-uefi-modern-lane0", "protocol-uefi-modern-lane1", "protocol-uefi-legacy-lane0", "protocol-uefi-legacy-lane1"]
+name = "Test actual manager DHCP rejection, lease lifetimes, and conflict recovery"
+run = '''
+python3 scripts/ci/paired_network.py --suite "$SUITE" \
+  --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
+'''
+
+[[step]]
+suites = ["link-bios-modern-lane0", "link-bios-modern-lane1", "link-bios-legacy-lane0", "link-bios-legacy-lane1", "link-uefi-modern-lane0", "link-uefi-modern-lane1", "link-uefi-legacy-lane0", "link-uefi-legacy-lane1"]
+name = "Test carrier peer packets, physical removal, and observation barriers"
+run = '''
+set -o pipefail
+python3 scripts/manager_link_peer_test.py 2>&1 | tee build/manager-link-peer.log
+'''
+
+[[step]]
+suites = ["link-bios-modern-lane0", "link-bios-modern-lane1", "link-bios-legacy-lane0", "link-bios-legacy-lane1", "link-uefi-modern-lane0", "link-uefi-modern-lane1", "link-uefi-legacy-lane0", "link-uefi-legacy-lane1"]
+name = "Test actual manager carrier transitions and failed-device cleanup"
+run = '''
+python3 scripts/ci/paired_network.py --suite "$SUITE" \
+  --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test clock scaling, ACPI discovery, PCI interrupts, and firmware routing with sanitizers"
+run = '''
+make test-clock-codec 2>&1 | tee build/clock-codec.log
+make test-pci-interrupts 2>&1 | tee build/pci-interrupts.log
+make test-acpi-routing 2>&1 | tee build/acpi-routing.log
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Test elapsed clocks and deadlines across delayed storage"
+run = '''
+make test-clock
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare Linux file locks and test RAM/ext2 description lifetime on i440fx and Q35"
+run = '''
+make test-file-locks FILE_LOCK_ARGS=--include-q35
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare Linux path descriptors and test RAM/ext2 lifetime and access"
+run = '''
+python3 scripts/tests/path_descriptor_cancellation_test.py -v
+python3 scripts/tests/path_descriptor_storage_test.py
+sudo -n python3 scripts/path_descriptor_test.py --native --directory build/path-descriptors-native --fixtures "$AXIOM64_NATIVE_FIXTURES/path-descriptors"
+sudo -n python3 scripts/path_descriptor_test.py --directory build/path-descriptors-guest
+'''
+
+[[step]]
+suites = ["configuration"]
+name = "Compare Linux inotify and test guest RAM and ext2 event lifetimes"
+run = '''
+make test-inotify-queue
+sudo -n make test-inotify-native
+make test-inotify
+'''

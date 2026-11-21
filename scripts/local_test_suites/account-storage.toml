@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/local_test_suites/account-storage.toml
+# @brief   Test persistent account operations and their failure paths.
+# @author  frankischilling
+# @date    2026-11-20
+#
+# Defines ordered commands run locally by the suite dispatcher.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
+[[step]]
+suites = ["account-storage-clean"]
+name = "Run actual administration, concurrent commands and fresh-kernel checks"
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+sudo -n python3 scripts/account_management_ext2.py --journal --campaign clean --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-clean-$cell"
+sudo -n python3 scripts/account_management_ext2.py --journal --campaign storage --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-storage-$cell"
+sudo -n python3 scripts/account_management_storage_coverage.py collect-clean --clean-directory "build/account-management-clean-$cell" --storage-directory "build/account-management-storage-$cell" --output "build/account-management-clean-index-$cell/coverage-index.json"
+'''
+
+[[step]]
+suites = ["account-storage-clean"]
+name = "Give the runner ownership of completed administration evidence"
+after_failure = true
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+if ((EUID != 0)); then
+    sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-management-clean-$cell" "build/account-management-storage-$cell" "build/account-management-clean-index-$cell"
+fi
+'''
+
+[[step]]
+suites = ["account-storage-fault"]
+name = "Interrupt every observed actual administration request and boot normal recovery"
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
+sudo -n python3 scripts/account_management_ext2.py --journal --campaign fault --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --cache-model "$CACHE" --fault-modes eio,pause-before,pause-after --directory "build/account-management-fault-$cell"
+sudo -n python3 scripts/account_management_storage_coverage.py collect-fault --directory "build/account-management-fault-$cell" --output "build/account-management-fault-index-$cell/coverage-index.json"
+'''
+
+[[step]]
+suites = ["account-storage-fault"]
+name = "Give the runner ownership of completed administration fault evidence"
+after_failure = true
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
+if ((EUID != 0)); then
+    sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-management-fault-$cell" "build/account-management-fault-index-$cell"
+fi
+'''
+
+[[step]]
+suites = ["account-rotation-storage"]
+name = "Interrupt every basic rotation target in all fault modes"
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-basic-$CACHE-$SHARD"
+sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "basic" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --jobs 2 --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
+'''
+
+[[step]]
+suites = ["account-rotation-storage"]
+name = "Interrupt every expiry rotation target in all fault modes"
+after_failure = true
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-expiry-$CACHE-$SHARD"
+sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "expiry" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --jobs 2 --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
+'''
+
+[[step]]
+suites = ["account-rotation-storage"]
+name = "Give the runner ownership of completed rotation evidence"
+after_failure = true
+run = '''
+cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+if ((EUID != 0)); then
+    sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-rotation-storage-$cell-basic-$CACHE-$SHARD" "build/account-rotation-storage-$cell-expiry-$CACHE-$SHARD"
+fi
+'''
+
+[[step]]
+suites = ["account-storage-coverage"]
+name = "Read all locally retained storage coverage indexes"
+run = '''
+set -o pipefail
+mkdir -p build/account-storage-coverage
+find build -maxdepth 2 -type f -name coverage-index.json -path 'build/account-management-*-index-*/*' -print0 |
+    sort -z | tar --null -T - -cf "$RUNNER_TEMP/administration.tar"
+find build -maxdepth 2 -type f -name coverage-index.json -path 'build/account-rotation-storage-*/*' -print0 |
+    sort -z | tar --null -T - -cf "$RUNNER_TEMP/rotation.tar"
+mkdir "$RUNNER_TEMP/administration" "$RUNNER_TEMP/rotation"
+tar -xf "$RUNNER_TEMP/administration.tar" -C "$RUNNER_TEMP/administration"
+tar -xf "$RUNNER_TEMP/rotation.tar" -C "$RUNNER_TEMP/rotation"
+python3 scripts/account_management_storage_coverage.py verify --indices "$RUNNER_TEMP/administration" --output build/account-storage-coverage/administration.json
+python3 scripts/account_rotation_storage_coverage.py verify --indices "$RUNNER_TEMP/rotation" --output build/account-storage-coverage/rotation.json
+'''

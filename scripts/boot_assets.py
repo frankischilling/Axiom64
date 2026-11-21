@@ -63,10 +63,10 @@ def init_path(value):
     return value
 
 
-def stage_payload(directory, kernel, initramfs, options, *, init="/sbin/init", network=False):
+def stage_payload(directory, kernel, initramfs, options, *, init="/sbin/init", compress=False):
     boot = directory / "boot"
     boot.mkdir(parents=True, exist_ok=True)
-    if network:
+    if compress:
         shutil.copy2(kernel, boot / "axiom64.elf")
         with initramfs.open("rb") as stream, (boot / "rootfs.cpio.gz").open("wb") as compressed:
             with gzip.GzipFile(filename="", mode="wb", fileobj=compressed,
@@ -80,7 +80,7 @@ def stage_payload(directory, kernel, initramfs, options, *, init="/sbin/init", n
             except OSError:
                 shutil.copy2(source, target)
     config = (ROOT / "boot/limine.conf").read_text()
-    if network:
+    if compress:
         config = config.replace("module_path: boot():/boot/rootfs.cpio",
                                 "module_path: $boot():/boot/rootfs.cpio.gz")
     return config.replace("cmdline: init=/sbin/init", f"cmdline: init={init}{options}")

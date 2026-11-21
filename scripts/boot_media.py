@@ -72,7 +72,7 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
     with tempfile.TemporaryDirectory(prefix=".boot-media-", dir=output.parent) as temporary:
         work = Path(temporary)
         payload = work / "payload"
-        config = stage_payload(payload, kernel, initramfs, options, init=init, network=kind == "pxe")
+        config = stage_payload(payload, kernel, initramfs, options, init=init, compress=True)
         if kind == "disk":
             loader = payload / "boot/limine"
             efi = payload / "EFI/BOOT"

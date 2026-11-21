@@ -57,8 +57,7 @@ qemu-system-x86_64 -m 2G -serial stdio -boot order=n \
 The disk uses GPT with a BIOS boot partition and a FAT32 EFI system partition.
 For UEFI, add OVMF firmware to the QEMU command. Select `BOOTX64.EFI` as the
 network boot file under UEFI. A separate TFTP server must support the `tsize`
-option. The PXE tree stores a gzip-compressed initramfs to reduce transfer size.
-Both media start the guest from its initramfs. Use the normal VM launcher
+option. Both media store a compressed initramfs and expand it at boot. Use the normal VM launcher
 to keep accounts and files across boots.
 
 The first Limine module supplies the initramfs. BIOS and UEFI boot logs report

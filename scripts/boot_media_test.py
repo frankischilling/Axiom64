@@ -43,13 +43,20 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def verify_initramfs(compressed, original):
+    with gzip.open(compressed, "rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != digest(original):
+            raise RuntimeError(f"{compressed}: initramfs differs after decompression")
+
+
 def inspect_disk(directory, image, kernel, initramfs):
     subprocess.run(["sfdisk", "--verify", image], check=True)
-    for name, source in (("axiom64.elf", kernel), ("rootfs.cpio", initramfs)):
-        copy = directory / f"disk-{name}"
-        subprocess.run(["mcopy", "-i", f"{image}@@{ESP_START * SECTOR}", f"::/boot/{name}", copy], check=True)
-        if digest(copy) != digest(source):
-            raise RuntimeError(f"disk readback differs: {name}")
+    for name in ("axiom64.elf", "rootfs.cpio.gz"):
+        subprocess.run(["mcopy", "-i", f"{image}@@{ESP_START * SECTOR}", f"::/boot/{name}",
+                        directory / f"disk-{name}"], check=True)
+    if digest(directory / "disk-axiom64.elf") != digest(kernel):
+        raise RuntimeError("disk kernel differs from the original")
+    verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
 def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False):
@@ -117,9 +124,7 @@ def main():
     inspect_disk(output, disk, kernel, initramfs)
     if digest(pxe / "boot/axiom64.elf") != digest(kernel):
         raise RuntimeError("PXE kernel differs from the original")
-    with gzip.open(pxe / "boot/rootfs.cpio.gz", "rb") as stream:
-        if hashlib.file_digest(stream, "sha256").hexdigest() != digest(initramfs):
-            raise RuntimeError("PXE initramfs differs after decompression")
+    verify_initramfs(pxe / "boot/rootfs.cpio.gz", initramfs)
     subprocess.run([sys.executable, ROOT / "scripts/image.py", "--test", "--initramfs", initramfs,
                     "--output-directory", output, "--output-name", iso.name], cwd=ROOT, check=True)
     bad_disk = output / "invalid-root.raw"

@@ -38,6 +38,8 @@ constexpr unsigned max_changes = 4096;
 constexpr uint32_t indexed_directory = 0x1000, directory_index_feature = 0x20;
 constexpr uint32_t extent_inode = 0x80000, extent_feature = 0x40;
 constexpr uint64_t extent_logical_limit = UINT32_MAX;
+constexpr uint32_t metadata_checksum_feature = 0x400, checksum_seed_feature = 0x2000;
+constexpr unsigned inode_uninitialized = 1, block_uninitialized = 2, inode_table_zeroed = 4;
 
 inline uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -107,6 +109,19 @@ struct Group {
     uint32_t first, blocks, inodes, block_bitmap, inode_bitmap, inode_table;
 };
 
+struct Inode {
+    uint8_t bytes[inode_bytes];
+    uint32_t number;
+
+    operator uint8_t*() {
+        return bytes;
+    }
+
+    operator const uint8_t*() const {
+        return bytes;
+    }
+};
+
 struct Change {
     Change* next;
     uint32_t block;
@@ -116,10 +131,10 @@ struct Change {
 
 struct Volume;
 void init_extent_tree(uint8_t* inode);
-bool map_extent(Volume&, uint8_t* inode, uint64_t logical, bool create, uint32_t& result,
+bool map_extent(Volume&, Inode& inode, uint64_t logical, bool create, uint32_t& result,
                 unsigned preferred);
-bool prune_extents(Volume&, uint8_t* inode, uint64_t keep);
-bool unchanged_extent_nodes(Volume&, const uint8_t* inode);
+bool prune_extents(Volume&, Inode& inode, uint64_t keep);
+bool unchanged_extent_nodes(Volume&, const Inode& inode);
 
 struct ExtentOwnership {
     const uint8_t* allocated;
@@ -128,7 +143,7 @@ struct ExtentOwnership {
     uint64_t& leaves;
 };
 
-bool validate_extent_tree(Volume&, const uint8_t* inode, bool allow_unwritten,
+bool validate_extent_tree(Volume&, const Inode& inode, bool allow_unwritten,
                           const ExtentOwnership&);
 
 struct Volume {
@@ -137,9 +152,10 @@ struct Volume {
     uint32_t blocks, inodes, first, blocks_per_group, inodes_per_group, first_inode;
     uint32_t gdt, gdt_blocks, reserved_gdt, revision, compatible, readonly_features;
     uint32_t directory_hash_seed[4];
+    uint32_t metadata_seed;
     uint8_t default_directory_hash_version;
     bool unsigned_directory_hash;
-    bool typed_entries, extent_enabled, claimed, writable_safe;
+    bool typed_entries, extent_enabled, claimed, writable_safe, journal_bootstrap;
     Group* groups;
     Change* changes;
     EntryCache entries;
@@ -155,6 +171,23 @@ struct Volume {
             error = code;
         return false;
     }
+
+    bool checksums() const {
+        return (readonly_features & metadata_checksum_feature) != 0;
+    }
+
+    bool configure_checksums(const uint8_t* header, bool stored_seed);
+    bool check_super_checksum(const uint8_t* header);
+    void seal_super(uint8_t* header) const;
+    uint16_t descriptor_checksum(unsigned group, const uint8_t* desc) const;
+    bool check_descriptor(unsigned group, const uint8_t* desc);
+    uint32_t inode_seed(const Inode& inode) const;
+    bool decode_inode(uint32_t number, const uint8_t* raw, Inode& inode);
+    void seal_inode(uint32_t number, uint8_t* raw) const;
+    bool read_bitmap(unsigned group, bool inode, uint8_t* data, const uint8_t* desc = nullptr);
+    bool save_bitmap(unsigned group, bool inode, const uint8_t* data, unsigned used_inode = 0);
+    bool read_xattr_block(uint32_t block, uint8_t* data);
+    bool write_xattr_block(uint32_t block, uint8_t* data, unsigned rank);
 
     bool has_super(unsigned group) const {
         if (!(readonly_features & 1) || group < 2)
@@ -234,7 +267,7 @@ struct Volume {
         if (!read_block(1024 / block_size, block))
             return false;
         memcpy(data, block + (1024 % block_size), 1024);
-        return true;
+        return check_super_checksum(data);
     }
 
     bool save_super(const uint8_t* data) {
@@ -242,6 +275,8 @@ struct Volume {
         if (!read_block(1024 / block_size, block))
             return false;
         memcpy(block + (1024 % block_size), data, 1024);
+        if (checksums())
+            seal_super(block + (1024 % block_size));
         return write_block(1024 / block_size, block, 5);
     }
 
@@ -250,14 +285,17 @@ struct Volume {
         if (group >= group_count || !read_block(gdt + group * 32 / block_size, block))
             return fail();
         memcpy(data, block + (group * 32 % block_size), 32);
-        return true;
+        return check_descriptor(group, data);
     }
 
     bool save_descriptor(unsigned group, const uint8_t* data) {
         uint8_t block[max_block_size];
         if (group >= group_count || !read_block(gdt + group * 32 / block_size, block))
             return fail();
-        memcpy(block + (group * 32 % block_size), data, 32);
+        auto target = block + (group * 32 % block_size);
+        memcpy(target, data, 32);
+        if (checksums())
+            set16(target + 30, descriptor_checksum(group, target));
         return write_block(gdt + group * 32 / block_size, block, 4);
     }
 
@@ -266,15 +304,16 @@ struct Volume {
             return fail();
         uint32_t index = inode ? number - 1 : number - first;
         unsigned per_group = inode ? inodes_per_group : blocks_per_group;
-        auto& group = groups[index / per_group];
         uint8_t bitmap[max_block_size];
-        if (!read_block(inode ? group.inode_bitmap : group.block_bitmap, bitmap))
+        if (!read_bitmap(index / per_group, inode, bitmap))
             return false;
         return bit(bitmap, index % per_group) ? true : fail();
     }
 
     bool data_block(uint32_t block) {
-        return !metadata(block) ? allocated(block, false) : fail();
+        if (metadata(block))
+            return fail();
+        return journal_bootstrap || allocated(block, false);
     }
 
     Entry* canonical(uint32_t number) {
@@ -284,7 +323,7 @@ struct Volume {
         return nullptr;
     }
 
-    bool load_inode(uint32_t number, uint8_t* data, bool check = true) {
+    bool load_inode(uint32_t number, Inode& data, bool check = true) {
         if (!number || number > inodes || (check && !allocated(number, true)))
             return fail();
         uint32_t index = number - 1;
@@ -292,7 +331,8 @@ struct Volume {
         uint8_t block[max_block_size];
         if (!read_block(groups[index / inodes_per_group].inode_table + offset / block_size, block))
             return false;
-        memcpy(data, block + offset % block_size, inode_bytes);
+        if (!decode_inode(number, block + offset % block_size, data))
+            return false;
         if (auto cached = canonical(number); cached && cached->atime_dirty)
             set32(data + 8, cached->node.atime.sec);
         return true;
@@ -308,6 +348,8 @@ struct Volume {
         if (clear)
             memset(block + offset % block_size, 0, inode_size);
         memcpy(block + offset % block_size, data, inode_bytes);
+        if (checksums())
+            seal_inode(number, block + offset % block_size);
         if (!write_block(groups[index / inodes_per_group].inode_table + offset / block_size, block,
                          2))
             return false;
@@ -342,7 +384,7 @@ struct Volume {
     bool flush() {
         for (unsigned i = 0; i < touched_count; i++) {
             if (auto entry = canonical(touched[i])) {
-                uint8_t inode[inode_bytes];
+                Inode inode;
                 if (!load_inode(touched[i], inode, false))
                     return false;
                 populate(entry, inode);
@@ -453,8 +495,7 @@ struct Volume {
             // Validated counters include this operation's staged allocations.
             if (!u16(desc + (inode ? 14 : 12)))
                 continue;
-            uint32_t bitmap_block = inode ? group.inode_bitmap : group.block_bitmap;
-            if (!read_block(bitmap_block, bitmap))
+            if (!read_bitmap(index, inode, bitmap, desc))
                 return 0;
             uint32_t count = inode ? group.inodes : group.blocks;
             for (uint32_t i = 0; i < count; i++) {
@@ -471,7 +512,8 @@ struct Volume {
                     return 0;
                 }
                 setbit(bitmap, i, true);
-                if (!write_block(bitmap_block, bitmap, 4) || !counts(index, inode, -1, dir ? 1 : 0))
+                if (!save_bitmap(index, inode, bitmap, i + 1) ||
+                    !counts(index, inode, -1, dir ? 1 : 0))
                     return 0;
                 if (!inode) {
                     uint8_t zero[max_block_size]{};
@@ -492,12 +534,11 @@ struct Volume {
         uint32_t offset = inode ? number - 1 : number - first;
         unsigned per_group = inode ? inodes_per_group : blocks_per_group,
                  index = offset / per_group;
-        uint32_t bitmap_block = inode ? groups[index].inode_bitmap : groups[index].block_bitmap;
         uint8_t bitmap[max_block_size];
-        if (!read_block(bitmap_block, bitmap))
+        if (!read_bitmap(index, inode, bitmap))
             return false;
         setbit(bitmap, offset % per_group, false);
-        return write_block(bitmap_block, bitmap, 4) && counts(index, inode, 1, dir ? -1 : 0);
+        return save_bitmap(index, inode, bitmap) && counts(index, inode, 1, dir ? -1 : 0);
     }
 
     bool free_blocks(uint32_t number, unsigned remaining) {
@@ -508,14 +549,14 @@ struct Volume {
             const auto& group = groups[index];
             unsigned offset = number - group.first, length = min(remaining, group.blocks - offset);
             uint8_t bitmap[max_block_size];
-            if (!read_block(group.block_bitmap, bitmap))
+            if (!read_bitmap(index, false, bitmap))
                 return false;
             for (unsigned i = 0; i < length; i++) {
                 if (metadata(number + i) || !bit(bitmap, offset + i))
                     return fail();
                 setbit(bitmap, offset + i, false);
             }
-            if (!write_block(group.block_bitmap, bitmap, 4) || !counts(index, false, length))
+            if (!save_bitmap(index, false, bitmap) || !counts(index, false, length))
                 return false;
             number += length;
             remaining -= length;
@@ -538,7 +579,7 @@ struct Volume {
         return true;
     }
 
-    bool map_block(uint8_t* inode, uint64_t logical, bool create, uint32_t& result,
+    bool map_block(Inode& inode, uint64_t logical, bool create, uint32_t& result,
                    unsigned preferred) {
         if (has_extents(inode))
             return map_extent(*this, inode, logical, create, result, preferred);
@@ -650,7 +691,7 @@ struct Volume {
         return !changed || write_block(pointer, data, 1);
     }
 
-    bool size(uint8_t* inode, uint64_t length) {
+    bool size(Inode& inode, uint64_t length) {
         if (length > capacity(inode))
             return fail(-27);
         if (length > INT32_MAX) {
@@ -706,7 +747,7 @@ struct Volume {
         references = 0;
         if (!block)
             return true;
-        if (!data_block(block) || !read_block(block, data))
+        if (!data_block(block) || !read_xattr_block(block, data))
             return false;
         return ext2_xattr_valid(data, block_size, references) ? true : fail();
     }
@@ -715,10 +756,10 @@ struct Volume {
         if (references == 1)
             return free_number(block, false);
         set32(data + 4, references - 1);
-        return write_block(block, data, 1);
+        return write_xattr_block(block, data, 1);
     }
 
-    bool delete_inode(uint32_t number, uint8_t* inode) {
+    bool delete_inode(uint32_t number, Inode& inode) {
         bool dir = (u16(inode) & 0170000) == directory;
         if (!fast_symlink(inode, block_size) && !size(inode, 0))
             return false;
@@ -749,13 +790,29 @@ struct Record {
     uint8_t type;
 };
 
-inline bool record(Volume& v, const uint8_t* data, unsigned offset, Record& r) {
-    if (offset > v.block_size - 8)
+inline unsigned directory_leaf_bytes(const Volume& v) {
+    return v.block_size - (v.checksums() ? 12u : 0u);
+}
+
+inline unsigned directory_index_bytes(const Volume& v) {
+    return v.block_size - (v.checksums() ? 8u : 0u);
+}
+
+unsigned directory_record_end(const Volume&, const Inode&, uint64_t offset, const uint8_t* data);
+bool check_directory_block(Volume&, const Inode&, uint64_t offset, const uint8_t* data);
+bool save_directory_leaf(Volume&, const Inode&, uint32_t block, uint8_t* data);
+bool save_directory_index(Volume&, const Inode&, uint32_t block, uint8_t* data, unsigned entries);
+bool save_directory_block(Volume&, const Inode&, uint64_t offset, uint32_t block, uint8_t* data);
+
+inline bool record(Volume& v, const uint8_t* data, unsigned offset, Record& r, unsigned end = 0) {
+    if (!end)
+        end = v.block_size;
+    if (offset > end - 8)
         return v.fail();
     r = {u32(data + offset), u16(data + offset + 4),
          unsigned(v.typed_entries ? data[offset + 6] : u16(data + offset + 6)),
          uint8_t(v.typed_entries ? data[offset + 7] : 0)};
-    if (r.length < 8 || r.length % 4 || r.length > v.block_size - offset || r.name_length > 255 ||
+    if (r.length < 8 || r.length % 4 || r.length > end - offset || r.name_length > 255 ||
         r.name_length > r.length - 8 || r.inode > v.inodes || r.type > 7)
         return v.fail();
     if (r.inode)
@@ -784,24 +841,25 @@ inline void put_record(Volume& v, uint8_t* data, unsigned offset, unsigned lengt
 bool insert_directory_record(Volume&, uint8_t* data, const char* name, uint32_t number,
                              uint32_t mode);
 
-inline bool directory_block(Volume& v, uint8_t* inode, uint64_t offset, uint32_t& block,
+inline bool directory_block(Volume& v, Inode& inode, uint64_t offset, uint32_t& block,
                             uint8_t* data) {
     if ((u16(inode) & 0170000) != directory || file_size(inode) % v.block_size)
         return v.fail();
     if (!v.map_block(inode, offset / v.block_size, false, block, 0))
         return false;
-    return block ? v.read_block(block, data) : v.fail();
+    return block ? v.read_block(block, data) && check_directory_block(v, inode, offset, data)
+                 : v.fail();
 }
 
 enum class Recovery { none, checked, journal };
 bool validate_volume(Volume&, uint8_t* header, Recovery);
 uint32_t directory_hash(const uint8_t* name, unsigned length, unsigned version,
                         const uint32_t* seed, bool unsigned_bytes);
-bool validate_directory_index(Volume&, uint8_t* inode);
-bool find_indexed_name(Volume&, uint8_t* inode, const char* name, uint32_t& number,
+bool validate_directory_index(Volume&, Inode& inode);
+bool find_indexed_name(Volume&, Inode& inode, const char* name, uint32_t& number,
                        uint64_t* position);
-bool insert_indexed_name(Volume&, uint8_t* inode, unsigned preferred, const char* name,
+bool insert_indexed_name(Volume&, Inode& inode, unsigned preferred, const char* name,
                          uint32_t number, uint32_t mode);
-bool start_directory_index(Volume&, uint8_t* inode, unsigned preferred, uint32_t physical,
+bool start_directory_index(Volume&, Inode& inode, unsigned preferred, uint32_t physical,
                            uint8_t* data);
 } // namespace ax::ext2_detail

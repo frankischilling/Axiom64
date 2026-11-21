@@ -22,7 +22,9 @@
 # along with this program. If not, see <https://gnu.org/licenses/>.
 
 import shutil
+from signal import SIGKILL
 import subprocess
+import time
 
 
 def boot(directory, iso, disks, firmware, transport, markers, success=True):
@@ -51,3 +53,32 @@ def boot(directory, iso, disks, firmware, transport, markers, success=True):
             any(token in output for token in failures)):
         raise RuntimeError(f"{logfile}:\n" + "\n".join(output.splitlines()[-35:]))
     return output
+
+
+def cut_after_write_fault(directory, iso, disk, sector, marker):
+    rule = directory / "home.conf"
+    rule.write_text('[inject-error]\nevent = "write_aio"\niotype = "write"\n'
+                    f'sector = "{sector}"\nerrno = "5"\nonce = "on"\n')
+    serial = directory / "home-fault.log"
+    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
+               "-boot", "order=d", "-cdrom", str(iso), "-display", "none", "-serial", "stdio",
+               "-monitor", "none", "-no-reboot", "-nic", "none",
+               "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
+               "-drive", f"if=none,id=d0,format=raw,file=blkdebug:{rule}:{disk},cache=writethrough,werror=report",
+               "-device", "virtio-blk-pci,drive=d0,disable-legacy=on,addr=5"]
+    with serial.open("wb") as log, subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT) as vm:
+        try:
+            deadline = time.monotonic() + 70
+            while time.monotonic() < deadline and vm.poll() is None:
+                if marker.encode() in serial.read_bytes().splitlines():
+                    break
+                time.sleep(0.05)
+            else:
+                raise RuntimeError(f"{serial}: guest did not report the home write fault")
+        finally:
+            if vm.poll() is None:
+                vm.kill()
+                vm.wait()
+        if vm.returncode != -SIGKILL:
+            raise RuntimeError(f"{serial}: expected an abrupt VM stop, got {vm.returncode}")

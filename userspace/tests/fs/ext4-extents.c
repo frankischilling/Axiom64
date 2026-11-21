@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #define REQUIRE(test)                                                                              \
@@ -200,6 +201,66 @@ static int full_volume(void) {
     return 0;
 }
 
+static int checksum_objects(int verify) {
+    const char* path = "/mnt/attribute";
+    if (access(path, F_OK)) {
+        REQUIRE(errno == ENOENT);
+        return 0;
+    }
+    char bytes[600], expected[600];
+    memset(expected, 'A', sizeof(expected));
+    REQUIRE(getxattr(path, "user.original", bytes, sizeof(bytes)) == sizeof(bytes));
+    REQUIRE(!memcmp(bytes, expected, sizeof(bytes)));
+    memset(expected, 'X', 133);
+    if (!verify)
+        REQUIRE(setxattr(path, "user.updated", expected, 133, XATTR_CREATE) == 0);
+    REQUIRE(getxattr(path, "user.updated", bytes, sizeof(bytes)) == 133);
+    REQUIRE(!memcmp(bytes, expected, 133));
+
+    int fd = open("/mnt/lazy", verify ? O_RDONLY : O_RDWR);
+    if (fd < 0) {
+        REQUIRE(errno == ENOENT);
+        return 0;
+    }
+
+    enum { chunk = 128 * 1024, size = 9 * 1024 * 1024 };
+
+    if (!verify) {
+        void* data = malloc(chunk);
+        REQUIRE(data);
+        memset(data, 'Z', chunk);
+        for (off_t at = 0; at < size; at += chunk)
+            REQUIRE(pwrite(fd, data, chunk, at) == chunk);
+        free(data);
+    }
+    struct stat st;
+    REQUIRE(fstat(fd, &st) == 0 && st.st_size == size);
+    for (off_t at = 0; at < size; at += chunk)
+        REQUIRE(bytes_are(fd, at, 1024, 'Z'));
+    REQUIRE(bytes_are(fd, size - 1024, 1024, 'Z'));
+    REQUIRE(close(fd) == 0);
+    return 0;
+}
+
+static int checksum_recovery(int interrupt) {
+    const char value[] = "metadata cut";
+    int fd = open("/mnt/attribute", interrupt ? O_RDWR : O_RDONLY);
+    REQUIRE(fd >= 0);
+    if (interrupt) {
+        REQUIRE(pwrite(fd, value, sizeof(value), 0) == -1 && errno == EIO);
+        puts("EXT4_METADATA_HOME_WRITE_FAULT");
+        fflush(stdout);
+        for (;;)
+            pause();
+    }
+    char data[sizeof(value)];
+    REQUIRE(read(fd, data, sizeof(data)) == sizeof(data) && !memcmp(data, value, sizeof(value)));
+    REQUIRE(read(fd, data, 1) == 0 && close(fd) == 0);
+    REQUIRE(umount("/mnt") == 0);
+    puts("EXT4_METADATA_RECOVERY_PASS");
+    return 0;
+}
+
 static int exercise(const char* phase) {
     int verify = !strcmp(phase, "verify"), root = !strcmp(phase, "io");
     if (!root) {
@@ -213,6 +274,8 @@ static int exercise(const char* phase) {
         REQUIRE(rc == 0);
         if (!strcmp(phase, "full"))
             return full_volume();
+        if (!strcmp(phase, "pressure") || !strcmp(phase, "recovery"))
+            return checksum_recovery(!strcmp(phase, "pressure"));
     } else {
         pid_t pid = fork();
         REQUIRE(pid >= 0);
@@ -234,6 +297,7 @@ static int exercise(const char* phase) {
     REQUIRE(fragmented(block, verify) == 0);
     REQUIRE(truncate_tree(block, verify) == 0);
     REQUIRE(wide_file(block, verify) == 0);
+    REQUIRE(checksum_objects(verify) == 0);
     if (!verify) {
         REQUIRE(drop_open_file(block) == 0);
         REQUIRE(rename("/mnt/generated", "/mnt/renamed") == 0);

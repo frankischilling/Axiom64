@@ -24,6 +24,7 @@
  */
 
 #include "volume.hpp"
+#include "core/crc.hpp"
 
 namespace ax::ext2_detail {
 namespace {
@@ -137,17 +138,34 @@ void reset_header(uint8_t* data, unsigned bytes, unsigned depth) {
     set16(data + 6, depth);
 }
 
-bool load_root(Volume& v, const uint8_t* inode, ExtentPage& page) {
+bool load_root(Volume& v, const Inode& inode, ExtentPage& page) {
     memcpy(page.data, inode + 40, inode_block_bytes);
     return page.header_valid(inode_block_bytes, page.depth(), true) || v.fail();
 }
 
-bool load_child(Volume& v, const ExtentPage& page, unsigned i, ExtentPage& child) {
+bool load_child(Volume& v, const Inode& inode, const ExtentPage& page, unsigned i,
+                ExtentPage& child) {
     uint32_t block = page.child(i), logical = page.key(i);
     unsigned depth = page.depth() - 1;
     if (u16(page.row(i) + 8) || !v.data_block(block) || !v.read_block(block, child.data))
         return v.fail();
-    return (child.header_valid(v.block_size, depth, false) && child.key(0) == logical) || v.fail();
+    if (!child.header_valid(v.block_size, depth, false) || child.key(0) != logical)
+        return v.fail();
+    unsigned tail = header_bytes + child.limit() * entry_bytes;
+    return !v.checksums() ||
+           (tail + 4 <= v.block_size &&
+            u32(child.data + tail) == crc32c(v.inode_seed(inode), child.data, tail)) ||
+           v.fail();
+}
+
+bool save_node(Volume& v, const Inode& inode, uint32_t block, ExtentPage& page) {
+    if (v.checksums()) {
+        unsigned tail = header_bytes + page.limit() * entry_bytes;
+        if (tail + 4 > v.block_size)
+            return v.fail();
+        set32(page.data + tail, crc32c(v.inode_seed(inode), page.data, tail));
+    }
+    return v.write_block(block, page.data, 1);
 }
 
 bool claim(Volume& v, const ExtentOwnership& ownership, uint32_t block, unsigned length) {
@@ -163,8 +181,8 @@ bool claim(Volume& v, const ExtentOwnership& ownership, uint32_t block, unsigned
     return true;
 }
 
-bool validate(Volume& v, const ExtentPage& page, uint64_t high, uint64_t file_blocks,
-              bool allow_unwritten, const ExtentOwnership& ownership) {
+bool validate(Volume& v, const Inode& inode, const ExtentPage& page, uint64_t high,
+              uint64_t file_blocks, bool allow_unwritten, const ExtentOwnership& ownership) {
     uint64_t previous_end = 0;
     for (unsigned i = 0; i < page.count(); i++) {
         uint32_t logical = page.key(i);
@@ -175,8 +193,8 @@ bool validate(Volume& v, const ExtentPage& page, uint64_t high, uint64_t file_bl
             if (end <= logical || end > high || !claim(v, ownership, page.child(i), 1))
                 return v.fail();
             ExtentPage child;
-            if (!load_child(v, page, i, child) ||
-                !validate(v, child, end, file_blocks, allow_unwritten, ownership))
+            if (!load_child(v, inode, page, i, child) ||
+                !validate(v, inode, child, end, file_blocks, allow_unwritten, ownership))
                 return false;
             previous_end = end;
         } else {
@@ -196,11 +214,11 @@ struct Sibling {
     uint32_t physical = 0, logical = 0;
 };
 
-bool publish(Volume& v, uint8_t* inode, unsigned preferred, uint32_t block, ExtentPage& page,
+bool publish(Volume& v, Inode& inode, unsigned preferred, uint32_t block, ExtentPage& page,
              Sibling& sibling) {
     if (page.count() <= page.limit()) {
         if (block)
-            return v.write_block(block, page.data, 1);
+            return save_node(v, inode, block, page);
         memcpy(inode + 40, page.data, inode_block_bytes);
         return true;
     }
@@ -216,7 +234,7 @@ bool publish(Volume& v, uint8_t* inode, unsigned preferred, uint32_t block, Exte
         memset(page.row(page.count()), 0,
                v.block_size - (header_bytes + page.count() * entry_bytes));
         page.limit(entry_limit(v.block_size));
-        if (!v.write_block(allocated, page.data, 1))
+        if (!save_node(v, inode, allocated, page))
             return false;
         reset_header(page.data, inode_block_bytes, depth + 1);
         page.count(1);
@@ -232,7 +250,7 @@ bool publish(Volume& v, uint8_t* inode, unsigned preferred, uint32_t block, Exte
     right.count(moved);
     page.count(middle);
     sibling = {allocated, right.key(0)};
-    return v.write_block(block, page.data, 1) && v.write_block(allocated, right.data, 1);
+    return save_node(v, inode, block, page) && save_node(v, inode, allocated, right);
 }
 
 void insert_initialized(ExtentPage& page, unsigned slot, uint32_t logical, uint32_t block) {
@@ -278,7 +296,7 @@ bool initialize_block(Volume& v, ExtentPage& page, unsigned i, const Extent& ext
     return true;
 }
 
-bool map_leaf(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uint32_t logical,
+bool map_leaf(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint32_t logical,
               bool create, unsigned preferred, uint32_t& result, Sibling& sibling) {
     unsigned slot = page.upper_bound(logical);
     if (slot) {
@@ -307,7 +325,7 @@ bool map_leaf(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uint3
     return publish(v, inode, preferred, block, page, sibling);
 }
 
-bool map_node(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uint32_t logical,
+bool map_node(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint32_t logical,
               unsigned preferred, uint32_t& result, Sibling& sibling) {
     if (!page.depth())
         return map_leaf(v, inode, page, block, logical, true, preferred, result, sibling);
@@ -316,7 +334,7 @@ bool map_node(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uint3
     uint32_t physical = page.child(slot);
     ExtentPage child;
     Sibling added;
-    if (!load_child(v, page, slot, child) ||
+    if (!load_child(v, inode, page, slot, child) ||
         !map_node(v, inode, child, physical, logical, preferred, result, added))
         return false;
     if (!added.physical && page.key(slot) == child.key(0))
@@ -329,7 +347,7 @@ bool map_node(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uint3
     return publish(v, inode, preferred, block, page, sibling);
 }
 
-bool prune_page(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uint64_t keep) {
+bool prune_page(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint64_t keep) {
     bool changed = false;
     while (page.count()) {
         unsigned last = page.count() - 1;
@@ -337,7 +355,8 @@ bool prune_page(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uin
         if (page.depth()) {
             uint32_t physical = page.child(last);
             ExtentPage child;
-            if (!load_child(v, page, last, child) || !prune_page(v, inode, child, physical, keep))
+            if (!load_child(v, inode, page, last, child) ||
+                !prune_page(v, inode, child, physical, keep))
                 return false;
             if (child.count())
                 break;
@@ -362,10 +381,10 @@ bool prune_page(Volume& v, uint8_t* inode, ExtentPage& page, uint32_t block, uin
         page.count(last);
         changed = true;
     }
-    return !block || !changed || !page.count() || v.write_block(block, page.data, 1);
+    return !block || !changed || !page.count() || save_node(v, inode, block, page);
 }
 
-bool unchanged_nodes(Volume& v, const ExtentPage& page) {
+bool unchanged_nodes(Volume& v, const Inode& inode, const ExtentPage& page) {
     if (!page.depth())
         return true;
     for (unsigned i = 0; i < page.count(); i++) {
@@ -373,7 +392,7 @@ bool unchanged_nodes(Volume& v, const ExtentPage& page) {
             if (change->block == page.child(i))
                 return v.fail();
         ExtentPage child;
-        if (!load_child(v, page, i, child) || !unchanged_nodes(v, child))
+        if (!load_child(v, inode, page, i, child) || !unchanged_nodes(v, inode, child))
             return false;
     }
     return true;
@@ -385,20 +404,20 @@ void init_extent_tree(uint8_t* inode) {
     reset_header(inode + 40, inode_block_bytes, 0);
 }
 
-bool validate_extent_tree(Volume& v, const uint8_t* inode, bool allow_unwritten,
+bool validate_extent_tree(Volume& v, const Inode& inode, bool allow_unwritten,
                           const ExtentOwnership& ownership) {
     ExtentPage page;
     uint64_t file_blocks = (file_size(inode) + v.block_size - 1) / v.block_size;
     return load_root(v, inode, page) &&
-           validate(v, page, extent_logical_limit, file_blocks, allow_unwritten, ownership);
+           validate(v, inode, page, extent_logical_limit, file_blocks, allow_unwritten, ownership);
 }
 
-bool unchanged_extent_nodes(Volume& v, const uint8_t* inode) {
+bool unchanged_extent_nodes(Volume& v, const Inode& inode) {
     ExtentPage page;
-    return load_root(v, inode, page) && unchanged_nodes(v, page);
+    return load_root(v, inode, page) && unchanged_nodes(v, inode, page);
 }
 
-bool map_extent(Volume& v, uint8_t* inode, uint64_t logical, bool create, uint32_t& result,
+bool map_extent(Volume& v, Inode& inode, uint64_t logical, bool create, uint32_t& result,
                 unsigned preferred) {
     if (logical >= extent_logical_limit)
         return v.fail(-27);
@@ -414,19 +433,19 @@ bool map_extent(Volume& v, uint8_t* inode, uint64_t logical, bool create, uint32
         unsigned upper = root.upper_bound(logical);
         if (!upper)
             return true;
-        if (!load_child(v, root, upper - 1, root))
+        if (!load_child(v, inode, root, upper - 1, root))
             return false;
     }
     return map_leaf(v, inode, root, 0, logical, false, preferred, result, unused);
 }
 
-bool prune_extents(Volume& v, uint8_t* inode, uint64_t keep) {
+bool prune_extents(Volume& v, Inode& inode, uint64_t keep) {
     ExtentPage root;
     if (!load_root(v, inode, root) || !prune_page(v, inode, root, 0, keep))
         return false;
     while (root.depth() && root.count() == 1) {
         ExtentPage child;
-        if (!load_child(v, root, 0, child))
+        if (!load_child(v, inode, root, 0, child))
             return false;
         if (child.count() > entry_limit(inode_block_bytes))
             break;

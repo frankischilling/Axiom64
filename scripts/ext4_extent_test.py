@@ -24,6 +24,7 @@
 
 """Check writable ext4 extent trees with e2fsprogs and real guest operations."""
 import argparse
+import ctypes
 import json
 from pathlib import Path
 import re
@@ -36,15 +37,18 @@ import tempfile
 from account_normal_test import write_cpio
 from ext2_index_test import debug, digest
 from fetch import ROOT
-from guest_storage_boot import boot
+from fixture_archive import archive_fixture, sparse_copy_fixture
+from guest_storage_boot import boot, cut_after_write_fault
 
 NATIVE = 96
 SPARSE = 400
 PROFILES = (
-    (1024, "bios", "modern", True),
-    (2048, "uefi", "modern", False),
-    (4096, "bios", "legacy", False),
-    (4096, "uefi", "legacy", True),
+    (1024, "bios", "modern", True, ""),
+    (2048, "uefi", "modern", False, ""),
+    (4096, "bios", "legacy", False, ""),
+    (4096, "uefi", "legacy", True, ""),
+    (1024, "bios", "modern", True, "metadata_csum"),
+    (4096, "uefi", "legacy", True, "metadata_csum,metadata_csum_seed"),
 )
 LAST_LOGICAL = 2**32 - 2
 
@@ -62,7 +66,28 @@ def native_file(block):
     return data
 
 
-def fixture(directory, disk, block, journal, binaries=()):
+def crc32c(seed, data):
+    crc = ctypes.CDLL("libext2fs.so.2").ext2fs_crc32c_le
+    crc.argtypes = [ctypes.c_uint32, ctypes.c_char_p, ctypes.c_size_t]
+    crc.restype = ctypes.c_uint32
+    return crc(seed, bytes(data), len(data))
+
+
+def checksummed_journal(disk, block):
+    physical = int(debug(disk, "bmap <8> 0"))
+    with disk.open("r+b") as raw:
+        raw.seek(physical * block)
+        header = bytearray(raw.read(1024))
+        if struct.unpack_from(">II", header) != (0xc03b3998, 4):
+            raise RuntimeError("native image did not create an internal JBD2 journal")
+        struct.pack_into(">I", header, 40, 19)
+        header[80] = 4
+        struct.pack_into(">I", header, 252, crc32c(0xffffffff, header))
+        raw.seek(physical * block)
+        raw.write(header)
+
+
+def fixture(directory, disk, block, journal, binaries=(), checksums=""):
     prefix = "/mnt" if binaries else ""
     with tempfile.TemporaryDirectory(prefix="ext4-extents-") as source:
         root = Path(source)
@@ -78,13 +103,24 @@ def fixture(directory, disk, block, journal, binaries=()):
         (store / "native").write_bytes(native_file(block))
         (store / "preallocated").touch()
         (store / "empty-reserved").touch()
+        if checksums:
+            (store / "attribute").touch()
+            if block == 1024:
+                (store / "lazy").touch()
         with disk.open("wb") as output:
             output.truncate(48 * 1024 * 1024)
         features = "none,filetype,sparse_super,large_file,extent,dir_index"
         if journal:
             features += ",has_journal"
-        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", str(block), "-I", "128",
+        if checksums:
+            features += ",ext_attr," + checksums
+        inode_size = "256" if checksums and block == 4096 else "128"
+        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", str(block), "-I", inode_size,
                         "-O", features, "-E", "root_owner=0:0", "-d", root, disk], check=True)
+        if checksums:
+            value = root / "attribute-value"
+            value.write_bytes(b"A" * 600)
+            debug(disk, f"ea_set -f {value} {prefix}/attribute user.original", write=True)
     path = prefix + "/preallocated"
     debug(disk, f"fallocate {path} 4 19", write=True)
     debug(disk, f"set_inode_field {path} size {14 * block}", write=True)
@@ -96,6 +132,8 @@ def fixture(directory, disk, block, journal, binaries=()):
                 raise RuntimeError("native preallocation did not create an unwritten extent")
             output.seek(int(row[0]) * block)
             output.write(b"\xa5" * block)
+    if checksums and journal:
+        checksummed_journal(disk, block)
     fsck(disk, directory / "before-fsck.log")
     (directory / "native-extents.log").write_bytes(debug(disk, f"extents {prefix}/native"))
 
@@ -116,6 +154,113 @@ def image(directory, archive, phase):
 def inode_offset(disk, path, block):
     fields = re.search(rb"located at block (\d+), offset (0x[\da-f]+)", debug(disk, f"imap {path}"))
     return int(fields[1]) * block + int(fields[2], 16)
+
+
+def checksum_rejections(directory, seed, iso):
+    block = 1024
+    with seed.open("rb") as raw:
+        raw.seek(1024 + 104)
+        seed_crc = crc32c(0xffffffff, raw.read(16))
+        raw.seek(inode_offset(seed, "/native", block) + 56)
+        node, = struct.unpack("<I", raw.read(4))
+        raw.seek(node * block + 4)
+        entries, = struct.unpack("<H", raw.read(2))
+    directory_block = int(debug(seed, "bmap / 0"))
+    attribute = int(re.search(rb"File ACL: (\d+)", debug(seed, "stat /attribute"))[1])
+    if not all((node, entries, directory_block, attribute)):
+        raise RuntimeError("could not locate the native checksum regions")
+    cases = {"superblock": 1024 + 1020, "group": 2 * block + 30,
+             "block-bitmap": 2 * block + 24, "inode-bitmap": 2 * block + 26,
+             "inode": inode_offset(seed, "/native", block) + 124,
+             "extent": node * block + 12 + entries * 12,
+             "directory": (directory_block + 1) * block - 4,
+             "xattr": attribute * block + 16}
+    for name, where in cases.items():
+        case = directory / ("checksum-" + name)
+        case.mkdir()
+        disk = case / "disk.raw"
+        subprocess.run(["cp", "--sparse=always", "--", seed, disk], check=True)
+        with disk.open("r+b") as raw:
+            raw.seek(where)
+            old = raw.read(1)
+            raw.seek(where)
+            raw.write(bytes([old[0] ^ 1]))
+            if name.endswith("-bitmap"):
+                # Keep the descriptor valid so this can only fail the bitmap check.
+                raw.seek(2 * block)
+                desc = bytearray(raw.read(32))
+                struct.pack_into("<H", desc, 30, 0)
+                checksum = crc32c(seed_crc, bytes(4) + desc) & 0xffff
+                raw.seek(2 * block + 30)
+                raw.write(struct.pack("<H", checksum))
+        digest_before = digest(disk)
+        boot(case, iso, [disk], "bios", "modern", ["EXT4_EXTENT_REJECTION_PASS"])
+        if digest(disk) != digest_before:
+            raise RuntimeError(f"rejected metadata checksum wrote to the disk: {name}")
+
+
+def lazy_flags(disk):
+    with disk.open("rb") as raw:
+        raw.seek(2048 + 32 + 18)
+        return struct.unpack("<H", raw.read(2))[0]
+
+
+def verify_cut(directory, seed, images):
+    directory.mkdir()
+    block = 1024
+    disk = directory / "disk.raw"
+    sparse_copy_fixture(seed, disk)
+    with seed.open("rb") as raw:
+        raw.seek(2 * block)
+        desc = raw.read(block)
+        bitmap, = struct.unpack_from("<I", desc)
+        raw.seek(bitmap * block)
+        bits = raw.read(block)
+    journal = int(debug(seed, "bmap <8> 0"))
+    cut_after_write_fault(directory, images["pressure"], disk, 4,
+                          "EXT4_METADATA_HOME_WRITE_FAULT")
+    with disk.open("rb") as raw:
+        raw.seek(2 * block)
+        if raw.read(block) != desc:
+            raise RuntimeError("fault did not leave the home descriptor untouched")
+        raw.seek(bitmap * block)
+        if raw.read(block) == bits:
+            raise RuntimeError("expected a newer home bitmap than the descriptor checksum")
+        raw.seek(journal * block + 28)
+        if not struct.unpack(">I", raw.read(4))[0]:
+            raise RuntimeError("metadata write fault did not leave a committed journal")
+    recovered, oracle = (directory / name for name in ("guest", "checker"))
+    for path in (recovered, oracle):
+        path.mkdir()
+        sparse_copy_fixture(disk, path / "disk.raw")
+    with (oracle / "replay.log").open("wb") as log:
+        run = subprocess.run(["e2fsck", "-fy", oracle / "disk.raw"], stdout=log,
+                             stderr=subprocess.STDOUT)
+    if run.returncode not in (0, 1) or b"recovering journal" not in (oracle / "replay.log").read_bytes():
+        raise RuntimeError("native checker did not replay the interrupted metadata update")
+    boot(recovered, images["recovery"], [recovered / "disk.raw"], "bios", "modern",
+         ["EXT4_METADATA_RECOVERY_PASS"])
+    for path in (recovered, oracle):
+        image = path / "disk.raw"
+        fsck(image, path / "fsck.log")
+        if debug(image, "cat /attribute") != b"metadata cut\0":
+            raise RuntimeError("metadata recovery did not preserve the committed file")
+    return {name: archive_fixture(path / "disk.raw", remove=True) for name, path in
+            (("interrupted", directory), ("checker", oracle), ("guest", recovered))}
+
+
+def verify_metadata(disk, block, prefix=""):
+    with tempfile.TemporaryDirectory(prefix="ext4-metadata-export-") as scratch:
+        data = Path(scratch) / "file"
+        for attr, expected in (("original", b"A" * 600), ("updated", b"X" * 133)):
+            debug(disk, f"ea_get -f {data} {prefix}/attribute user.{attr}")
+            if data.read_bytes() != expected:
+                raise RuntimeError(f"metadata checksum fixture lost user.{attr} bytes")
+            data.unlink()
+        if block == 1024:
+            debug(disk, f"dump {prefix}/lazy {data}")
+            if lazy_flags(disk) & 2 or data.read_bytes() != b"Z" * (9 * 1024 * 1024):
+                raise RuntimeError("lazy block allocation did not persist")
 
 
 def rejected(directory, seed, boot_images):
@@ -239,38 +384,50 @@ def main():
     files = {name: (0o40755, b"") for name in ("dev", "proc", "run", "sbin", "sys", "tmp")}
     files["sbin/init"] = 0o100755, client.read_bytes()
     write_cpio(archive, files)
-    phases = ["write", "verify", "invalid", "unsupported", "full"]
+    phases = ["write", "verify", "invalid", "unsupported", "full", "pressure", "recovery"]
     if args.root_tools:
         phases.append("root")
     boot_images = {phase: image(directory, archive, phase) for phase in phases}
     rows = []
     selected = range(len(PROFILES)) if args.profile is None else (args.profile,)
     for profile in selected:
-        block, firmware, transport, journal = PROFILES[profile]
+        block, firmware, transport, journal, checksums = PROFILES[profile]
         case = directory / f"profile-{profile}"
         case.mkdir()
         disk = case / "disk.raw"
-        fixture(case, disk, block, journal)
+        fixture(case, disk, block, journal, checksums=checksums)
+        cut = None
         if profile == 0:
             rejected(case, disk, boot_images)
             full_volume(case / "full", boot_images["full"])
+        if profile == 4:
+            if not lazy_flags(disk) & 2:
+                raise RuntimeError("native seed did not have a lazy block group")
+            checksum_rejections(case, disk, boot_images["invalid"])
+            cut = verify_cut(case / "metadata-cut", disk, boot_images)
         boot(case, boot_images["write"], [disk], firmware, transport, ["EXT4_EXTENT_MUTATION_PASS"])
         depth = verify_host(case, disk, block)
+        if checksums:
+            verify_metadata(disk, block)
         written = digest(disk)
         boot(case, boot_images["verify"], [disk], firmware, transport, ["EXT4_EXTENT_REBOOT_PASS"])
         if digest(disk) != written:
             raise RuntimeError("read-only ext4 reboot changed disk bytes")
         row = dict(profile=profile, block_size=block, firmware=firmware, transport=transport,
-                   journal=journal, tree_depth=depth, disk_sha256=written)
+                   journal=journal, metadata_checksums=checksums, tree_depth=depth, disk_sha256=written)
+        if cut:
+            row["metadata_cut"] = cut
         if args.root_tools:
             root = case / "root"
             root.mkdir()
             rootdisk = root / "disk.raw"
-            fixture(root, rootdisk, block, journal, (client, *args.root_tools))
+            fixture(root, rootdisk, block, journal, (client, *args.root_tools), checksums)
             boot(root, boot_images["root"], [rootdisk], firmware, transport,
                  ["VFS_ROOT_PASS filesystem=ext4 device=/dev/vda readonly=0",
                   "EXT4_EXTENT_MUTATION_PASS"])
             verify_host(root, rootdisk, block, "/mnt")
+            if checksums:
+                verify_metadata(rootdisk, block, "/mnt")
             row["root_disk_sha256"] = digest(rootdisk)
         rows.append(row)
         (directory / "results.json").write_text(json.dumps(rows, indent=2) + "\n")

@@ -32,13 +32,12 @@ import shutil
 import struct
 import subprocess
 import sys
-import time
 
 from account_normal_test import write_cpio
 from ext2_index_test import debug, digest
 from fetch import ROOT
 from fixture_archive import archive_fixture, sparse_copy_fixture
-from guest_storage_boot import boot
+from guest_storage_boot import boot, cut_after_write_fault
 
 MAGIC = 0xc03b3998
 PROFILES = (("v1", "bios", "modern"), ("v2", "uefi", "modern"),
@@ -198,30 +197,8 @@ def power_cut(directory, source, size, images):
     with disk.open("rb") as raw:
         raw.seek(tail * size)
         historical_tail = raw.read(size)
-    rule = directory / "home.conf"
-    rule.write_text('[inject-error]\nevent = "write_aio"\niotype = "write"\n'
-                    f'sector = "{tail * (size // 512)}"\nerrno = "5"\nonce = "on"\n')
-    serial = directory / "home-fault.log"
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
-               "-boot", "order=d", "-cdrom", str(images["error"]), "-display", "none",
-               "-serial", "stdio", "-monitor", "none", "-no-reboot", "-nic", "none",
-               "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
-               "-drive", f"if=none,id=d0,format=raw,file=blkdebug:{rule}:{disk},cache=writethrough,werror=report",
-               "-device", "virtio-blk-pci,drive=d0,disable-legacy=on,addr=5"]
-    with serial.open("wb") as log, subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT) as vm:
-        try:
-            deadline = time.monotonic() + 70
-            while time.monotonic() < deadline and vm.poll() is None:
-                if b"EXT2_JOURNAL_HOME_WRITE_FAULT" in serial.read_bytes().splitlines():
-                    break
-                time.sleep(0.05)
-            else:
-                raise RuntimeError(f"{serial}: guest did not report the home write fault")
-        finally:
-            if vm.poll() is None:
-                vm.kill()
-                vm.wait()
+    cut_after_write_fault(directory, images["error"], disk, tail * (size // 512),
+                          "EXT2_JOURNAL_HOME_WRITE_FAULT")
     mapping = (source / "journal-map.bin").read_bytes()
     superblock, = struct.unpack_from("<I", mapping)
     with disk.open("rb") as raw:

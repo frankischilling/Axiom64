@@ -35,7 +35,8 @@ static Volume& volume(Node* node) {
 
 static bool locate(Volume& v, uint32_t parent, const char* name, uint32_t& number,
                    uint64_t* position = nullptr) {
-    uint8_t inode[inode_bytes], data[max_block_size];
+    Inode inode;
+    uint8_t data[max_block_size];
     if (!v.load_inode(parent, inode))
         return false;
     if (u32(inode + 32) & indexed_directory)
@@ -45,9 +46,10 @@ static bool locate(Volume& v, uint32_t parent, const char* name, uint32_t& numbe
         uint32_t block;
         if (!directory_block(v, inode, base, block, data))
             return false;
-        for (unsigned offset = 0; offset < v.block_size;) {
+        unsigned end = directory_leaf_bytes(v);
+        for (unsigned offset = 0; offset < end;) {
             Record r;
-            if (!record(v, data, offset, r))
+            if (!record(v, data, offset, r, end))
                 return false;
             if (r.inode && r.name_length == length && !memcmp(data + offset + 8, name, length)) {
                 number = r.inode;
@@ -61,7 +63,7 @@ static bool locate(Volume& v, uint32_t parent, const char* name, uint32_t& numbe
     return v.fail(-2);
 }
 
-static bool add_linear_name(Volume& v, uint8_t* inode, unsigned preferred, const char* name,
+static bool add_linear_name(Volume& v, Inode& inode, unsigned preferred, const char* name,
                             uint32_t number, uint32_t mode) {
     uint8_t data[max_block_size];
     uint64_t length = file_size(inode);
@@ -70,7 +72,7 @@ static bool add_linear_name(Volume& v, uint8_t* inode, unsigned preferred, const
         if (!directory_block(v, inode, base, block, data))
             return false;
         if (insert_directory_record(v, data, name, number, mode))
-            return v.write_block(block, data, 3);
+            return save_directory_leaf(v, inode, block, data);
         if (v.error)
             return false;
         if (length == v.block_size && (v.compatible & directory_index_feature) &&
@@ -84,13 +86,13 @@ static bool add_linear_name(Volume& v, uint8_t* inode, unsigned preferred, const
     if (length > UINT32_MAX - v.block_size ||
         !v.map_block(inode, length / v.block_size, true, block, preferred))
         return v.fail(-27);
-    put_record(v, data, 0, v.block_size, name, number, mode);
+    put_record(v, data, 0, directory_leaf_bytes(v), name, number, mode);
     set32(inode + 4, length + v.block_size);
-    return v.write_block(block, data, 3);
+    return save_directory_leaf(v, inode, block, data);
 }
 
 static bool add_name(Volume& v, uint32_t parent, const char* name, uint32_t number, uint32_t mode) {
-    uint8_t inode[inode_bytes];
+    Inode inode;
     if (!v.load_inode(parent, inode))
         return false;
     unsigned preferred = (parent - 1) / v.inodes_per_group;
@@ -111,13 +113,15 @@ static bool erase_name(Volume& v, uint32_t parent, const char* name, uint32_t ex
         return false;
     if (number != expected)
         return v.fail();
-    uint8_t inode[inode_bytes], data[max_block_size];
+    Inode inode;
+    uint8_t data[max_block_size];
     if (!v.load_inode(parent, inode) || !directory_block(v, inode, position, block, data))
         return false;
+    unsigned end = directory_record_end(v, inode, position, data);
     unsigned target = position % v.block_size, previous = 0;
     for (unsigned offset = 0; offset < target;) {
         Record r;
-        if (!record(v, data, offset, r))
+        if (!record(v, data, offset, r, end))
             return false;
         previous = offset;
         offset += r.length;
@@ -125,7 +129,7 @@ static bool erase_name(Volume& v, uint32_t parent, const char* name, uint32_t ex
             return v.fail();
     }
     Record r;
-    if (!record(v, data, target, r))
+    if (!record(v, data, target, r, end))
         return false;
     if (target)
         set16(data + previous + 4, u16(data + previous + 4) + r.length);
@@ -135,11 +139,11 @@ static bool erase_name(Volume& v, uint32_t parent, const char* name, uint32_t ex
     }
     set32(inode + 12, node_now().sec);
     set32(inode + 16, node_now().sec);
-    return v.write_block(block, data, 3) && v.save_inode(parent, inode);
+    return save_directory_block(v, inode, position, block, data) && v.save_inode(parent, inode);
 }
 
 static bool adjust_links(Volume& v, uint32_t number, int delta) {
-    uint8_t inode[inode_bytes];
+    Inode inode;
     if (!v.load_inode(number, inode))
         return false;
     int count = int(u16(inode + 26)) + delta;
@@ -154,7 +158,7 @@ static bool adjust_links(Volume& v, uint32_t number, int delta) {
 
 static bool drop_inode(Volume& v, Node* node) {
     node = file_node(node);
-    uint8_t inode[inode_bytes];
+    Inode inode;
     if (!v.load_inode(node->inode, inode))
         return false;
     bool dir = (u16(inode) & 0170000) == directory;
@@ -183,7 +187,7 @@ static int lookup(Node* parent, const char* name, Node*& result) {
             result = &entry->node;
             return 0;
         }
-    uint8_t inode[inode_bytes];
+    Inode inode;
     if (!v.load_inode(number, inode))
         return v.error;
     auto entry = v.reserve_entry();
@@ -208,7 +212,8 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     }
     bool dir = (mode & 0170000) == directory;
     uint32_t number = v.allocate(true, (parent->inode - 1) / v.inodes_per_group, dir);
-    uint8_t inode[inode_bytes]{};
+    Inode inode{};
+    inode.number = number;
     set16(inode, mode);
     uint32_t uid = current ? current->credentials.user.filesystem : 0;
     uint32_t gid = (parent->mode & 02000) ? parent->gid
@@ -232,9 +237,10 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
         if (success) {
             uint8_t data[max_block_size]{};
             put_record(v, data, 0, 12, ".", number, directory);
-            put_record(v, data, 12, v.block_size - 12, "..", parent->inode, directory);
+            put_record(v, data, 12, directory_leaf_bytes(v) - 12, "..", parent->inode, directory);
             set32(inode + 4, v.block_size);
-            success = v.write_block(block, data, 3) && adjust_links(v, parent->inode, 1);
+            success =
+                save_directory_leaf(v, inode, block, data) && adjust_links(v, parent->inode, 1);
         }
     } else if (success && target) {
         size_t length = strlen(target);
@@ -299,18 +305,19 @@ static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
     if (success && dir && node->parent != parent) {
         uint32_t number, block;
         uint64_t offset;
-        uint8_t inode[inode_bytes], data[max_block_size];
+        Inode inode;
+        uint8_t data[max_block_size];
         success = locate(v, node->inode, "..", number, &offset) &&
                   v.load_inode(node->inode, inode) &&
                   directory_block(v, inode, offset, block, data);
         if (success) {
             set32(data + offset % v.block_size, parent->inode);
-            success = v.write_block(block, data, 3) && adjust_links(v, node->parent->inode, -1) &&
-                      adjust_links(v, parent->inode, 1);
+            success = save_directory_block(v, inode, offset, block, data) &&
+                      adjust_links(v, node->parent->inode, -1) && adjust_links(v, parent->inode, 1);
         }
     }
     if (success) {
-        uint8_t inode[inode_bytes];
+        Inode inode;
         success = v.load_inode(node->inode, inode);
         if (success) {
             set32(inode + 12, node_now().sec);
@@ -332,7 +339,8 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
     if (offset >= node->size)
         return 0;
     size_t count = min(length, node->size - size_t(offset)), done = 0;
-    uint8_t inode[inode_bytes], data[max_block_size];
+    Inode inode;
+    uint8_t data[max_block_size];
     if (!v.load_inode(node->inode, inode))
         return v.error;
     auto out = static_cast<uint8_t*>(buffer);
@@ -368,7 +376,8 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
         return -27;
     if (!v.begin())
         return v.error;
-    uint8_t inode[inode_bytes], data[max_block_size];
+    Inode inode;
+    uint8_t data[max_block_size];
     bool success = v.load_inode(node->inode, inode);
     if (success && offset + length > file_size(inode))
         success = v.size(inode, offset + length);
@@ -399,7 +408,7 @@ static int truncate(Node* node, size_t length) {
     auto& v = volume(node);
     if (!v.begin())
         return v.error;
-    uint8_t inode[inode_bytes];
+    Inode inode;
     bool success = v.load_inode(node->inode, inode) && v.size(inode, length);
     if (success) {
         set32(inode + 12, node_now().sec);
@@ -417,7 +426,7 @@ static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, 
     auto& v = volume(node);
     if (!v.begin())
         return v.error;
-    uint8_t inode[inode_bytes];
+    Inode inode;
     bool success = v.load_inode(node->inode, inode);
     if (success) {
         set16(inode, mode);
@@ -436,7 +445,8 @@ static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, 
 static int64_t getxattr(Node* node, const XattrName& name, void* buffer, size_t size) {
     auto& v = volume(node);
     v.error = 0;
-    uint8_t inode[inode_bytes], block[max_block_size];
+    Inode inode;
+    uint8_t block[max_block_size];
     uint32_t references;
     if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, block, references))
         return v.error;
@@ -446,7 +456,8 @@ static int64_t getxattr(Node* node, const XattrName& name, void* buffer, size_t 
 static int64_t listxattr(Node* node, void* buffer, size_t size, bool trusted) {
     auto& v = volume(node);
     v.error = 0;
-    uint8_t inode[inode_bytes], block[max_block_size];
+    Inode inode;
+    uint8_t block[max_block_size];
     uint32_t references;
     if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, block, references))
         return v.error;
@@ -460,7 +471,8 @@ static int change_xattr(Node* node, const XattrName& name, const void* value, si
         return -28;
     if (!v.begin())
         return v.error;
-    uint8_t inode[inode_bytes], old[max_block_size], replacement[max_block_size];
+    Inode inode;
+    uint8_t old[max_block_size], replacement[max_block_size];
     uint32_t references;
     if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, old, references))
         return v.finish(false);
@@ -482,7 +494,7 @@ static int change_xattr(Node* node, const XattrName& name, const void* value, si
             success = target &&
                       (block ? v.release_xattr(block, old, references) : v.add_blocks(inode, 1));
         }
-        success = success && v.write_block(target, replacement, 0);
+        success = success && v.write_xattr_block(target, replacement, 0);
         uint8_t header[1024];
         if (success && !(v.compatible & 8)) {
             success = v.super(header);
@@ -522,7 +534,8 @@ static int removexattr(Node* node, const XattrName& name) {
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
     auto& v = volume(node);
     v.error = 0;
-    uint8_t inode[inode_bytes], data[max_block_size], child[inode_bytes];
+    Inode inode;
+    uint8_t data[max_block_size];
     if (!v.load_inode(node->inode, inode))
         return v.error;
     if (cookie > file_size(inode))
@@ -534,24 +547,28 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
             return v.error;
         // Cookies are record offsets. Reject seeks into a record's payload.
         unsigned wanted = cookie % v.block_size, offset = 0;
+        unsigned end = directory_record_end(v, inode, base, data);
+        if (wanted > end)
+            return -22;
         while (offset < wanted) {
             Record r;
-            if (!record(v, data, offset, r))
+            if (!record(v, data, offset, r, end))
                 return v.error;
             offset += r.length;
         }
         if (offset != wanted)
             return -22;
-        while (offset < v.block_size) {
+        while (offset < end) {
             Record r;
-            if (!record(v, data, offset, r))
+            if (!record(v, data, offset, r, end))
                 return v.error;
             cookie = base + offset + r.length;
             if (r.inode) {
+                Inode child;
                 if (!v.load_inode(r.inode, child))
                     return v.error;
                 entry.inode = r.inode;
-                entry.next = cookie;
+                entry.next = offset + r.length == end ? base + v.block_size : cookie;
                 entry.mode = u16(child);
                 if (r.name_length == 2 && !memcmp(data + offset + 8, "..", 2) &&
                     node == node->mount->root)
@@ -562,6 +579,7 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
             }
             offset += r.length;
         }
+        cookie = base + v.block_size;
     }
     return 0;
 }
@@ -575,7 +593,7 @@ static int sync(Mount* mount, Node*, bool) {
     for (auto entry = v.entries.first(); entry; entry = entry->next) {
         if (!entry->number || entry->node.hardlink)
             continue;
-        uint8_t inode[inode_bytes];
+        Inode inode;
         if (!v.load_inode(entry->number, inode))
             return v.error;
         bool orphan = !u16(inode + 26) && !node_referenced(&entry->node);
@@ -628,7 +646,7 @@ static int prepare_unmount(Mount* mount) {
     for (auto entry = v.entries.first(); entry; entry = entry->next) {
         if (!entry->number || entry->node.hardlink)
             continue;
-        uint8_t inode[inode_bytes];
+        Inode inode;
         if (!v.load_inode(entry->number, inode))
             return v.error;
         if (!u16(inode + 26)) {
@@ -682,9 +700,10 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
         return (u32(header + 96) & 4) ? v.fail(-95) : true;
     if (u32(header + 224) != 8 || u32(header + 228) || !disk.flush_supported)
         return v.fail(-95);
-    uint8_t inode[inode_bytes], original_header[1024];
+    Inode inode;
+    uint8_t original_header[1024];
     memcpy(original_header, header, sizeof(original_header));
-    if (!v.load_inode(8, inode))
+    if (!v.load_inode(8, inode, !v.checksums()))
         return false;
     if ((u16(inode) & 0170000) != regular_file || u16(inode + 26) != 1 || u16(inode + 2) ||
         u16(inode + 24) || u16(inode + 120) || u16(inode + 122) || u32(inode + 20) ||
@@ -696,9 +715,15 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
     v.journal_map = static_cast<uint32_t*>(alloc(uint64_t(v.journal_blocks) * sizeof(uint32_t)));
     if (!v.journal_map)
         return v.fail(-12);
-    for (uint32_t index = 0; index < v.journal_blocks; index++)
-        if (!v.map_block(inode, index, false, v.journal_map[index], 0) || !v.journal_map[index])
-            return v.fail();
+    // The replay overlay can repair home bitmaps whose checksum is out of date.
+    // Protect the journal using its inode and routing geometry until that scan.
+    v.journal_bootstrap = v.checksums();
+    bool mapped = true;
+    for (uint32_t index = 0; mapped && index < v.journal_blocks; index++)
+        mapped = v.map_block(inode, index, false, v.journal_map[index], 0) && v.journal_map[index];
+    v.journal_bootstrap = false;
+    if (!mapped)
+        return v.fail();
     JournalStorage storage{
         &v,           v.block_size,  v.blocks,     v.journal_map, v.journal_blocks,
         journal_read, journal_write, journal_flush};
@@ -722,6 +747,8 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
         set32(normalized + offset, u32(original_header + offset));
     for (unsigned offset : state_fields)
         set16(normalized + offset, u16(original_header + offset));
+    if (v.checksums())
+        set32(normalized + 1020, u32(original_header + 1020));
     if ((u32(header + 96) & ~4u) != (u32(original_header + 96) & ~4u) ||
         (u32(header + 100) != u32(original_header + 100) &&
          u32(header + 100) != (u32(original_header + 100) | 2)))
@@ -738,8 +765,8 @@ static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
             u32(descriptor + 8) != expected.inode_table)
             return v.fail();
     }
-    uint8_t replayed[inode_bytes];
-    if (!v.load_inode(8, replayed) || memcmp(inode, replayed, sizeof(inode)))
+    Inode replayed;
+    if (!v.load_inode(8, replayed) || memcmp(inode, replayed, inode_bytes))
         return v.fail();
     if (has_extents(replayed) && !unchanged_extent_nodes(v, replayed))
         return false;
@@ -777,9 +804,13 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     v.default_directory_hash_version = header[252];
     v.typed_entries = incompatible & 2;
     v.extent_enabled = incompatible & extent_feature;
-    if ((v.compatible & ~0x3cu) || (incompatible & ~(6u | extent_feature)) ||
-        (v.readonly_features & ~3u) || (v.inode_size != 128 && v.inode_size != 256))
+    if ((v.compatible & ~0x3cu) ||
+        (incompatible & ~(6u | extent_feature | checksum_seed_feature)) ||
+        (v.readonly_features & ~(3u | metadata_checksum_feature)) ||
+        (v.inode_size != 128 && v.inode_size != 256))
         return v.fail(-95);
+    if (!v.configure_checksums(header, incompatible & checksum_seed_feature))
+        return false;
     v.reserved_gdt = v.compatible & 16 ? u16(header + 206) : 0;
     if (v.first_inode != 11 || ((v.compatible & 16) && !(v.readonly_features & 1)))
         return v.fail(-95);
@@ -794,6 +825,8 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     v.group_count = (uint64_t(v.blocks) - v.first + v.blocks_per_group - 1) / v.blocks_per_group;
     if (v.group_count > 4096)
         return v.fail(-95);
+    if (v.checksums() && ((v.blocks_per_group | v.inodes_per_group) & 7))
+        return v.fail();
     if ((uint64_t(v.inodes) + v.inodes_per_group - 1) / v.inodes_per_group != v.group_count)
         return v.fail();
     v.gdt = v.first + 1;
@@ -871,7 +904,8 @@ int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
         return result;
     }
     v->claimed = true;
-    uint8_t header[1024], inode[inode_bytes];
+    uint8_t header[1024];
+    Inode inode;
     result = block_read(v->device, 2, header, 2);
     if (!result && !layout(*v, header, *info, check_dirty))
         result = v->error;

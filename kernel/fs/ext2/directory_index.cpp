@@ -78,12 +78,12 @@ struct IndexPage {
     }
 };
 
-bool read_at(Volume& v, uint8_t* inode, uint32_t logical, uint32_t& physical, uint8_t* data) {
+bool read_at(Volume& v, Inode& inode, uint32_t logical, uint32_t& physical, uint8_t* data) {
     uint64_t offset = uint64_t(logical) * v.block_size;
     return offset < file_size(inode) ? directory_block(v, inode, offset, physical, data) : v.fail();
 }
 
-bool read_index(Volume& v, uint8_t* inode, uint32_t logical, IndexPage& page) {
+bool read_index(Volume& v, Inode& inode, uint32_t logical, IndexPage& page) {
     page.offset = logical ? node_entries : root_entries;
     if (!read_at(v, inode, logical, page.physical, page.data))
         return false;
@@ -101,7 +101,7 @@ bool read_index(Volume& v, uint8_t* inode, uint32_t logical, IndexPage& page) {
         if (bytes[28] > 2 || bytes[30] > 1 || bytes[31])
             return v.fail(-95);
     }
-    if (page.limit() != (v.block_size - page.offset) / 8 || !page.count() ||
+    if (page.limit() != (directory_index_bytes(v) - page.offset) / 8 || !page.count() ||
         page.count() > page.limit())
         return v.fail();
     return true;
@@ -111,7 +111,7 @@ uint32_t hash_name(Volume& v, const uint8_t* bytes, unsigned length, unsigned ve
     return directory_hash(bytes, length, version, v.directory_hash_seed, v.unsigned_directory_hash);
 }
 
-bool visit(Volume& v, uint8_t* inode, const IndexPage& page, unsigned levels, unsigned version,
+bool visit(Volume& v, Inode& inode, const IndexPage& page, unsigned levels, unsigned version,
            uint64_t low, uint64_t high, uint8_t* seen, uint32_t& total) {
     uint64_t previous = low;
     for (unsigned i = 0; i < page.count(); i++) {
@@ -142,9 +142,10 @@ bool visit(Volume& v, uint8_t* inode, const IndexPage& page, unsigned levels, un
         if (!read_at(v, inode, logical, physical, leaf))
             return false;
         uint64_t minimum = first & ~1ull, maximum = (last & ~1ull) + (last & 1);
-        for (unsigned offset = 0; offset < v.block_size;) {
+        unsigned end = directory_leaf_bytes(v);
+        for (unsigned offset = 0; offset < end;) {
             Record row;
-            if (!record(v, leaf, offset, row))
+            if (!record(v, leaf, offset, row, end))
                 return false;
             if (row.inode) {
                 uint32_t hash = hash_name(v, leaf + offset + 8, row.name_length, version);
@@ -157,11 +158,11 @@ bool visit(Volume& v, uint8_t* inode, const IndexPage& page, unsigned levels, un
     return true;
 }
 
-bool lookup_leaf(Volume& v, const uint8_t* bytes, const char* name, unsigned length,
+bool lookup_leaf(Volume& v, const uint8_t* bytes, unsigned end, const char* name, unsigned length,
                  uint32_t& number, unsigned& offset) {
-    for (offset = 0; offset < v.block_size;) {
+    for (offset = 0; offset < end;) {
         Record row;
-        if (!record(v, bytes, offset, row))
+        if (!record(v, bytes, offset, row, end))
             return false;
         if (row.inode && row.name_length == length && !memcmp(bytes + offset + 8, name, length)) {
             number = row.inode;
@@ -176,7 +177,7 @@ bool continues(uint32_t key, uint32_t hash) {
     return key == (hash | 1u);
 }
 
-bool append_block(Volume& v, uint8_t* inode, unsigned preferred, uint32_t& logical,
+bool append_block(Volume& v, Inode& inode, unsigned preferred, uint32_t& logical,
                   uint32_t& physical) {
     uint64_t size = file_size(inode);
     if (size > UINT32_MAX - v.block_size)
@@ -188,7 +189,7 @@ bool append_block(Volume& v, uint8_t* inode, unsigned preferred, uint32_t& logic
     return true;
 }
 
-bool split_index(Volume& v, uint8_t* inode, unsigned preferred, IndexPage& root, IndexPage& node,
+bool split_index(Volume& v, Inode& inode, unsigned preferred, IndexPage& root, IndexPage& node,
                  bool indirect) {
     if (indirect && root.count() == root.limit())
         return v.fail(-28);
@@ -200,28 +201,28 @@ bool split_index(Volume& v, uint8_t* inode, unsigned preferred, IndexPage& root,
     if (!indirect) {
         unsigned count = root.count();
         memcpy(right.data + node_entries, root.data + root_entries, count * 8);
-        right.reset(node_entries, v.block_size, count);
+        right.reset(node_entries, directory_index_bytes(v), count);
         right.slot = root.slot;
         set16(root.data + root_entries + 2, 1);
         set32(root.data + root_entries + 4, logical);
         root.data[30] = 1;
         node = right;
-        return v.write_block(root.physical, root.data, 3);
+        return save_directory_index(v, inode, root.physical, root.data, root_entries);
     }
     unsigned middle = node.count() / 2, moved = node.count() - middle;
     uint32_t boundary = node.key(middle);
     memcpy(right.data + node_entries, node.data + node_entries + middle * 8, moved * 8);
-    right.reset(node_entries, v.block_size, moved);
+    right.reset(node_entries, directory_index_bytes(v), moved);
     set16(node.data + node_entries + 2, middle);
     root.insert(root.slot, boundary, logical);
-    if (!v.write_block(root.physical, root.data, 3))
+    if (!save_directory_index(v, inode, root.physical, root.data, root_entries))
         return false;
     if (node.slot >= middle) {
-        if (!v.write_block(node.physical, node.data, 3))
+        if (!save_directory_index(v, inode, node.physical, node.data, node_entries))
             return false;
         right.slot = node.slot - middle;
         node = right;
-    } else if (!v.write_block(right.physical, right.data, 3)) {
+    } else if (!save_directory_index(v, inode, right.physical, right.data, node_entries)) {
         return false;
     }
     return true;
@@ -232,15 +233,16 @@ struct LeafRow {
     uint16_t offset, size;
 };
 
-bool split_leaf(Volume& v, uint8_t* inode, unsigned preferred, IndexPage& page, uint32_t physical,
+bool split_leaf(Volume& v, Inode& inode, unsigned preferred, IndexPage& page, uint32_t physical,
                 const uint8_t* leaf, const char* name, uint32_t number, uint32_t mode,
                 unsigned version, uint32_t hash) {
     constexpr unsigned new_row = UINT16_MAX;
     LeafRow rows[max_block_size / 12 + 1];
     unsigned count = 0, total = 0;
-    for (unsigned offset = 0; offset < v.block_size;) {
+    unsigned usable = directory_leaf_bytes(v);
+    for (unsigned offset = 0; offset < usable;) {
         Record row;
-        if (!record(v, leaf, offset, row))
+        if (!record(v, leaf, offset, row, usable))
             return false;
         if (row.inode) {
             unsigned size = dir_record_size(row.name_length);
@@ -266,7 +268,7 @@ bool split_leaf(Volume& v, uint8_t* inode, unsigned preferred, IndexPage& page, 
     unsigned middle = 0, bytes = 0;
     while (middle + 1 < count && bytes < total / 2)
         bytes += rows[middle++].size;
-    if (!middle || bytes > v.block_size || total - bytes > v.block_size)
+    if (!middle || bytes > usable || total - bytes > usable)
         return v.fail();
     uint32_t logical, new_physical;
     if (!append_block(v, inode, preferred, logical, new_physical))
@@ -277,7 +279,7 @@ bool split_leaf(Volume& v, uint8_t* inode, unsigned preferred, IndexPage& page, 
         unsigned end = start ? count : middle, offset = 0;
         for (unsigned i = start; i < end; i++) {
             const auto& row = rows[i];
-            unsigned length = i + 1 == end ? v.block_size - offset : row.size;
+            unsigned length = i + 1 == end ? usable - offset : row.size;
             if (row.offset == new_row) {
                 put_record(v, packed, offset, length, name, number, mode);
             } else {
@@ -287,21 +289,22 @@ bool split_leaf(Volume& v, uint8_t* inode, unsigned preferred, IndexPage& page, 
             }
             offset += length;
         }
-        if (!v.write_block(start ? new_physical : physical, packed, 3))
+        if (!save_directory_leaf(v, inode, start ? new_physical : physical, packed))
             return false;
     }
     uint32_t separator = rows[middle].hash | uint32_t(rows[middle - 1].hash == rows[middle].hash);
     page.insert(page.slot, separator, logical);
-    return v.write_block(page.physical, page.data, 3);
+    return save_directory_index(v, inode, page.physical, page.data, page.offset);
 }
 } // namespace
 
 bool insert_directory_record(Volume& v, uint8_t* data, const char* name, uint32_t number,
                              uint32_t mode) {
     unsigned need = dir_record_size(strlen(name));
-    for (unsigned offset = 0; offset < v.block_size;) {
+    unsigned end = directory_leaf_bytes(v);
+    for (unsigned offset = 0; offset < end;) {
         Record row;
-        if (!record(v, data, offset, row))
+        if (!record(v, data, offset, row, end))
             return false;
         unsigned used = row.inode ? dir_record_size(row.name_length) : 0;
         if (row.length - used >= need) {
@@ -315,20 +318,21 @@ bool insert_directory_record(Volume& v, uint8_t* data, const char* name, uint32_
     return false;
 }
 
-bool start_directory_index(Volume& v, uint8_t* inode, unsigned preferred, uint32_t physical,
+bool start_directory_index(Volume& v, Inode& inode, unsigned preferred, uint32_t physical,
                            uint8_t* data) {
     Record dot, parent;
-    if (!record(v, data, 0, dot) || dot.length != 12 || !dot.inode || dot.name_length != 1 ||
+    unsigned end = directory_leaf_bytes(v);
+    if (!record(v, data, 0, dot, end) || dot.length != 12 || !dot.inode || dot.name_length != 1 ||
         data[8] != '.')
         return false;
-    if (!record(v, data, 12, parent) || !parent.inode || parent.name_length != 2 ||
-        memcmp(data + 20, "..", 2) || 12 + parent.length == v.block_size)
+    if (!record(v, data, 12, parent, end) || !parent.inode || parent.name_length != 2 ||
+        memcmp(data + 20, "..", 2) || 12 + parent.length == end)
         return false;
 
     unsigned first = 12 + parent.length, last = first;
-    for (unsigned offset = first; offset < v.block_size;) {
+    for (unsigned offset = first; offset < end;) {
         Record row;
-        if (!record(v, data, offset, row))
+        if (!record(v, data, offset, row, end))
             return false;
         last = offset;
         offset += row.length;
@@ -337,24 +341,24 @@ bool start_directory_index(Volume& v, uint8_t* inode, unsigned preferred, uint32
     if (!append_block(v, inode, preferred, logical, leaf))
         return false;
     uint8_t names[max_block_size];
-    memcpy(names, data + first, v.block_size - first);
-    memset(names + v.block_size - first, 0, first);
+    memcpy(names, data + first, end - first);
+    memset(names + end - first, 0, first);
     set16(names + last - first + 4, u16(data + last + 4) + first);
-    if (!v.write_block(leaf, names, 3))
+    if (!save_directory_leaf(v, inode, leaf, names))
         return false;
 
     set16(data + 16, v.block_size - 12);
     memset(data + 24, 0, v.block_size - 24);
     data[28] = v.default_directory_hash_version;
     data[29] = 8;
-    set16(data + root_entries, (v.block_size - root_entries) / 8);
+    set16(data + root_entries, (directory_index_bytes(v) - root_entries) / 8);
     set16(data + root_entries + 2, 1);
     set32(data + root_entries + 4, logical);
     set32(inode + 32, u32(inode + 32) | indexed_directory);
-    return v.write_block(physical, data, 3);
+    return save_directory_index(v, inode, physical, data, root_entries);
 }
 
-bool validate_directory_index(Volume& v, uint8_t* inode) {
+bool validate_directory_index(Volume& v, Inode& inode) {
     IndexPage root;
     if (!read_index(v, inode, 0, root))
         return false;
@@ -370,14 +374,14 @@ bool validate_directory_index(Volume& v, uint8_t* inode) {
     return ok && seen_count == blocks ? true : v.fail();
 }
 
-bool find_indexed_name(Volume& v, uint8_t* inode, const char* name, uint32_t& number,
+bool find_indexed_name(Volume& v, Inode& inode, const char* name, uint32_t& number,
                        uint64_t* position) {
     IndexPage root, child;
     if (!read_index(v, inode, 0, root))
         return false;
     unsigned length = strlen(name), offset;
     if ((length == 1 && name[0] == '.') || (length == 2 && !memcmp(name, "..", 2))) {
-        if (!lookup_leaf(v, root.data, name, length, number, offset))
+        if (!lookup_leaf(v, root.data, v.block_size, name, length, number, offset))
             return v.fail();
         if (position)
             *position = offset;
@@ -398,7 +402,7 @@ bool find_indexed_name(Volume& v, uint8_t* inode, const char* name, uint32_t& nu
         uint32_t logical = page->child(page->slot), physical;
         if (!read_at(v, inode, logical, physical, leaf))
             return false;
-        if (lookup_leaf(v, leaf, name, length, number, offset)) {
+        if (lookup_leaf(v, leaf, directory_leaf_bytes(v), name, length, number, offset)) {
             if (position)
                 *position = uint64_t(logical) * v.block_size + offset;
             return true;
@@ -420,7 +424,7 @@ bool find_indexed_name(Volume& v, uint8_t* inode, const char* name, uint32_t& nu
     return v.fail(-2);
 }
 
-bool insert_indexed_name(Volume& v, uint8_t* inode, unsigned preferred, const char* name,
+bool insert_indexed_name(Volume& v, Inode& inode, unsigned preferred, const char* name,
                          uint32_t number, uint32_t mode) {
     IndexPage root, node;
     if (!read_index(v, inode, 0, root))
@@ -441,7 +445,7 @@ bool insert_indexed_name(Volume& v, uint8_t* inode, unsigned preferred, const ch
     if (!read_at(v, inode, page->child(page->slot), physical, leaf))
         return false;
     if (insert_directory_record(v, leaf, name, number, mode))
-        return v.write_block(physical, leaf, 3);
+        return save_directory_leaf(v, inode, physical, leaf);
     if (v.error)
         return false;
     if (page->count() == page->limit()) {

@@ -51,6 +51,7 @@ PROFILES = (
     ("legacy", True, 2048, "bios", "modern", "ext2"),
     ("half_md4", False, 4096, "uefi", "modern", "ext3"),
     ("half_md4", True, 1024, "uefi", "legacy", "ext4"),
+    ("half_md4", True, 1024, "bios", "modern", "ext4-csum"),
 )
 
 
@@ -81,9 +82,11 @@ def fixture(directory, disk, block_size, algorithm, unsigned, filesystem):
         features = "none,filetype,sparse_super,large_file,dir_index"
         if filesystem != "ext2":
             features += ",has_journal"
-        if filesystem == "ext4":
+        if filesystem.startswith("ext4"):
             features += ",extent"
-        subprocess.run(["mke2fs", "-q", "-F", "-t", filesystem,
+        if filesystem == "ext4-csum":
+            features += ",metadata_csum"
+        subprocess.run(["mke2fs", "-q", "-F", "-t", filesystem.split("-")[0],
                         "-b", str(block_size), "-I", "128", "-N", "4096", "-O", features,
                         "-E", "hash_seed=01234567-89ab-cdef-0123-456789abcdef,root_owner=0:0",
                         "-d", root, disk], check=True)
@@ -112,6 +115,38 @@ def inspect_index(disk, path, logfile, algorithm):
     if not levels or not count or not version or int(version[1]) != HASH_VERSIONS[algorithm]:
         raise RuntimeError(f"{disk}: missing indexed directory at {path}")
     return int(levels[1]), int(count[1])
+
+
+def lazy_inode_flag(disk):
+    with disk.open("rb") as source:
+        source.seek(2048 + 32 + 18)
+        return struct.unpack("<H", source.read(2))[0] & 1
+
+
+def rejected_index_checksums(directory, disk, iso):
+    tree = "/target/index"
+    root = int(debug(disk, f"bmap {tree} 0"))
+    with disk.open("rb") as source:
+        source.seek(root * 1024 + 36)
+        logical, = struct.unpack("<I", source.read(4))
+    node = int(debug(disk, f"bmap {tree} {logical}"))
+    if not root or not node or root == node:
+        raise RuntimeError("missing root or child index checksum")
+    for name, block in (("root-checksum", root), ("node-checksum", node)):
+        case = directory / name
+        case.mkdir()
+        damaged = case / "disk.raw"
+        subprocess.run(["cp", "--sparse=always", "--", disk, damaged], check=True)
+        offset = (block + 1) * 1024 - 1
+        with damaged.open("r+b") as output:
+            output.seek(offset)
+            old = output.read(1)
+            output.seek(offset)
+            output.write(bytes([old[0] ^ 1]))
+        before = digest(damaged)
+        boot(case, iso, [damaged], "bios", "modern", ["EXT2_INDEX_REJECT_PASS"])
+        if digest(damaged) != before:
+            raise RuntimeError(f"rejected {name} wrote to the disk")
 
 
 def images(directory, kernel, archive):
@@ -197,6 +232,8 @@ def main():
         case.mkdir()
         disk = case / "disk.raw"
         before, _ = fixture(case, disk, block_size, algorithm, unsigned, filesystem)
+        if filesystem == "ext4-csum" and not lazy_inode_flag(disk):
+            raise RuntimeError("native seed did not have a lazy inode group")
         if profile == 0:
             if before:
                 raise RuntimeError("root promotion fixture already has indirect index nodes")
@@ -205,13 +242,17 @@ def main():
         after, root_entries = inspect_index(disk, "/target/index", case / "guest-index.log",
                                             algorithm)
         inspect_index(disk, "/target/converted", case / "converted-index.log", algorithm)
-        if (profile == 0 or filesystem == "ext4") and (after != 1 or root_entries < 2):
+        if (profile == 0 or filesystem.startswith("ext4")) and (after != 1 or root_entries < 2):
             raise RuntimeError("guest growth did not promote the index root and split a child")
-        if filesystem == "ext4":
+        if filesystem.startswith("ext4"):
             for path in ("/target/index", "/target/converted"):
                 flags = re.search(rb"Flags: 0x([\da-f]+)", debug(disk, "stat " + path))
                 if not flags or int(flags[1], 16) & 0x81000 != 0x81000:
                     raise RuntimeError(f"{disk}: {path} must retain indexed extent mapping")
+        if filesystem == "ext4-csum" and lazy_inode_flag(disk):
+            raise RuntimeError("guest did not initialize the next inode group")
+        if filesystem == "ext4-csum":
+            rejected_index_checksums(case, disk, boot_images["invalid"])
         if profile == 0:
             collision = debug(disk, "htree_dump /target/collision")
             (case / "collision-index.log").write_bytes(collision)

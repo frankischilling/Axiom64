@@ -122,7 +122,7 @@ struct Validation {
         uint8_t data[max_block_size], desc[32];
         for (unsigned group = 0; group < v.group_count; group++) {
             auto& g = v.groups[group];
-            if (!v.descriptor(group, desc) || !v.read_block(g.block_bitmap, data))
+            if (!v.descriptor(group, desc) || !v.read_bitmap(group, false, data, desc))
                 return false;
             uint32_t free = 0;
             for (unsigned i = 0; i < v.block_size * 8; i++) {
@@ -143,7 +143,7 @@ struct Validation {
             if (reconcile_counts)
                 group_free_blocks[group] = free;
             free_blocks += free;
-            if (!v.read_block(g.inode_bitmap, data))
+            if (!v.read_bitmap(group, true, data, desc))
                 return false;
             free = 0;
             for (unsigned i = 0; i < v.block_size * 8; i++) {
@@ -155,6 +155,8 @@ struct Validation {
                 uint32_t number = group * v.inodes_per_group + i + 1;
                 bool used = bit(data, i);
                 setbit(inode_bits, number, used);
+                if (v.checksums() && used && i >= v.inodes_per_group - u16(desc + 28))
+                    return v.fail();
                 if (number < v.first_inode && !used)
                     return v.fail();
                 if (!used)
@@ -197,7 +199,7 @@ struct Validation {
         return true;
     }
 
-    bool inode(uint32_t number, uint8_t* data) {
+    bool inode(uint32_t number, Inode& data) {
         uint32_t index = number - 1;
         uint64_t offset = uint64_t(index % v.inodes_per_group) * v.inode_size;
         uint32_t block = v.groups[index / v.inodes_per_group].inode_table + offset / v.block_size;
@@ -206,17 +208,7 @@ struct Validation {
                 return false;
             cached_table = block;
         }
-        if (v.inode_size > ext2_detail::inode_bytes) {
-            auto full = inode_table + offset % v.block_size;
-            unsigned extra = u16(full + ext2_detail::inode_bytes);
-            if (extra > v.inode_size - ext2_detail::inode_bytes || (extra & 3))
-                return v.fail(-95);
-            if (ext2_detail::inode_bytes + extra + 4 <= v.inode_size &&
-                u32(full + ext2_detail::inode_bytes + extra) == 0xea020000)
-                return v.fail(-95); // ext4 inode-body EAs need their own layout policy.
-        }
-        memcpy(data, inode_table + offset % v.block_size, ext2_detail::inode_bytes);
-        return true;
+        return v.decode_inode(number, inode_table + offset % v.block_size, data);
     }
 
     bool reserved_descriptor(uint32_t block) {
@@ -255,7 +247,8 @@ struct Validation {
     }
 
     bool inode_maps() {
-        uint8_t data[ext2_detail::inode_bytes], desc[32];
+        Inode data;
+        uint8_t desc[32];
         for (unsigned group = 0; group < v.group_count; group++) {
             unsigned dirs = 0;
             auto& g = v.groups[group];
@@ -301,7 +294,7 @@ struct Validation {
                         return v.fail();
                     uint8_t block[max_block_size];
                     uint32_t actual;
-                    if (!v.read_block(attribute, block))
+                    if (!v.read_xattr_block(attribute, block))
                         return false;
                     if (!ext2_xattr_valid(block, v.block_size, actual))
                         return v.fail();
@@ -394,7 +387,8 @@ struct Validation {
 
     bool check_directory(uint32_t number) {
         bool detached = deleted(number);
-        uint8_t disk_inode[ext2_detail::inode_bytes], data[max_block_size];
+        Inode disk_inode;
+        uint8_t data[max_block_size];
         if (!inode(number, disk_inode))
             return false;
         if ((u32(disk_inode + 32) & indexed_directory) && !validate_directory_index(v, disk_inode))
@@ -410,9 +404,12 @@ struct Validation {
         for (uint64_t base = 0; success && base < file_size(disk_inode); base += v.block_size) {
             uint32_t block;
             success = directory_block(v, disk_inode, base, block, data);
-            for (unsigned offset = 0; success && offset < v.block_size;) {
+            if (!success)
+                break;
+            unsigned end = directory_record_end(v, disk_inode, base, data);
+            for (unsigned offset = 0; success && offset < end;) {
                 Record r;
-                if (!record(v, data, offset, r)) {
+                if (!record(v, data, offset, r, end)) {
                     success = false;
                     break;
                 }
@@ -470,7 +467,8 @@ struct Validation {
                                 break;
                             }
                             Record old;
-                            if (!record(v, previous, position % v.block_size, old)) {
+                            if (!record(v, previous, position % v.block_size, old,
+                                        directory_record_end(v, disk_inode, position, previous))) {
                                 success = false;
                                 break;
                             }
@@ -506,7 +504,7 @@ struct Validation {
             if ((modes[number] & 0170000) != ax::directory || !references[number])
                 continue;
             uint32_t parent = parents[number];
-            uint8_t data[ext2_detail::inode_bytes];
+            Inode data;
             // An empty directory can keep one existing parent name. Its dotdot
             // must identify that live parent; only that known link may be missing.
             if (references[number] != 1 || !parent || dotdots[number] != parent ||
@@ -522,7 +520,7 @@ struct Validation {
             if (!modes[number])
                 continue;
             if (references[number] != links[number]) {
-                uint8_t data[ext2_detail::inode_bytes];
+                Inode data;
                 unsigned type = modes[number] & 0170000;
                 bool parent_link = named_directory_parents &&
                                    bit(named_directory_parents, number) && !deleted(number) &&
@@ -576,7 +574,7 @@ struct Validation {
         // them, including shared external-attribute ownership.
         if (!v.save_super(header))
             return false;
-        uint8_t data[ext2_detail::inode_bytes];
+        Inode data;
         for (uint32_t number = 2; number <= v.inodes; number++) {
             if (!bit(named_directory_parents, number))
                 continue;

@@ -24,6 +24,7 @@
  */
 #include "net/ethernet.hpp"
 #include "drivers/virtio/pci.hpp"
+#include "mm/dma.hpp"
 #include "ipc/ipc.hpp"
 
 namespace ax {
@@ -218,12 +219,12 @@ static bool initialize(Controller& device, const PciFunction& pci) {
     device.rx_count = min(unsigned(device.rx.layout().size), slots);
     device.tx_count = min(unsigned(device.tx.layout().size), slots);
     for (unsigned i = 0; i < device.rx_count; i++) {
-        device.receive[i].physical = page_alloc(device.pages);
+        device.receive[i].physical = Dma::allocate(device.pages, Dma::pci);
         if (!device.receive[i].physical || !supply(device, i))
             return false;
     }
     for (unsigned i = 0; i < device.tx_count; i++) {
-        device.transmit[i].physical = page_alloc(device.pages);
+        device.transmit[i].physical = Dma::allocate(device.pages, Dma::pci);
         if (!device.transmit[i].physical)
             return false;
     }

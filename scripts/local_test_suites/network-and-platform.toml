@@ -583,6 +583,16 @@ build/mmio-test
 '''
 
 [[step]]
+suites = ["configuration", "dma"]
+name = "Verify DMA apertures, boundaries and contiguous page selection"
+run = '''
+mkdir -p build
+g++ -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -Ikernel/include kernel/tests/mm/dma.cpp kernel/mm/dma.cpp -o build/dma-test
+build/dma-test
+'''
+
+[[step]]
 suites = ["configuration"]
 name = "Test clock scaling, ACPI discovery, PCI interrupts, and firmware routing with sanitizers"
 run = '''

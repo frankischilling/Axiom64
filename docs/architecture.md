@@ -101,6 +101,15 @@ uncacheable type and preserves already compatible entries. It stages any
 new page tables and publishes them only after checking the entire range.
 A rejected range leaves the old mappings intact. [Intel system programming manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 
+The direct DMA allocator gives drivers contiguous, zeroed RAM within a
+device address limit and an optional power-of-two boundary. Virtio and
+Intel Ethernet use a 32-bit PCI aperture. The floppy controller uses a
+24-bit aperture with a 64 KiB boundary. The allocator also checks the
+CPU's physical address width and uses the normal page ownership records.
+This path assumes coherent x86 RAM and uses physical addresses as DMA
+addresses. Drivers keep DMA storage until the device stops using it. An
+IOMMU and bounce buffering for general streaming DMA remain future work.
+
 Boot also validates the DSDT referenced by the FADT and the SSDTs listed in
 the ACPI root table. SSDTs retain their firmware order for namespace loading.
 After verifying APIC delivery, the kernel evaluates AML to select the

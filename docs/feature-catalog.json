@@ -77,6 +77,8 @@
         "kernel/mm/memory.cpp",
         "kernel/mm/mmio.cpp",
         "kernel/tests/mm/mmio.cpp",
+        "kernel/mm/dma.cpp",
+        "kernel/tests/mm/dma.cpp",
         "scripts/storage_test.py",
         "docs/storage.md",
         "kernel/drivers/virtio/pci.cpp",

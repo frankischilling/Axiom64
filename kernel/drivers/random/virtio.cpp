@@ -26,6 +26,7 @@
 #include "drivers/random/virtio.hpp"
 #include "drivers/random/sample.hpp"
 #include "drivers/virtio/pci.hpp"
+#include "mm/dma.hpp"
 #include "core/random.hpp"
 #include "core/random/engine.hpp"
 
@@ -129,7 +130,7 @@ static void attach(const PciFunction& function) {
     auto& device = controllers[attempts++];
     device.trusted = trust_policy;
     if (!device.pci.open(function, 0, 0) || !device.pci.setup_queue(device.queue, 0, 8, 1) ||
-        !(device.buffer = page_alloc()) || !device.pci.start()) {
+        !(device.buffer = Dma::allocate(1, Dma::pci)) || !device.pci.start()) {
         failed(device, "initialization");
         return;
     }

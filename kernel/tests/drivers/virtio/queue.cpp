@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "drivers/virtio/queue.hpp"
+#include "mm/dma.hpp"
 
 #define CHECK(value)                                                                               \
     do {                                                                                           \
@@ -43,7 +44,8 @@ bool fail_pages, fail_metadata;
 namespace ax {
 uint64_t direct_map = 0;
 
-uint64_t page_alloc(size_t count) {
+uint64_t Dma::allocate(size_t count, Limits limits) {
+    CHECK(limits.end == Dma::pci.end && !limits.boundary);
     if (fail_pages)
         return 0;
     void* memory = std::aligned_alloc(page_size, count * page_size);
@@ -274,14 +276,20 @@ static void errors_and_allocation() {
     CHECK(queue.submit(buffers, 5, 0) == -22);
     const VirtioBuffer order[]{{0x2000, 16, true}, {0x3000, 32, false}};
     CHECK(queue.submit(order, 2, 0) == -22);
-    const VirtioBuffer address[]{{1ull << 52, 1, true}, {(1ull << 52) - 1, 2, true}};
+    const VirtioBuffer address[]{{Dma::pci.end, 0, true}, {Dma::pci.end - 1, 2, true}};
     CHECK(queue.submit(address, 1, 0) == -22 && queue.submit(address + 1, 1, 0) == -22);
-    const VirtioBuffer oversized[]{{0x2000, UINT32_MAX, false}, {0x3000, 1, true}};
+    const VirtioBuffer oversized[]{{0, UINT32_MAX, false}, {0x3000, 1, true}};
     CHECK(queue.submit(oversized, 2, 0) == -22 && device.available[1] == 0);
     int head = queue.submit(buffers, 2, 99);
     CHECK(head >= 0 && device.take() == head);
     device.finish(head, 32);
     consume(queue, head, 99, 32);
+    const VirtioBuffer last_byte{Dma::pci.end - 1, 1, true};
+    head = queue.submit(&last_byte, 1, 100);
+    CHECK(head >= 0 && device.take() == head);
+    device.check_chain(head, &last_byte, 1);
+    device.finish(head, 1);
+    consume(queue, head, 100, 1);
     clean(queue);
     CHECK(queue.release());
     std::puts("VIRTQUEUE_ERROR_ALLOCATION_PASS");

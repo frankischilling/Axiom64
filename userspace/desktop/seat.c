@@ -690,7 +690,9 @@ static void child(const struct account_profile* profile, int output, int server,
               "-extension", "GLX", "-logfile", "", "-verbose", "3", (char*)NULL);
     } else {
         umask(077);
-        execl("/bin/busybox", "busybox", "sh", "/etc/desktop-client-session.sh", (char*)NULL);
+        execl("/usr/bin/dbus-run-session", "dbus-run-session",
+              "--dbus-daemon=/usr/libexec/axiom64-session-bus", "--",
+              "/etc/desktop-client-session.sh", (char*)NULL);
     }
     _exit(127);
 }

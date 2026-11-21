@@ -51,6 +51,25 @@ static pid_t network(void) {
     return child;
 }
 
+static pid_t start_system_bus(void) {
+    pid_t child = fork();
+    if (!child) {
+        int input = open("/dev/null", O_RDONLY);
+        if (input < 0 || dup2(input, STDIN_FILENO) < 0)
+            _exit(126);
+        if (input != STDIN_FILENO)
+            close(input);
+        char* const arguments[] = {"/usr/libexec/axiom64-system-bus", NULL};
+        char* const environment[] = {"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/", NULL};
+        execve(arguments[0], arguments, environment);
+        perror("init: system bus exec");
+        _exit(127);
+    }
+    if (child < 0)
+        perror("init: system bus fork");
+    return child;
+}
+
 static int monotonic(struct timespec* now) {
     if (clock_gettime(CLOCK_MONOTONIC, now) < 0) {
         perror("init: monotonic clock");
@@ -113,6 +132,10 @@ int main(void) {
         struct timespec seed_retry = retry;
         pid_t seeder = seed_service(&seed_retry);
         int seeded = 0;
+        const int bus_installed = access("/usr/libexec/axiom64-system-bus", X_OK) == 0;
+        struct timespec bus_retry = retry;
+        pid_t bus = bus_installed ? start_system_bus() : -1;
+        bus_retry.tv_sec++;
         seed_retry.tv_sec++;
         retry.tv_sec++;
         struct init_console console;
@@ -150,6 +173,12 @@ int main(void) {
                 init_seed_reaped_record(child, status, milliseconds(&seed_retry));
                 seeded = WIFEXITED(status) && WEXITSTATUS(status) == 0;
                 seed_retry.tv_sec++;
+            } else if (child > 0 && child == bus) {
+                fprintf(stderr, "System bus exited status=%d. Retrying in one second.\n", status);
+                bus = -1;
+                if (monotonic(&bus_retry) < 0)
+                    return 1;
+                bus_retry.tv_sec++;
             }
             struct timespec now;
             if (monotonic(&now) < 0)
@@ -174,6 +203,13 @@ int main(void) {
                 seeder = seed_service(&now);
                 seed_retry = now;
                 seed_retry.tv_sec++;
+            }
+            if (bus_installed && bus < 0 &&
+                (now.tv_sec > bus_retry.tv_sec ||
+                 (now.tv_sec == bus_retry.tv_sec && now.tv_nsec >= bus_retry.tv_nsec))) {
+                bus = start_system_bus();
+                bus_retry = now;
+                bus_retry.tv_sec++;
             }
             if (!child) {
                 struct timespec interval = {0, 100000000};

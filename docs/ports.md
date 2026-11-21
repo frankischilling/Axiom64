@@ -4,6 +4,8 @@ The kernel implements the Linux x86-64 ABI itself. The host builds static tests,
 
 Native development tools are GCC 14.2.0, binutils 2.44, Make 4.4.1, and NASM 2.16.03. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. The native toolchain test assembles an x86-64 ELF object and links and calls it from C. It also checks compiler diagnostics and builds a C++ shared library inside the guest. A separate executable loads the library with `dlopen`, catches its exceptions across the library boundary, and verifies that two threads use independent thread-local state.
 
+Both image profiles ship the pinned Alpine D-Bus 1.16.2 daemon, tools and client library. The source bundle carries the upstream sources, notices and Alpine recipe. The test probe builds against the matching development headers, which stay out of the boot images. See [the D-Bus service and session setup](accounts.md#d-bus).
+
 `make test-guest-kernel` imports the kernel sources into an isolated guest and builds `build/axiom64.elf` using the installed GNU tools and NASM. It verifies the source digests inside Axiom64, checks the ext2 export, and packages the resulting ELF with the existing root filesystem for the full BIOS and UEFI boot suite. Set `AXIOM64_KERNEL_BUILD_ACCEL=kvm` to accelerate compilation on hosts with KVM. Results and the exported kernel are retained under `build/guest-kernel-*`.
 
 Run `make test-guest-kernel GUEST_KERNEL_FLAGS=--source-tools` to build GNU Make and NASM from the locked source releases inside Axiom64, then use those binaries to build the kernel. Installed GCC and binutils provide the initial toolchain. The guest checks both source archive hashes before extraction.

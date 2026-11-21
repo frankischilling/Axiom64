@@ -86,6 +86,43 @@
       "source_commit": "2e97d754a30d558f15524b8e422303c8a96832df"
     },
     {
+      "name": "dbus",
+      "version": "1.16.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/dbus-1.16.2-r1.apk",
+      "archive": "dbus-1.16.2-r1.apk",
+      "sha256": "46151607de7017bb8d5187a68ef7eeafb927c839f9b1e1f143201f66ff4c74c1",
+      "license": "AFL-2.1 OR GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/Software/dbus",
+      "origin": "dbus",
+      "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac"
+    },
+    {
+      "name": "dbus-dev",
+      "version": "1.16.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/dbus-dev-1.16.2-r1.apk",
+      "archive": "dbus-dev-1.16.2-r1.apk",
+      "sha256": "5f44236ba97d6621d816ee841b00e27ed07cf04e29926e4a5ca8cb88ebf8740a",
+      "license": "AFL-2.1 OR GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/Software/dbus",
+      "origin": "dbus",
+      "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac",
+      "build_only": true
+    },
+    {
+      "name": "dbus-libs",
+      "version": "1.16.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/dbus-libs-1.16.2-r1.apk",
+      "archive": "dbus-libs-1.16.2-r1.apk",
+      "sha256": "b0e8869a9bd504d971c9f9fbee2536305d3dbd4e34b0c11f0d77c0db3a76bca9",
+      "license": "AFL-2.1 OR GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/Software/dbus",
+      "origin": "dbus",
+      "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac"
+    },
+    {
       "name": "encodings",
       "version": "1.0.7-r1",
       "repository": "main",

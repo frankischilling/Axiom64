@@ -117,6 +117,17 @@ static int authorization(void) {
     return 0;
 }
 
+static int run_observer(int fd, const char* path, const char* mode) {
+    pid_t child = fork();
+    if (!child) {
+        if (dup2(fd, 1) < 0 || dup2(fd, 2) < 0)
+            _exit(126);
+        execl(path, path, mode, (char*)NULL);
+        _exit(127);
+    }
+    return wait_child(child, 0);
+}
+
 static int graphical(void) {
     CHECK(getuid() == 1000 && geteuid() == 1000 && getgid() == 1000 && isatty(0));
     CHECK(getenv("DISPLAY") && !strcmp(getenv("DISPLAY"), ":0"));
@@ -126,14 +137,9 @@ static int graphical(void) {
     CHECK(fd >= 0);
     CHECK(dprintf(fd, "DESKTOP_PROFILE_SHELL %.128s\n",
                   getenv("SHELL") ? getenv("SHELL") : "absent") > 0);
-    pid_t child = fork();
-    if (!child) {
-        if (dup2(fd, 1) < 0 || dup2(fd, 2) < 0)
-            _exit(126);
-        execl("/usr/bin/account-normal-observe", "account-normal-observe", "identity", (char*)NULL);
-        _exit(127);
-    }
-    int result = wait_child(child, 0);
+    int result = run_observer(fd, "/usr/bin/account-normal-observe", "identity");
+    if (!result && access("/usr/bin/desktop-dbus-probe", X_OK) == 0)
+        result = run_observer(fd, "/usr/bin/desktop-dbus-probe", "call");
     CHECK(fsync(fd) == 0);
     close(fd);
     fd = open("graphical-done", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
@@ -157,6 +163,10 @@ static int graphical_result(void) {
     }
     CHECK(size > 0 && strstr(text, "ACCOUNT_NORMAL_IDENTITY_PASS uid=1000 gid=1000 groups=2 ") &&
           !strstr(text, "FAIL"));
+    if (access("/usr/bin/desktop-dbus-probe", X_OK) == 0) {
+        const char* bus = strstr(text, "DESKTOP_DBUS_PASS ");
+        CHECK(bus && fputs(bus, stdout) >= 0);
+    }
     CHECK(unlink("graphical-proof") == 0 && unlink("graphical-done") == 0);
     puts("DESKTOP_KEYBOARD_IDENTITY_PASS uid=1000 gid=1000 groups=2 caps=0 tty=private "
          "home=private shadow_denied=1");

@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/account_normal_test.py
+# @brief   Verify normal account and desktop behavior in Axiom64.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Drives authenticated guest sessions and reads back persistent account data.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Drive normal administrator creation, Bash login, console recovery and ext2 reboots."""
 import argparse
 import json
@@ -11,6 +33,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import tarfile
 import tempfile
 import time
 
@@ -20,6 +43,7 @@ from build_musl import compiler_args
 from console_prompt import shell_prompt_end
 from disk_root import archive_entries, bootstrap, populate
 from fetch import ROOT
+from ports import locked_package, overlay_tar
 from qmp import Qmp
 
 # This is a public, disposable test credential. Never use a person's password here.
@@ -58,6 +82,35 @@ def build_desktop_observer(directory):
         subprocess.run(command, cwd=ROOT, env=environment(), check=True,
                        stdout=log, stderr=subprocess.STDOUT)
     return program, dict(command=command, binary_sha256=digest(program))
+
+
+def build_dbus_probe(directory):
+    inputs = ROOT / 'ports.lock.json'
+    packages = {package['name']: package for package in json.loads(inputs.read_text())['packages']}
+    files = {}
+    for name in ('dbus-dev', 'dbus-libs'):
+        with tarfile.open(locked_package(packages[name]), 'r:gz', ignore_zeros=True) as archive:
+            overlay_tar(files, archive)
+    stage = directory / 'dbus-sysroot'
+    stage.mkdir()
+    for name, (mode, content) in files.items():
+        if stat.S_ISREG(mode) and name.startswith(('usr/include/dbus-1.0/',
+                                                   'usr/lib/dbus-1.0/include/',
+                                                   'usr/lib/libdbus-1.so.3.')):
+            path = stage / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+    library, = (stage / 'usr/lib').glob('libdbus-1.so.3.*')
+    program = directory / 'desktop-dbus-probe'
+    command = [*compiler_args('build'), '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+               '-I' + str(stage / 'usr/include/dbus-1.0'),
+               '-I' + str(stage / 'usr/lib/dbus-1.0/include'),
+               str(ROOT / 'userspace/tests/desktop/dbus-probe.c'), str(library), '-o', str(program)]
+    with (directory / 'dbus-probe-build.log').open('wb') as log:
+        subprocess.run(command, cwd=ROOT, env=environment(), check=True,
+                       stdout=log, stderr=subprocess.STDOUT)
+    return program, dict(command=command, binary_sha256=digest(program),
+                         packages={name: packages[name]['sha256'] for name in ('dbus-dev', 'dbus-libs')})
 
 
 def write_cpio(destination, files):
@@ -148,6 +201,11 @@ def inspect(disk, directory, label):
     assert b'root:x:0:0:' in contents['passwd']
     assert b'sudo:x:27:admin\n' in contents['group']
     assert b'root:!:' in contents['shadow'] and b'admin:$y$' in contents['shadow']
+    assert b'messagebus:x:81:81:System message bus:/dev/null:/bin/nologin\n' in contents['passwd']
+    assert b'messagebus:x:81:\n' in contents['group'] and b'messagebus:!:' in contents['shadow']
+    metadata('/etc/machine-id', 0o644, 0, 0, 'regular')
+    machine_id = payload('/etc/machine-id')
+    assert re.fullmatch(rb'[0-9a-f]{32}\n', machine_id)
     metadata('/home/admin', 0o700, 1000, 1000, 'directory')
     metadata('/home/admin/persisted-account', 0o600, 1000, 1000, 'regular')
     assert payload('/home/admin/persisted-account') == FILE_BYTES
@@ -192,6 +250,7 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, grap
     log = log_path.open('wb')
     monitor = None
     captures, monitor_records, previous_desktop = [], [], []
+    bus_addresses, system_buses = [], []
 
     def monitor_command(name, arguments=None):
         nonlocal monitor
@@ -231,7 +290,7 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, grap
         assert PASSWORD not in text and WRONG_PASSWORD not in text, 'password appeared on serial'
         complete = text[:text.rfind(b'\n') + 1]
         failures = [line for line in complete.splitlines() if any(marker in line for marker in
-            (b'ACCOUNT_NORMAL_FAIL', b'DESKTOP_LOGIN_FAIL', b'PANIC:', b'FAULT pid='))]
+            (b'ACCOUNT_NORMAL_FAIL', b'DESKTOP_LOGIN_FAIL', b'DESKTOP_DBUS_FAIL', b'PANIC:', b'FAULT pid='))]
         if failures:
             raise AssertionError('actual guest check failed at ' + stage + ': ' +
                                  failures[-1].decode(errors='replace'))
@@ -278,8 +337,29 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, grap
             until('ACCOUNT_NORMAL_PROTECTED_PASS ')
             until('$ ')
 
+    def system_bus():
+        send(b'/usr/bin/desktop-dbus-probe system')
+        until('DESKTOP_SYSTEM_DBUS_PASS client_uid=1000 daemon_uid=81 policy=denied')
+        until('$ ')
+        return re.findall(rb'DESKTOP_SYSTEM_DBUS_PASS [^\r\n]+ id=([0-9a-f]{32}) pid=(\d+) '
+                          rb'machine=([0-9a-f]{32})', text)[-1]
+
     def desktop():
         nonlocal previous_desktop
+        current = system_bus()
+        if not system_buses:
+            send(b'sudo /bin/kill -KILL ' + current[1])
+            until('Password: ')
+            send(PASSWORD)
+            until('System bus exited status=9.')
+            until('$ ')
+            restarted = system_bus()
+            assert current[0] != restarted[0] and current[1] != restarted[1] and current[2] == restarted[2]
+            system_buses.append(current)
+            current = restarted
+        else:
+            assert current == system_buses[-1]
+        system_buses.append(current)
         send(b'/usr/bin/desktop-login-observe authorization')
         until('DESKTOP_AUTH_PASS valid=1 absent_denied=1 wrong_denied=1 rotated=')
         until('$ ')
@@ -305,14 +385,29 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, grap
             {'type': 'btn', 'data': {'button': 'left', 'down': False}}]})
         keyboard('/usr/bin/desktop-login-observe graphical')
         send(b'while ! test -f graphical-done; do sleep .1; done; /usr/bin/desktop-login-observe result')
+        until('DESKTOP_DBUS_PASS uid=1000 fd=pipe activation=1 address=')
         until('DESKTOP_KEYBOARD_IDENTITY_PASS uid=1000')
         until('$ ')
+        address = re.findall(rb'DESKTOP_DBUS_PASS [^\r\n]+ address=(\S+)', text)[-1]
+        assert address not in bus_addresses
+        if bus_addresses:
+            send(b'/usr/bin/desktop-dbus-probe retired ' + bus_addresses[-1])
+            until('DESKTOP_DBUS_RETIRED_PASS')
+            until('$ ')
+        else:
+            send(b'sudo /usr/bin/desktop-dbus-probe foreign ' + address)
+            until('Password: ')
+            send(PASSWORD)
+            until('DESKTOP_DBUS_FOREIGN_DENIED')
+            until('$ ')
+        bus_addresses.append(address)
         capture()
         owner, server, clients = map(int, re.findall(
             rb'DESKTOP_PROTECTED_PASS [^\r\n]* owner=(\d+) server=(\d+) clients=(\d+)', text)[-1])
         beginning = list(re.finditer(rb'ACCOUNT_DESKTOP_READY uid=1000 server=\d+', text))[-1].start()
         descendants = [int(pid) for pid in re.findall(
-            rb'exec pid=(\d+) /(?:usr/bin/(?:twm|xeyes|xterm)|bin/bash) ', text[beginning:])]
+            rb'exec pid=(\d+) /(?:usr/bin/(?:twm|xeyes|xterm)|bin/bash) ',
+            text[beginning:])]
         previous_desktop = sorted(set([owner, server, clients, *descendants]))
 
     error = None
@@ -404,7 +499,10 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, grap
     return dict(command=command, returncode=process.returncode, firmware=firmware, fresh=fresh,
                 transport=transport, elapsed_seconds=time.monotonic() - started,
                 log_sha256=digest(log_path), passed=error is None, error=error, stage=stage,
-                graphical=graphical, captures=captures, monitor_records=len(monitor_records))
+                graphical=graphical, captures=captures, monitor_records=len(monitor_records),
+                system_buses=[dict(id=bus.decode(), pid=int(pid), machine=machine.decode())
+                              for bus, pid, machine in system_buses],
+                session_bus_addresses=[address.decode() for address in bus_addresses])
 
 
 def main():
@@ -434,6 +532,11 @@ def main():
         graphical_program, graphical_inputs = build_desktop_observer(directory)
         files['usr/bin/desktop-login-observe'] = (0o100755, graphical_program.read_bytes())
         inputs['desktop_observer'] = graphical_inputs
+        bus_program, bus_inputs = build_dbus_probe(directory)
+        files['usr/bin/desktop-dbus-probe'] = (0o100755, bus_program.read_bytes())
+        files['usr/share/dbus-1/services/org.axiom64.TestPipe.service'] = (0o100644,
+            b'[D-BUS Service]\nName=org.axiom64.TestPipe\nExec=/usr/bin/desktop-dbus-probe serve\n')
+        inputs['desktop_dbus_probe'] = bus_inputs
     cpio = directory / 'root.cpio'
     write_cpio(cpio, files)
     inputs.update(normal_cpio_sha256=digest(rootfs), root_cpio_sha256=digest(cpio),
@@ -472,7 +575,8 @@ def main():
                     row['host_state'] = inspect(disk, case, phase)
                     if previous:
                         assert previous['current'] == row['host_state']['current']
-                        stable = ['/home/admin', '/home/admin/persisted-account', '/etc/axiom64/accounts/current']
+                        stable = ['/home/admin', '/home/admin/persisted-account', '/etc/axiom64/accounts/current',
+                                  '/etc/machine-id']
                         stable += ['/etc/axiom64/accounts/' + previous['current'] + '/' + name
                                    for name in ('passwd', 'group', 'shadow')]
                         assert all(previous['files'][name] == row['host_state']['files'][name] for name in stable)

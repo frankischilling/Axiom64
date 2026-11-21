@@ -1,4 +1,27 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/rootfs.py
+# @brief   Build the boot image's root filesystem.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Assembles the pinned ports and first-party guest programs into a newc archive.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Create a deterministic newc initramfs without privileged filesystem tools."""
 from pathlib import Path
 import subprocess
@@ -140,6 +163,9 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("freedoom-*.desk
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
+regular('usr/libexec/axiom64-session-bus', ROOT / 'build/desktop-session-bus')
+regular('usr/libexec/axiom64-system-bus', ROOT / 'userspace/services/system-bus.sh')
+files['var/lib/dbus/machine-id'] = (0o120777, b'/etc/machine-id')
 for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")

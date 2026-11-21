@@ -42,6 +42,7 @@ static void usage(void) {
           "  user-rename NAME NEW | user-shell NAME SHELL | user-home NAME HOME\n"
           "  member-add GROUP USER | member-delete GROUP USER\n"
           "  password NAME --password-fd FD | lock NAME | unlock NAME\n"
+          "  ensure-messagebus\n"
           "  show NAME\n",
           stderr);
 }
@@ -266,6 +267,51 @@ static int guard(struct account_database* db, const struct account_logbook* book
     return 0;
 }
 
+static int ensure_messagebus(struct account_database* db, const char* records) {
+    const struct account_group service_group = {"messagebus", 81, NULL, 0};
+    const struct account_user service = {
+        "messagebus", "!", "System message bus",     "/dev/null", "/bin/nologin",
+        81,           81,  {-1, -1, -1, -1, -1, -1},
+    };
+    const struct account_user* user = account_database_user(db, service.name);
+    const struct account_group* group = account_database_group(db, service_group.name);
+    if (user && group && user->uid == service.uid && user->gid == service.gid &&
+        group->gid == service_group.gid && !group->member_count &&
+        !strcmp(user->password, service.password) && !strcmp(user->home, service.home) &&
+        !strcmp(user->shell, service.shell)) {
+        gid_t gid;
+        size_t count;
+        if (account_database_groups(db, user->uid, &gid, 1, &count) == 0 && count == 1)
+            return 0;
+        return failed(EPERM);
+    }
+    if (user || group || account_database_uid(db, service.uid) ||
+        account_database_gid(db, service_group.gid))
+        return failed(EEXIST);
+    int error = account_database_recovery_error(db);
+    if (error)
+        return failed(error);
+
+    struct account_logbook* book;
+    if (account_logbook_open(records, 1, &book) < 0)
+        return -1;
+    int published = 0;
+    int intended = account_logbook_audit(book, ACCOUNT_LOGIN_USER_ADD, "root", 0, service.name, "",
+                                         EINPROGRESS) == 0;
+    if (!intended || account_guard_new_ids(book, service.uid, service.gid) < 0 ||
+        account_database_put_group(db, NULL, &service_group) < 0 ||
+        account_database_put_user(db, NULL, &service) < 0 ||
+        account_database_commit(db, &published) < 0)
+        error = errno;
+    if (intended &&
+        account_logbook_audit(book, ACCOUNT_LOGIN_USER_ADD, "root", 0, service.name, "", error) <
+            0 &&
+        !error)
+        error = errno;
+    account_logbook_close(book);
+    return error ? failed(error) : 0;
+}
+
 int main(int argc, char** argv) {
     if (getuid() || geteuid() || getegid()) {
         fputs("accountctl: root administration is required\n", stderr);
@@ -296,6 +342,13 @@ int main(int argc, char** argv) {
     if (recovery_error)
         fprintf(stderr, "accountctl: pending home recovery: %s; updates are blocked\n",
                 strerror(recovery_error));
+    if (!strcmp(argv[first], "ensure-messagebus") && argc == first + 1) {
+        int result = ensure_messagebus(db, records);
+        if (result < 0)
+            perror("accountctl: messagebus account");
+        account_database_end(db);
+        return result < 0;
+    }
     if (!strcmp(argv[first], "show") && argc == first + 2) {
         const struct account_user* user = account_database_user(db, argv[first + 1]);
         int result = user ? 0 : 1;

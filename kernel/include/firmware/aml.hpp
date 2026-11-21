@@ -38,6 +38,8 @@ struct PciPinRoute {
 struct PciPinRoutes {
     PciPinRoute entries[256];
     unsigned count;
+    unsigned programmed_links;
+    bool rollback_failed;
 };
 
 struct PciBridge {
@@ -56,9 +58,19 @@ struct PciBridges {
 using PciConfigRead = bool (*)(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
                                uint16_t offset, uint8_t width, uint32_t& value);
 
+// Replace one routing register after checking its old value. Verify the new
+// value and attempt to restore the old one if readback fails.
+using PciLinkWrite = bool (*)(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
+                              uint16_t offset, uint8_t previous, uint8_t next);
+
+struct PciLinkProgram {
+    PciLinkWrite write = nullptr;
+    uint32_t allowed_gsis = 0;
+};
+
 // Evaluates the boot interrupt model and resolves routing packages and resources.
 bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&, PciBridges* = nullptr,
-                           PciConfigRead = nullptr);
+                           PciConfigRead = nullptr, PciLinkProgram = {});
 
 const PciPinRoute* find_pci_pin(const PciPinRoutes&, uint16_t segment, uint8_t bus, uint8_t slot,
                                 uint8_t function, uint8_t pin, const PciBridges* = nullptr);

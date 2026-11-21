@@ -37,6 +37,11 @@ from both chipsets under BIOS and UEFI. The native comparison exercises
 invalid flag handling before descriptor lookup. Use a Linux 7.0 VM if the
 host kernel reports `EBADF` for that case.
 
+The i440fx link recovery boots in `make test-udp` use GDB to disable one
+PIIX routing byte after firmware setup. The host reads back the programmed
+IRQ, and the guest must report actual RX and TX interrupts. Serial, debugger,
+and packet capture evidence stays under `build/udp-intx/pc-*-reprogram/`.
+
 `make test-suite SUITE=legacy-ports` boots BIOS and UEFI on i440fx and Q35
 with each combination of UART and printer presence. The fixture checks
 device numbers, unprivileged access, and absence of phantom nodes. It

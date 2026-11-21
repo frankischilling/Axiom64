@@ -116,14 +116,15 @@ Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool uns
 }
 
 bool evaluate(const Fixture& fixture, ax::Acpi::PciPinRoutes& routes, bool with_ssdt = true,
-              ax::Acpi::PciBridges* bridges = nullptr, ax::Acpi::PciConfigRead read = nullptr) {
+              ax::Acpi::PciBridges* bridges = nullptr, ax::Acpi::PciConfigRead read = nullptr,
+              ax::Acpi::PciLinkProgram program = {}) {
     ax::Acpi::DefinitionBlocks blocks{};
     blocks.dsdt = {fixture.dsdt.data(), 0x1000, fixture.dsdt.size()};
     if (with_ssdt) {
         blocks.ssdt[0] = {fixture.ssdt.data(), 0x2000, fixture.ssdt.size()};
         blocks.ssdt_count = 1;
     }
-    return ax::Acpi::decode_pci_pin_routes(blocks, routes, bridges, read);
+    return ax::Acpi::decode_pci_pin_routes(blocks, routes, bridges, read, program);
 }
 
 Bytes bridge_device(const char* label, uint8_t slot, const Bytes& children, uint16_t function = 0) {
@@ -279,6 +280,139 @@ void dynamic_cases() {
     std::puts(
         "ACPI_PCI_DYNAMIC_ROUTING_PASS packages loop_bound pci_region disabled_link read_only");
 }
+
+enum class LinkCase { valid, bad_checksum, wrong_field, wrong_status, extra_store, invalid_route };
+uint8_t pirq[2];
+std::vector<unsigned> link_writes;
+bool fail_second_write, fail_rollback;
+
+bool read_pirq(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, uint16_t offset,
+               uint8_t width, uint32_t& value) {
+    if (segment || bus || slot != 1 || function || width != 1 || offset < 0x60 || offset > 0x61)
+        return false;
+    value = pirq[offset - 0x60];
+    return true;
+}
+
+bool write_pirq(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, uint16_t offset,
+                uint8_t previous, uint8_t next) {
+    uint32_t current;
+    assert(read_pirq(segment, bus, slot, function, offset, 1, current) && current == previous);
+    link_writes.push_back(unsigned(offset) << 8 | next);
+    if ((offset == 0x61 && fail_second_write) || (next == 0x80 && fail_rollback))
+        return false;
+    pirq[offset - 0x60] = next;
+    return true;
+}
+
+Bytes buffer(const char* label, const Bytes& bytes) {
+    return data(label, block({0x11}, sequence({{0x0a, uint8_t(bytes.size())}, bytes})));
+}
+
+Bytes programmable_link(const char* label, const char* field, LinkCase scenario) {
+    auto hid = data("_HID", {0x0c, 0x41, 0xd0, 0x0c, 0x0f});
+    auto possible = buffer("_PRS", {0x89, 10, 0, 9, 2, 9, 0, 0, 0, 11, 0, 0, 0, 0x79,
+                                    uint8_t(scenario == LinkCase::bad_checksum)});
+    auto disabled = block({0xa0}, sequence({{0x7b}, name(field), {0x0a, 0x80, 0, 0xa4, 0x0a, 9}}));
+    auto status = block(
+        {0x14}, sequence({name("_STA"),
+                          {0},
+                          disabled,
+                          {0xa4, 0x0a, uint8_t(scenario == LinkCase::wrong_status ? 9 : 11)}}));
+    auto current = buffer("RBUF", {0x89, 6, 0, 9, 1, 0, 0, 0, 0, 0x79, 0});
+    auto crs = block(
+        {0x14},
+        sequence(
+            {name("_CRS"),
+             {0},
+             current,
+             {0x8a},
+             name("RBUF"),
+             {0x0a, 5},
+             name("IRQN"),
+             block({0xa0},
+                   sequence({{0x95}, name(field), {0x0a, 0x80, 0x70}, name(field), name("IRQN")})),
+             {0xa4},
+             name("RBUF")}));
+    auto extra = scenario == LinkCase::extra_store ? sequence({{0x70, 1}, name("DATA")}) : Bytes{};
+    auto srs = block({0x14}, sequence({name("_SRS"),
+                                       {1, 0x8a, 0x68, 0x0a, 5},
+                                       name("IRQN"),
+                                       {0x70},
+                                       name("IRQN"),
+                                       name(scenario == LinkCase::wrong_field ? "PIN1" : field),
+                                       extra}));
+    return block({0x5b, 0x82}, sequence({name(label), hid, possible, status, crs, srs}));
+}
+
+Fixture programmable_firmware(LinkCase scenario = LinkCase::valid, bool second_link = false) {
+    auto registers = sequence(
+        {{0x5b, 0x80},
+         name("PIRQ"),
+         {2, 0x0a, 0x60, 0x0a, 2},
+         block({0x5b, 0x81}, sequence({name("PIRQ"), {1}, name("PIN0"), {8}, name("PIN1"), {8}})),
+         data("DATA", {0})});
+    auto bridge = bridge_device(
+        "SBRG", 1,
+        sequence({registers, programmable_link("LNKA", "PIN0", scenario),
+                  second_link ? programmable_link("LNKB", "PIN1", LinkCase::valid) : Bytes{}}));
+    auto first = package(4, sequence({{0x0c, 0xff, 0xff, 4, 0, 0, 0x2e}, name("SBRGLNKA"), {0}}));
+    auto second =
+        second_link
+            ? package(4, sequence({{0x0c, 0xff, 0xff, 5, 0, 0, 0x2e}, name("SBRGLNKB"), {0}}))
+            : package(4, sequence({{0x0c, 0xff, 0xff, 5, 0, 0, 0x2e}, name("SBRGLNKA"), {0}}));
+    auto direct = scenario == LinkCase::invalid_route
+                      ? Bytes{0}
+                      : package(4, {0x0c, 0xff, 0xff, 6, 0, 0, 0, 0x0a, 21});
+    auto prt = data("_PRT", package(3, sequence({first, second, direct})));
+    auto hid = data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 0x03});
+    return {definition(block({0x5b, 0x82}, sequence({name("PCI0"), hid, bridge, prt}))), {}};
+}
+
+void programmable_cases() {
+    using namespace ax::Acpi;
+    PciPinRoutes routes{};
+    PciLinkProgram program{write_pirq, 1u << 11};
+    pirq[0] = pirq[1] = 0x80;
+    for (auto scenario : {LinkCase::bad_checksum, LinkCase::wrong_field, LinkCase::wrong_status,
+                          LinkCase::extra_store}) {
+        assert(
+            evaluate(programmable_firmware(scenario), routes, false, nullptr, read_pirq, program));
+        assert(routes.count == 1 && !routes.programmed_links && link_writes.empty());
+        assert(pirq[0] == 0x80 && pirq[1] == 0x80);
+    }
+    assert(!evaluate(programmable_firmware(LinkCase::invalid_route), routes, false, nullptr,
+                     read_pirq, program));
+    assert(link_writes.empty() && !routes.count);
+    assert(evaluate(programmable_firmware(), routes, false, nullptr, read_pirq,
+                    {write_pirq, 1u << 10}));
+    assert(routes.count == 1 && !routes.programmed_links && link_writes.empty());
+
+    assert(evaluate(programmable_firmware(), routes, false, nullptr, read_pirq, program));
+    assert(routes.count == 3 && routes.programmed_links == 1 && !routes.rollback_failed);
+    assert((link_writes == std::vector<unsigned>{0x600b}));
+    for (uint8_t slot : {4, 5}) {
+        auto* route = find_pci_pin(routes, 0, 0, slot, 0, 1);
+        assert(route && route->gsi == 11 && route->level && route->shared && !route->active_low);
+    }
+    link_writes.clear();
+    assert(evaluate(programmable_firmware(), routes, false, nullptr, read_pirq, program));
+    assert(routes.count == 3 && !routes.programmed_links && link_writes.empty());
+
+    fail_second_write = true;
+    for (bool rollback_failure : {false, true}) {
+        fail_rollback = rollback_failure;
+        pirq[0] = pirq[1] = 0x80;
+        assert(!evaluate(programmable_firmware(LinkCase::valid, true), routes, false, nullptr,
+                         read_pirq, program));
+        assert((link_writes == std::vector<unsigned>{0x600b, 0x610b, 0x6080}));
+        assert(!routes.count && !routes.programmed_links &&
+               routes.rollback_failed == fail_rollback);
+        assert(pirq[0] == (fail_rollback ? 11 : 0x80) && pirq[1] == 0x80);
+        link_writes.clear();
+    }
+    std::puts("ACPI_PCI_LINK_PASS disabled shared enabled allowed_irq aml_rejection rollback");
+}
 } // namespace
 
 int main() {
@@ -304,4 +438,5 @@ int main() {
               "truncation");
     bridge_cases();
     dynamic_cases();
+    programmable_cases();
 }

@@ -72,7 +72,7 @@ def save_case(row, directory):
     directory = Path(directory)
     for name in (row['log'], row['log'][:-4] + '-gdb.log'):
         source = ROOT / 'build' / name
-        if source.exists() and (name == row['log'] or row['fault']):
+        if source.exists() and (name == row['log'] or row['fault'] or row.get('intx') == 'reprogram'):
             shutil.copyfile(source, directory / name)
     (directory / 'result.json').write_text(json.dumps(row, indent=2) + '\n')
 

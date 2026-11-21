@@ -1,3 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+## @file    Makefile
+# @brief   Builds Axiom64 and runs its native and guest tests.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Discovers kernel sources and builds the kernel, userspace, and boot images.
+#
+# Copyright (C) 2026 frankischilling
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License along with this program. If not, see <https://gnu.org/licenses/>.
+
 ROUTING_SOURCES = userspace/net/config/routing.cpp userspace/net/config/route_snapshot.cpp
 ROUTING_HEADERS = userspace/net/config/routing.hpp userspace/net/config/route_snapshot.hpp
 CXX = g++
@@ -930,20 +943,7 @@ test-ipv4-gateways-native:
 test-udp:
 	$(PYTHON) scripts/udp_matrix.py
 	$(PYTHON) scripts/tests/udp_capture_test.py
-	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --expected-irq msix
-	$(PYTHON) scripts/udp_test.py --expected-irq poll --no-vectors
-	$(PYTHON) scripts/udp_test.py --expected-irq poll --force-pic
-	$(PYTHON) scripts/udp_test.py --machine q35 --e1000e --expected-irq msix --capture-directory build/udp-e1000e/bios
-	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --e1000e --expected-irq msix --capture-directory build/udp-e1000e/uefi
-	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --e1000e --expected-irq poll --force-pic --capture-directory build/udp-e1000e/uefi-pic
-	$(PYTHON) scripts/udp_test.py --machine q35 --intx single --expected-irq msix --capture-directory build/udp-intx/bios
-	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --intx shared --capture-directory build/udp-intx/uefi-shared
-	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --intx poll --force-pic --expected-irq poll --capture-directory build/udp-intx/uefi-pic
-	$(PYTHON) scripts/udp_test.py --machine q35 --intx bridge --expected-irq msix --capture-directory build/udp-intx/bios-bridge
-	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --intx bridge --expected-irq msix --capture-directory build/udp-intx/uefi-bridge
-	$(PYTHON) scripts/udp_test.py --intx single --expected-irq msix --capture-directory build/udp-intx/pc-bios
-	$(PYTHON) scripts/udp_test.py --firmware uefi --intx single --expected-irq msix --capture-directory build/udp-intx/pc-uefi
-	$(PYTHON) scripts/udp_test.py --firmware uefi --intx poll --force-pic --expected-irq poll --capture-directory build/udp-intx/pc-uefi-pic
+	$(PYTHON) scripts/udp_matrix.py --platform
 
 .PHONY: test-pci-interrupts
 build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kernel/drivers/platform/pci.cpp $(call rwildcard,kernel/include/,*.hpp)

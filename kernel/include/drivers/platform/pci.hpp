@@ -109,6 +109,6 @@ class PciIntx {
 };
 
 void pci_configure_ecam(const Acpi::Mcfg&);
-void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci);
+void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t link_gsis);
 void pci_scan(void (*visit)(const PciFunction&));
 } // namespace ax

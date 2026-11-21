@@ -334,6 +334,18 @@ void interrupt_retire_message(uint8_t vector) {
         messages[vector - first_message_vector] = {};
 }
 
+static bool line_unowned(uint32_t entry) {
+    return (entry & lvt_mask) && (entry & ioapic_delivery_mask) != ioapic_smi &&
+           !(entry & (1u << 14));
+}
+
+bool interrupt_line_available(uint32_t gsi) {
+    Irq::Route route;
+    return interrupt_apic_ready() &&
+           Irq::isa_route(gsi, 0, controller_ranges, controller_count, route) &&
+           line_unowned(controllers[route.controller].read(0x10 + 2 * route.input));
+}
+
 bool interrupt_register_line(uint32_t gsi, bool active_low, bool shared, Irq::LineHandler handler,
                              void* context, Irq::Line& subscription) {
     if (!interrupt_apic_ready() || !handler || subscription.index)
@@ -367,7 +379,7 @@ bool interrupt_register_line(uint32_t gsi, bool active_low, bool shared, Irq::Li
     auto& io = controllers[route.controller];
     unsigned reg = 0x10 + 2 * route.input;
     uint32_t low = io.read(reg);
-    if (!(low & lvt_mask) || (low & ioapic_delivery_mask) == ioapic_smi || (low & (1u << 14)))
+    if (!line_unowned(low))
         return false; // Another owner, firmware SMI, or outstanding level acknowledgement.
     auto& line = lines[spare];
     Irq::Message message;

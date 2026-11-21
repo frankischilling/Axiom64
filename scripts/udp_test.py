@@ -18,6 +18,43 @@ from qmp import Qmp
 from network_fault import inject
 
 
+def start_link_debugger(endpoint, label):
+    script = ROOT / 'build' / (label + '.gdb')
+    script.write_text(f'''set pagination off
+set confirm off
+file {ROOT / "build/axiom64.elf"}
+target remote {endpoint}
+hbreak ax::pci_configure_intx
+continue
+delete 1
+python
+import gdb, re
+def pirq():
+    # The i440fx 82540EM at slot 5 maps INTA to PIIX PIRQA.
+    gdb.execute("monitor o /w 0xcf8 0x80000860")
+    report = gdb.execute("monitor i /w 0xcfc", to_string=True)
+    return int(re.search(r"portl\\[0x0cfc\\] = (0x[0-9a-f]+)", report).group(1), 16)
+before = pirq()
+assert before & 0xff == 10, hex(before)
+gdb.execute("monitor o /b 0xcfc 0x80")
+disabled = pirq()
+assert disabled == ((before & ~0xff) | 0x80), (hex(before), hex(disabled))
+print(f"PIRQ_DISABLED before={{before:#010x}} after={{disabled:#010x}}")
+end
+finish
+python
+restored = pirq()
+assert restored & 0xff == 10, hex(restored)
+print(f"PIRQ_RESTORED value={{restored:#010x}}")
+end
+detach
+''')
+    log = ROOT / 'build' / (label + '-gdb.log')
+    with log.open('w') as output:
+        return subprocess.Popen(['gdb', '-q', '-batch', '-x', str(script)],
+                                stdout=output, stderr=subprocess.STDOUT), log
+
+
 def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         capture_directory=None, image=None, expected_irq=None, machine='pc', no_vectors=False,
         force_pic=False, e1000e=False, intx=None):
@@ -36,6 +73,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
     selector = selectors.DefaultSelector()
     control = Path('/tmp') / f'axiom64-udp-{os.getpid()}.sock'
     control.unlink(missing_ok=True)
+    link_debug = control.with_suffix('.gdb.sock') if intx == 'reprogram' else None
     link_events = set()
     armed = control.with_suffix('.armed')
     armed.unlink(missing_ok=True)
@@ -48,6 +86,9 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     if fault:
         command += ['-gdb', 'tcp:127.0.0.1:1239']
+    if link_debug:
+        command += ['-S', '-chardev', f'socket,id=link-debug,path={link_debug},server=on,wait=off',
+                    '-gdb', 'chardev:link-debug']
     if intx == 'bridge':
         command += ['-device', 'pcie-root-port,id=upstream,bus=pcie.0,addr=6,slot=6',
                     '-device', 'pcie-pci-bridge,id=legacy,bus=upstream,addr=0']
@@ -86,6 +127,13 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
     with log.open('wb') as output:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
         try:
+            if link_debug:
+                deadline = time.monotonic() + 5
+                while not link_debug.is_socket():
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError('QEMU link debugger socket did not become available')
+                    time.sleep(.01)
+                debugger, debug_log = start_link_debugger(link_debug, label)
             while process.poll() is None:
                 if time.monotonic() - started > timeout:
                     timed_out = True
@@ -103,7 +151,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                         time.sleep(debugger_delay)
                     debugger, debug_log = inject('virtio', 'id', 1239, label, armed)
                 if debugger is not None and debugger.poll() not in [None, 0]:
-                    raise RuntimeError('UDP completion injection failed: ' + debug_log.read_text(errors='replace'))
+                    raise RuntimeError('UDP debugger fixture failed: ' + debug_log.read_text(errors='replace'))
                 sending = not fault or armed.exists()
                 for lane in range(2):
                     for stage, up in [('DOWN', False), ('UP', True)]:
@@ -169,6 +217,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                     peer.connection.close()
             control.unlink(missing_ok=True)
             armed.unlink(missing_ok=True)
+            if link_debug:
+                link_debug.unlink(missing_ok=True)
             if debugger is not None and debugger.poll() is None:
                 debugger.kill()
                 debugger.wait()
@@ -192,6 +242,10 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                      f'UDP_UNREACHABLE_PASS index={lane + 1}']
     injected = not fault or (debug_log is not None and debugger.returncode == 0 and
         'PACKET_FAULT_INJECTED model=virtio kind=id' in debug_log.read_text(errors='replace'))
+    if link_debug:
+        debug_text = debug_log.read_text(errors='replace') if debug_log else ''
+        injected = (debugger is not None and debugger.poll() == 0 and
+                    'PIRQ_DISABLED before=' in debug_text and 'PIRQ_RESTORED value=' in debug_text)
     if fault:
         required = ['UDP_BINDINGS_PASS', 'UDP_ZERO_PEER_PASS', 'UDP_LOOPBACK_PASS', 'UDP_REUSE_PASS',
             'UDP_SHUTDOWN_PASS', 'UDP_ERRORS_PASS', 'UDP_RECEIVE_LIFETIME_PASS',
@@ -247,7 +301,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
             missing.append('both INTx adapters on one firmware GSI')
         if intx == 'bridge' and intx_routes != [('2', '23')]:
             missing.append('swizzled Q35 bridge route on GSI 23')
-        if intx == 'single' and machine == 'pc' and intx_routes != [('2', '10')]:
+        if intx in ('single', 'reprogram') and machine == 'pc' and intx_routes != [('2', '10')]:
             missing.append('i440fx firmware link on GSI 10')
         if 'masked unclaimed I/O APIC line' in text:
             missing.append('INTx line was masked during wire traffic')
@@ -276,6 +330,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                   passed=returncode == 1 and not timed_out and not error and not missing and injected and host_passed)
     if intx:
         result['intx_routes'] = [dict(index=int(index), gsi=int(gsi)) for index, gsi in intx_routes]
+        result['intx'] = intx
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print('\n'.join(text.splitlines()[-25:]), flush=True)
@@ -293,7 +348,7 @@ def main():
     parser.add_argument('--no-vectors', action='store_true')
     parser.add_argument('--force-pic', action='store_true')
     parser.add_argument('--e1000e', action='store_true')
-    parser.add_argument('--intx', choices=['single', 'shared', 'bridge', 'poll'])
+    parser.add_argument('--intx', choices=['single', 'shared', 'bridge', 'poll', 'reprogram'])
     parser.add_argument('--capture-directory', type=Path)
     parser.add_argument('--debugger-delay', type=float, default=0,
                         help='simulate slow fault debugger setup while the guest is stopped')
@@ -304,6 +359,8 @@ def main():
         parser.error('--intx uses 82540EM and normal traffic, with two Intel devices in shared mode')
     if args.intx == 'bridge' and (args.machine != 'q35' or args.force_pic):
         parser.error('--intx bridge requires Q35 with APIC routing')
+    if args.intx == 'reprogram' and (args.machine != 'pc' or args.force_pic):
+        parser.error('--intx reprogram requires i440fx with APIC routing')
     fixture(program='udp-tests', script='userspace/tests/net/udp.sh',
             environment={'AXIOM64_UDP_FAULT': '1'} if args.fault else None)
     image = 'udp-test-pic.iso' if args.force_pic else 'udp-test.iso'

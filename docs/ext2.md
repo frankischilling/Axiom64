@@ -43,6 +43,10 @@ On unjournaled volumes, default mounts, clean-state mounts and checked read-only
 
 The layout follows the Linux kernel's [superblock](https://www.kernel.org/doc/html/latest/filesystems/ext4/super.html), [inode](https://www.kernel.org/doc/html/latest/filesystems/ext4/inodes.html), [classic block map](https://www.kernel.org/doc/html/latest/filesystems/ext4/ifork.html), and [directory record](https://www.kernel.org/doc/html/latest/filesystems/ext4/directory.html) documentation. Free counters use the classic [group descriptor and superblock fields](https://github.com/torvalds/linux/blob/v6.17/fs/ext2/ext2.h). Classic timestamp handling is checked against the [Linux ext2 implementation](https://github.com/torvalds/linux/blob/master/fs/ext2/inode.c).
 
+Targets through 59 bytes fit in the inode together with a terminating NUL.
+Targets of 60 bytes or more use data blocks. The reader still accepts
+60-byte inline targets written by older Axiom64 kernels.
+
 ## Write and error behavior
 
 Each mutation stages its changed blocks in a bounded overlay. Allocation or validation failure discards that operation before disk writes. Successful staging writes data, pointer blocks, inodes, directory records, allocation metadata, and the superblock, then flushes the device. Ordinary writes currently perform this flush too. Read access times are retained until filesystem sync. There is no permanent copy of the disk volume in RAM.

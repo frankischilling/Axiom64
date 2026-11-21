@@ -101,7 +101,13 @@ def host_verify(disk, block_size, label):
     stat = debugfs(disk, "stat /sparse")
     if f"Size: {logical * block_size + 37}" not in stat or f"Blockcount: {4 * block_size // 512}" not in stat:
         raise RuntimeError("host sparse size/allocation count differs")
-    return check_fs(disk, label)
+    fsck = check_fs(disk, label)
+    for length in (59, 60, 61):
+        stat = debugfs(disk, f"stat /link-{length}")
+        sectors = 0 if length == 59 else block_size // 512
+        if not re.search(rf"\bSize: {length}\b", stat) or not re.search(rf"\bBlockcount: {sectors}\b", stat):
+            raise RuntimeError(f"host symlink size or allocation differs: /link-{length}")
+    return fsck
 
 
 def boot(firmware, transport, phase, disks, images, label, timeout, readonly=False, rules=None):

@@ -2,6 +2,15 @@
 
 The kernel discovers PCI virtio block devices at boot and exposes whole disks as `/dev/vda` through `/dev/vdh`. Partitions use names such as `/dev/vda1`. [Writable ext2 data mounts](ext2.md) and the optional [ext2 root](disk-root.md) work on whole disks and partitions.
 
+PCI IDE compatibility channels also expose ATA disks as `/dev/sda` through
+`/dev/sdd`, in primary master, primary slave, secondary master and secondary
+slave order. Missing slots keep their names reserved. The driver uses
+programmed I/O with 512-byte logical sectors, LBA28 and LBA48 addressing, and
+polled completion. Disks without an advertised flush command are read-only.
+The same partition scanner and filesystem layer handle both disk types.
+ATA DMA, optical ATAPI, native PCI IDE channels, and floppy I/O remain in
+development.
+
 ## Attach a disk
 
 Create a new image and attach it to the normal guest:
@@ -39,10 +48,10 @@ Block nodes support these Linux x86-64 operations:
 | --- | --- |
 | `read`, `write`, `pread`, `pwrite` | Byte offsets; partial sectors use read-modify-write; offsets advance only for completed bytes |
 | `lseek` | Seek from the start, current offset, or disk capacity |
-| `stat`, `fstat` | Block-device type and mode `0600`. Whole disks use major 252 and minors 0, 16, 32, and so on. Partitions 1–15 add their number to the disk minor. Higher partitions use major 259. |
+| `stat`, `fstat` | Block-device type and mode `0600`. Whole virtio disks use major 252 and ATA disks use major 8. Minors are 0, 16, 32, and so on. Partitions 1–15 add their number to the disk minor. Higher partitions use major 259. |
 | `BLKGETSIZE64`, `BLKGETSIZE` | Byte capacity and 512-byte sector count |
 | `BLKSSZGET`, `BLKROGET` | Sector size and read-only flag |
-| `fsync`, `fdatasync`, `BLKFLSBUF` | Wait for a virtio flush completion when supported |
+| `fsync`, `fdatasync`, `BLKFLSBUF` | Wait for the disk to complete its flush when supported |
 | `O_SYNC`, `O_DSYNC` | Flush completed writes before reporting success |
 
 Reads at or beyond capacity return EOF. A write that crosses the end returns the completed prefix. A write starting at the end returns `ENOSPC`. Opening a read-only disk for writing returns `EROFS`. Device truncation and unsupported `O_DIRECT` return `EINVAL`. Unsupported ioctls return `ENOTTY`. If flush was not negotiated, the driver relies on the virtio writethrough contract.

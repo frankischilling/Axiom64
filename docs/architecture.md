@@ -62,6 +62,10 @@ bytes. A failure after partial output returns the number sent. The fixed
 ports use polling. ISA Plug-and-Play resource assignment and legacy disk
 drivers remain in development.
 
+Legacy PCI IDE compatibility channels also support polled ATA disks. Reads,
+writes, partition discovery, and persistent roots use the shared block layer.
+See [storage](storage.md) for device names and supported commands.
+
 PCI discovery uses the validated ACPI MCFG table for PCIe configuration
 registers. Each aperture identifies a PCI segment and bus range. Its base
 address refers to bus zero even when the aperture starts at another bus.

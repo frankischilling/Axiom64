@@ -584,14 +584,19 @@ Acceptance evidence:
 
 ### F23. Shells, window managers, and desktop environments
 
-BusyBox ash, Bash, zsh, twm, xterm, and xeyes work.
+BusyBox ash, Bash, zsh, twm, xterm, and xeyes work. The image includes
+Chocolate Doom and both Freedoom campaigns, with a Games submenu in the
+current X11 session and desktop entries for both campaigns. See
+[desktop ports](ports.md) for setup and audio permissions.
 
 Required work:
 
 - Bash as the default interactive shell while retaining ash and zsh.
 - Lightweight FVWM/Openbox-style window manager next.
 - Additional window managers: ctwm and matwm2.
-- CDE, TDE and KDE desktop environments in the wider roadmap.
+- KDE Plasma as the default desktop, including KWin, the panel, the application launcher, settings, and runtime dependencies. Keep CDE and TDE as alternate sessions.
+- Give every vendored user-facing program a Start menu entry and a desktop shortcut. Use terminal launchers for command-line tools.
+- Bundle a file manager, terminal, editor, archive manager, image viewer, screenshot utility, and system monitor alongside Plasma.
 - X11 tools, fonts, fontconfig, locale/input support, and session selection.
 - GTK/Motif/Tk/SDL applications and desktop application catalog.
 
@@ -600,6 +605,8 @@ Acceptance evidence:
 - Start Bash from normal serial and desktop sessions with job control.
 - Open, move, resize, close, and restart windows in each claimed manager.
 - Run a smoke scenario for every claimed desktop/application rather than treating package presence as proof.
+- Reach Plasma by default as an ordinary user and start an alternate session.
+- Verify both launch paths for every vendored user-facing program on a fresh desktop image. Launch Freedoom from both paths and verify input, audio, and clean exit.
 
 ### F24. HD Audio and multimedia interfaces
 

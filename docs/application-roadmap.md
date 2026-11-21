@@ -8,6 +8,11 @@ The machine-readable catalog records locked provider aliases for MPC (`mpc1`), `
 
 Developer tools receive the first new application compatibility work. Each entry needs a guest smoke or conformance test, documented runtime dependencies, pinned source/binary inputs, and retained license notices. [Base userland coverage](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) tracks the wider catalog; [self-hosting](feature-roadmap.md#f28-native-development-and-full-self-hosting) tracks development tools.
 
+KDE Plasma is the planned default desktop. Every vendored user-facing program
+needs a Start menu entry and a desktop shortcut. The current image carries
+Chocolate Doom and both Freedoom campaigns. The broader desktop utility suite
+and Plasma session remain on the [desktop roadmap](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments).
+
 The catalog contains 479 inventory entries, of which 478 remain in scope. A project can occur in more than one role; counts are inventory entries, not a promise of that many distinct runnable applications.
 
 ## Application and dependency ports

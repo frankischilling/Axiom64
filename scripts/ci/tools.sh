@@ -24,7 +24,7 @@
 # along with this program. If not, see <https://gnu.org/licenses/>.
 set -euo pipefail
 
-tools=(g++ libc6-dev make musl-tools linux-libc-dev nasm python3 perl bzip2 gpg gpgv openssl xorriso qemu-system-x86 qemu-utils xvfb libx11-6 x11-utils
+tools=(g++ libc6-dev make cmake musl-tools linux-libc-dev nasm python3 perl bzip2 gpg gpgv openssl xorriso qemu-system-x86 qemu-utils xvfb libx11-6 x11-utils
        ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python gdb iproute2 ethtool)
 bundle=build/ci-packages
 shopt -s nullglob

@@ -617,7 +617,8 @@ deps:
 	$(PYTHON) scripts/fetch.py
 busybox:
 	$(PYTHON) scripts/build_busybox.py
-build/licenses/.stamp: sources.lock.json ports.lock.json dependencies.json scripts/sources.py scripts/fetch.py
+DOOM_INPUTS = scripts/build_doom.py $(wildcard vendor/chocolate-doom/*.patch)
+build/licenses/.stamp: sources.lock.json ports.lock.json dependencies.json scripts/sources.py scripts/fetch.py $(DOOM_INPUTS)
 	$(PYTHON) scripts/sources.py prepare
 sources: busybox
 	$(PYTHON) scripts/sources.py bundle
@@ -878,23 +879,7 @@ build/x11-probe: userspace/tests/desktop/probe.c userspace/desktop/authority.c u
 build/desktop-terminal: userspace/desktop/terminal.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
-ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
-ROOTFS_INPUTS += build/network-manager
-ROOTFS_INPUTS += scripts/configure-busybox.sh
-ROOTFS_INPUTS += build/random-seed-static
-ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
-ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
-ROOTFS_INPUTS += scripts/build_curl.py scripts/ca_bundle.py
-ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
-ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h)
-ROOTFS_INPUTS += build/desktop-terminal
-build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
-	$(PYTHON) scripts/rootfs.py
-build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
-	$(PYTHON) scripts/rootfs.py --profile desktop
-image: build/axiom64.elf build/rootfs.cpio
-	$(PYTHON) scripts/image.py
+include mk/rootfs.mk
 disk-root: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/disk_root.py --verify-reproducible
 	$(PYTHON) scripts/image.py --root-device /dev/vda --output-name axiom64-disk.iso

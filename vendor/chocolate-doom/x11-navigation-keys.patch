@@ -1,0 +1,31 @@
+Use X11 navigation key symbols when the SDL scancode disagrees.
+
+The fbdev X11 session delivers the evdev keycode and the correct logical
+arrow/navigation key. SDL may attach a different physical scancode to the
+same event. Keep the existing physical mapping for printable keys.
+
+--- a/src/i_input.c
++++ b/src/i_input.c
+@@ -106,6 +106,22 @@ static int TranslateKey(SDL_Keysym *sym)
+ {
+     int scancode = sym->scancode;
+
++    switch (sym->sym)
++    {
++        case SDLK_UP:
++        case SDLK_DOWN:
++        case SDLK_LEFT:
++        case SDLK_RIGHT:
++        case SDLK_HOME:
++        case SDLK_END:
++        case SDLK_PAGEUP:
++        case SDLK_PAGEDOWN:
++        case SDLK_INSERT:
++        case SDLK_DELETE:
++            scancode = sym->sym & ~SDLK_SCANCODE_MASK;
++            break;
++    }
++
+     switch (scancode)
+     {
+         case SDL_SCANCODE_LCTRL:

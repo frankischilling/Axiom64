@@ -122,6 +122,8 @@ def prepare():
     from build_curl import source_inputs as curl_sources
     from ca_bundle import source_inputs as ca_sources
     inputs.extend((curl_sources(), ca_sources()))
+    from build_doom import source_inputs as doom_sources
+    inputs.extend(doom_sources())
     password = LOCK['libxcrypt']
     signature = verify(download(password['signature_url'], CACHE / 'libxcrypt-upstream' /
                                 (password['archive'] + '.asc')), password['signature_sha256'], 'sha256')
@@ -223,7 +225,7 @@ def bundle(inputs):
                                    path.is_relative_to(ROOT / "scripts" / "tests" / "fixtures")):
                 archive.add(path, arcname=f"Axiom64/{path.relative_to(ROOT).as_posix()}")
         archive.add(ROOT / "build" / "busybox-1.37.0" / ".config", arcname="Axiom64/BusyBox.config")
-        for folder in ["kernel", "userspace", "boot", "vendor", "docs"]:
+        for folder in ["kernel", "userspace", "boot", "vendor", "docs", "mk"]:
             archive.add(ROOT / folder, arcname=f"Axiom64/{folder}")
     print(f"Source bundle: {destination}")
 

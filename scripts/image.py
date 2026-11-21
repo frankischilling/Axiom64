@@ -24,13 +24,12 @@
 
 """Build an ISO that boots through the same Limine protocol on BIOS and UEFI."""
 import argparse
-import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
-import tarfile
-from fetch import ROOT, fetch
+from boot_assets import copy_limine_notices, init_path, limine_files, stage_payload
+from fetch import ROOT
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
@@ -43,6 +42,7 @@ parser.add_argument("--output-name", help="ISO filename under build/ for an isol
 parser.add_argument("--output-directory", type=Path, help="directory for the completed ISO")
 parser.add_argument("--initramfs", type=Path, help="explicit initramfs for an isolated fixture")
 parser.add_argument("--kernel", type=Path, help="explicit kernel ELF for an isolated fixture")
+parser.add_argument("--init-path", type=init_path, default="/sbin/init", help="absolute guest PID 1 path")
 parser.add_argument("--root-device", help="/dev/vd disk or partition, PARTUUID=, or PARTLABEL=")
 parser.add_argument("--root-readonly", action="store_true")
 parser.add_argument("--root-recovery", action="store_true", help="validate a structurally consistent dirty ext2 root")
@@ -72,43 +72,25 @@ if any(not token or any(character.isspace() for character in token) for token in
 if args.output_name and (Path(args.output_name).name != args.output_name or
                          not args.output_name.endswith(".iso") or "\\" in args.output_name):
     parser.error("--output-name must be an ISO filename without directory components")
-archive = fetch("limine")
-limine = ROOT / "downloads" / "limine"
-if not (limine / "limine.c").exists():
-    with tarfile.open(archive) as source:
-        source.extractall(limine.parent, filter="data")
-    extracted = limine.parent / "limine-binary"
-    if extracted.exists() and extracted != limine:
-        extracted.rename(limine)
-subprocess.run(["make", "-C", str(limine)], check=True, stdout=subprocess.DEVNULL)
+limine = limine_files()
 disk_suite = args.test and args.suite in ["storage", "ext2", "root"]
 staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name else
                             "iso-" + args.suite + "-" + args.phase if disk_suite else "iso")
 (staging / "boot" / "limine").mkdir(parents=True, exist_ok=True)
 (staging / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
-for filename in ["axiom64.elf", "rootfs.cpio"]:
-    desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase in ["cond", "io"])
-    source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
-    if filename == 'axiom64.elf' and args.kernel:
-        source = args.kernel
-    if filename == 'rootfs.cpio' and args.test and args.suite == 'network':
-        source = ROOT / 'build/rootfs-network.cpio'
-    if filename == 'rootfs.cpio' and args.initramfs:
-        source = args.initramfs
-    if filename == "rootfs.cpio" and args.root_device:
-        source = ROOT / "build/rootfs-bootstrap.cpio"
-    target = staging / "boot" / filename
-    if target.exists():
-        target.unlink()
-    try:
-        os.link(source, target)
-    except OSError:
-        shutil.copy2(source, target)
+desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase in ["cond", "io"])
+kernel = args.kernel or ROOT / "build/axiom64.elf"
+initramfs = ROOT / "build" / ("rootfs-desktop.cpio" if args.test and desktop_profile else "rootfs.cpio")
+if args.test and args.suite == "network":
+    initramfs = ROOT / "build/rootfs-network.cpio"
+if args.initramfs:
+    initramfs = args.initramfs
+if args.root_device:
+    initramfs = ROOT / "build/rootfs-bootstrap.cpio"
 for filename in ["limine-bios.sys", "limine-bios-cd.bin", "limine-uefi-cd.bin"]:
     shutil.copy2(limine / filename, staging / "boot" / "limine" / filename)
 shutil.copy2(limine / "BOOTX64.EFI", staging / "EFI" / "BOOT" / "BOOTX64.EFI")
-shutil.copy2(limine / "LICENSE", staging / "boot" / "limine" / "LICENSE")
-config = (ROOT / "boot" / "limine.conf").read_text()
+copy_limine_notices(limine, staging / "boot" / "limine")
 options = (" test" if args.test else "") + (" trace" if args.trace else "")
 if args.test:
     options += " suite=" + args.suite
@@ -120,7 +102,7 @@ if args.root_device:
         options += ",recovery=check"
 for token in args.kernel_option:
     options += " " + token
-config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)
+config = stage_payload(staging, kernel, initramfs, options, init=args.init_path)
 (staging / "boot" / "limine" / "limine.conf").write_text(config)
 output_directory = (args.output_directory.resolve() if args.output_directory else ROOT / "build")
 output_directory.mkdir(parents=True, exist_ok=True)

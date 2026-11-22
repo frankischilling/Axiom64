@@ -699,14 +699,16 @@ struct Controller {
         }
     }
 
-    bool probe_configuration(unsigned slot, unsigned port, unsigned speed, ProbeMode mode) {
+    bool probe_configuration(unsigned slot, unsigned port, unsigned speed, ProbeMode mode,
+                             bool full_descriptor_read) {
         auto bytes = static_cast<const uint8_t*>(physical(devices[slot] + 3 * page_size));
-        if (!read_descriptor(slot, 2, configuration_header_size))
+        // Some devices return a full packet even when only a descriptor header was requested.
+        if (!read_descriptor(slot, 2, full_descriptor_read ? page_size : configuration_header_size))
             return false;
         const unsigned length = descriptor_word(bytes + 2);
         if (bytes[0] != configuration_header_size || bytes[1] != 2 ||
             length < configuration_header_size || length > page_size ||
-            !read_descriptor(slot, 2, length))
+            (!full_descriptor_read && !read_descriptor(slot, 2, length)))
             return false;
         BootEndpoints boot{};
         ReportEndpoint report{};
@@ -830,7 +832,7 @@ struct Controller {
         log("xhci-device: port=%u speed=%u vendor=%x product=%x configurations=%u\n",
             uint64_t(port), uint64_t(speed), uint64_t(descriptor[8] | (descriptor[9] << 8)),
             uint64_t(descriptor[10] | (descriptor[11] << 8)), uint64_t(descriptor[17]));
-        return probe_configuration(slot, port, speed, mode);
+        return probe_configuration(slot, port, speed, mode, retry);
     }
 };
 

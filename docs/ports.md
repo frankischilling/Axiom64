@@ -4,6 +4,8 @@ The kernel implements the Linux x86-64 ABI itself. The host builds static tests,
 
 Native development tools are GCC 14.2.0, binutils 2.44, Make 4.4.1, and NASM 2.16.03. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. The native toolchain test assembles an x86-64 ELF object and links and calls it from C. It also checks compiler diagnostics and builds a C++ shared library inside the guest. A separate executable loads the library with `dlopen`, catches its exceptions across the library boundary, and verifies that two threads use independent thread-local state.
 
+The installed desktop profile sets Thunar 4.20.3 as the system default for folders and adds a shortcut to each account's desktop. The profile includes the GTK runtime, icons, and shared MIME database. The graphical session builds the image loader cache under the user's cache directory. The port manifests pin the packages and the corresponding source recipes.
+
 All image profiles ship the pinned Alpine D-Bus 1.16.2 daemon, tools and client library. The source bundle carries the upstream sources, notices and Alpine recipe. The test probe builds against the matching development headers, which stay out of the boot images. See [the D-Bus service and session setup](accounts.md#d-bus).
 
 The [installed desktop profile](disk-root.md) adds kitty 0.42.1, its X11 backend,

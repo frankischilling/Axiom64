@@ -52,6 +52,22 @@ seed_desktop desktop-shortcuts /etc/skel/Desktop/freedoom-*.desktop ||
     printf '%s\n' 'Could not install the Freedoom shortcuts.' >&2
 seed_desktop weston-shortcut /etc/skel/Desktop/weston-nested.desktop ||
     printf '%s\n' 'Could not install the Weston shortcut.' >&2
+if test -x /usr/bin/thunar; then
+    seed_desktop thunar-shortcut /etc/skel/Desktop/thunar.desktop ||
+        printf '%s\n' 'Could not install the Thunar shortcut.' >&2
+    if test -n "${HOME:-}" && test -z "${GDK_PIXBUF_MODULE_FILE:-}"; then
+        pixbuf_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gdk-pixbuf"
+        if mkdir -p "$pixbuf_dir" && pixbuf_tmp=$(mktemp "$pixbuf_dir/loaders.XXXXXX"); then
+            if /usr/bin/gdk-pixbuf-query-loaders > "$pixbuf_tmp" &&
+                mv -f "$pixbuf_tmp" "$pixbuf_dir/loaders.cache"; then
+                GDK_PIXBUF_MODULE_FILE="$pixbuf_dir/loaders.cache"
+                export GDK_PIXBUF_MODULE_FILE
+            else
+                rm -f "$pixbuf_tmp"
+            fi
+        fi
+    fi
+fi
 if test -x /usr/bin/kitty; then
     seed_desktop kitty-shortcut /etc/skel/Desktop/kitty.desktop ||
         printf '%s\n' 'Could not install the kitty shortcut.' >&2

@@ -28,7 +28,7 @@ ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-s
 	build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests \
 	build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests \
 	build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp \
-	$(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py \
+	$(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/newc.py \
 	scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager scripts/configure-busybox.sh build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json

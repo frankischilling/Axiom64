@@ -43,6 +43,7 @@ from build_musl import compiler_args
 from console_prompt import shell_prompt_end
 from disk_root import archive_entries, bootstrap, populate
 from fetch import ROOT
+from newc import write_cpio
 from ports import locked_package, overlay_tar
 from qmp import Qmp
 
@@ -111,17 +112,6 @@ def build_dbus_probe(directory):
                        stdout=log, stderr=subprocess.STDOUT)
     return program, dict(command=command, binary_sha256=digest(program),
                          packages={name: packages[name]['sha256'] for name in ('dbus-dev', 'dbus-libs')})
-
-
-def write_cpio(destination, files):
-    with destination.open('wb') as output:
-        for inode, (name, (mode, payload)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
-            encoded = name.encode() + b'\0'
-            fields = [inode, mode, 0, 0, 1, 0, len(payload), 0, 0, 0, 0, len(encoded), 0]
-            output.write(b'070701' + b''.join(f'{value:08x}'.encode() for value in fields) + encoded)
-            output.write(bytes(-output.tell() % 4))
-            output.write(payload)
-            output.write(bytes(-output.tell() % 4))
 
 
 def image(directory, cpio, disk_root=False):

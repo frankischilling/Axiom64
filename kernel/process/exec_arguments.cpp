@@ -331,6 +331,7 @@ int ExecArguments::layout(uint64_t top, size_t auxiliary_size, ExecStack& output
     result.mapping_size = mapping;
     result.auxiliary_size = auxiliary_size;
     result.strings = top - used_;
+    result.argument_end = envc_ ? result.strings + size_t(envp()[0] - text_) : top;
     result.platform = result.strings - 7;
     result.filename = result.platform - filename_size;
     result.random = result.filename - 16;

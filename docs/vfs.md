@@ -34,6 +34,8 @@ newly allocated pages and empty page tables before returning `ENOMEM`.
 
 Procfs lists descriptors under `/proc/<pid>/fd` and `/proc/<pid>/task/<tid>/fd`. The `self` and `thread-self` aliases use the calling process or thread. `/dev/fd` points to `/proc/self/fd`. Standard input, output, and error have aliases under `/dev`.
 
+`/proc/<pid>/cmdline` and the corresponding thread files read the live NUL-delimited argument strings. They support partial reads, byte offsets, and Linux-style process title rewrites into the contiguous initial environment area. A zombie returns an empty command line.
+
 `/proc/cpuinfo` reports the identity of the online boot CPU. `/proc/stat` reports
 its user, kernel, and idle time in 100 Hz ticks, including time from tasks that
 have exited. `/proc/uptime` uses the same boot and idle clocks. `/proc/meminfo`

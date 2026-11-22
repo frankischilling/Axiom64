@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "volume.hpp"
+#include "mm/file_mapping.hpp"
 
 namespace ax {
 namespace {
@@ -428,6 +429,7 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
         return -27;
     if (!v.begin())
         return v.error;
+    invalidate_disk_pages(*node, offset, offset + length);
     Inode inode;
     uint8_t data[max_block_size];
     bool success = v.load_inode(node->inode, inode);
@@ -474,6 +476,8 @@ static int truncate(Node* node, size_t length) {
     if (!v.load_inode(node->inode, inode))
         return v.finish(false);
     uint64_t old = file_size(inode);
+    if (length < old)
+        invalidate_disk_pages(*node, length, old);
     if (stage_truncate(v, inode, length, SizeChange::normal))
         return v.finish(true);
     if (v.error != -28 || !v.journal || length > old)

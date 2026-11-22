@@ -38,6 +38,7 @@
 #include "fs/descriptor.hpp"
 #include "fs/pipe.hpp"
 #include "fs/memfd.hpp"
+#include "mm/file_mapping.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
 #include "drivers/audio/pcm.hpp"
@@ -1021,18 +1022,18 @@ extern "C" Frame* handle_trap(Frame* f) {
     asm volatile("mov %%cr2,%0" : "=r"(cr2));
     if ((f->cs & 3) == 3 && current) {
         cpu_account();
-        auto fault = MemfdFault::outside;
+        auto fault = FileFault::outside;
         if (f->vector == 14 && !(f->error & 8)) {
             cpu_account(current);
             auto& space = current->memory->space;
-            fault = memfd_fault(space, cr2, f->error & 2, f->error & 16);
-            if (fault == MemfdFault::resolved ||
-                (fault == MemfdFault::outside && !(f->error & 1) &&
+            fault = file_mapping_fault(space, cr2, f->error & 2, f->error & 16);
+            if (fault == FileFault::resolved ||
+                (fault == FileFault::outside && !(f->error & 1) &&
                  grow_user_stack(space, cr2, 1, f->error & 2, f->error & 16)))
                 return schedule(f, false);
             cpu_account();
         }
-        int signal = fault == MemfdFault::bus                               ? 7
+        int signal = fault == FileFault::bus                                ? 7
                      : f->vector == 0 || f->vector == 16 || f->vector == 19 ? 8
                      : f->vector == 6                                       ? 4
                      : f->vector == 1 || f->vector == 3                     ? 5
@@ -1045,8 +1046,8 @@ extern "C" Frame* handle_trap(Frame* f) {
         else
             queue_signal(
                 current, signal, 0,
-                fault == MemfdFault::bus ||
-                        (f->vector == 14 && ((f->error & 1) || fault == MemfdFault::protection))
+                fault == FileFault::bus ||
+                        (f->vector == 14 && ((f->error & 1) || fault == FileFault::protection))
                     ? 2
                     : 1,
                 0, f->vector == 14 ? cr2 : f->rip);

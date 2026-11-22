@@ -23,18 +23,19 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "mm/remap.hpp"
-#include "fs/memfd.hpp"
 #include "mm/file_mapping.hpp"
 #include "mm/limits.hpp"
 #include "process/task.hpp"
 
 namespace ax {
 namespace {
-FileMapping* memory_file_range(AddressSpace& space, uint64_t start, uint64_t end) {
+FileMapping* demand_paged_range(AddressSpace& space, uint64_t start, uint64_t end) {
     auto map = space.file_mappings;
     while (map && map->end <= start)
         map = map->next;
-    return map && map->start == start && map->end == end && map->memory_file ? map : nullptr;
+    return map && map->start == start && map->end == end && (map->memory_file || map->disk_file)
+               ? map
+               : nullptr;
 }
 
 bool grow_file_mapping(FileMapping& map, uint64_t destination, size_t new_size, int protection) {
@@ -46,8 +47,8 @@ bool grow_file_mapping(FileMapping& map, uint64_t destination, size_t new_size, 
         return false;
 
     // Reserve the new range before moving resident pages. New pages fault
-    // against the original file, preserving its offsets, EOF and seal checks.
-    uint64_t initial = memfd_unpopulated_page(map, protection);
+    // against the original file, preserving its offsets and access checks.
+    uint64_t initial = unpopulated_file_page(map, protection);
     for (uint64_t page = tail; page < destination + new_size; page += page_size)
         *space.entry(page) = initial;
     if (moved) {
@@ -85,7 +86,7 @@ int64_t remap_memory(Task& task, uint64_t address, size_t old_size, size_t new_s
     if (!first || !(*first & (page_mask | page_file)))
         return -14;
     bool file_backed = *first & page_file;
-    auto file = file_backed ? memory_file_range(space, address, end) : nullptr;
+    auto file = file_backed ? demand_paged_range(space, address, end) : nullptr;
     if (file_backed && !file)
         return -14;
     uint64_t readable = file ? page_file_access : 1;

@@ -41,8 +41,7 @@ constexpr unsigned all_seals = seal_seal | seal_shrink | seal_grow | write_seals
 constexpr unsigned close_on_exec = 1, allow_sealing = 2, huge_pages = 4, noexec_seal = 8,
                    executable = 16;
 constexpr unsigned radix_bits = 9, radix_size = 1 << radix_bits, root_shift = 45;
-constexpr uint64_t nx = 1ull << 63;
-constexpr uint64_t shared_page = 0x400, deny_write = 0x800;
+constexpr uint64_t shared_page = 0x400;
 constexpr uint64_t new_preallocation = 1;
 
 struct MemoryFile {
@@ -120,15 +119,6 @@ void collect(MemoryFile& memory) {
     release(&memory);
 }
 
-uint64_t pte_permissions(uint64_t pte) {
-    pte &= ~3ull;
-    if ((pte & page_mask) && (pte & page_file_access))
-        pte |= 1;
-    if ((pte & page_file_write) && !(pte & page_file_cow))
-        pte |= 2;
-    return pte;
-}
-
 void flush(AddressSpace& space) {
     if (read_cr3() == space.root)
         write_cr3(space.root);
@@ -149,7 +139,7 @@ void invalidate_pages(MemoryFile& memory, uint64_t first, uint64_t end, bool kee
             *pte &= ~(page_mask | shared_page | page_file_cow);
             if (!map->shared)
                 *pte |= page_file_cow;
-            *pte = pte_permissions(*pte);
+            *pte = file_page_permissions(*pte);
         }
         flush(*map->space);
     }
@@ -496,26 +486,6 @@ void memfd_reap(Node* node) {
         collect(file(node));
 }
 
-uint64_t memfd_page_protection(uint64_t entry, int prot) {
-    entry &= ~(nx | page_file_access | page_file_write);
-    if (!(prot & 4))
-        entry |= nx;
-    if (prot & 7)
-        entry |= page_file_access;
-    if (prot & 2)
-        entry |= page_file_write;
-    return pte_permissions(entry);
-}
-
-uint64_t memfd_unpopulated_page(const FileMapping& map, int prot) {
-    uint64_t flags = page_file | 4;
-    if (!map.shared)
-        flags |= page_private | page_file_cow;
-    else if (!map.may_write)
-        flags |= deny_write;
-    return memfd_page_protection(flags, prot);
-}
-
 int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t offset, int prot,
               bool shared, bool replace) {
     if (offset > INT64_MAX || length - 1 > uint64_t(INT64_MAX) - offset)
@@ -544,7 +514,7 @@ int memfd_map(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t
             .memory_file = &memory.node,
             .shared = shared,
             .may_write = may_write};
-    uint64_t initial = memfd_unpopulated_page(*map, prot);
+    uint64_t initial = unpopulated_file_page(*map, prot);
     for (uint64_t va = base; va < base + length; va += page_size)
         *space->entry(va) = initial;
     attach_file_mapping(*map);
@@ -566,31 +536,19 @@ void memfd_unlink_mapping(FileMapping& mapping) {
     collect(memory);
 }
 
-MemfdFault memfd_fault(AddressSpace& space, uint64_t address, bool write, bool execute) {
-    auto pte = space.entry(address);
-    if (!pte || !(*pte & page_file))
-        return MemfdFault::outside;
-    uint64_t state = *pte;
-    if (!(state & page_file_access) || (write && !(state & page_file_write)) ||
-        (execute && (state & nx)))
-        return MemfdFault::protection;
-    auto map = space.file_mappings;
-    while (map && map->end <= address)
-        map = map->next;
-    if (!map || address < map->start || !map->memory_file)
-        panic("memory file PTE without a mapping");
-    auto& memory = file(map->memory_file);
-    uint64_t offset = align_down(address) - map->start + map->offset;
+FileFault memfd_fault(FileMapping& map, uint64_t offset, uint64_t& pte, bool write) {
+    uint64_t state = pte;
+    auto& memory = file(map.memory_file);
     if (offset >= memory.node.size)
-        return MemfdFault::bus;
+        return FileFault::bus;
 
     uint64_t old = state & page_mask;
     bool copy = write && (state & page_file_cow);
     if (old && !copy)
-        return MemfdFault::protection;
+        return FileFault::protection;
     auto page = copy ? page_alloc() : data_page(memory, offset / page_size, true);
     if (!page)
-        return MemfdFault::bus;
+        return FileFault::bus;
     if (copy) {
         auto source = old ? old : data_page(memory, offset / page_size, false);
         if (source)
@@ -602,8 +560,8 @@ MemfdFault memfd_fault(AddressSpace& space, uint64_t address, bool write, bool e
     }
     if (old)
         page_free(old);
-    *pte = pte_permissions((state & ~page_mask) | page);
-    flush(space);
-    return MemfdFault::resolved;
+    pte = file_page_permissions((state & ~page_mask) | page);
+    flush(*map.space);
+    return FileFault::resolved;
 }
 } // namespace ax

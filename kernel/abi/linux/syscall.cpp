@@ -501,6 +501,10 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         int error = memfd_map(*current, *h, addr, len, off, prot, flags & 1, replace_existing);
         return error ? error : complete();
     }
+    if (h && (flags & 1) && h->node->mount->ops == &ext2_ops) {
+        int error = map_disk_file(*current, *h, addr, len, off, prot, replace_existing);
+        return error ? error : complete();
+    }
     auto& space = current->memory->space;
     auto file = h ? static_cast<FileMapping*>(alloc(sizeof(FileMapping))) : nullptr;
     if (h && !file)

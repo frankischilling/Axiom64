@@ -68,10 +68,10 @@ struct Node {
     uint32_t uid, gid;
     char name[256];
     uint32_t mode;
+    bool owned, removed;
     uint8_t* data;
     size_t size, capacity;
     uint64_t backing_physical;
-    bool owned, removed;
     Device device;
     unsigned device_id;
     Timestamp atime, mtime, ctime;
@@ -81,6 +81,7 @@ struct Node {
     unsigned lock_readers, exec_images;
     Handle* lock_writer;
     Pipe* named_pipe = nullptr;
+    FileMapping* shared_mappings = nullptr;
 };
 
 // Relative paths retain their directory identity even when a mount covers it.

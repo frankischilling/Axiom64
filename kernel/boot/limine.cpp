@@ -80,7 +80,6 @@ struct ApplicationProcessor {
     unsigned timer_firings = 0;
     bool task_slot_idle = false;
     bool timer_checked = false;
-    TlbRequest tlb_request{};
     uint64_t tlb_before = 0;
     uint64_t tlb_after = 0;
     bool tlb_left = false;
@@ -90,7 +89,7 @@ ApplicationProcessor application_processors[max_boot_processors];
 AddressSpace tlb_space;
 uint64_t* tlb_leaf;
 uint64_t tlb_original, tlb_replacement;
-bool tlb_stop;
+bool tlb_finished;
 
 void release_tlb_probe() {
     if (tlb_leaf) {
@@ -128,10 +127,6 @@ bool prepare_tlb_probe() {
 void record_secondary_event(uint32_t apic_id, Irq::SecondaryEvent event) {
     for (auto& state : application_processors)
         if (state.stack && state.expected_apic_id == apic_id) {
-            if (event == Irq::SecondaryEvent::invalidate) {
-                state.tlb_request.service();
-                return;
-            }
             auto& counter =
                 event == Irq::SecondaryEvent::wake ? state.wakeups : state.timer_firings;
             __atomic_fetch_add(&counter, 1, __ATOMIC_RELEASE);
@@ -162,32 +157,13 @@ void probe_local_timer(ApplicationProcessor& state) {
 }
 
 void probe_tlb_on_secondary(ApplicationProcessor& state) {
-    write_cr3(tlb_space.root);
+    switch_address_space(tlb_space.root);
     const auto page = reinterpret_cast<const volatile uint64_t*>(probe_address);
     __atomic_store_n(&state.tlb_before, *page, __ATOMIC_RELEASE);
-    while (!__atomic_load_n(&tlb_stop, __ATOMIC_ACQUIRE) &&
-           state.tlb_request.result() != TlbResult::invalidated)
+    while (!__atomic_load_n(&tlb_finished, __ATOMIC_ACQUIRE))
         asm volatile("sti; hlt; cli" ::: "memory");
     state.tlb_after = *page;
     activate_kernel_memory();
-}
-
-bool probe_tlb_requests(uint64_t root, TlbResult expected) {
-    for (auto& state : application_processors) {
-        if (!state.stack)
-            continue;
-        if (!state.tlb_request.submit(root, probe_address) ||
-            !interrupt_send_tlb_ipi(state.expected_apic_id))
-            return false;
-    }
-    return DevicePoll::wait(
-        [&] {
-            for (const auto& state : application_processors)
-                if (state.stack && state.tlb_request.result() != expected)
-                    return false;
-            return true;
-        },
-        ap_tlb_timeout_ticks);
 }
 
 void check_tlb_probe() {
@@ -203,19 +179,26 @@ void check_tlb_probe() {
         },
         ap_tlb_timeout_ticks);
     bool invalidated = false;
-    // The boot CPU still uses the kernel root. Requests for it must be ignored.
-    if (warmed && probe_tlb_requests(read_cr3() & page_mask, TlbResult::inactive)) {
+    unsigned unrelated = 0, targets = 0, participants = 0;
+    for (const auto& state : application_processors)
+        participants += state.stack != 0;
+    // The secondary CPUs switched away from the kernel root.
+    if (warmed &&
+        invalidate_user_translations(kernel_memory_root(), all_user_translations, &unrelated) &&
+        !unrelated) {
         __atomic_store_n(tlb_leaf, tlb_replacement | 1, __ATOMIC_RELEASE);
-        invalidated = probe_tlb_requests(tlb_space.root, TlbResult::invalidated);
+        invalidated =
+            invalidate_user_translations(tlb_space.root, all_user_translations, &targets) &&
+            targets == participants;
     }
-    if (!invalidated) {
+    log("SMP: translation targets=%u other=%u\n", uint64_t(targets), uint64_t(unrelated));
+    if (!invalidated)
         log("SMP: remote page invalidation incomplete\n");
-        __atomic_store_n(&tlb_stop, true, __ATOMIC_RELEASE);
-        for (const auto& state : application_processors)
-            if (state.stack && __atomic_load_n(&state.entered, __ATOMIC_ACQUIRE) &&
-                state.wakeup_ready && !interrupt_send_ipi(state.expected_apic_id))
-                break;
-    }
+    __atomic_store_n(&tlb_finished, true, __ATOMIC_RELEASE);
+    for (const auto& state : application_processors)
+        if (state.stack && __atomic_load_n(&state.entered, __ATOMIC_ACQUIRE) &&
+            state.wakeup_ready && !interrupt_send_ipi(state.expected_apic_id))
+            break;
     const bool retired = DevicePoll::wait(
         [] {
             for (const auto& state : application_processors)
@@ -241,15 +224,6 @@ void check_tlb_probe() {
         log("SMP: retained probe pages while a secondary CPU may still use them\n");
 }
 
-uint32_t current_apic_id() {
-    constexpr unsigned apic_base = 0x1b, x2apic = 1 << 10, x2apic_id = 0x802;
-    if (rdmsr(apic_base) & x2apic)
-        return uint32_t(rdmsr(x2apic_id));
-    uint32_t a, b, c, d;
-    asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1u), "c"(0u));
-    return b >> 24;
-}
-
 [[noreturn]] void application_processor_entry(limine_mp_info* processor) {
     asm volatile("cli; cld" ::: "memory");
     auto state = reinterpret_cast<ApplicationProcessor*>(processor->extra_argument);
@@ -260,15 +234,17 @@ uint32_t current_apic_id() {
 
 extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
     auto state = static_cast<ApplicationProcessor*>(argument);
-    activate_kernel_memory();
+    write_cr3(kernel_memory_root());
     const auto stack_bottom = uint64_t(physical(state->stack));
     const auto stack_top = stack_bottom + ap_stack_pages * page_size;
     const auto fault_top = stack_top + ap_fault_pages * page_size;
     uint64_t current_stack;
     asm volatile("mov %%rsp,%0" : "=r"(current_stack));
-    state->observed_apic_id = current_apic_id();
+    state->observed_apic_id = arch_current_apic_id();
     state->local_tables = current_stack >= stack_bottom && current_stack < stack_top &&
                           arch_init_secondary_tables(state->slot, stack_top, fault_top);
+    if (state->local_tables)
+        register_tlb_cpu(state->observed_apic_id);
     state->wakeup_ready = state->local_tables &&
                           state->observed_apic_id == state->expected_apic_id &&
                           interrupt_enable_secondary_ipi();
@@ -280,6 +256,8 @@ extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
         if (tlb_space.root)
             probe_tlb_on_secondary(*state);
     }
+    if (state->local_tables)
+        unregister_tlb_cpu();
     __atomic_store_n(&state->tlb_left, true, __ATOMIC_RELEASE);
     // Device interrupts and the scheduler still belong to the BSP.
     for (;;)
@@ -309,7 +287,7 @@ void boot_probe_application_processors() {
             }
         }
     }
-    if (bootstrap != 1 || current_apic_id() != response->bsp_lapic_id) {
+    if (bootstrap != 1 || arch_current_apic_id() != response->bsp_lapic_id) {
         log("SMP: bootstrap processor ID mismatch\n");
         return;
     }

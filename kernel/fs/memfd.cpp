@@ -24,6 +24,7 @@
  */
 
 #include "fs/memfd.hpp"
+#include "mm/tlb_batch.hpp"
 #include "mm/file_mapping.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
@@ -119,29 +120,26 @@ void collect(MemoryFile& memory) {
     release(&memory);
 }
 
-void flush(AddressSpace& space) {
-    if (read_cr3() == space.root)
-        write_cr3(space.root);
-}
-
 void invalidate_pages(MemoryFile& memory, uint64_t first, uint64_t end, bool keep_private) {
     for (auto map = memory.mappings; map; map = map->file_next) {
         uint64_t start = max(first, map->offset);
         uint64_t stop = min(end, map->offset + map->end - map->start);
         if (start >= stop)
             continue;
+        TlbBatch batch(map->space->root);
         for (uint64_t offset = start; offset < stop; offset += page_size) {
             auto pte = map->space->entry(map->start + offset - map->offset);
             if (!pte || !(*pte & page_mask) ||
                 (keep_private && !map->shared && !(*pte & page_file_cow)))
                 continue;
-            page_free(*pte & page_mask);
+            const auto page = *pte & page_mask;
             *pte &= ~(page_mask | shared_page | page_file_cow);
             if (!map->shared)
                 *pte |= page_file_cow;
             *pte = file_page_permissions(*pte);
+            batch.retire(page);
         }
-        flush(*map->space);
+        batch.finish();
     }
 }
 
@@ -558,10 +556,10 @@ FileFault memfd_fault(FileMapping& map, uint64_t offset, uint64_t& pte, bool wri
         page_retain(page);
         state |= shared_page;
     }
+    pte = file_page_permissions((state & ~page_mask) | page);
+    sync_user_translations(map.space->root, map.start + offset - map.offset);
     if (old)
         page_free(old);
-    pte = file_page_permissions((state & ~page_mask) | page);
-    flush(*map.space);
     return FileFault::resolved;
 }
 } // namespace ax

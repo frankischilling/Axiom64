@@ -30,6 +30,7 @@ struct CpuEntry {
     uint64_t kernel_stack_top;
     uint64_t saved_user_rsp;
     Task* task;
+    unsigned index;
 };
 
 // entry.asm uses these offsets while switching from the userspace stack.
@@ -37,12 +38,21 @@ static_assert(__builtin_offsetof(CpuEntry, kernel_stack_top) == 0);
 static_assert(__builtin_offsetof(CpuEntry, saved_user_rsp) == 8);
 
 bool arch_secondary_task_slot_idle(unsigned slot);
+uint32_t arch_current_apic_id();
 
 #if __STDC_HOSTED__
 Task* current_task();
 void set_current_task(Task*);
 #else
 // Only use these when the CPU-local GS base is active.
+inline unsigned current_cpu_index() {
+    unsigned index;
+    asm volatile("movl %%gs:%c[slot], %[index]"
+                 : [index] "=r"(index)
+                 : [slot] "i"(__builtin_offsetof(CpuEntry, index)));
+    return index;
+}
+
 inline Task* current_task() {
     Task* task;
     asm volatile("movq %%gs:%c[slot], %[task]"

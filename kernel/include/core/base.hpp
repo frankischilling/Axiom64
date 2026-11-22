@@ -231,6 +231,7 @@ struct AddressSpace {
 void memory_init();
 
 void activate_kernel_memory();
+uint64_t kernel_memory_root();
 
 // Supervisor-only, uncached mappings for device registers; length is bounded to 1 MiB.
 void* map_mmio(uint64_t address, size_t length);

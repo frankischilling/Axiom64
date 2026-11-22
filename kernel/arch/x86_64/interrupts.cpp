@@ -25,6 +25,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "arch/x86_64/interrupts.hpp"
+#include "arch/x86_64/tlb.hpp"
 #include "core/base.hpp"
 #include "drivers/platform/poll.hpp"
 #include "firmware/acpi.hpp"
@@ -530,7 +531,7 @@ bool interrupt_dispatch(uint64_t vector) {
         return false;
     if (vector == invalidate_vector && secondary_handler) {
         if (ipi_local.in_service(invalidate_vector)) {
-            secondary_handler(ipi_local.id(), Irq::SecondaryEvent::invalidate);
+            service_tlb_ipi();
             ipi_local.write(end_of_interrupt, 0);
         }
         return false;

@@ -29,6 +29,7 @@
 #include "mm/file_mapping.hpp"
 #include "mm/mmio.hpp"
 #include "mm/stack.hpp"
+#include "mm/tlb_batch.hpp"
 
 namespace ax {
 uint64_t direct_map;
@@ -134,7 +135,11 @@ PhysicalMemoryStats physical_memory_stats() {
 }
 
 void activate_kernel_memory() {
-    write_cr3(kernel_root);
+    switch_address_space(kernel_root);
+}
+
+uint64_t kernel_memory_root() {
+    return kernel_root;
 }
 
 static const Mmio::PageTables kernel_tables{
@@ -414,7 +419,7 @@ static uint64_t reservation_permissions(int prot) {
 }
 
 static void release_empty_tables(uint64_t table, unsigned level, uint64_t base, uint64_t start,
-                                 uint64_t end) {
+                                 uint64_t end, TlbBatch& batch) {
     auto entries = static_cast<uint64_t*>(physical(table));
     uint64_t span = 1ull << (12 + (level - 1) * 9);
     for (size_t i = (start - base) / span; i <= (end - base - 1) / span; i++) {
@@ -425,22 +430,22 @@ static void release_empty_tables(uint64_t table, unsigned level, uint64_t base, 
         uint64_t address = base + i * span;
         if (level > 2)
             release_empty_tables(child, level - 1, address, max(start, address),
-                                 min(end, address + span));
+                                 min(end, address + span), batch);
         auto children = static_cast<const uint64_t*>(physical(child));
         size_t used = 0;
         while (used < 512 && !(children[used] & page_mapping))
             used++;
         if (used == 512) {
             entry = 0;
-            page_free(child);
+            batch.retire(child);
         }
     }
 }
 
 static void discard_empty_tables(AddressSpace& space, uint64_t start, uint64_t end) {
-    release_empty_tables(space.root, 4, 0, start, end);
-    if (read_cr3() == space.root)
-        write_cr3(space.root);
+    TlbBatch batch(space.root);
+    release_empty_tables(space.root, 4, 0, start, end, batch);
+    batch.finish();
 }
 
 bool AddressSpace::map(uint64_t va, size_t len, int prot, uint64_t mapping_flags) {
@@ -472,8 +477,7 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot, uint64_t mapping_flags
         auto& e = *entry(p);
         e = (e & (page_mask | (page_software & ~page_private))) | permissions(prot) | mapping_flags;
     }
-    if (read_cr3() == root)
-        write_cr3(root);
+    sync_user_translations(root);
     return true;
 }
 
@@ -512,8 +516,7 @@ bool AddressSpace::fault_anonymous_reservation(uint64_t va, bool write, bool exe
     if (!page)
         return false;
     *pte = (*pte & ~page_anonymous_access) | 1 | page;
-    if (read_cr3() == root)
-        write_cr3(root);
+    sync_user_translations(root, align_down(va));
     return true;
 }
 
@@ -558,32 +561,34 @@ bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, 
     }
     if (!prepare_mapping(va, len))
         return false;
+    TlbBatch batch(root);
     for (uint64_t offset = 0; offset < len; offset += page_size) {
         auto e = entry(va + offset);
+        const auto old = *e;
         if (!external)
             page_retain(pa + offset);
-        if ((*e & page_mask) && !(*e & 0x200))
-            page_free(*e & page_mask);
         *e = (pa + offset) | permissions(prot) | cache_flags | (external ? 0x200 : 0x400);
+        if ((old & page_mask) && !(old & 0x200))
+            batch.retire(old & page_mask);
     }
-    if (read_cr3() == root)
-        write_cr3(root);
+    batch.finish();
     return true;
 }
 
 void AddressSpace::unmap(uint64_t va, size_t len) {
     if (va >= user_limit || len > user_limit - va)
         return;
+    TlbBatch batch(root);
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
         auto e = entry(p);
         if (e && (*e & page_mapping)) {
-            if ((*e & page_mask) && !(*e & 0x200))
-                page_free(*e & page_mask);
+            const auto old = *e;
             *e = 0;
+            if ((old & page_mask) && !(old & 0x200))
+                batch.retire(old & page_mask);
         }
     }
-    if (read_cr3() == root)
-        write_cr3(root);
+    batch.finish();
 }
 
 void AddressSpace::trim_page_tables(uint64_t va, size_t len) {
@@ -611,8 +616,7 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
             *e = (*e & (page_mask | page_software | cache_mask)) | permissions(prot);
         }
     }
-    if (read_cr3() == root)
-        write_cr3(root);
+    sync_user_translations(root);
     return true;
 }
 
@@ -701,6 +705,8 @@ static void destroy_table(uint64_t phys, int level) {
 
 void AddressSpace::destroy() {
     if (root) {
+        if (address_space_loaded(root))
+            panic("released address space is still loaded");
         destroy_table(root, 4);
         root = 0;
     }

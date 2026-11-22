@@ -26,6 +26,7 @@
 #include "core/base.hpp"
 #include "arch/x86_64/cpu_local.hpp"
 #include "arch/x86_64/interrupts.hpp"
+#include "arch/x86_64/tlb.hpp"
 #include "boot/boot.hpp"
 
 namespace ax {
@@ -84,8 +85,9 @@ static void load_cpu_tables(CpuTables& tables, uint64_t kernel_top, uint64_t fau
     load_gdt(&gdtr);
 }
 
-static void init_cpu_entry(CpuEntry& entry, uint64_t kernel_top) {
+static void init_cpu_entry(CpuEntry& entry, uint64_t kernel_top, unsigned index) {
     entry.kernel_stack_top = kernel_top;
+    entry.index = index;
     wrmsr(gs_base_msr, uint64_t(&entry));
     wrmsr(gs_shadow_msr, 0);
     TablePointer idtr{sizeof(idt) - 1, uint64_t(idt)};
@@ -103,6 +105,15 @@ static void init_cpu_entry(CpuEntry& entry, uint64_t kernel_top) {
     wrmsr(0xc0000084, 0x47700); // Clear IF, DF, TF, AC, NT on entry.
 }
 
+uint32_t arch_current_apic_id() {
+    constexpr unsigned apic_base = 0x1b, x2apic = 1 << 10, x2apic_id = 0x802;
+    if (rdmsr(apic_base) & x2apic)
+        return uint32_t(rdmsr(x2apic_id));
+    uint32_t a, b, c, d;
+    asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1u), "c"(0u));
+    return b >> 24;
+}
+
 bool arch_secondary_task_slot_idle(unsigned slot) {
     return slot < max_boot_processors &&
            rdmsr(gs_base_msr) == uint64_t(&secondary_tables[slot].entry) &&
@@ -114,7 +125,7 @@ bool arch_init_secondary_tables(unsigned slot, uint64_t kernel_top, uint64_t fau
         return false;
     auto& tables = secondary_tables[slot];
     load_cpu_tables(tables, kernel_top, fault_top);
-    init_cpu_entry(tables.entry, kernel_top);
+    init_cpu_entry(tables.entry, kernel_top, slot + 1);
     TablePointer observed{}, observed_idt{};
     uint16_t task_register;
     asm volatile("sgdt %0" : "=m"(observed));
@@ -137,7 +148,8 @@ void arch_init() {
         idt[i] = {uint16_t(p),       8, uint8_t(i == 8 ? 1 : 0), type, uint16_t(p >> 16),
                   uint32_t(p >> 32), 0};
     }
-    init_cpu_entry(bootstrap_tables.entry, kernel_stack_top);
+    init_cpu_entry(bootstrap_tables.entry, kernel_stack_top, 0);
+    register_tlb_cpu(arch_current_apic_id());
     interrupt_init_legacy();
     log("CPU: GDT, TSS, IDT, SYSCALL and PIT initialized\n");
 }

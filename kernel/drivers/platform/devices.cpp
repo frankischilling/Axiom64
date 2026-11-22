@@ -40,8 +40,9 @@
 namespace ax {
 static const BootFramebuffer* framebuffer;
 static Pty ptys[32];
-static Terminal console_terminal{0x500,  5, 0xbf,
-                                 0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
+static constexpr Terminal default_terminal{0x500,  5, 0xbf,
+                                           0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
+static Terminal console_terminal = default_terminal;
 static ByteQueue console_input;
 static int console_pgid = 1, console_sid = 1, vt_mode = 0, keyboard_mode = 1;
 
@@ -522,7 +523,7 @@ int device_open(Handle* h) {
                 p.used = true;
                 p.id = &p - ptys;
                 p.locked = true;
-                p.terminal = console_terminal;
+                p.terminal = default_terminal;
                 p.rows = 24;
                 p.columns = 80;
                 char name[16];

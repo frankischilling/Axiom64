@@ -32,17 +32,16 @@ def checked_patches(lock):
     return patches
 
 
-def build_sources(lock):
+def build_sources(source):
     paths = [verify(download(row['url'], CACHE / 'build-musl' / row['name']),
-                    row['sha256'], 'sha256') for row in lock['build_musl']['files']]
+                    row['sha256'], 'sha256') for row in source['files']]
     archive = next(path for path in paths if path.name.endswith('.orig.tar.gz'))
     packaging = next(path for path in paths if path.name.endswith('.debian.tar.xz'))
     return archive, packaging, paths
 
 
-def runtime_sources(lock, local_patches):
-    row = next(row for row in lock['ports'] if row['origin'] == 'musl')
-    _, paths = port_sources(row)
+def runtime_sources(source, local_patches):
+    _, paths = port_sources(source)
     archive = next(path for path in paths if path.name == 'musl-1.2.5.tar.gz')
     return archive, [path for path in paths if path.suffix == '.patch'] + local_patches, paths
 
@@ -53,13 +52,16 @@ def ensure(provider='build'):
     OUTPUT.mkdir(parents=True, exist_ok=True)
     lock = json.loads((ROOT / 'sources.lock.json').read_text())
     patches = checked_patches(lock)
+    source_lock = (lock['build_musl'] if provider == 'build'
+                   else next(row for row in lock['ports'] if row['origin'] == 'musl'))
     compiler = subprocess.check_output(['gcc', '-dumpfullversion'], text=True).strip()
     target = subprocess.check_output(['gcc', '-dumpmachine'], text=True).strip()
     if target != 'x86_64-linux-gnu':
         raise RuntimeError(f'musl build requires the pinned x86-64 Linux host; found {target}')
-    identity = hashlib.sha256((ROOT / 'sources.lock.json').read_bytes() +
-        Path(__file__).read_bytes() + b''.join(path.read_bytes() for path in patches) +
-        (compiler + target + provider).encode()).hexdigest()
+    identity_inputs = dict(source=source_lock, local_patches=lock['musl_local_patches'],
+                           recipe_sha256=digest(Path(__file__)), compiler=compiler,
+                           target=target, provider=provider)
+    identity = hashlib.sha256(json.dumps(identity_inputs, sort_keys=True).encode()).hexdigest()
     # Keep completed libraries immutable while a changed input builds separately.
     destination = OUTPUT / provider / identity
     manifest = destination / 'manifest.json'
@@ -73,10 +75,10 @@ def ensure(provider='build'):
                         raise RuntimeError(f'cached musl product changed: {provider}/{name}')
                 return destination
         if provider == 'build':
-            archive, packaging, verified = build_sources(lock)
+            archive, packaging, verified = build_sources(source_lock)
             ordered = []
         else:
-            archive, ordered, verified = runtime_sources(lock, patches)
+            archive, ordered, verified = runtime_sources(source_lock, patches)
             packaging = None
         destination.mkdir(parents=True, exist_ok=True)
         logfile = destination / 'build.log'

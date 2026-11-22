@@ -176,7 +176,7 @@ static Mount* mounted_on(Node* point) {
 }
 
 Node* directory_parent(Node* node) {
-    if (current && node == current->fs->root_node)
+    if (current_task() && node == current_task()->fs->root_node)
         return node;
     if (node == node->mount->root && node->mount->point)
         return node->mount->point->parent;
@@ -189,7 +189,7 @@ void node_path(Node* node, char* result, size_t cap, bool include_unlinked, Node
     result[0] = 0;
     Node* chain[128];
     size_t count = 0;
-    Node* root = boundary ? boundary : current ? current->fs->root_node : root_node;
+    Node* root = boundary ? boundary : current_task() ? current_task()->fs->root_node : root_node;
     while (node && node != root && count < 128) {
         if (node == node->mount->root && node->mount->point) {
             node = node->mount->point;
@@ -230,7 +230,7 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
         return -2;
     char pending[2048];
     memcpy(pending, path.text, strlen(path.text) + 1);
-    Node* boundary = current ? current->fs->root_node : root_node;
+    Node* boundary = current_task() ? current_task()->fs->root_node : root_node;
     Node* node = pending[0] == '/' ? boundary : path.base;
     if (!node)
         return -2;
@@ -268,8 +268,9 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
         if (auto mount = mounted_on(child))
             child = mount->root;
         if ((child->mode & 0170000) == symlink && (follow || pending[p])) {
-            if (current && (node->mode & 01002) == 01002 &&
-                current->credentials.user.filesystem != child->uid && node->uid != child->uid)
+            if (current_task() && (node->mode & 01002) == 01002 &&
+                current_task()->credentials.user.filesystem != child->uid &&
+                node->uid != child->uid)
                 return -13;
             if (++links > 40)
                 return -40;
@@ -380,8 +381,8 @@ int node_access(Node* node, unsigned mask, bool real) {
         if (int result = access(node, mask))
             return min(result, 0);
     const Credentials boot{};
-    return credential_access(current ? current->credentials : boot, node->uid, node->gid,
-                             node->mode, mask, real);
+    return credential_access(current_task() ? current_task()->credentials : boot, node->uid,
+                             node->gid, node->mode, mask, real);
 }
 
 static int parent_write(Node* parent, Node* victim = nullptr) {
@@ -390,10 +391,10 @@ static int parent_write(Node* parent, Node* victim = nullptr) {
     int error = node_access(parent, 3);
     if (error)
         return error;
-    if (current && victim && (parent->mode & 01000) &&
-        current->credentials.user.filesystem != parent->uid &&
-        current->credentials.user.filesystem != file_node(victim)->uid &&
-        !capable(current->credentials, Capability::fowner))
+    if (current_task() && victim && (parent->mode & 01000) &&
+        current_task()->credentials.user.filesystem != parent->uid &&
+        current_task()->credentials.user.filesystem != file_node(victim)->uid &&
+        !capable(current_task()->credentials, Capability::fowner))
         return -1;
     return 0;
 }
@@ -453,8 +454,8 @@ int link_node(const Path& from, const Path& to, bool follow) {
         return -2;
     if ((target->mode & 0170000) == directory)
         return -1;
-    if (current && current->credentials.user.filesystem != target->uid &&
-        !capable(current->credentials, Capability::fowner) &&
+    if (current_task() && current_task()->credentials.user.filesystem != target->uid &&
+        !capable(current_task()->credentials, Capability::fowner) &&
         ((target->mode & 0170000) != regular_file || (target->mode & 04000) ||
          (target->mode & 02010) == 02010 || node_access(target, 6)))
         return -1;
@@ -631,15 +632,16 @@ int node_truncate(Node* node, uint64_t size) {
         return -30;
     if (node->exec_images && !is_memfd(node))
         return -26;
-    if (current && size > node->size && size > current->process->limits.soft(Resource::file_size)) {
-        queue_signal(current, 25, current->process->pid);
+    if (current_task() && size > node->size &&
+        size > current_task()->process->limits.soft(Resource::file_size)) {
+        queue_signal(current_task(), 25, current_task()->process->pid);
         return -27;
     }
     if (auto control = node_control(node))
         return control->truncate(node, size);
     if (int error = node_drop_file_capabilities(node))
         return error;
-    if (current && !capable(current->credentials, Capability::fsetid)) {
+    if (current_task() && !capable(current_task()->credentials, Capability::fsetid)) {
         uint32_t mode = node->mode & ~04000;
         if (mode & 010)
             mode &= ~02000;
@@ -670,12 +672,12 @@ int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, ui
 int node_chmod(Node* node, uint32_t mode) {
     auto dentry = node;
     node = file_node(node);
-    if (current && current->credentials.user.filesystem != node->uid &&
-        !capable(current->credentials, Capability::fowner))
+    if (current_task() && current_task()->credentials.user.filesystem != node->uid &&
+        !capable(current_task()->credentials, Capability::fowner))
         return -1;
     mode &= 07777;
-    if (current && !credential_group(current->credentials, node->gid) &&
-        !capable(current->credentials, Capability::fsetid))
+    if (current_task() && !credential_group(current_task()->credentials, node->gid) &&
+        !capable(current_task()->credentials, Capability::fsetid))
         mode &= ~02000;
     return node_setattr(dentry, (node->mode & 0170000) | mode, node->atime, node->mtime);
 }
@@ -689,9 +691,9 @@ int node_chown(Node* node, uint32_t uid, uint32_t gid) {
         uid = node->uid;
     if (gid == UINT32_MAX)
         gid = node->gid;
-    if (current && !capable(current->credentials, Capability::chown) &&
-        (current->credentials.user.filesystem != node->uid || uid != node->uid ||
-         (gid != node->gid && !credential_group(current->credentials, gid))))
+    if (current_task() && !capable(current_task()->credentials, Capability::chown) &&
+        (current_task()->credentials.user.filesystem != node->uid || uid != node->uid ||
+         (gid != node->gid && !credential_group(current_task()->credentials, gid))))
         return -1;
     if (node_readonly(node))
         return -30;
@@ -849,7 +851,7 @@ static bool mount_busy(Mount* mount, bool writers_only) {
 
 int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags,
                      bool check_dirty) {
-    if (current && !capable(current->credentials, Capability::sys_admin))
+    if (current_task() && !capable(current_task()->credentials, Capability::sys_admin))
         return -1;
     if (flags & ~uint64_t(1 | 2 | 4 | 8 | 32 | 32768)) // MS_SILENT is used by mount.
         return -22;
@@ -938,7 +940,7 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
 }
 
 int vfs_disk_root(unsigned device, bool readonly, bool check_dirty) {
-    if (current || !mounts[0].active || mounts[0].ops != &ramfs_ops)
+    if (current_task() || !mounts[0].active || mounts[0].ops != &ramfs_ops)
         return -16;
     for (size_t i = 1; i < sizeof(mounts) / sizeof(mounts[0]); i++)
         if (mounts[i].active)
@@ -961,7 +963,7 @@ int vfs_disk_root(unsigned device, bool readonly, bool check_dirty) {
 }
 
 int unmount(const Path& path, uint64_t flags) {
-    if (current && !capable(current->credentials, Capability::sys_admin))
+    if (current_task() && !capable(current_task()->credentials, Capability::sys_admin))
         return -1;
     if (flags)
         return -22;
@@ -1076,9 +1078,9 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
     if (handle) {
         *handle = {n, nullptr, 0, flags, 1, false};
         handle->generation = next_generation++;
-        if (current) {
-            handle->opener_uid = current->credentials.user.filesystem;
-            handle->opener_gid = current->credentials.group.filesystem;
+        if (current_task()) {
+            handle->opener_uid = current_task()->credentials.user.filesystem;
+            handle->opener_gid = current_task()->credentials.group.filesystem;
         }
         result = flags & 010000000 ? 0 : device_open(handle);
         if (result) {
@@ -1302,7 +1304,7 @@ int write_handle_limit_at(Task* task, Handle& handle, uint64_t offset, size_t& l
 
 int write_handle_limit(Handle* h, size_t& length) {
     uint64_t offset = h->node && (h->flags & 02000) ? h->node->size : h->offset;
-    return write_handle_limit_at(current, *h, offset, length);
+    return write_handle_limit_at(current_task(), *h, offset, length);
 }
 
 int prepare_regular_write(Task* task, Node* node) {
@@ -1363,7 +1365,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if (!len)
         return 0;
     if (h->socket)
-        return socket_write(*current, h->socket, buf, len);
+        return socket_write(*current_task(), h->socket, buf, len);
     if (h->packet)
         return packet_write(h->packet, buf, len);
     if (h->inet)
@@ -1371,7 +1373,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if (h->inet6)
         return inet6_send(h->inet6, inet6_peer(h->inet6), buf, len);
     if (h->netlink)
-        return netlink_send(*current, h->netlink, buf, len);
+        return netlink_send(*current_task(), h->netlink, buf, len);
     auto n = h->node;
     if (!n)
         return -9;
@@ -1383,6 +1385,6 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return error;
     if (h->flags & 02000)
         h->offset = n->size;
-    return write_regular_at(current, *h, h->offset, buf, len);
+    return write_regular_at(current_task(), *h, h->offset, buf, len);
 }
 } // namespace ax

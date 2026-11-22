@@ -235,11 +235,11 @@ static Handle* descriptor(const Entry& item) {
 }
 
 static bool descriptor_access(const Task& owner) {
-    if (!current)
+    if (!current_task())
         return false;
-    const auto& caller = current->credentials;
+    const auto& caller = current_task()->credentials;
     const auto& target = owner.credentials;
-    return current->process == owner.process || capable(caller, Capability::sys_ptrace) ||
+    return current_task()->process == owner.process || capable(caller, Capability::sys_ptrace) ||
            (owner.memory && owner.memory->dumpable && caller.user.filesystem == target.user.real &&
             caller.user.filesystem == target.user.effective &&
             caller.user.filesystem == target.user.saved &&
@@ -299,21 +299,22 @@ static int access_override(Node* node, unsigned mask) {
         auto owner = task(item->pid);
         if (!owner)
             return -3;
-        if (current && owner->process == current->process && !(mask & 1))
+        if (current_task() && owner->process == current_task()->process && !(mask & 1))
             return 1;
     }
     auto owner = item->kind == Kind::fd_directory ? task(item->pid) : nullptr;
-    return owner && current && owner->process == current->process && !(mask & 2) ? 1 : 0;
+    return owner && current_task() && owner->process == current_task()->process && !(mask & 2) ? 1
+                                                                                               : 0;
 }
 
 static size_t link_target(Kind kind, char output[40]) {
-    if (!current)
+    if (!current_task())
         return 0;
     Text text{output, 0, 40};
-    text.number(unsigned(current->process->pid));
+    text.number(unsigned(current_task()->process->pid));
     if (kind == Kind::thread_self) {
         text.string("/task/");
-        text.number(unsigned(current->pid));
+        text.number(unsigned(current_task()->pid));
     }
     return text.length;
 }
@@ -1331,7 +1332,7 @@ static int control_access(Node* node, unsigned mask, bool real) {
     if (mask & 1)
         return -13;
     const Credentials boot{};
-    const auto& credentials = current ? current->credentials : boot;
+    const auto& credentials = current_task() ? current_task()->credentials : boot;
     uint64_t capabilities = credentials.effective;
     // access(2) substitutes the real user's capability set unless securebits
     // disable the normal setuid fixups. sysctl ownership still uses euid/egid.
@@ -1397,8 +1398,8 @@ static int64_t control_write(Handle* handle, const void* input, size_t length) {
         // A transferred description does not retain its opener's sysctl rights.
         if (control_access(handle->node, 2, false))
             return -1;
-        if (item->property == proc4::forwarding_property && current &&
-            !(current->credentials.effective & (1ull << unsigned(Capability::net_admin))))
+        if (item->property == proc4::forwarding_property && current_task() &&
+            !(current_task()->credentials.effective & (1ull << unsigned(Capability::net_admin))))
             return -1;
         return proc4::write(item->network_index, item->property, handle->offset, input, length);
     }
@@ -1581,7 +1582,7 @@ static int64_t write(Node* node, uint64_t, const void* input, size_t length) {
     auto owner = task(item->pid);
     if (!owner)
         return -3;
-    if (!current || owner->process != current->process)
+    if (!current_task() || owner->process != current_task()->process)
         return -22;
     owner->set_name(static_cast<const char*>(input), length);
     return int64_t(length);

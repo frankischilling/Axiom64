@@ -106,7 +106,7 @@ int open_queue(int key, unsigned flags) {
             continue;
         if ((flags & (ipc_create | ipc_exclusive)) == (ipc_create | ipc_exclusive))
             return -17;
-        return permission.allows(current->credentials, flags | flags >> 3 | flags >> 6)
+        return permission.allows(current_task()->credentials, flags | flags >> 3 | flags >> 6)
                    ? id_for(slot)
                    : -13;
     }
@@ -118,7 +118,7 @@ int open_queue(int key, unsigned flags) {
     if (!queue)
         return -12;
     *queue = {};
-    const auto& credentials = current->credentials;
+    const auto& credentials = current_task()->credentials;
     auto& status = queue->status;
     status.permission.key = key;
     status.permission.uid = status.permission.creator_uid = credentials.user.effective;
@@ -161,14 +161,14 @@ int64_t wait_for(Queue& queue, Message* message) {
         release(message);
         return -12;
     }
-    *request = {&queue, current, nullptr, message, message != nullptr};
+    *request = {&queue, current_task(), nullptr, message, message != nullptr};
     auto** link = request->sending ? &queue.senders : &queue.receivers;
     while (*link)
         link = &(*link)->next;
     *link = request;
-    current->message_queue_request = request;
-    current->wait = Wait::message_queue;
-    current->state = State::blocked;
+    current_task()->message_queue_request = request;
+    current_task()->wait = Wait::message_queue;
+    current_task()->state = State::blocked;
     return would_block;
 }
 
@@ -236,7 +236,7 @@ void wake_senders(Queue& queue) {
 }
 
 int64_t send(int id, uint64_t pointer, size_t size, unsigned flags) {
-    auto& memory = current->memory->space;
+    auto& memory = current_task()->memory->space;
     int64_t type;
     if (!memory.copy_in(&type, pointer, sizeof(type)))
         return -14;
@@ -252,14 +252,14 @@ int64_t send(int id, uint64_t pointer, size_t size, unsigned flags) {
         result = -14;
     else if (!queue)
         result = -22;
-    else if (!queue->status.permission.allows(current->credentials, 2))
+    else if (!queue->status.permission.allows(current_task()->credentials, 2))
         result = -13;
     if (result) {
         release(message);
         return result;
     }
     if (queue->fits(size)) {
-        publish(*queue, message, *current);
+        publish(*queue, message, *current_task());
         return 0;
     }
     if (!(flags & no_wait))
@@ -304,13 +304,13 @@ int64_t receive(int id, uint64_t pointer, size_t size, int64_t selector, unsigne
     if (copy) {
         if ((flags & except_type) || !(flags & no_wait))
             return -22;
-        if (size && !current->memory->space.valid(pointer, min(size, max_message)))
+        if (size && !current_task()->memory->space.valid(pointer, min(size, max_message)))
             return -14;
     }
     auto* queue = find(id);
     if (!queue)
         return -22;
-    if (!queue->status.permission.allows(current->credentials, 4))
+    if (!queue->status.permission.allows(current_task()->credentials, 4))
         return -13;
     auto** link = select(*queue, selector, flags);
     if (!link)
@@ -323,7 +323,7 @@ int64_t receive(int id, uint64_t pointer, size_t size, int64_t selector, unsigne
             return -22;
     }
     if (copy)
-        return receive_output(*current, *message, pointer, size);
+        return receive_output(*current_task(), *message, pointer, size);
     // A destructive receive consumes the message even when copying to userspace fails.
     *link = message->next;
     if (!*link)
@@ -332,9 +332,9 @@ int64_t receive(int id, uint64_t pointer, size_t size, int64_t selector, unsigne
     --queue->status.count;
     total_bytes -= message->size;
     --total_messages;
-    record_receive(*queue, current->process->pid);
+    record_receive(*queue, current_task()->process->pid);
     wake_senders(*queue);
-    const auto result = receive_output(*current, *message, pointer, size);
+    const auto result = receive_output(*current_task(), *message, pointer, size);
     release(message);
     return result;
 }
@@ -366,7 +366,7 @@ int info(uint64_t pointer, bool usage) {
         16,
         usage ? int32_t(min(total_bytes, uint64_t(INT32_MAX))) : int32_t(default_capacity),
         65535};
-    if (!current->memory->space.copy_out(pointer, output, sizeof(output)))
+    if (!current_task()->memory->space.copy_out(pointer, output, sizeof(output)))
         return -14;
     for (unsigned slot = max_queues; slot > 0; --slot)
         if (queues[slot - 1])
@@ -380,7 +380,7 @@ int control(int id, int command, uint64_t pointer) {
     if (command == 3 || command == 12)
         return info(pointer, command == 12);
     const bool by_slot = command == 11 || command == 13;
-    auto& memory = current->memory->space;
+    auto& memory = current_task()->memory->space;
     Status input;
     if (command == 1 && !memory.copy_in(&input, pointer, sizeof(input)))
         return -14;
@@ -388,7 +388,7 @@ int control(int id, int command, uint64_t pointer) {
     if (!queue)
         return -22;
     auto& status = queue->status;
-    const auto& credentials = current->credentials;
+    const auto& credentials = current_task()->credentials;
     if (command == 0 || command == 1) {
         if (!status.permission.controls(credentials))
             return -1;
@@ -439,10 +439,10 @@ void message_queue_resume(Task& task) {
         return;
     // Complete a handed-off receive before signal delivery. Stack growth applies
     // to the receiving task's address space and limits, even across a context switch.
-    auto* previous = current;
-    current = &task;
+    auto* previous = current_task();
+    set_current_task(&task);
     auto result = receive_output(task, *request->message, task.frame.rsi, task.frame.rdx);
-    current = previous;
+    set_current_task(previous);
     finish(task, result);
 }
 

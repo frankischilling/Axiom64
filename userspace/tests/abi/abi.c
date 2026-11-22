@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -152,6 +153,12 @@ static uint64_t read_gs_word(void) {
     return value;
 }
 
+static volatile sig_atomic_t gs_trap_ok;
+
+static void gs_trap_handler(int signal) {
+    gs_trap_ok = signal == SIGTRAP && read_gs_word() == UINT64_C(0x123456789abcdef0);
+}
+
 static void user_gs_base(const char* executable) {
     uintptr_t saved = read_gs_base();
     uintptr_t fs_before, fs_after;
@@ -162,6 +169,12 @@ static void user_gs_base(const char* executable) {
     CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, UINTPTR_MAX) == -1 && errno == EPERM);
     CHECK(syscall(SYS_arch_prctl, ARCH_GET_GS, 1ul) == -1 && errno == EFAULT);
     CHECK(read_gs_word() == parent_value);
+    struct sigaction trap = {.sa_handler = gs_trap_handler}, previous;
+    CHECK(sigemptyset(&trap.sa_mask) == 0);
+    CHECK(sigaction(SIGTRAP, &trap, &previous) == 0);
+    __asm__ volatile("int3" ::: "memory");
+    CHECK(gs_trap_ok && read_gs_word() == parent_value);
+    CHECK(sigaction(SIGTRAP, &previous, NULL) == 0);
     pid_t child = fork();
     CHECK(child >= 0);
     if (!child) {

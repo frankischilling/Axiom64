@@ -177,6 +177,7 @@ struct Frame {
 };
 
 static_assert(sizeof(Frame) == 22 * 8);
+static_assert(__builtin_offsetof(Frame, cs) == 18 * 8);
 
 struct FileMapping;
 

@@ -64,23 +64,23 @@ int64_t create(TimerClock clock, uint32_t flags) {
     if (clock != TimerClock::realtime && clock != TimerClock::monotonic &&
         clock != TimerClock::boottime)
         return -22;
-    int fd = reserve_fd(*current, 0, flags & 02000000);
+    int fd = reserve_fd(*current_task(), 0, flags & 02000000);
     if (fd < 0)
         return fd;
     int error;
     auto handle = open_timerfd(clock, flags & 04000, error);
     if (!handle) {
-        discard_reserved_fd(*current->files, fd);
+        discard_reserved_fd(*current_task()->files, fd);
         return error;
     }
-    install_reserved_fd(*current->files, fd, handle);
+    install_reserved_fd(*current_task()->files, fd, handle);
     return fd;
 }
 
 int copy_setting(uint64_t pointer, TimerfdSetting setting) {
     Itimerspec value{Timespec::from_nanoseconds(setting.interval),
                      Timespec::from_nanoseconds(setting.value)};
-    return current->memory->space.copy_out(pointer, &value, sizeof(value)) ? 0 : -14;
+    return current_task()->memory->space.copy_out(pointer, &value, sizeof(value)) ? 0 : -14;
 }
 } // namespace
 
@@ -92,14 +92,14 @@ int64_t timerfd_syscall(const Frame& frame) {
     uint32_t flags = frame.rsi;
     Itimerspec input;
     if (setting) {
-        if (!current->memory->space.copy_in(&input, frame.rdx, sizeof(input)))
+        if (!current_task()->memory->space.copy_in(&input, frame.rdx, sizeof(input)))
             return -14;
         if (flags & ~uint32_t(3) || !input.interval.valid() || !input.value.valid())
             return -22;
     }
 
     unsigned fd = unsigned(frame.rdi);
-    auto handle = fd < max_fds ? current->files->entries[fd].handle : nullptr;
+    auto handle = fd < max_fds ? current_task()->files->entries[fd].handle : nullptr;
     if (!handle)
         return -9;
     if (!handle->timer)
@@ -118,7 +118,7 @@ int64_t timerfd_ioctl(Timerfd& timer, uint32_t request, uint64_t argument) {
     if (request != set_ticks_request)
         return -25;
     uint64_t count;
-    if (!current->memory->space.copy_in(&count, argument, sizeof(count)))
+    if (!current_task()->memory->space.copy_in(&count, argument, sizeof(count)))
         return -14;
     if (!count)
         return -22;

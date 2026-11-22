@@ -315,7 +315,10 @@ build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp
     kernel/include/fs/inotify.hpp kernel/include/ipc/eventfd.hpp kernel/include/ipc/ipc.hpp \
     kernel/include/ipc/signal_descriptor.hpp kernel/include/ipc/timerfd.hpp \
     kernel/include/fs/proc/integer.hpp kernel/include/fs/proc/ipv4.hpp kernel/include/fs/proc/ipv6.hpp \
-    kernel/include/fs/vfs.hpp kernel/include/process/limits.hpp kernel/include/process/task.hpp \
+    kernel/include/arch/x86_64/cpu_local.hpp kernel/include/drivers/block/block.hpp \
+    kernel/include/fs/ext2/ext2.hpp kernel/include/fs/vfs.hpp \
+    kernel/include/ipc/posix_message_queues.hpp kernel/include/process/cpu.hpp \
+    kernel/include/process/limits.hpp kernel/include/process/task.hpp \
     kernel/include/security/credentials.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@

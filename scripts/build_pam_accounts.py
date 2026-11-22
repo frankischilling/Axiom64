@@ -62,7 +62,7 @@ def stage_pam(directory):
 
 
 def build(output):
-    crypt = password_library('build') / 'dynamic/stage/usr'
+    crypt = password_library('build') / 'static/stage/usr'
     accounts = ROOT / 'userspace/accounts'
     with tempfile.TemporaryDirectory(prefix='axiom64-pam-') as temporary:
         stage = Path(temporary)
@@ -74,10 +74,12 @@ def build(output):
             f'-I{stage}', f'-I{crypt / "include"}', '-shared',
             '-Wl,-z,defs,--gc-sections', f'-ffile-prefix-map={ROOT}=/usr/src/axiom64',
             *(str(accounts / f'{name}.c') for name in (*MODULES, 'logbook_rotation', 'pam')),
-            f'-L{stage}', f'-L{crypt / "lib"}', '-l:libpam.so.0', '-lcrypt', '-o', str(result),
+            # SDDM may have loaded musl's crypt_r before loading its PAM modules.
+            f'-L{stage}', '-l:libpam.so.0', str(crypt / 'lib/libcrypt.a'),
+            '-Wl,--exclude-libs,libcrypt.a', '-o', str(result),
         ], check=True, env=environment(), cwd=ROOT)
         tags = subprocess.check_output(['readelf', '-W', '-d', result], text=True)
-        if ('libpam.so.0' not in tags or 'libcrypt.so.2' not in tags or
+        if ('libpam.so.0' not in tags or 'libcrypt.so.2' in tags or
                 'RPATH' in tags or 'RUNPATH' in tags):
             raise RuntimeError('account PAM module has unexpected ELF dependencies')
         output.write_bytes(result.read_bytes())

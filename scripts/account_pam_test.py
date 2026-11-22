@@ -32,7 +32,7 @@ import tempfile
 
 from boot_media import build_medium
 from build_accounts import MODULES, environment
-from build_libxcrypt import runtime_files as crypt_files, ensure as password_library
+from build_libxcrypt import ensure as password_library
 from build_musl import compiler_args, runtime_files as musl_files
 from build_pam_accounts import stage_pam
 from fetch import LOCK, ROOT
@@ -60,22 +60,21 @@ def test_archive(staging):
     packages = {p['name']: p for p in json.loads(LOCKFILE.read_text())['packages']}
     files = {name: entry for name, entry in musl_files().items()
              if name.startswith('lib/') or name == 'usr/lib/libc.so'}
-    files.update({name: entry for name, entry in crypt_files().items()
-                  if name.startswith('usr/lib/libcrypt.so.')})
     for path, payload in ((archive, 'usr/lib/libpam.so*'),
                           (locked_package(packages['libintl']), 'usr/lib/libintl.so*')):
         with tarfile.open(path, 'r:gz', ignore_zeros=True) as stream:
             overlay_tar(files, stream, include=(payload,))
 
     (staging / 'libc.musl-x86_64.so.1').write_bytes(files['lib/ld-musl-x86_64.so.1'][1])
-    crypt = password_library('runtime') / 'dynamic/stage/usr'
+    crypt = password_library('build') / 'static/stage/usr'
     accounts = ROOT / 'userspace/accounts'
     runner = staging / 'account-pam'
     subprocess.run([
         *compiler_args('build'), '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', f'-I{staging}',
         f'-I{crypt / "include"}', *(str(accounts / f'{name}.c') for name in (*MODULES, 'logbook_rotation')),
-        str(ROOT / 'userspace/tests/security/account-pam.c'), str(libpam), f'-L{crypt / "lib"}',
-        f'-Wl,-rpath-link,{staging}', '-lcrypt', '-o', str(runner),
+        str(ROOT / 'userspace/tests/security/account-pam.c'), str(libpam),
+        f'-Wl,-rpath-link,{staging}', str(crypt / 'lib/libcrypt.a'),
+        '-Wl,--exclude-libs,libcrypt.a', '-o', str(runner),
     ], check=True, env=environment())
     busybox = ROOT / 'build' / f'busybox-{LOCK["busybox"]["version"]}' / 'busybox'
     files.update({

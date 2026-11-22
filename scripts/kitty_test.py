@@ -114,6 +114,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="axiom64-kitty-root-") as root:
         entries = archive_entries(archive)
         entries.pop("usr/libexec/axiom64-plasma-session", None)
+        entries.pop("usr/libexec/axiom64-display-manager", None)
         fixture = Path(root) / "x11.cpio"
         write_cpio(fixture, entries)
         del entries

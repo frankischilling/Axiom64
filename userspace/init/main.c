@@ -28,6 +28,7 @@
 #include "seed_records.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +52,7 @@ static pid_t network(void) {
     return child;
 }
 
-static pid_t start_system_bus(void) {
+static pid_t start_service(const char* path, int own_session) {
     pid_t child = fork();
     if (!child) {
         int input = open("/dev/null", O_RDONLY);
@@ -59,14 +60,16 @@ static pid_t start_system_bus(void) {
             _exit(126);
         if (input != STDIN_FILENO)
             close(input);
-        char* const arguments[] = {"/usr/libexec/axiom64-system-bus", NULL};
+        if (own_session && setsid() < 0)
+            _exit(126);
+        char* const arguments[] = {(char*)path, NULL};
         char* const environment[] = {"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/", NULL};
         execve(arguments[0], arguments, environment);
-        perror("init: system bus exec");
+        perror(path);
         _exit(127);
     }
     if (child < 0)
-        perror("init: system bus fork");
+        perror(path);
     return child;
 }
 
@@ -132,16 +135,26 @@ int main(void) {
         struct timespec seed_retry = retry;
         pid_t seeder = seed_service(&seed_retry);
         int seeded = 0;
-        const int bus_installed = access("/usr/libexec/axiom64-system-bus", X_OK) == 0;
+        const char* bus_path = "/usr/libexec/axiom64-system-bus";
+        const int bus_installed = access(bus_path, X_OK) == 0;
         struct timespec bus_retry = retry;
-        pid_t bus = bus_installed ? start_system_bus() : -1;
+        pid_t bus = bus_installed ? start_service(bus_path, 0) : -1;
+        const char* display_path = "/usr/libexec/axiom64-display-manager";
+        const int use_display_manager =
+            access(display_path, X_OK) == 0 && access("/etc/axiom64/console-desktop", F_OK) != 0;
+        struct timespec display_retry = retry;
+        pid_t display = use_display_manager ? start_service(display_path, 1) : -1;
         bus_retry.tv_sec++;
         seed_retry.tv_sec++;
         retry.tv_sec++;
         struct init_console console;
         struct timespec console_start;
+        const char* service_accounts = use_display_manager ? "desktop"
+                                       : bus_installed     ? "bus"
+                                                           : "none";
         if (monotonic(&console_start) < 0 ||
-            init_console_initialize(&console, &console_start) < 0) {
+            init_console_initialize(&console, &console_start, !use_display_manager,
+                                    service_accounts) < 0) {
             perror("init: authenticated console setup");
             return 1;
         }
@@ -179,6 +192,15 @@ int main(void) {
                 if (monotonic(&bus_retry) < 0)
                     return 1;
                 bus_retry.tv_sec++;
+            } else if (child > 0 && child == display) {
+                if (kill(-display, SIGKILL) < 0 && errno != ESRCH)
+                    perror("init: display manager cleanup");
+                fprintf(stderr, "Display manager exited status=%d. Retrying in five seconds.\n",
+                        status);
+                display = -1;
+                if (monotonic(&display_retry) < 0)
+                    return 1;
+                display_retry.tv_sec += 5;
             }
             struct timespec now;
             if (monotonic(&now) < 0)
@@ -207,9 +229,16 @@ int main(void) {
             if (bus_installed && bus < 0 &&
                 (now.tv_sec > bus_retry.tv_sec ||
                  (now.tv_sec == bus_retry.tv_sec && now.tv_nsec >= bus_retry.tv_nsec))) {
-                bus = start_system_bus();
+                bus = start_service(bus_path, 0);
                 bus_retry = now;
                 bus_retry.tv_sec++;
+            }
+            if (use_display_manager && display < 0 &&
+                (now.tv_sec > display_retry.tv_sec ||
+                 (now.tv_sec == display_retry.tv_sec && now.tv_nsec >= display_retry.tv_nsec))) {
+                display = start_service(display_path, 1);
+                display_retry = now;
+                display_retry.tv_sec += 5;
             }
             if (!child) {
                 struct timespec interval = {0, 100000000};

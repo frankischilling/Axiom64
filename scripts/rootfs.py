@@ -226,9 +226,14 @@ for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 if installed_desktop:
     regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
-    for service in ('sddm', 'sddm-autologin'):
+    for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
         regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
                 0o100644)
+    regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
+    regular('usr/share/axiom64/display-sessions/plasma.desktop',
+            ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)
+    regular('usr/libexec/axiom64-display-manager', ROOT / 'userspace/services/display-manager.sh')
+    regular('usr/libexec/axiom64-display-session', ROOT / 'userspace/desktop/display-session.sh')
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
     autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'

@@ -126,7 +126,7 @@ static int run(char* const arguments[], int terminal, const struct termios* orig
         if (sigprocmask(SIG_SETMASK, &mask, NULL) < 0 || setenv("TERM", "vt100", 1) < 0)
             _exit(126);
         execv(arguments[0], arguments);
-        perror("account-console: authentication exec");
+        perror("account-console: worker exec");
         _exit(127);
     }
     int status = 0, error = 0;
@@ -161,6 +161,7 @@ int main(int argc, char** argv) {
     }
     const char *database = "/etc/axiom64/accounts", *records = "/var/log/axiom64/login";
     const char *executable = "/usr/bin/account-access", *homes = "/home", *shell = "/bin/bash";
+    int prepare_bus = 0, prepare_greeter = 0;
     int graphical = 0;
     for (int index = 1; index < argc; index += 2) {
         if (index + 1 == argc)
@@ -175,7 +176,13 @@ int main(int argc, char** argv) {
             homes = argv[index + 1];
         else if (!strcmp(argv[index], "--shell"))
             shell = argv[index + 1];
-        else if (!strcmp(argv[index], "--session")) {
+        else if (!strcmp(argv[index], "--services")) {
+            const char* services = argv[index + 1];
+            prepare_greeter = !strcmp(services, "desktop");
+            prepare_bus = prepare_greeter || !strcmp(services, "bus");
+            if (!prepare_bus && strcmp(services, "none"))
+                return 2;
+        } else if (!strcmp(argv[index], "--session")) {
             if (strcmp(argv[index + 1], "desktop") && strcmp(argv[index + 1], "shell"))
                 return 2;
             graphical = !strcmp(argv[index + 1], "desktop");
@@ -230,6 +237,25 @@ int main(int argc, char** argv) {
         int fresh = account_database_fresh(db);
         // Never fork an authentication worker while retaining the database lock.
         account_database_end(db);
+        if (!fresh && prepare_bus) {
+            // Complete boot-time account updates before authenticating against
+            // a database revision. Service restarts can then reuse the accounts.
+            char* prepare[] = {
+                "/usr/bin/accountctl", "--database", (char*)database, "--records", (char*)records,
+                "ensure-messagebus",   NULL};
+            int result = run(prepare, terminal, &original);
+            if (prepare_greeter && !stopped) {
+                prepare[5] = "ensure-sddm";
+                if (run(prepare, terminal, &original))
+                    result = 1;
+            }
+            if (result)
+                fputs("Desktop service accounts are unavailable. Console login is available.\n",
+                      stderr);
+            prepare_bus = 0;
+            if (stopped)
+                break;
+        }
         char name[ACCOUNT_NAME_MAX + 1], home[PATH_MAX];
         if (fresh) {
             dprintf(terminal, "Axiom64 first boot: create an administrator.\n");

@@ -22,6 +22,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#include "arch/x86_64/interrupts.hpp"
 #include "boot/boot.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/platform/poll.hpp"
@@ -57,16 +58,39 @@ extern "C" [[noreturn]] void ap_enter_stack(uint64_t stack_top, void* state);
 namespace {
 constexpr unsigned ap_timeout_ticks = 200;
 constexpr unsigned ap_stack_pages = 4, ap_fault_pages = 2;
+constexpr unsigned ap_wakeups = 2, ap_wakeup_timeout_ticks = 20;
 
 struct ApplicationProcessor {
     uint64_t stack = 0;
     unsigned slot = 0;
+    uint32_t expected_apic_id = 0;
     uint32_t observed_apic_id = 0;
     bool entered = false;
     bool local_tables = false;
+    bool wakeup_ready = false;
+    unsigned wakeups = 0;
 };
 
 ApplicationProcessor application_processors[max_boot_processors];
+
+void record_wakeup(uint32_t apic_id) {
+    for (auto& state : application_processors)
+        if (state.stack && state.expected_apic_id == apic_id) {
+            __atomic_fetch_add(&state.wakeups, 1, __ATOMIC_RELEASE);
+            return;
+        }
+}
+
+unsigned probe_wakeups(const ApplicationProcessor& state) {
+    for (unsigned count = 1; count <= ap_wakeups; ++count) {
+        if (!interrupt_send_ipi(state.expected_apic_id) ||
+            !DevicePoll::wait(
+                [&] { return __atomic_load_n(&state.wakeups, __ATOMIC_ACQUIRE) >= count; },
+                ap_wakeup_timeout_ticks))
+            break;
+    }
+    return __atomic_load_n(&state.wakeups, __ATOMIC_ACQUIRE);
+}
 
 uint32_t current_apic_id() {
     constexpr unsigned apic_base = 0x1b, x2apic = 1 << 10, x2apic_id = 0x802;
@@ -87,6 +111,7 @@ uint32_t current_apic_id() {
 
 extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
     auto state = static_cast<ApplicationProcessor*>(argument);
+    activate_kernel_memory();
     const auto stack_bottom = uint64_t(physical(state->stack));
     const auto stack_top = stack_bottom + ap_stack_pages * page_size;
     const auto fault_top = stack_top + ap_fault_pages * page_size;
@@ -95,7 +120,13 @@ extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
     state->observed_apic_id = current_apic_id();
     state->local_tables = current_stack >= stack_bottom && current_stack < stack_top &&
                           arch_init_secondary_tables(state->slot, stack_top, fault_top);
+    state->wakeup_ready = state->local_tables &&
+                          state->observed_apic_id == state->expected_apic_id &&
+                          interrupt_enable_secondary_ipi();
     __atomic_store_n(&state->entered, true, __ATOMIC_RELEASE);
+    if (state->wakeup_ready)
+        while (__atomic_load_n(&state->wakeups, __ATOMIC_ACQUIRE) < ap_wakeups)
+            asm volatile("sti; hlt; cli" ::: "memory");
     // Device interrupts and the scheduler still belong to the BSP.
     for (;;)
         asm volatile("hlt");
@@ -142,8 +173,11 @@ void boot_probe_application_processors() {
             log("SMP: application processor stack allocation failed\n");
             return;
         }
-        application_processors[i] = {.stack = stack, .slot = i};
+        application_processors[i] = {
+            .stack = stack, .slot = i, .expected_apic_id = response->cpus[i]->lapic_id};
     }
+    if (response->cpu_count > 1 && !interrupt_prepare_ipi(record_wakeup))
+        log("SMP: IPI transport unavailable\n");
     for (unsigned i = 0; i < response->cpu_count; ++i) {
         auto cpu = response->cpus[i];
         if (cpu->lapic_id == response->bsp_lapic_id)
@@ -180,6 +214,9 @@ void boot_probe_application_processors() {
             log("SMP: application processor apic=%u entered\n", uint64_t(cpu->lapic_id));
             log("SMP: application processor apic=%u stack, TSS, IDT and syscall entry ready\n",
                 uint64_t(cpu->lapic_id));
+            const unsigned wakeups = state.wakeup_ready ? probe_wakeups(state) : 0;
+            log("SMP: application processor apic=%u wake interrupts=%u\n", uint64_t(cpu->lapic_id),
+                uint64_t(wakeups));
         }
     }
     log("SMP: present=%u bsp=%u application_processors=%u\n", response->cpu_count,

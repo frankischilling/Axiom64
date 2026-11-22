@@ -99,6 +99,7 @@ int64_t device_ioctl(Handle*, uint64_t, uint64_t);
 int64_t framebuffer_map(AddressSpace&, uint64_t, size_t, int, uint64_t);
 
 void devices_poll();
+void usb_keyboard_event(unsigned code, bool pressed);
 
 void terminal_exit(Task*);
 } // namespace ax

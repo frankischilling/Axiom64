@@ -74,6 +74,9 @@ python3 scripts/nvme_install_pxe.py build/axiom64-install-pxe \
     --address 192.168.100.200/24 --client 192.168.100.3
 ```
 
+Add `--usb-keyboard` for a boot-protocol USB keyboard connected directly to
+the xHCI controller.
+
 Point TFTP to the maintenance tree and choose **IPv4 PXE**. The guest generates
 its host key on this boot and displays the fingerprint on the firmware
 framebuffer and serial console. Check

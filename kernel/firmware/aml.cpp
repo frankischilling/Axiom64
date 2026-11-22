@@ -31,6 +31,7 @@ namespace ax::Acpi {
 namespace {
 
 constexpr unsigned max_depth = 16;
+constexpr unsigned max_evaluation_depth = 48;
 constexpr uint8_t root_prefix = 0x5c, parent_prefix = 0x5e;
 
 constexpr uint32_t name_segment(const char (&s)[5]) {
@@ -243,20 +244,52 @@ bool region_operand(Cursor& stream, unsigned depth = 0) {
     }
 }
 
-enum class Kind : uint8_t { Scope, Device, Data, Method, Opaque, Region, PciField, MemoryField };
+unsigned buffer_field_width(unsigned opcode) {
+    switch (opcode) {
+    case 0x8a:
+        return 32; // CreateDWordField
+    case 0x8b:
+        return 16; // CreateWordField
+    case 0x8c:
+        return 8; // CreateByteField
+    case 0x8d:
+        return 1; // CreateBitField
+    case 0x8f:
+        return 64; // CreateQWordField
+    default:
+        return 0;
+    }
+}
 
-struct Object {
-    Path path;
-    Cursor content;
-    uint64_t integer;
-    Kind kind;
-    unsigned arguments;
-    bool assigned;
-    const Object* region = nullptr;
-    bool firmware_lock = false;
-    uint8_t access_bytes = 0;
+uint64_t read_buffer_bits(const uint8_t* data, uint64_t offset, unsigned length) {
+    uint64_t result = 0;
+    for (unsigned i = 0; i < length; ++i) {
+        const auto bit = offset + i;
+        result |= uint64_t((data[bit / 8] >> (bit % 8)) & 1) << i;
+    }
+    return result;
+}
+
+void write_buffer_bits(uint8_t* data, uint64_t offset, unsigned length, uint64_t value) {
+    for (unsigned i = 0; i < length; ++i) {
+        const auto bit = offset + i;
+        const uint8_t mask = 1u << (bit % 8);
+        auto& byte = data[bit / 8];
+        byte = (byte & ~mask) | ((value >> i) & 1 ? mask : 0);
+    }
+}
+
+enum class Kind : uint8_t {
+    Scope,
+    Device,
+    Data,
+    Method,
+    Opaque,
+    Region,
+    PciField,
+    MemoryField,
+    BufferField
 };
-
 enum class Type : uint8_t {
     None,
     Integer,
@@ -265,7 +298,20 @@ enum class Type : uint8_t {
     Device,
     String,
     Reference,
+    ObjectReference,
     BufferField
+};
+
+struct Object {
+    Path path;
+    Cursor content;
+    uint64_t integer;
+    Kind kind;
+    unsigned arguments;
+    Type assigned;
+    const Object* region = nullptr;
+    bool firmware_lock = false;
+    uint8_t access_bytes = 0;
 };
 
 struct Value {
@@ -275,9 +321,15 @@ struct Value {
     const Object* object;
     Value* entries = nullptr;
     uint8_t* bytes = nullptr;
+
+    bool is_reference() const {
+        return type == Type::Reference || type == Type::ObjectReference;
+    }
 };
 
 struct Frame {
+    enum class LoopControl { none, stop, next };
+
     struct Named {
         uint32_t name;
         Value value;
@@ -288,6 +340,8 @@ struct Frame {
     Value locals[8]{};
     Named names[8]{};
     unsigned named = 0;
+    unsigned loops = 0;
+    LoopControl loop_control = LoopControl::none;
 
     Value* find(const Name& name) {
         if (name.absolute || name.parents || name.path.count != 1)
@@ -328,6 +382,7 @@ struct Namespace {
     unsigned steps;
     unsigned used_values;
     unsigned used_bytes;
+    unsigned persistent_bytes;
     uint64_t integer_mask;
     const PciBridges* bridges;
     PciConfigRead read_pci;
@@ -385,13 +440,14 @@ struct Namespace {
         auto& entry = index_slot(path);
         if (entry)
             return false;
-        objects[count++] = {path, content, 0, kind, arguments, false};
+        objects[count++] = {path, content, 0, kind, arguments, Type::None};
         entry = uint16_t(count);
         return true;
     }
 
     bool load(Cursor stream, const Path& scope, unsigned depth);
     bool load_fields(Cursor, const Path&);
+    bool declare_buffer_field(Cursor&, const Path&, unsigned opcode, unsigned depth);
     bool field_address(const Object&, ConfigField&, unsigned depth);
     bool read_field(const Object&, Value&, unsigned depth);
     bool read_memory_field(const Object&, Value&, unsigned depth);
@@ -410,10 +466,21 @@ struct Namespace {
             return read_field(object, result, depth);
         if (object.kind == Kind::MemoryField)
             return read_memory_field(object, result, depth);
+        if (object.kind == Kind::BufferField) {
+            const auto number =
+                read_buffer_bits(object.region->content.next, object.integer, object.arguments);
+            result = {Type::Integer, number & integer_mask, {}, nullptr};
+            return true;
+        }
         if (object.kind != Kind::Data)
             return false;
-        if (object.assigned) {
+        if (object.assigned == Type::Integer) {
             result = {Type::Integer, object.integer, {}, nullptr};
+            return true;
+        }
+        if (object.assigned == Type::Buffer) {
+            result = {Type::Buffer, 0,       object.content,
+                      nullptr,      nullptr, const_cast<uint8_t*>(object.content.next)};
             return true;
         }
         Cursor stream = object.content;
@@ -486,6 +553,14 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
                 return false;
             break;
         }
+        case 0x8a: // CreateDWordField
+        case 0x8b: // CreateWordField
+        case 0x8c: // CreateByteField
+        case 0x8d: // CreateBitField
+        case 0x8f: // CreateQWordField
+            if (!read_nvs || !declare_buffer_field(stream, scope, opcode, depth + 1))
+                return false;
+            break;
         case 0x10:   // Scope
         case 0x14:   // Method
         case 0x5b82: // Device
@@ -571,7 +646,7 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
     unsigned access = flags & 15;
     field.skip(1);
     uint64_t offset = 0;
-    const uint64_t limit = (system_memory ? 65536 : 4096) * 8;
+    const uint64_t limit = system_memory ? UINT64_MAX : 4096 * 8;
     const unsigned integer_bits = integer_mask == UINT32_MAX ? 32 : 64;
     while (field.left) {
         auto term = field.peek();
@@ -618,6 +693,48 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
     return true;
 }
 
+bool Namespace::declare_buffer_field(Cursor& stream, const Path& scope, unsigned opcode,
+                                     unsigned depth) {
+    const unsigned values_before = used_values, bytes_before = used_bytes;
+    Name source, name;
+    Path path;
+    Value index_value{}, buffer{};
+    if (!read_name(stream, source) || !source.path.count ||
+        !evaluate(stream, scope, nullptr, index_value, depth + 1) ||
+        index_value.type != Type::Integer || !read_name(stream, name) || !name.path.count ||
+        !append(scope, name, path))
+        return false;
+    auto* backing = lookup(scope, source);
+    if (!backing || backing->kind != Kind::Data || !value(*backing, buffer, depth + 1) ||
+        buffer.type != Type::Buffer)
+        return false;
+    const unsigned width = buffer_field_width(opcode);
+    const unsigned scale = width == 1 ? 1 : 8;
+    if (index_value.number > UINT64_MAX / scale || buffer.content.left > UINT64_MAX / 8)
+        return false;
+    const uint64_t offset = index_value.number * scale;
+    const uint64_t bits = buffer.content.left * 8;
+    if (offset > bits || width > bits - offset)
+        return false;
+    if (backing->assigned != Type::Buffer) {
+        if (buffer.content.left > sizeof(buffers) - used_bytes - persistent_bytes)
+            return false;
+        persistent_bytes += unsigned(buffer.content.left);
+        auto* copy = buffers + sizeof(buffers) - persistent_bytes;
+        memcpy(copy, buffer.content.next, buffer.content.left);
+        backing->content = {copy, buffer.content.left};
+        backing->assigned = Type::Buffer;
+    }
+    if (!add(path, Kind::BufferField, {}, width))
+        return false;
+    auto& field = objects[count - 1];
+    field.integer = offset;
+    field.region = backing;
+    used_values = values_before;
+    used_bytes = bytes_before;
+    return true;
+}
+
 bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value input,
                       unsigned depth) {
     unsigned target = stream.peek();
@@ -628,7 +745,7 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
     if (target == 0x88) {
         Value reference{};
         if (link_evaluation || !evaluate(stream, scope, frame, reference, depth + 1) ||
-            reference.type != Type::Reference || input.type == Type::Reference)
+            reference.type != Type::Reference || input.is_reference())
             return false;
         *reference.entries = input;
         return true;
@@ -652,11 +769,17 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
     auto* object = lookup(scope, name);
     if (object && object->kind == Kind::PciField)
         return stage_field(*object, input, depth + 1);
+    if (object && object->kind == Kind::BufferField && !link_evaluation &&
+        input.type == Type::Integer) {
+        auto* bytes = const_cast<uint8_t*>(object->region->content.next);
+        write_buffer_bits(bytes, object->integer, object->arguments, input.number);
+        return true;
+    }
     Value old{};
     if (link_evaluation || input.type != Type::Integer || !object || object->kind != Kind::Data ||
         !value(*object, old, depth + 1) || old.type != Type::Integer)
         return false;
-    object->assigned = true;
+    object->assigned = Type::Integer;
     object->integer = input.number;
     return true;
 }
@@ -708,9 +831,34 @@ bool integer_result(unsigned opcode, uint64_t left, uint64_t right, uint64_t& re
     return true;
 }
 
+uint64_t explicit_integer(Cursor string, uint64_t maximum) {
+    while (string.peek() == ' ' || (string.peek() >= '\t' && string.peek() <= '\r'))
+        string.skip(1);
+    unsigned radix = 10;
+    if (string.left >= 2 && string.next[0] == '0' &&
+        (string.next[1] == 'x' || string.next[1] == 'X')) {
+        radix = 16;
+        string.skip(2);
+    }
+    uint64_t result = 0;
+    while (string.left) {
+        const unsigned character = string.peek();
+        unsigned digit = radix;
+        if (character >= '0' && character <= '9')
+            digit = character - '0';
+        else if ((character | 32) >= 'a' && (character | 32) <= 'f')
+            digit = (character | 32) - 'a' + 10;
+        if (digit >= radix || result > (maximum - digit) / radix)
+            break;
+        result = result * radix + digit;
+        string.skip(1);
+    }
+    return result;
+}
+
 bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value& result,
                          unsigned depth) {
-    if (depth >= max_depth || !steps)
+    if (depth >= max_evaluation_depth || !steps)
         return false;
     --steps;
     uint64_t number;
@@ -729,6 +877,31 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         return result.type != Type::None && stream.skip(1);
     }
     switch (opcode) {
+    case 0x5b: { // CondRefOf
+        uint64_t extended;
+        Name source;
+        if (!stream.skip(1) || !stream.read(1, extended) || extended != 0x12 ||
+            !read_name(stream, source) || !source.path.count)
+            return false;
+        auto* local = frame ? frame->find(source) : nullptr;
+        const auto* object = local ? nullptr : lookup(scope, source);
+        const bool present = local || object;
+        if (present) {
+            const Value reference = local ? Value{Type::Reference, 0, {}, nullptr, local}
+                                          : Value{Type::ObjectReference, 0, {}, object};
+            if (!store(stream, scope, frame, reference, depth + 1))
+                return false;
+        } else if (frame && stream.peek() >= 0x60 && stream.peek() <= 0x67) {
+            stream.skip(1);
+        } else {
+            Name target;
+            if (!read_name(stream, target) ||
+                (!target.path.count && (target.absolute || target.parents)))
+                return false;
+        }
+        result = {Type::Integer, present ? integer_mask : 0, {}, nullptr};
+        return true;
+    }
     case 0x0d: {
         stream.skip(1);
         Cursor text = stream;
@@ -737,20 +910,24 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         result = {Type::String, 0, {text.next, text.left - stream.left}, nullptr};
         return stream.skip(1);
     }
-    case 0x11:
-        if (!stream.skip(1) || !stream.block(block) || !integer(block, number) ||
-            number != block.left)
+    case 0x11: { // Buffer
+        Value length{};
+        if (!stream.skip(1) || !stream.block(block) ||
+            !evaluate(block, scope, frame, length, depth + 1) || length.type != Type::Integer)
             return false;
+        number = max(length.number, uint64_t(block.left));
         result = {Type::Buffer, 0, block, nullptr};
-        if (frame) {
-            if (number > sizeof(buffers) - used_bytes)
+        if (frame || number != block.left) {
+            if (number > sizeof(buffers) - used_bytes - persistent_bytes)
                 return false;
             result.bytes = buffers + used_bytes;
             used_bytes += unsigned(number);
-            memcpy(result.bytes, block.next, number);
-            result.content.next = result.bytes;
+            memcpy(result.bytes, block.next, block.left);
+            memset(result.bytes + block.left, 0, number - block.left);
+            result.content = {result.bytes, size_t(number)};
         }
         return true;
+    }
     case 0x12: {
         if (!stream.skip(1) || !stream.block(block) || !block.read(1, number) ||
             number > sizeof(values) / sizeof(*values) - used_values)
@@ -778,8 +955,11 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         return store(target, scope, frame, result, depth + 1);
     }
     case 0x83: // DerefOf
-        if (!stream.skip(1) || !evaluate(stream, scope, frame, result, depth + 1) ||
-            result.type != Type::Reference || result.entries->type == Type::Reference)
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, result, depth + 1))
+            return false;
+        if (result.type == Type::ObjectReference)
+            return value(*result.object, result, depth + 1);
+        if (result.type != Type::Reference || result.entries->is_reference())
             return false;
         result = *result.entries;
         return result.type != Type::None;
@@ -790,6 +970,23 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
             index.type != Type::Integer || index.number >= package.number)
             return false;
         result = {Type::Reference, 0, {}, nullptr, package.entries + index.number};
+        return store(stream, scope, frame, result, depth + 1);
+    }
+    case 0x99: { // ToInteger
+        Value input{};
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, input, depth + 1))
+            return false;
+        if (input.type == Type::Integer)
+            number = input.number;
+        else if (input.type == Type::String)
+            number = explicit_integer(input.content, integer_mask);
+        else if (input.type == Type::Buffer && input.content.left) {
+            const unsigned width = integer_mask == UINT32_MAX ? 4 : 8;
+            if (!input.content.read(min(size_t(width), input.content.left), number))
+                return false;
+        } else
+            return false;
+        result = {Type::Integer, number & integer_mask, {}, nullptr};
         return store(stream, scope, frame, result, depth + 1);
     }
     case 0x72:   // Add
@@ -855,9 +1052,10 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
 
 bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& result,
                         unsigned depth) {
-    if (depth >= max_depth)
+    if (depth >= max_evaluation_depth)
         return false;
-    while (stream.left && result.type == Type::None) {
+    while (stream.left && result.type == Type::None &&
+           frame.loop_control == Frame::LoopControl::none) {
         if (!steps)
             return false;
         --steps;
@@ -902,6 +1100,7 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
             Cursor loop;
             if (!stream.block(loop))
                 return false;
+            ++frame.loops;
             while (result.type == Type::None) {
                 Cursor body = loop;
                 Value test{};
@@ -911,15 +1110,29 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
                     break;
                 if (!execute(body, scope, frame, result, depth + 1))
                     return false;
+                const auto control = frame.loop_control;
+                frame.loop_control = Frame::LoopControl::none;
+                if (control == Frame::LoopControl::stop)
+                    break;
             }
+            --frame.loops;
             break;
         }
+        case 0x9f: // Continue
+        case 0xa5: // Break
+            if (!frame.loops)
+                return false;
+            frame.loop_control =
+                opcode == 0x9f ? Frame::LoopControl::next : Frame::LoopControl::stop;
+            break;
         case 0xa3: // NoOp
             break;
         case 0xa4: // Return
             return evaluate(stream, scope, &frame, result, depth + 1) &&
-                   result.type != Type::None && result.type != Type::Reference;
+                   result.type != Type::None && !result.is_reference();
         case 0x70:   // Store
+        case 0x5b:   // CondRefOf
+        case 0x99:   // ToInteger
         case 0x72:   // Add
         case 0x75:   // Increment
         case 0x79:   // ShiftLeft
@@ -1274,7 +1487,7 @@ bool pci_root_id(Value id) {
 }
 
 bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth) {
-    if (depth >= max_depth)
+    if (depth >= max_evaluation_depth)
         return false;
     const auto* region = field.region;
     Cursor operands = region->content;
@@ -1380,11 +1593,7 @@ bool Namespace::read_memory_field(const Object& field, Value& result, unsigned d
     if (offset >= length.number || bytes > length.number - offset ||
         !read_nvs(base.number + offset, data, bytes, field.firmware_lock))
         return false;
-    uint64_t number = 0;
-    for (unsigned i = 0; i < bits; ++i) {
-        const unsigned bit = shift + i;
-        number |= uint64_t((data[bit / 8] >> (bit % 8)) & 1) << i;
-    }
+    const uint64_t number = read_buffer_bits(data, shift, bits);
     result = {Type::Integer, number & integer_mask, {}, nullptr};
     return true;
 }
@@ -1637,6 +1846,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->steps = 32768;
     space->used_values = 0;
     space->used_bytes = 0;
+    space->persistent_bytes = 0;
     space->integer_mask = blocks.dsdt.table && blocks.dsdt.length >= 36 && blocks.dsdt.table[8] >= 2
                               ? UINT64_MAX
                               : UINT32_MAX;

@@ -629,6 +629,98 @@ void diagnostic_pci_cases() {
            pci_word_reads == 2);
     std::puts("ACPI_DIAGNOSTIC_PCI_PASS word_access parent_scope absent_function");
 }
+
+void firmware_control_cases() {
+    using namespace ax::Acpi;
+    auto inspect = [](const Bytes& body) {
+        const auto crs =
+            sequence({address_window(0x87, 0x0c, 1, 0xfe000000, 0xfe000fff, 0x1000), {0x79, 0}});
+        const auto status = block({0x14}, sequence({name("_STA"), {0}, body}));
+        const auto root =
+            block({0x5b, 0x82}, sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}),
+                                          buffer("_CRS", crs), status}));
+        auto table = definition(
+            sequence({data("MARK", {0x0a, 42}),
+                      block({0xa0}, sequence({{0x5b, 0x12}, name("NONE"), {0, 0xfe}})),
+                      block({0xa0}, sequence({{0x5b, 0x12}, name("MARK"), {0}, root}))}));
+        table[8] = 2;
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        PciRootWindows windows{};
+        return decode_pci_root_windows(blocks, windows, {read_test_nvs}) && windows.count == 1;
+    };
+    const Bytes present{0xa4, 0x0a, 15};
+    const auto holds_reference =
+        sequence({{0x5b, 0x12},
+                  name("MARK"),
+                  {0x60, 0x5b, 0x12},
+                  name("NONE"),
+                  {0x60},
+                  block({0xa0}, sequence({{0x93, 0x83, 0x60, 0x0a, 42}, present})),
+                  {0xa4, 0}});
+    assert(inspect(holds_reference));
+
+    const auto number = block({0x11}, {0x0a, 3, 0x34, 0x12, 0});
+    for (const auto& input : {number, sequence({{0x0d}, name(" 0x1234"), {0}}),
+                              sequence({{0x0d}, name("4660"), {0}})}) {
+        const auto predicate = sequence({{0x93, 0x99}, input, {0, 0x0b, 0x34, 0x12}});
+        assert(inspect(sequence({block({0xa0}, sequence({predicate, present})), {0xa4, 0}})));
+    }
+
+    const auto loop = block({0xa2}, sequence({{1, 0x75, 0x61},
+                                              block({0xa0}, {0x93, 0x61, 1, 0x9f}),
+                                              block({0xa0}, {0x93, 0x61, 0x0a, 2, 0xa5}),
+                                              {0xa4, 0}}));
+    assert(inspect(sequence({{0x70, 0, 0x61}, loop, present})));
+    assert(!inspect(sequence({{0xa5}, present})));
+
+    auto nested = present;
+    for (unsigned i = 0; i < 20; ++i)
+        nested = sequence({block({0xa0}, {0}), block({0xa1}, nested)});
+    assert(inspect(nested));
+    for (unsigned i = 0; i < 40; ++i)
+        nested = sequence({block({0xa0}, {0}), block({0xa1}, nested)});
+    assert(!inspect(nested));
+    std::puts("ACPI_CONTROL_PROBES_PASS references integer_conversion loop_control depth_limit");
+}
+
+void namespace_buffer_fields() {
+    using namespace ax::Acpi;
+    const auto resource =
+        sequence({address_window(0x87, 0x0c, 1, 0xfe000000, 0xfe000fff, 0x1000), {0x79, 0}});
+    const auto status =
+        block({0x14},
+              sequence({name("_STA"),
+                        {0},
+                        block({0xa0}, sequence({{0x91}, name("WRD0"), name("BIT0"), {0xa4, 0}})),
+                        {0x70, 0x0b, 0xa4, 0xa5},
+                        name("WRD0"),
+                        {0x70, 1},
+                        name("BIT0"),
+                        block({0xa0},
+                              sequence({{0x93}, name("WRD0"), {0x0b, 0xa5, 0xa5, 0xa4, 0x0a, 15}})),
+                        {0xa4, 0}}));
+    auto inspect = [&](uint8_t offset) {
+        const auto word = sequence({{0x8b}, name("BUF0"), {0x0a, offset}, name("WRD0")});
+        const auto bit = sequence({{0x8d}, name("BUF0"), {0}, name("BIT0")});
+        const auto unrelated_region =
+            sequence({{0x5b, 0x80}, name("NVHM"), {0, 0, 0x0c, 0, 4, 3, 0}});
+        const auto unrelated_field = block(
+            {0x5b, 0x81}, sequence({name("NVHM"), {3, 0, 0x80, 0, 0xf0}, name("OPCE"), {32}}));
+        const auto table = definition(block(
+            {0x5b, 0x82},
+            sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}), unrelated_region,
+                      unrelated_field, data("BUF0", block({0x11}, {0x0a, 2})), word, bit, status,
+                      buffer("_CRS", resource)})));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        PciRootWindows windows{};
+        return decode_pci_root_windows(blocks, windows, {read_test_nvs}) && windows.count == 1;
+    };
+    assert(inspect(0));
+    assert(!inspect(1));
+    std::puts("ACPI_BUFFER_FIELDS_PASS persistent_bytes bounds overlapping_bit");
+}
 } // namespace
 
 int main() {
@@ -659,4 +751,6 @@ int main() {
     root_window_cases();
     nvs_field_cases();
     diagnostic_pci_cases();
+    firmware_control_cases();
+    namespace_buffer_fields();
 }

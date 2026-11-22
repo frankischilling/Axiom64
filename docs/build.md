@@ -120,6 +120,8 @@ size without assigning an address.
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and
 skip discovery if they cannot acquire the lock safely.
+The probes can follow conditional namespace references and hold firmware
+resource buffers in a private copy when AML declares writable fields.
 
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.

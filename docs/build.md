@@ -45,6 +45,10 @@ After `make image`, use `scripts/boot_media.py` to package the same kernel and
 initramfs for a raw virtual disk or a TFTP server. Disk packaging uses
 `dosfstools`, `mtools`, and `sfdisk` (`fdisk` on Ubuntu).
 
+The installed desktop profile also uses `glib-compile-schemas` and
+`update-mime-database`. Install `libglib2.0-bin` and `shared-mime-info` on
+Ubuntu or Debian before building that profile.
+
 ```sh
 python3 scripts/boot_media.py disk build/axiom64-boot.raw
 qemu-system-x86_64 -m 2G -serial stdio -boot order=c \

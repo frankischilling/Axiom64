@@ -18,6 +18,152 @@
       ]
     },
     {
+      "origin": "at-spi2-core",
+      "commit": "018d4847479d9e07f2f3c9e3b510204258d1a3cc",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/018d4847479d9e07f2f3c9e3b510204258d1a3cc/main/at-spi2-core/APKBUILD",
+      "recipe_sha256": "f03884e7615b7cfc4b698037c67e43fc4e0a4eeb275ea3950569599f7da5e623",
+      "files": [
+        {
+          "name": "at-spi2-core-2.56.5.tar.xz",
+          "sha512": "b495a9f7f8539c9d7a3929d8bdceb98ce0b8dac9ea735fa85aada6e1062658b7fff323c8e76a4ae34131febffa9664976f3e1e3e171154c0ff8e923c4db9d9e5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/at-spi2-core-2.56.5.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/018d4847479d9e07f2f3c9e3b510204258d1a3cc/main/at-spi2-core/at-spi2-core-2.56.5.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "avahi",
+      "commit": "05472661376698ae9474d0d23f337c9ca56822fc",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/APKBUILD",
+      "recipe_sha256": "a6fd8002338df111ca9db3831587f040d51a83abc073ad76d6d9c693bfb6d00b",
+      "files": [
+        {
+          "name": "avahi-0.8.tar.gz",
+          "sha512": "c6ba76feb6e92f70289f94b3bf12e5f5c66c11628ce0aeb3cadfb72c13a5d1a9bd56d71bdf3072627a76cd103b9b056d9131aa49ffe11fa334c24ab3b596c7de",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/avahi-0.8.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/avahi-0.8.tar.gz"
+          ]
+        },
+        {
+          "name": "CVE-2021-3468.patch",
+          "sha512": "743430a532b8ec246672cd0997b7831efc15c461cbfe0461faac5d6525293297efb7c06f759b2bcd71d1842ba165464fd334508534e6c247211d613061c49da5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2021-3468.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2021-3468.patch"
+          ]
+        },
+        {
+          "name": "CVE-2021-3502.patch",
+          "sha512": "9e4688ffd8e512c0f614fd24fff2a2a1c66e009069229a6f81dcd382edfff5a8635e0551533c7f9271973a87e62e199fdb34a5560dab27c0a328f531c94f757d",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2021-3502.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2021-3502.patch"
+          ]
+        },
+        {
+          "name": "CVE-2023-1981.patch",
+          "sha512": "6be9c7bdeb98828c55069b4570dd6ac87354ed59df6445683ed78a26e40fad194dbb745a5df32b0fc7abb9a393e655334a31833db996ccb39e71d8a801adea6a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2023-1981.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2023-1981.patch"
+          ]
+        },
+        {
+          "name": "CVE-2023-38469.patch",
+          "sha512": "7ebaa7220c72c8bc16d34fad54dc4dd173541e5e97f066b53b8c6e9af01a5e910eab1db998d34708af86a92329c65aa3a398f16279a7204117afd84362a3100c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2023-38469.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2023-38469.patch"
+          ]
+        },
+        {
+          "name": "CVE-2023-38470.patch",
+          "sha512": "ea593c570ea7ce133ef4e47a5557b4b1dccdd45bba87bd1e948409c7abdb394eeea2d2cda2bf2f5b720b2c3cf41aee2b6bb189b55b842077024aaf7947e1a3c6",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2023-38470.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2023-38470.patch"
+          ]
+        },
+        {
+          "name": "CVE-2023-38471.patch",
+          "sha512": "b69d63a0490447e3aa2c9f0179d9b76d49fb5d9cce6b02459c1ef561379217c9157790938def9775527c1109e21e99970434eb56ca61337b2c3df1c5a79ab5a1",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2023-38471.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2023-38471.patch"
+          ]
+        },
+        {
+          "name": "CVE-2023-38472.patch",
+          "sha512": "98e141a8f17303a235b926dda452f4b9671e11395ea70e4a7e2ea8c446fb52a84796de273fcc08c556c8b3895cf703b58e5ccc7dc15b3da4c28aa0f9ebaaa2b0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2023-38472.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2023-38472.patch"
+          ]
+        },
+        {
+          "name": "CVE-2023-38473.patch",
+          "sha512": "66f40c5ed8e771530c381c7c32ba47562b372b48a41af5aa3b972e350b77afac521934e2fc0d2122b1456f331920dd74bd9846d5efca39b9e3db7e47711e3695",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2023-38473.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2023-38473.patch"
+          ]
+        },
+        {
+          "name": "Fetch-build-db-from-upstream-git.patch",
+          "sha512": "302db5f4c8339b7f074aa4b2f2e8108e33e128db26f10a201a63bd09f9c2bde600929e586e00d7f7c448019eefbc3e97eb8b419079253f5f4fb60e477a577fa1",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/Fetch-build-db-from-upstream-git.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/Fetch-build-db-from-upstream-git.patch"
+          ]
+        },
+        {
+          "name": "build-db-Use-the-same-database-format-that-the-C-code-exp.patch",
+          "sha512": "e4e923dbaa0c729a8685b71f1487f337fd7c68b464b04643127a2f7a3a34b24f87869c9c185632229b25f350425ea979ddb329eda043548d55ae86f5c905dd11",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/build-db-Use-the-same-database-format-that-the-C-code-exp.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/build-db-Use-the-same-database-format-that-the-C-code-exp.patch"
+          ]
+        },
+        {
+          "name": "Add-hostname-dependency-to-avahi-daemon-service.patch",
+          "sha512": "b003e16ced0076a3ef8aa34333405265169b96f92d1ece648f0e70ae07c651383e02d8ad27d52665a07d1ced0bbcdbd281f74a9af26ec48c60f8909409bdbe43",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/Add-hostname-dependency-to-avahi-daemon-service.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/Add-hostname-dependency-to-avahi-daemon-service.patch"
+          ]
+        },
+        {
+          "name": "CVE-2024-52616.patch",
+          "sha512": "791b55527b8150fe7c88190e922f4617cf2fa5326183c8307281e0a3031ad40c9390dd4ccc5c49d790344b420b2be82117fd327b013446cf55593c51258e1399",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2024-52616.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2024-52616.patch"
+          ]
+        },
+        {
+          "name": "CVE-2024-52615.patch",
+          "sha512": "e20fa0ecd4469969b61d625de2d1db838afba12f1bcfa518e1dac96d2dd2eba353a91ee927dc7435e4ac5e83b03dda145ae64c2e4c40d65ed872e2dfb70b3dfc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2024-52615.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/CVE-2024-52615.patch"
+          ]
+        },
+        {
+          "name": "pkgconf.patch",
+          "sha512": "e0a9cfa2063e70916c7e1f8f8e1e40b2385271e359216a74270fbc8da05a7a46e53c2c484e3e1af201c4c1b1f1fb4046c5058ff90428972091c6863b1b5bcf2b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pkgconf.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/05472661376698ae9474d0d23f337c9ca56822fc/main/avahi/pkgconf.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "bash",
       "commit": "dfdce3cefb431614e410ac9bc3665d33ea45020c",
       "license": "GPL-3.0-or-later",
@@ -1162,6 +1308,63 @@
       ]
     },
     {
+      "origin": "cups",
+      "commit": "b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4",
+      "license": "Apache-2.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/APKBUILD",
+      "recipe_sha256": "dd9d323d1bd3f9de7d8439b4e784b253ef09542b8dd6799f19e4eeac2a527085",
+      "files": [
+        {
+          "name": "cups-2.4.18.tar.gz",
+          "sha512": "89f631b38cc5193d63ce253066784b766abd577b3406a16cf60547f0585a57aed937fe2fc0c4995a396ec856ba32b02e8026377af8d162c6428bfc00c2767c14",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cups-2.4.18.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/cups-2.4.18.tar.gz"
+          ]
+        },
+        {
+          "name": "cups.logrotate",
+          "sha512": "cf64211da59e79285f99d437c02fdd7db462855fb2920ec9563ba47bd8a9e5cbd10555094940ceedeb41ac805c4f0ddb9147481470112a11a76220d0298aef79",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cups.logrotate",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/cups.logrotate"
+          ]
+        },
+        {
+          "name": "cupsd.initd",
+          "sha512": "2c2683f755a220166b3a1653fdd1a6daa9718c8f0bbdff2e2d5e61d1133306260d63a83d3ff41619b5cf84c4913fae5822b79553e2822858f38fa3613f4c7082",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cupsd.initd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/cupsd.initd"
+          ]
+        },
+        {
+          "name": "cups-no-export-ssllibs.patch",
+          "sha512": "148eb01f0861e1cd0861a174a5c5262c49b079b27b972b4e90656b9b9357ec710e861604c30e897818f550e9c1cdcefcd8c8bc955ba4a333902a74cdd8dfb5a6",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cups-no-export-ssllibs.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/cups-no-export-ssllibs.patch"
+          ]
+        },
+        {
+          "name": "cups-nostrip.patch",
+          "sha512": "ca93cd1490e1f17d1ce3a8a5bcf7b9d46a3efaf0cb16c53fc2da779b4ac2eec46fa2a43d1e14d320d410e27618b34744c705a12ca7e7e91fcaee4196a28ac0f6",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cups-nostrip.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/cups-nostrip.patch"
+          ]
+        },
+        {
+          "name": "default-config-no-gssapi.patch",
+          "sha512": "c492f5e20a1bb73cf6bed86d0343659e839df4003aa1409bf608dd3ff05694d1e06ba26fd3786385d2c96dd668485dcef6cfee7f908416a2b125a8e30e82e670",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/default-config-no-gssapi.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4/main/cups/default-config-no-gssapi.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "dbus",
       "commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac",
       "license": "AFL-2.1 OR GPL-2.0-or-later",
@@ -1214,6 +1417,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/README.alpine",
             "https://raw.githubusercontent.com/alpinelinux/aports/a4670f2536a19d8d2dec70c884de496cfc6a89ac/main/dbus/README.alpine"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "desktop-file-utils",
+      "commit": "d219babac2540b2418a91177836c9490e1388683",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/d219babac2540b2418a91177836c9490e1388683/community/desktop-file-utils/APKBUILD",
+      "recipe_sha256": "28f14b3845b468914008bcd3f2c6c1cf27b696842ae197ddf6e8a542f3493127",
+      "files": [
+        {
+          "name": "desktop-file-utils-0.28.tar.xz",
+          "sha512": "1024172fcd37ace0660fd58195c0562b47f1ef8ed37f662b88048c295a388d1458d01f86799b34ec9e8b27a7ea441f98665f0d641c29cb5ecc3abd7da41230f0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/desktop-file-utils-0.28.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d219babac2540b2418a91177836c9490e1388683/community/desktop-file-utils/desktop-file-utils-0.28.tar.xz"
           ]
         }
       ]
@@ -1337,6 +1557,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/udev-postmount.initd",
             "https://raw.githubusercontent.com/alpinelinux/aports/8bac74716d06c84627ab02d101fd9d2bafd0a34c/main/eudev/udev-postmount.initd"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "exo",
+      "commit": "31e7aacc5ace446f28a537ed062e7cff27547587",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/31e7aacc5ace446f28a537ed062e7cff27547587/community/exo/APKBUILD",
+      "recipe_sha256": "92673ac27c4708563cd7aeb698b3861e129a3c99f4259a86c1818aacfa45f06f",
+      "files": [
+        {
+          "name": "exo-4.20.0.tar.bz2",
+          "sha512": "7481f47bb0c8eb5cdc8d7db3e67c1cdaa81e3ef0833281b5380f3eab41e3c2f7112a22b37a3ce305a052b261444fd9f11c130150663deb1b4a220a998321284b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/exo-4.20.0.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/31e7aacc5ace446f28a537ed062e7cff27547587/community/exo/exo-4.20.0.tar.bz2"
           ]
         }
       ]
@@ -1913,6 +2150,23 @@
       ]
     },
     {
+      "origin": "gdk-pixbuf",
+      "commit": "398a5aee3025ec8a4d0d761e448dc86ac777fa09",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/398a5aee3025ec8a4d0d761e448dc86ac777fa09/main/gdk-pixbuf/APKBUILD",
+      "recipe_sha256": "a84bf2b5efe08fcbe7c3577bc3ee403b72dcd42590d3708dca3e70672a77fc14",
+      "files": [
+        {
+          "name": "gdk-pixbuf-2.42.12.tar.xz",
+          "sha512": "ae9fcc9b4e8fd10a4c9bf34c3a755205dae7bbfe13fbc93ec4e63323dad10cc862df6a9e2e2e63c84ffa01c5e120a3be06ac9fad2a7c5e58d3dc6ba14d1766e8",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gdk-pixbuf-2.42.12.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/398a5aee3025ec8a4d0d761e448dc86ac777fa09/main/gdk-pixbuf/gdk-pixbuf-2.42.12.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "gettext",
       "commit": "215a26431d1b09c56cb2a9ffe10175feb9518fd8",
       "license": "LGPL-2.1-or-later",
@@ -2004,6 +2258,80 @@
       ]
     },
     {
+      "origin": "gnutls",
+      "commit": "1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/APKBUILD",
+      "recipe_sha256": "c8b833389f617eefc277cf3bb3980c9325d0b4ee4261fa70618502054e2567c5",
+      "files": [
+        {
+          "name": "gnutls-3.8.14.tar.xz",
+          "sha512": "d28911cb6176ada9d90e5611f065d8a56744cc63771ca73a0544f4cf07eb4e33c6c07debd3ef471ffe8fa0fbf327ff8393a998c95c64ddae788514adc5d8f266",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gnutls-3.8.14.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/gnutls-3.8.14.tar.xz"
+          ]
+        },
+        {
+          "name": "tests-certtool.patch",
+          "sha512": "fadfe4f451d6ae2f657117c9b647d2343db5cdab51dcf602c92428edbc178138e47b5b72d008eda93674ca476563d678a602eb9351f484504998f14105a67242",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/tests-certtool.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/tests-certtool.patch"
+          ]
+        },
+        {
+          "name": "gnutls-3.8.8-tests-ktls-skip-tls12-chachapoly.patch",
+          "sha512": "773e2c3f0b351c10e46e88d113b4a1719a3d554749a57c1f521f5160df6ebe52318e834c420c30b89a8a934e5e6502f2ada52450f64ffa3ef3d338cc52a892c3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gnutls-3.8.8-tests-ktls-skip-tls12-chachapoly.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/gnutls-3.8.8-tests-ktls-skip-tls12-chachapoly.patch"
+          ]
+        },
+        {
+          "name": "skip-meaningless-pthread-rwlock-test.patch",
+          "sha512": "566c32bf90a6a58062d003edd419051024a2e48c8c8c4b4baf8517bb504c45142d304d2476f187ae6c8039bd50e6173c1af9c8f3160553c911e3998e910231d1",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/skip-meaningless-pthread-rwlock-test.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/skip-meaningless-pthread-rwlock-test.patch"
+          ]
+        },
+        {
+          "name": "skip-test-thread-optim2_patch",
+          "sha512": "7bdb8443666ab0b3efdbba34f5a230d0d58988f744e1497bd86d4916e6a1d6bbf9ab43e86c891d892cbe73de32b6e2051714be5a3eb8f872043fe4b878aab58f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/skip-test-thread-optim2_patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/skip-test-thread-optim2_patch"
+          ]
+        },
+        {
+          "name": "test-ktls_keyupdate.sh_patch",
+          "sha512": "e3d2bc8096e70a6469ee47f12027a56d391603cc05b1aa854e1dad59d459bc458d1919e84d7e3e75fd6299b3dd9b73c7bd671503ccb58ccc05241159a3c9dcc8",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/test-ktls_keyupdate.sh_patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16/main/gnutls/test-ktls_keyupdate.sh_patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "gobject-introspection",
+      "commit": "b24c96508fe69b0260be1ceeac501436c4789a7e",
+      "license": "LGPL-2.0-or-later AND GPL-2.0-or-later AND MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/b24c96508fe69b0260be1ceeac501436c4789a7e/main/gobject-introspection/APKBUILD",
+      "recipe_sha256": "60afd9f88021b64a819444b3f9e6ebe8fcd2ce88ebdd62b5c34b774e865201c2",
+      "files": [
+        {
+          "name": "gobject-introspection-1.84.0.tar.xz",
+          "sha512": "764b5071472f93ed62bd64983c16fc4f73d4e20575d31eb475b40f4c6643080249aec4c5e9536d0ade719a99844cefa5a6e902b4d58e5644d0c0793212da3e5b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gobject-introspection-1.84.0.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/b24c96508fe69b0260be1ceeac501436c4789a7e/main/gobject-introspection/gobject-introspection-1.84.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "graphite2",
       "commit": "33283848034c9885d984c8e8697c645c57324938",
       "license": "LGPL-2.1-or-later OR MPL-1.1",
@@ -2029,6 +2357,56 @@
       ]
     },
     {
+      "origin": "gtk+3.0",
+      "commit": "39697851d8c158410602c93773d416258896281c",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/39697851d8c158410602c93773d416258896281c/main/gtk+3.0/APKBUILD",
+      "recipe_sha256": "52a753eb13c1b2161a572369392b903f0b7deadb0350eefd58e191e2f05dec68",
+      "files": [
+        {
+          "name": "gtk-3.24.50.tar.xz",
+          "sha512": "40db8b781372d45faebb571363a4919a3259e1bffd110eb91f11d33fcd175eaaf4a4241416dae3398bf0ce58a3d2a9e3dbee1a9153e4e673b45892044be6b9e5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gtk-3.24.50.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/39697851d8c158410602c93773d416258896281c/main/gtk+3.0/gtk-3.24.50.tar.xz"
+          ]
+        },
+        {
+          "name": "5628.patch",
+          "sha512": "b592559177c60e627940b8894aace41b058fe738d47ebb8bccdb4c9c35dd1750e1db7e153a6e5db61d2d4e95ddefd712fd734a1bbc4230a79c889f8adac96e1f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/5628.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/39697851d8c158410602c93773d416258896281c/main/gtk+3.0/5628.patch"
+          ]
+        },
+        {
+          "name": "events-Compress-touch-update-events.patch",
+          "sha512": "74e38bbdf8d8f84bd07c10b1d879d2ef5cc80ffcfc6bcbc3d916c4c4e9a10686e20c77bed4abb56d1eed463c644873ddd2500ef3028beb7db3b10cba3a658909",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/events-Compress-touch-update-events.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/39697851d8c158410602c93773d416258896281c/main/gtk+3.0/events-Compress-touch-update-events.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "gtk-layer-shell",
+      "commit": "7ae3c9a78e2484f2fd6f34a3b1bf608d54bd4c0e",
+      "license": "LGPL-3.0-or-later AND MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7ae3c9a78e2484f2fd6f34a3b1bf608d54bd4c0e/community/gtk-layer-shell/APKBUILD",
+      "recipe_sha256": "ff88602e90fad2391d66646381f1f131e40e019505c9a5c11aa98e35384fa67f",
+      "files": [
+        {
+          "name": "gtk-layer-shell-0.9.2.tar.gz",
+          "sha512": "7ecbefca73f3bcba709f2b5f4153203592cb345ebce8aee27e75365d615e9a8f66ec28f9d42bae8828da9427082b0df190e820593301a80ac8b730c61a75b708",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gtk-layer-shell-0.9.2.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7ae3c9a78e2484f2fd6f34a3b1bf608d54bd4c0e/community/gtk-layer-shell/gtk-layer-shell-0.9.2.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "harfbuzz",
       "commit": "c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83",
       "license": "MIT",
@@ -2041,6 +2419,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/harfbuzz-11.2.1.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83/main/harfbuzz/harfbuzz-11.2.1.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "hicolor-icon-theme",
+      "commit": "0d5b763d2fa803e7d71b4d2272a138842e4966fa",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/0d5b763d2fa803e7d71b4d2272a138842e4966fa/main/hicolor-icon-theme/APKBUILD",
+      "recipe_sha256": "8b11f22efc6bcf3588ce23521c505e05da4ee7bfcf5a23191bfa8f9ad5816d41",
+      "files": [
+        {
+          "name": "hicolor-icon-theme-0.18.tar.xz",
+          "sha512": "07db44fb6bec797445740832fa2b3ba56f5f335834161a26a4e5f767a8c45c0885ef1189e887b56752bd20c4b1aac101c5d4a395df4177cd3817ee5105db0d37",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/hicolor-icon-theme-0.18.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/0d5b763d2fa803e7d71b4d2272a138842e4966fa/main/hicolor-icon-theme/hicolor-icon-theme-0.18.tar.xz"
           ]
         }
       ]
@@ -2300,6 +2695,23 @@
       ]
     },
     {
+      "origin": "libexif",
+      "commit": "de8de479d6afadaebd300120df3af802c87bc193",
+      "license": "LGPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/de8de479d6afadaebd300120df3af802c87bc193/community/libexif/APKBUILD",
+      "recipe_sha256": "a757d2603fbeb0c779e579b1e60a17f3763ccb67011a3af899a77fd1414f740e",
+      "files": [
+        {
+          "name": "libexif-0.6.25.tar.bz2",
+          "sha512": "8dbf56c85f18157affde0e8500b847424ec508e7dfd40ff9f8d85816d45eccc4b70ebca891550a10824641bbd63f69050f9e24be82bcbfa9e8acda2f123ce848",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libexif-0.6.25.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/de8de479d6afadaebd300120df3af802c87bc193/community/libexif/libexif-0.6.25.tar.bz2"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libffi",
       "commit": "be5e49159a2ccca93a3290af3d8ab25443523363",
       "license": "MIT",
@@ -2334,6 +2746,40 @@
       ]
     },
     {
+      "origin": "libgtop",
+      "commit": "6313b174fa1e738932aebfc3caea2a24b0a5970e",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/6313b174fa1e738932aebfc3caea2a24b0a5970e/community/libgtop/APKBUILD",
+      "recipe_sha256": "93bb3f31d4477dc5cae8b3e898f7e6cda6a50f9c3244be5a5b7f385d345773fa",
+      "files": [
+        {
+          "name": "libgtop-2.41.3.tar.xz",
+          "sha512": "17eca4214229b7b4e40ef572ea61feb60829f3db7870db2c474a813e59c4723d67da8e1c2d22be6ab3b19a6beeab05edbc4833a115196c2288f9a7a0de3d6ef2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libgtop-2.41.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6313b174fa1e738932aebfc3caea2a24b0a5970e/community/libgtop/libgtop-2.41.3.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libgudev",
+      "commit": "12c1f57207b39cb7ea0076afd63bd557e1a06a05",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/12c1f57207b39cb7ea0076afd63bd557e1a06a05/community/libgudev/APKBUILD",
+      "recipe_sha256": "02b00c414b9a01f51eff499394c3166e23a205c540c9b1724873ba808e37798a",
+      "files": [
+        {
+          "name": "libgudev-238.tar.xz",
+          "sha512": "684061b4fc64a6ea3dd1ac34835279330c7eb2728fad6e3a9d34c0d501be3103d0f96c6d6866c8e257a0027e4f78a6314cb8ba81cda5ddf42ee9ea1a576ec5dc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libgudev-238.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/12c1f57207b39cb7ea0076afd63bd557e1a06a05/community/libgudev/libgudev-238.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libice",
       "commit": "d4941e833167c30aa1172e6d8420d084698254ab",
       "license": "X11",
@@ -2346,6 +2792,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libICE-1.1.2.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/d4941e833167c30aa1172e6d8420d084698254ab/main/libice/libICE-1.1.2.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libidn2",
+      "commit": "1cdcdd0eccbee1f60078417a7aaf83f92f6e6754",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/1cdcdd0eccbee1f60078417a7aaf83f92f6e6754/main/libidn2/APKBUILD",
+      "recipe_sha256": "a4e1b54ec3f7639ce5cd0a1c228a782079d1bae49216fab02c7d8c5d788c13f9",
+      "files": [
+        {
+          "name": "libidn2-2.3.7.tar.gz",
+          "sha512": "eab5702bc0baed45492f8dde43a4d2ea3560ad80645e5f9e0cfa8d3b57bccd7fd782d04638e000ba07924a5d9f85e760095b55189188c4017b94705bef9b4a66",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libidn2-2.3.7.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1cdcdd0eccbee1f60078417a7aaf83f92f6e6754/main/libidn2/libidn2-2.3.7.tar.gz"
           ]
         }
       ]
@@ -2436,6 +2899,23 @@
       ]
     },
     {
+      "origin": "libnotify",
+      "commit": "75ee19d34dbc755c608097fb24a3b064260740d9",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/75ee19d34dbc755c608097fb24a3b064260740d9/community/libnotify/APKBUILD",
+      "recipe_sha256": "3752445a456ff16bf58fbae32a7d9ac895b5e8249e034cad16d8e29b10acf774",
+      "files": [
+        {
+          "name": "libnotify-0.8.6.tar.xz",
+          "sha512": "6e566f5907cfd7d623d58f5aa22d547271feb7e52bf28e463ecb98a763d6f7ad38cacc473d65e6f4a7e44c0514ab008078042e56a8b61edb719b9a1d192c2e34",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libnotify-0.8.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/75ee19d34dbc755c608097fb24a3b064260740d9/community/libnotify/libnotify-0.8.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libpciaccess",
       "commit": "9bda3b34ae265f5b18e3e0de94261e63dbe8d586",
       "license": "X11",
@@ -2498,6 +2978,40 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libSM-1.2.5.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/b1ad94dc4022b4397665817e1dabc08afe2773e2/main/libsm/libSM-1.2.5.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libtasn1",
+      "commit": "720f0a85f776c2020d1c4f420b849673cfc1213f",
+      "license": "LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/720f0a85f776c2020d1c4f420b849673cfc1213f/main/libtasn1/APKBUILD",
+      "recipe_sha256": "23c9685d8b0d19f0f9b09e7a9c87bc10ef8cdefd47688f3b9aa7afdf4410d840",
+      "files": [
+        {
+          "name": "libtasn1-4.21.0.tar.gz",
+          "sha512": "6a581c4c072b168bf29a0dec7e59a9329a798e392b7d1033791d0e3166a5d1164e2a7065373a84018d500a01563657900c318b1fd437c227c3174b754f9998d3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libtasn1-4.21.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/720f0a85f776c2020d1c4f420b849673cfc1213f/main/libtasn1/libtasn1-4.21.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libunistring",
+      "commit": "22200a467cea998010743cc288889dbde0496d4a",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/22200a467cea998010743cc288889dbde0496d4a/main/libunistring/APKBUILD",
+      "recipe_sha256": "3f0eda7e7627fb980e7b8a823b0b7758f4c6ce2eca8517b9d46b88b6ecfda0b3",
+      "files": [
+        {
+          "name": "libunistring-1.3.tar.xz",
+          "sha512": "864d42b1d4ae4941fe5c8327d6726ab8e3a35d2d5f9d25ce4859a72ab2f549a7b68f58638cf8767d863f58161d1a4053495d185860964a942d6750e42facf931",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libunistring-1.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/22200a467cea998010743cc288889dbde0496d4a/main/libunistring/libunistring-1.3.tar.xz"
           ]
         }
       ]
@@ -2588,6 +3102,23 @@
       ]
     },
     {
+      "origin": "libxcomposite",
+      "commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxcomposite/APKBUILD",
+      "recipe_sha256": "d6d2084ddba1bfe60fc2befd1af4c59ad12f11b48cbaa19d8eed61e7b5014050",
+      "files": [
+        {
+          "name": "libXcomposite-0.4.6.tar.xz",
+          "sha512": "f35a0da8f9f22fd788eee01209557fe3a1b1abdc9744f76330ba42b21b6e3af5464ca4451c33415856417c30da5aa5624e3707980c644327249bfeda5a62a59b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libXcomposite-0.4.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxcomposite/libXcomposite-0.4.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libxcursor",
       "commit": "1d6d12ed6f5cc1fc2e382d0bdc6fc90712745e8a",
       "license": "MIT",
@@ -2622,6 +3153,23 @@
       ]
     },
     {
+      "origin": "libxdamage",
+      "commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxdamage/APKBUILD",
+      "recipe_sha256": "827a8562ea6c43e094df8d37cea2a0a1819d740c0aa4c0eca5eaddebd677000e",
+      "files": [
+        {
+          "name": "libXdamage-1.1.6.tar.xz",
+          "sha512": "624dcefa1c79064569df952892f7f1351dc19ad338ce73d1a57041e406cb3e18abe531bab352b93d1f0f5c9b5c6b2652cc84a8f1fbfcbba648343812695a8acb",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libXdamage-1.1.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxdamage/libXdamage-1.1.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libxdmcp",
       "commit": "614e9166706cec427fc3d907b8d981390a42e088",
       "license": "MIT",
@@ -2651,6 +3199,48 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libXext-1.3.6.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxext/libXext-1.3.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libxfce4ui",
+      "commit": "4c3864c9445726bd07a4a7f9e9cf47e4a7631049",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/4c3864c9445726bd07a4a7f9e9cf47e4a7631049/community/libxfce4ui/APKBUILD",
+      "recipe_sha256": "0575823d9a751841e47b63f744a04742e431415fae64482dc5d1d3796410257e",
+      "files": [
+        {
+          "name": "libxfce4ui-4.20.1.tar.bz2",
+          "sha512": "f530e14302a4e11cc04111d5488ad4b8727bc016bfdef5fd29e1098209fd5e886dde3102bd0feab7c49daff964a4fa208b67dd83be806171f832f09e27ba40a7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libxfce4ui-4.20.1.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/4c3864c9445726bd07a4a7f9e9cf47e4a7631049/community/libxfce4ui/libxfce4ui-4.20.1.tar.bz2"
+          ]
+        },
+        {
+          "name": "alpine-logo.svg",
+          "sha512": "d9547480b2ffa98e6dce59992c99ae50929428dffe7dca8eaeafe0b8985678177ba3b838fbe91fcce08db1975852a84d8b63dda6dd258cb57f18cd2eecebb0ef",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/alpine-logo.svg",
+            "https://raw.githubusercontent.com/alpinelinux/aports/4c3864c9445726bd07a4a7f9e9cf47e4a7631049/community/libxfce4ui/alpine-logo.svg"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libxfce4util",
+      "commit": "ec1231f1fb79eab07be0952ebf61d7a02dbeeff2",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/ec1231f1fb79eab07be0952ebf61d7a02dbeeff2/community/libxfce4util/APKBUILD",
+      "recipe_sha256": "97f52e884bfbf1175014523d58a798d17a40f12566a953896d88cee1b89e01a9",
+      "files": [
+        {
+          "name": "libxfce4util-4.20.0.tar.bz2",
+          "sha512": "07edc4c8645b3418a659ebb688a48cd1de00d12d06521d30ccfa10b16c4525ce5a869f4b890c9da9b297c44c249a8a091ea1143c72c5f74702cd90337a124ca5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libxfce4util-4.20.0.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/ec1231f1fb79eab07be0952ebf61d7a02dbeeff2/community/libxfce4util/libxfce4util-4.20.0.tar.bz2"
           ]
         }
       ]
@@ -2719,6 +3309,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libXi-1.8.2.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/c8f6e25cf06e780fa669e89d6b1468edeac5714b/main/libxi/libXi-1.8.2.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libxinerama",
+      "commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxinerama/APKBUILD",
+      "recipe_sha256": "ca2ba2b9eafa186033a6cd86339057e76b1054aa77edd8d48a2b045a69c5b069",
+      "files": [
+        {
+          "name": "libXinerama-1.1.5.tar.xz",
+          "sha512": "735b5320de4782005b379e409bf2f976131c17d496b297d33a0e127ca1443034778586b6b25c077b2ad73a4ab34d440d7510475e0041f38202bb40f15fb08ff7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libXinerama-1.1.5.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxinerama/libXinerama-1.1.5.tar.xz"
           ]
         }
       ]
@@ -2828,6 +3435,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libXpm-3.5.19.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/6a9b9cd9d79074041cbb7f4efb7e396169173dc1/main/libxpm/libXpm-3.5.19.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libxrandr",
+      "commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxrandr/APKBUILD",
+      "recipe_sha256": "164e9b9de0f9f431b480656d64ea28a9151eea0d5abfe5b8687db2c65a2ac76a",
+      "files": [
+        {
+          "name": "libXrandr-1.5.4.tar.xz",
+          "sha512": "f7c0b083943e11b4cc3c97e10e2cbbc3920fe0c9c5031ef86fca2eb5df413d767caf53dca266abf65395eb10e55354c8fe59ed6b3265402ffccb919a813bc781",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libXrandr-1.5.4.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxrandr/libXrandr-1.5.4.tar.xz"
           ]
         }
       ]
@@ -3492,6 +4116,23 @@
       ]
     },
     {
+      "origin": "p11-kit",
+      "commit": "63236622fcbb6476e5727bb6213fcd48fe7ff6fc",
+      "license": "BSD-3-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/63236622fcbb6476e5727bb6213fcd48fe7ff6fc/main/p11-kit/APKBUILD",
+      "recipe_sha256": "36c00f2297d83c135abee45698e43b5b254fe30eb67ced6a5c94a4af11600ef4",
+      "files": [
+        {
+          "name": "p11-kit-0.26.2.tar.xz",
+          "sha512": "662c77e3133a9ee00f155fc2c1f12fdb16492920f992ab6e9de587c8abf76f990d442643bf8464cc08ad4d1c584f4d6f8d3a006aa7fc791010fa9cb7acaf6b7b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/p11-kit-0.26.2.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/63236622fcbb6476e5727bb6213fcd48fe7ff6fc/main/p11-kit/p11-kit-0.26.2.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "pango",
       "commit": "7072d5b4762ad6280669406526c5f391e444800e",
       "license": "LGPL-2.1-or-later",
@@ -3950,6 +4591,23 @@
       ]
     },
     {
+      "origin": "shared-mime-info",
+      "commit": "928e1a4d6ab69057a9b8db5dd8b3077e06a0c0ec",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/928e1a4d6ab69057a9b8db5dd8b3077e06a0c0ec/main/shared-mime-info/APKBUILD",
+      "recipe_sha256": "2133a2c98a08a27904c411657cd495aef9328a28a2f1d4ac120640430a1c327a",
+      "files": [
+        {
+          "name": "shared-mime-info-2.4.tar.gz",
+          "sha512": "17b443c2c09a432d09e4c83db956f8c0c3a768cfa9ffb8c87cd2d7c9002b95d010094e2bc64dd35946205a0f8b2d87c4f8f0a1faec86443e2edd502aa8f7cc8f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/shared-mime-info-2.4.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/928e1a4d6ab69057a9b8db5dd8b3077e06a0c0ec/main/shared-mime-info/shared-mime-info-2.4.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "spirv-tools",
       "commit": "5e92a103a8ac7baea97f089965f902c4b738c191",
       "license": "Apache-2.0",
@@ -3995,6 +4653,81 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2025-6965.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/dac9cea7503a4e9b84d647aab2492d733ac4ac8c/main/sqlite/CVE-2025-6965.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "startup-notification",
+      "commit": "2f99c9e0b8bca06e7dd4994d08e96cc8df138b0d",
+      "license": "LGPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/2f99c9e0b8bca06e7dd4994d08e96cc8df138b0d/community/startup-notification/APKBUILD",
+      "recipe_sha256": "f986cef1d6871b83ec866d9dda1c9da233f50ddb6b05595e638bf88c13bcb3eb",
+      "files": [
+        {
+          "name": "startup-notification-0.12.tar.gz",
+          "sha512": "ea1246acdb50dafd9ced9914ec3c8f0d499c0ca3cfd447b43a444c768a6e9ea7135e5c42d9ca0089354698ac235bd86d42f12c70a3a17c9c79f998c07461f7ab",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/startup-notification-0.12.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2f99c9e0b8bca06e7dd4994d08e96cc8df138b0d/community/startup-notification/startup-notification-0.12.tar.gz"
+          ]
+        },
+        {
+          "name": "disable-rotten-tests.patch",
+          "sha512": "955db2c24ed28cfb1397c183d2a9d1617c5617e329b819a65ee592dc7cd5c019187e72f4061ad8c5b8eb8f55aa9af539b9e81c21e4c748c98f538bf2a8b97f39",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/disable-rotten-tests.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2f99c9e0b8bca06e7dd4994d08e96cc8df138b0d/community/startup-notification/disable-rotten-tests.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "thunar",
+      "commit": "bbf4343c7186784db5e011334b501f8bea2e0a85",
+      "license": "GPL-2.0-or-later LGPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/bbf4343c7186784db5e011334b501f8bea2e0a85/community/thunar/APKBUILD",
+      "recipe_sha256": "060db45c78acba7a5b86c3fd2c01febe161d34d23fe463edf90e4330469f530a",
+      "files": [
+        {
+          "name": "thunar-4.20.3.tar.bz2",
+          "sha512": "0e559b74c6244607ee3f97507cf6e5f5e9ba4690d8346352a7472c6d374554823a6b728cdce9b9fdffc24037179a94b92661d11082d96baa4c850bd6ea46ee61",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/thunar-4.20.3.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/bbf4343c7186784db5e011334b501f8bea2e0a85/community/thunar/thunar-4.20.3.tar.bz2"
+          ]
+        },
+        {
+          "name": "thunar-sendto-audacious-playlist.desktop",
+          "sha512": "dce525f22abf8e723111673b8fdad48079d5379cef49cc013383bb0944274cdd0de1dda6e8894dd8c9efb54cc9eea2baf8f4c76265665b84f3f58aeb01c72390",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/thunar-sendto-audacious-playlist.desktop",
+            "https://raw.githubusercontent.com/alpinelinux/aports/bbf4343c7186784db5e011334b501f8bea2e0a85/community/thunar/thunar-sendto-audacious-playlist.desktop"
+          ]
+        },
+        {
+          "name": "thunar-sendto-bluetooth.desktop",
+          "sha512": "b4e8024e093b8e3f9bf5d460335fd9d19c1e394383bd58a7ac05c720103612dea9dde8a02f090f0af09d89e6644b292236ef257dd1790eccd627efce0577828e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/thunar-sendto-bluetooth.desktop",
+            "https://raw.githubusercontent.com/alpinelinux/aports/bbf4343c7186784db5e011334b501f8bea2e0a85/community/thunar/thunar-sendto-bluetooth.desktop"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "tiff",
+      "commit": "a19ba329cabf74e010b845cae4368898ba6dbc03",
+      "license": "libtiff",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a19ba329cabf74e010b845cae4368898ba6dbc03/main/tiff/APKBUILD",
+      "recipe_sha256": "e11b242272f404c6b06af7ec7c3d341614984d86b38452687ef2a6effbd23d9f",
+      "files": [
+        {
+          "name": "tiff-4.7.2.tar.gz",
+          "sha512": "bad66954a7e7e158c6dcbfc0e2d0032b8f3e2a354b6d0fdbb8038a7963e36c5b8a433dd4ee81c6c4dabfb50094152d440aa1f32b5299098c9ae29e55de2e41fc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/tiff-4.7.2.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a19ba329cabf74e010b845cae4368898ba6dbc03/main/tiff/tiff-4.7.2.tar.gz"
           ]
         }
       ]
@@ -4158,6 +4891,23 @@
       ]
     },
     {
+      "origin": "xcb-util",
+      "commit": "33283848034c9885d984c8e8697c645c57324938",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/33283848034c9885d984c8e8697c645c57324938/main/xcb-util/APKBUILD",
+      "recipe_sha256": "646df220ddd8f1e0f8c27a9789169bd529612adf5081598d163f28540ab44193",
+      "files": [
+        {
+          "name": "xcb-util-0.4.1.tar.xz",
+          "sha512": "da67f2f017d2a1788dcf35f28d6956e171303a622a1dd085cd3d69fdb2ed77965d83c557cc926ebf9b32e905eb2cbb5921987250192d78a2f5edc4d437ed7d2b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/xcb-util-0.4.1.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/33283848034c9885d984c8e8697c645c57324938/main/xcb-util/xcb-util-0.4.1.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "xeyes",
       "commit": "aed44f44287756c7ae43edb4ac3fdfa9bd4073c7",
       "license": "MIT",
@@ -4212,6 +4962,40 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/fix-build.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/community/xf86-video-fbdev/fix-build.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "xfce4-panel",
+      "commit": "9a1fe01c4060b8677e6d4206b86b169f38f83437",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/9a1fe01c4060b8677e6d4206b86b169f38f83437/community/xfce4-panel/APKBUILD",
+      "recipe_sha256": "3cbed8d907f64a974dc5e159a4bd716be1ae3b991ff182410153e8e31b0c42f3",
+      "files": [
+        {
+          "name": "xfce4-panel-4.20.4.tar.bz2",
+          "sha512": "89d835617cab0afce1344495fa29f9cba49fdd1472fb079474c4511befebd1771eb5f4d6f968b98c43517f61e2e284760597a437e39a4956a56abb6d73e43265",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/xfce4-panel-4.20.4.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9a1fe01c4060b8677e6d4206b86b169f38f83437/community/xfce4-panel/xfce4-panel-4.20.4.tar.bz2"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "xfconf",
+      "commit": "cb27080ea17eaf81c85df58be14c8dfcff368bb3",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/cb27080ea17eaf81c85df58be14c8dfcff368bb3/community/xfconf/APKBUILD",
+      "recipe_sha256": "335849f178146ad8ffec3c60a3d41cd44a7db746f0ef8ee7b38504ac58223b9b",
+      "files": [
+        {
+          "name": "xfconf-4.20.0.tar.bz2",
+          "sha512": "87ae4e9366cccb6c2f13229539e8317d26bfb3fc5333e769ec2de1b596e04348595bb2e85ca90fb63c6c64968e5108e59490700028aeb077b32b9cd03062d9e9",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/xfconf-4.20.0.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/cb27080ea17eaf81c85df58be14c8dfcff368bb3/community/xfconf/xfconf-4.20.0.tar.bz2"
           ]
         }
       ]

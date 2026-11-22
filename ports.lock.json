@@ -14,6 +14,32 @@
       "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
     },
     {
+      "name": "at-spi2-core-libs",
+      "version": "2.56.5-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/at-spi2-core-libs-2.56.5-r0.apk",
+      "archive": "at-spi2-core-libs-2.56.5-r0.apk",
+      "sha256": "f034b94f65c15f1b6a6f8633dbaabbed00c2263fc9605e7a88380e3e4faf9c94",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/",
+      "origin": "at-spi2-core",
+      "source_commit": "018d4847479d9e07f2f3c9e3b510204258d1a3cc",
+      "installed_only": true
+    },
+    {
+      "name": "avahi-libs",
+      "version": "0.8-r21",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/avahi-libs-0.8-r21.apk",
+      "archive": "avahi-libs-0.8-r21.apk",
+      "sha256": "88982a7710f506bf4ee52ac4f7f681c129ce098df225e54887a95aa2ae199f16",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.avahi.org/",
+      "origin": "avahi",
+      "source_commit": "05472661376698ae9474d0d23f337c9ca56822fc",
+      "installed_only": true
+    },
+    {
       "name": "bash",
       "version": "5.2.37-r0",
       "repository": "main",
@@ -111,6 +137,32 @@
       "source_commit": "7fe77742880d49da1db854abd16e78073d538983"
     },
     {
+      "name": "cairo-gobject",
+      "version": "1.18.4-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/cairo-gobject-1.18.4-r0.apk",
+      "archive": "cairo-gobject-1.18.4-r0.apk",
+      "sha256": "bb994751b65387f502c406f33aad2f201512898784bf9bd2e5d3a231e1fe26fc",
+      "license": "LGPL-2.1-or-later OR MPL-1.1",
+      "upstream": "https://cairographics.org/",
+      "origin": "cairo",
+      "source_commit": "7fe77742880d49da1db854abd16e78073d538983",
+      "installed_only": true
+    },
+    {
+      "name": "cups-libs",
+      "version": "2.4.18-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/cups-libs-2.4.18-r0.apk",
+      "archive": "cups-libs-2.4.18-r0.apk",
+      "sha256": "51e8b16470bd334c9bdefa571e16bef22d52a68a681f6aa7c3f383f5f100d794",
+      "license": "Apache-2.0",
+      "upstream": "https://github.com/OpenPrinting/cups/",
+      "origin": "cups",
+      "source_commit": "b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4",
+      "installed_only": true
+    },
+    {
       "name": "dbus",
       "version": "1.16.2-r1",
       "repository": "main",
@@ -148,6 +200,19 @@
       "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac"
     },
     {
+      "name": "desktop-file-utils",
+      "version": "0.28-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/desktop-file-utils-0.28-r0.apk",
+      "archive": "desktop-file-utils-0.28-r0.apk",
+      "sha256": "f90bd251aef2c8aa80921bd2754918bb01b5f45f9e14ae544eaaba180d9fe3b8",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Software/desktop-file-utils",
+      "origin": "desktop-file-utils",
+      "source_commit": "d219babac2540b2418a91177836c9490e1388683",
+      "installed_only": true
+    },
+    {
       "name": "encodings",
       "version": "1.0.7-r1",
       "repository": "main",
@@ -170,6 +235,19 @@
       "upstream": "https://github.com/eudev-project/eudev",
       "origin": "eudev",
       "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
+    },
+    {
+      "name": "exo-libs",
+      "version": "4.20.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/exo-libs-4.20.0-r0.apk",
+      "archive": "exo-libs-4.20.0-r0.apk",
+      "sha256": "6c32765793d108bb50aca6020fed21e28f1cb9f021da9d01b060ef4852bd92e6",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "upstream": "https://docs.xfce.org/xfce/exo/start",
+      "origin": "exo",
+      "source_commit": "31e7aacc5ace446f28a537ed062e7cff27547587",
+      "installed_only": true
     },
     {
       "name": "flex",
@@ -306,6 +384,19 @@
       "installed_only": true
     },
     {
+      "name": "gdk-pixbuf",
+      "version": "2.42.12-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gdk-pixbuf-2.42.12-r1.apk",
+      "archive": "gdk-pixbuf-2.42.12-r1.apk",
+      "sha256": "449511656a10112cc397510d1f1c9eaaed19b16fbb6aa19d48f40b546bd3a35d",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://wiki.gnome.org/Projects/GdkPixbuf",
+      "origin": "gdk-pixbuf",
+      "source_commit": "398a5aee3025ec8a4d0d761e448dc86ac777fa09",
+      "installed_only": true
+    },
+    {
       "name": "glib",
       "version": "2.84.4-r0",
       "repository": "main",
@@ -330,6 +421,32 @@
       "source_commit": "187e3f7791d3390e18bc06969a5f34c385fd883e"
     },
     {
+      "name": "gnutls",
+      "version": "3.8.14-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gnutls-3.8.14-r0.apk",
+      "archive": "gnutls-3.8.14-r0.apk",
+      "sha256": "76f7ca03c7ac1e070b7253ef0d0173dc302d5347e390cdad9a4f25baf78a84a7",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.gnutls.org/",
+      "origin": "gnutls",
+      "source_commit": "1ea7ebc87c2ec9ee143e9fa0690bfbdc6690af16",
+      "installed_only": true
+    },
+    {
+      "name": "gobject-introspection",
+      "version": "1.84.0-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gobject-introspection-1.84.0-r0.apk",
+      "archive": "gobject-introspection-1.84.0-r0.apk",
+      "sha256": "8ca54d01564b91461ceee52a66b15cd7ae36ced63aa51d42fa64f2a51ef7c10a",
+      "license": "LGPL-2.0-or-later AND GPL-2.0-or-later AND MIT",
+      "upstream": "https://gi.readthedocs.io",
+      "origin": "gobject-introspection",
+      "source_commit": "b24c96508fe69b0260be1ceeac501436c4789a7e",
+      "installed_only": true
+    },
+    {
       "name": "graphite2",
       "version": "1.3.14-r6",
       "repository": "main",
@@ -342,6 +459,45 @@
       "source_commit": "33283848034c9885d984c8e8697c645c57324938"
     },
     {
+      "name": "gtk+3.0",
+      "version": "3.24.50-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gtk+3.0-3.24.50-r0.apk",
+      "archive": "gtk+3.0-3.24.50-r0.apk",
+      "sha256": "075392889e0c3f6d7eb961456adcca7f4e02791ec8ea39e75d78f2f988f38211",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.gtk.org/",
+      "origin": "gtk+3.0",
+      "source_commit": "39697851d8c158410602c93773d416258896281c",
+      "installed_only": true
+    },
+    {
+      "name": "gtk-layer-shell",
+      "version": "0.9.2-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/gtk-layer-shell-0.9.2-r0.apk",
+      "archive": "gtk-layer-shell-0.9.2-r0.apk",
+      "sha256": "3ef9a3da45f0782617af21a1a02cd82f756cb8c351d9a39e2e1f71b42467c5dc",
+      "license": "LGPL-3.0-or-later AND MIT",
+      "upstream": "https://github.com/wmww/gtk-layer-shell",
+      "origin": "gtk-layer-shell",
+      "source_commit": "7ae3c9a78e2484f2fd6f34a3b1bf608d54bd4c0e",
+      "installed_only": true
+    },
+    {
+      "name": "gtk-update-icon-cache",
+      "version": "3.24.50-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gtk-update-icon-cache-3.24.50-r0.apk",
+      "archive": "gtk-update-icon-cache-3.24.50-r0.apk",
+      "sha256": "ce7a85338b1b1129fed853d52a69d51786a95ddb494abe90d0e65131334b2c1a",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.gtk.org/",
+      "origin": "gtk+3.0",
+      "source_commit": "39697851d8c158410602c93773d416258896281c",
+      "installed_only": true
+    },
+    {
       "name": "harfbuzz",
       "version": "11.2.1-r0",
       "repository": "main",
@@ -352,6 +508,19 @@
       "upstream": "https://harfbuzz.github.io/",
       "origin": "harfbuzz",
       "source_commit": "c9247a23f6a64eefde9d75b2e6a7c7c7454d8c83"
+    },
+    {
+      "name": "hicolor-icon-theme",
+      "version": "0.18-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/hicolor-icon-theme-0.18-r0.apk",
+      "archive": "hicolor-icon-theme-0.18-r0.apk",
+      "sha256": "a7cc6bbfb048cb7805c747b5881fa58ada740c8006abb45888b6b9ab73148401",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Software/icon-theme/",
+      "origin": "hicolor-icon-theme",
+      "source_commit": "0d5b763d2fa803e7d71b4d2272a138842e4966fa",
+      "installed_only": true
     },
     {
       "name": "hwdata-pci",
@@ -465,6 +634,32 @@
       "upstream": "https://www.greenwoodsoftware.com/less/",
       "origin": "less",
       "source_commit": "7a5f1241d7636ff96ede08e351b28d7258bea389",
+      "installed_only": true
+    },
+    {
+      "name": "libatk-1.0",
+      "version": "2.56.5-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libatk-1.0-2.56.5-r0.apk",
+      "archive": "libatk-1.0-2.56.5-r0.apk",
+      "sha256": "8e218ca73602995775cba0b803438eada829174e2b60b008e787601facdee29b",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/",
+      "origin": "at-spi2-core",
+      "source_commit": "018d4847479d9e07f2f3c9e3b510204258d1a3cc",
+      "installed_only": true
+    },
+    {
+      "name": "libatk-bridge-2.0",
+      "version": "2.56.5-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libatk-bridge-2.0-2.56.5-r0.apk",
+      "archive": "libatk-bridge-2.0-2.56.5-r0.apk",
+      "sha256": "c090710b68b60848c290acbd218c2982557133d8cb2b2c1da3077f890e264914",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/",
+      "origin": "at-spi2-core",
+      "source_commit": "018d4847479d9e07f2f3c9e3b510204258d1a3cc",
       "installed_only": true
     },
     {
@@ -612,6 +807,19 @@
       "source_commit": "8cd6f2bc8f9abeb4b3d2a74a41f77f44f978a3a8"
     },
     {
+      "name": "libexif",
+      "version": "0.6.25-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libexif-0.6.25-r0.apk",
+      "archive": "libexif-0.6.25-r0.apk",
+      "sha256": "8a79389d7ebb116f72ae19db61bcbb375286a1fda7423eccefcea739a9ab2596",
+      "license": "LGPL-2.0-or-later",
+      "upstream": "https://sourceforge.net/projects/libexif/",
+      "origin": "libexif",
+      "source_commit": "de8de479d6afadaebd300120df3af802c87bc193",
+      "installed_only": true
+    },
+    {
       "name": "libexpat",
       "version": "2.10.0-r0",
       "repository": "main",
@@ -672,6 +880,32 @@
       "source_commit": "fbf60319be3bbaf6dd32ef55cc6fb7189e05c266"
     },
     {
+      "name": "libgtop",
+      "version": "2.41.3-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libgtop-2.41.3-r1.apk",
+      "archive": "libgtop-2.41.3-r1.apk",
+      "sha256": "f1d76086f8ccd4e721b8135747172748be56b3ec7b24d84c00d43f585341ca77",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.gnome.org/",
+      "origin": "libgtop",
+      "source_commit": "6313b174fa1e738932aebfc3caea2a24b0a5970e",
+      "installed_only": true
+    },
+    {
+      "name": "libgudev",
+      "version": "238-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libgudev-238-r0.apk",
+      "archive": "libgudev-238-r0.apk",
+      "sha256": "e3dca9514694cb35bd394983210d575428b23f4e309d6c1dd8b5d63a9dd53190",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://wiki.gnome.org/Projects/libgudev",
+      "origin": "libgudev",
+      "source_commit": "12c1f57207b39cb7ea0076afd63bd557e1a06a05",
+      "installed_only": true
+    },
+    {
       "name": "libice",
       "version": "1.1.2-r0",
       "repository": "main",
@@ -682,6 +916,19 @@
       "upstream": "https://xorg.freedesktop.org/",
       "origin": "libice",
       "source_commit": "d4941e833167c30aa1172e6d8420d084698254ab"
+    },
+    {
+      "name": "libidn2",
+      "version": "2.3.7-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libidn2-2.3.7-r0.apk",
+      "archive": "libidn2-2.3.7-r0.apk",
+      "sha256": "515cfe061176c7456ea3548651d0014084d77dd3774b78e2c944404ae75a41ff",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/libidn#libidn2",
+      "origin": "libidn2",
+      "source_commit": "1cdcdd0eccbee1f60078417a7aaf83f92f6e6754",
+      "installed_only": true
     },
     {
       "name": "libinput-libs",
@@ -780,6 +1027,19 @@
       "source_commit": "3fefbe8dda8b3e85458edb190e2f3a69ad16035c"
     },
     {
+      "name": "libnotify",
+      "version": "0.8.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libnotify-0.8.6-r0.apk",
+      "archive": "libnotify-0.8.6-r0.apk",
+      "sha256": "47be63dcd8fa1ab5d8bc554c3ae483fcca2f298d44b5f66dbf37283442587751",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://gitlab.gnome.org/GNOME/libnotify",
+      "origin": "libnotify",
+      "source_commit": "75ee19d34dbc755c608097fb24a3b064260740d9",
+      "installed_only": true
+    },
+    {
       "name": "libpanelw",
       "version": "6.5_p20250503-r0",
       "repository": "main",
@@ -863,6 +1123,32 @@
       "upstream": "https://gcc.gnu.org",
       "origin": "gcc",
       "source_commit": "fbf60319be3bbaf6dd32ef55cc6fb7189e05c266"
+    },
+    {
+      "name": "libtasn1",
+      "version": "4.21.0-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libtasn1-4.21.0-r0.apk",
+      "archive": "libtasn1-4.21.0-r0.apk",
+      "sha256": "ce3d6b63c8fd8c4248028740095c83a6291c334f5f260003c3adc12fb810404e",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.gnu.org/software/gnutls/",
+      "origin": "libtasn1",
+      "source_commit": "720f0a85f776c2020d1c4f420b849673cfc1213f",
+      "installed_only": true
+    },
+    {
+      "name": "libunistring",
+      "version": "1.3-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libunistring-1.3-r0.apk",
+      "archive": "libunistring-1.3-r0.apk",
+      "sha256": "989640e58f7646c0495c3950df36eb7b4df152d8150c2c888f8ab954fed8c908",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/libunistring/",
+      "origin": "libunistring",
+      "source_commit": "22200a467cea998010743cc288889dbde0496d4a",
+      "installed_only": true
     },
     {
       "name": "libuuid",
@@ -949,6 +1235,19 @@
       "source_commit": "56abd9107430e190174cbc368cf4d9faa6bdd758"
     },
     {
+      "name": "libxcomposite",
+      "version": "0.4.6-r5",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxcomposite-0.4.6-r5.apk",
+      "archive": "libxcomposite-0.4.6-r5.apk",
+      "sha256": "ce7f5d7223fe45084045ffe6074a96aa2abb8065cadc92ae531c7f24d5e91718",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org/",
+      "origin": "libxcomposite",
+      "source_commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "installed_only": true
+    },
+    {
       "name": "libxcursor",
       "version": "1.2.3-r0",
       "repository": "main",
@@ -974,6 +1273,19 @@
       "source_commit": "68e887cbf59009caf08c641174e4d706c87074d7"
     },
     {
+      "name": "libxdamage",
+      "version": "1.1.6-r5",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxdamage-1.1.6-r5.apk",
+      "archive": "libxdamage-1.1.6-r5.apk",
+      "sha256": "fd362965b3b37e70233da356aaca792e2ea5ede7dd2a0d1e2e9c366aa2b70320",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org/",
+      "origin": "libxdamage",
+      "source_commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "installed_only": true
+    },
+    {
       "name": "libxdmcp",
       "version": "1.1.5-r1",
       "repository": "main",
@@ -996,6 +1308,45 @@
       "upstream": "https://xorg.freedesktop.org/",
       "origin": "libxext",
       "source_commit": "614e9166706cec427fc3d907b8d981390a42e088"
+    },
+    {
+      "name": "libxfce4panel",
+      "version": "4.20.4-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libxfce4panel-4.20.4-r0.apk",
+      "archive": "libxfce4panel-4.20.4-r0.apk",
+      "sha256": "11a4c1466998c739df2b2a73786feb6384402c9c1fe4e8732e5a7844c29e22e8",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "upstream": "https://xfce.org/",
+      "origin": "xfce4-panel",
+      "source_commit": "9a1fe01c4060b8677e6d4206b86b169f38f83437",
+      "installed_only": true
+    },
+    {
+      "name": "libxfce4ui",
+      "version": "4.20.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libxfce4ui-4.20.1-r0.apk",
+      "archive": "libxfce4ui-4.20.1-r0.apk",
+      "sha256": "7fbfa2f45bc9016e322f9b04a3e5f3db5a1e7b8c1ddfc02e214c806208543120",
+      "license": "GPL-2.0-only",
+      "upstream": "https://xfce.org/",
+      "origin": "libxfce4ui",
+      "source_commit": "4c3864c9445726bd07a4a7f9e9cf47e4a7631049",
+      "installed_only": true
+    },
+    {
+      "name": "libxfce4util",
+      "version": "4.20.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libxfce4util-4.20.0-r0.apk",
+      "archive": "libxfce4util-4.20.0-r0.apk",
+      "sha256": "eefcfec38213c4fffb3550a92c46f64033a5d3fab08c2c36912e9050c22a943e",
+      "license": "GPL-2.0-only",
+      "upstream": "https://xfce.org/",
+      "origin": "libxfce4util",
+      "source_commit": "ec1231f1fb79eab07be0952ebf61d7a02dbeeff2",
+      "installed_only": true
     },
     {
       "name": "libxfixes",
@@ -1045,6 +1396,19 @@
       "upstream": "https://www.x.org",
       "origin": "libxi",
       "source_commit": "c8f6e25cf06e780fa669e89d6b1468edeac5714b"
+    },
+    {
+      "name": "libxinerama",
+      "version": "1.1.5-r4",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxinerama-1.1.5-r4.apk",
+      "archive": "libxinerama-1.1.5-r4.apk",
+      "sha256": "88583bca030e73a27ff36d607f891a54ae9fd86eeb5300172b5fe4119eab2289",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org/",
+      "origin": "libxinerama",
+      "source_commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "installed_only": true
     },
     {
       "name": "libxkbcommon",
@@ -1118,6 +1482,19 @@
       "upstream": "https://xorg.freedesktop.org/",
       "origin": "libxpm",
       "source_commit": "6a9b9cd9d79074041cbb7f4efb7e396169173dc1"
+    },
+    {
+      "name": "libxrandr",
+      "version": "1.5.4-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxrandr-1.5.4-r1.apk",
+      "archive": "libxrandr-1.5.4-r1.apk",
+      "sha256": "523a9bec4367b0838a718eaf611b431fbab993bb6247bf76ff32f87e11482220",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org/",
+      "origin": "libxrandr",
+      "source_commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "installed_only": true
     },
     {
       "name": "libxrender",
@@ -1439,6 +1816,19 @@
       "source_commit": "d1a58b83bd3186946ce6c0d5e1ee2bf9a8592bec"
     },
     {
+      "name": "p11-kit",
+      "version": "0.26.2-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/p11-kit-0.26.2-r0.apk",
+      "archive": "p11-kit-0.26.2-r0.apk",
+      "sha256": "3acc0d16e7e73ce32cdd12f58979809bbaf0ff88f6fff73883307233aab5ce70",
+      "license": "BSD-3-Clause",
+      "upstream": "https://p11-glue.freedesktop.org/",
+      "origin": "p11-kit",
+      "source_commit": "63236622fcbb6476e5727bb6213fcd48fe7ff6fc",
+      "installed_only": true
+    },
+    {
       "name": "pango",
       "version": "1.56.3-r0",
       "repository": "main",
@@ -1600,6 +1990,19 @@
       "build_only": true
     },
     {
+      "name": "shared-mime-info",
+      "version": "2.4-r6",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/shared-mime-info-2.4-r6.apk",
+      "archive": "shared-mime-info-2.4-r6.apk",
+      "sha256": "f399f0cf1923b5bb863c5cce0b5c43f9ba019bdb74085087aa10a906034b95b3",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/Software/shared-mime-info",
+      "origin": "shared-mime-info",
+      "source_commit": "928e1a4d6ab69057a9b8db5dd8b3077e06a0c0ec",
+      "installed_only": true
+    },
+    {
       "name": "spirv-tools",
       "version": "1.4.313.0-r0",
       "repository": "main",
@@ -1623,6 +2026,45 @@
       "upstream": "https://www.sqlite.org/",
       "origin": "sqlite",
       "source_commit": "dac9cea7503a4e9b84d647aab2492d733ac4ac8c",
+      "installed_only": true
+    },
+    {
+      "name": "startup-notification",
+      "version": "0.12-r8",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/startup-notification-0.12-r8.apk",
+      "archive": "startup-notification-0.12-r8.apk",
+      "sha256": "acb165d452149e5df8c70aa9025ab619345911b571c72c90d11fc204ace119de",
+      "license": "LGPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Software/startup-notification",
+      "origin": "startup-notification",
+      "source_commit": "2f99c9e0b8bca06e7dd4994d08e96cc8df138b0d",
+      "installed_only": true
+    },
+    {
+      "name": "thunar",
+      "version": "4.20.3-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/thunar-4.20.3-r0.apk",
+      "archive": "thunar-4.20.3-r0.apk",
+      "sha256": "56dfa9af42830c0c3bf4a2363675b1f80578c4e967f8d99f0773454acb19b64b",
+      "license": "GPL-2.0-or-later LGPL-2.0-only",
+      "upstream": "https://docs.xfce.org/xfce/thunar/start",
+      "origin": "thunar",
+      "source_commit": "bbf4343c7186784db5e011334b501f8bea2e0a85",
+      "installed_only": true
+    },
+    {
+      "name": "tiff",
+      "version": "4.7.2-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/tiff-4.7.2-r0.apk",
+      "archive": "tiff-4.7.2-r0.apk",
+      "sha256": "6af6a6b7df561b9206886c0a79c90a4b1e63113000d1bb592c2397add388b2d0",
+      "license": "libtiff",
+      "upstream": "https://gitlab.com/libtiff/libtiff",
+      "origin": "tiff",
+      "source_commit": "a19ba329cabf74e010b845cae4368898ba6dbc03",
       "installed_only": true
     },
     {
@@ -1672,6 +2114,19 @@
       "upstream": "https://wayland.freedesktop.org",
       "origin": "wayland",
       "source_commit": "4abf33c74f2d6576e60fa01507040e9137709fc1"
+    },
+    {
+      "name": "wayland-libs-egl",
+      "version": "1.23.1-r3",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/wayland-libs-egl-1.23.1-r3.apk",
+      "archive": "wayland-libs-egl-1.23.1-r3.apk",
+      "sha256": "2b04173744dfb274f6f546c8232ea3f046bf71255fa94660bc849009bd4ac8a4",
+      "license": "MIT",
+      "upstream": "https://wayland.freedesktop.org",
+      "origin": "wayland",
+      "source_commit": "4abf33c74f2d6576e60fa01507040e9137709fc1",
+      "installed_only": true
     },
     {
       "name": "wayland-libs-server",
@@ -1758,6 +2213,19 @@
       "source_commit": "562e4595bac9444c612bef30c22371b45fbadd18"
     },
     {
+      "name": "xcb-util",
+      "version": "0.4.1-r3",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/xcb-util-0.4.1-r3.apk",
+      "archive": "xcb-util-0.4.1-r3.apk",
+      "sha256": "ad4bc6f19f88418215019a66acdc6ff0cd2d4781c5afe9d74c368af7f31d95a8",
+      "license": "MIT",
+      "upstream": "https://xcb.freedesktop.org/",
+      "origin": "xcb-util",
+      "source_commit": "33283848034c9885d984c8e8697c645c57324938",
+      "installed_only": true
+    },
+    {
       "name": "xeyes",
       "version": "1.3.0-r0",
       "repository": "community",
@@ -1792,6 +2260,19 @@
       "upstream": "https://www.x.org",
       "origin": "xf86-video-fbdev",
       "source_commit": "614e9166706cec427fc3d907b8d981390a42e088"
+    },
+    {
+      "name": "xfconf",
+      "version": "4.20.0-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/xfconf-4.20.0-r1.apk",
+      "archive": "xfconf-4.20.0-r1.apk",
+      "sha256": "edaac4d2ce4a33f8166c649bc5ec69a42e3375f304aec79e9464523e4564a62b",
+      "license": "GPL-2.0-only",
+      "upstream": "https://xfce.org/",
+      "origin": "xfconf",
+      "source_commit": "cb27080ea17eaf81c85df58be14c8dfcff368bb3",
+      "installed_only": true
     },
     {
       "name": "xkbcomp",

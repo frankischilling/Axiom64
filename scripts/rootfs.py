@@ -66,6 +66,28 @@ def regular(path, source, mode=0o100755):
     files[path] = (mode, Path(source).read_bytes())
 
 
+def compile_desktop_data():
+    schema_dir = Path("usr/share/glib-2.0/schemas")
+    mime_dir = Path("usr/share/mime")
+    with tempfile.TemporaryDirectory(prefix="axiom64-desktop-data-") as temporary:
+        stage = Path(temporary)
+        for name, (mode, payload) in files.items():
+            path = Path(name)
+            if mode & 0o170000 == 0o100000 and path.parent in (schema_dir, mime_dir / "packages"):
+                target = stage / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payload)
+        subprocess.run(["glib-compile-schemas", "--strict", stage / schema_dir], check=True)
+        subprocess.run(["update-mime-database", stage / mime_dir], check=True)
+        for target in sorted(stage.rglob("*")):
+            name = target.relative_to(stage).as_posix()
+            if name not in files:
+                if target.is_dir():
+                    directory(name)
+                elif target.is_file():
+                    regular(name, target, 0o100644)
+
+
 for path in ["bin", "sbin", "lib", "etc", "dev", "proc", "sys", "tmp", "run", "root", "usr", "usr/bin", "usr/share", "usr/share/licenses", "usr/share/licenses/Axiom64", "usr/share/licenses/BusyBox", "usr/share/licenses/musl"]:
     directory(path)
 busybox_dir = ROOT / "build" / f"busybox-{LOCK['busybox']['version']}"
@@ -143,7 +165,8 @@ weston_payloads = {
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
-    if args.profile != "full" and package["name"] in {
+    thunar_runtime = installed_desktop and package["name"] == "gmp"
+    if args.profile != "full" and not thunar_runtime and package["name"] in {
         "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
         "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
         "libisoburn", "libisofs", "xorriso"
@@ -183,8 +206,13 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 if installed_desktop:
-    for name in ("btop.desktop", "kitty.desktop"):
+    for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
+    files.setdefault("etc/xdg", (0o40755, b""))
+    files["etc/xdg/mimeapps.list"] = (
+        0o100644, b"[Default Applications]\ninode/directory=thunar.desktop;\n"
+    )
+    compile_desktop_data()
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
 regular('usr/libexec/axiom64-session-bus', ROOT / 'build/desktop-session-bus')
 regular('usr/libexec/axiom64-system-bus', ROOT / 'userspace/services/system-bus.sh')

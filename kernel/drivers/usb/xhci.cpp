@@ -189,7 +189,7 @@ bool parse_configuration(const uint8_t* bytes, unsigned length, BootEndpoints& b
                           report_bytes};
             auto& input = protocol == BootProtocol::keyboard ? boot.keyboard : boot.mouse;
             if (protocol != BootProtocol::none && !input.address && interrupt_in &&
-                packet >= report_size(protocol))
+                packet >= report_size(protocol) && packet <= 1024)
                 input = {interface, item[2], packet, item[6], protocol};
         }
         offset += item[0];
@@ -581,7 +581,7 @@ struct Controller {
         input.protocol = descriptor.protocol;
         input.buffer = buffer;
         input.ring = buffer + page_size;
-        input.transfer_bytes = wanted;
+        input.transfer_bytes = descriptor.packet;
         if (input.protocol == BootProtocol::keyboard)
             input.layout = boot_keyboard_layout;
         return true;
@@ -660,10 +660,12 @@ struct Controller {
             return;
         }
         const unsigned actual = input.transfer_bytes - remaining;
-        const unsigned wanted =
-            input.protocol == BootProtocol::keyboard ? input.layout.bytes : mouse_report_size;
+        // Boot mice can append device-specific bytes after the three standard bytes.
+        const bool complete_report = input.protocol == BootProtocol::mouse
+                                         ? actual >= mouse_report_size
+                                         : actual == input.layout.bytes;
         const auto data = static_cast<const uint8_t*>(physical(input.buffer));
-        if (actual == wanted && (!input.layout.report_id || data[0] == input.layout.report_id))
+        if (complete_report && (!input.layout.report_id || data[0] == input.layout.report_id))
             input_report(input, data);
         if (++input.index == ring_size - 1) {
             input.index = 0;

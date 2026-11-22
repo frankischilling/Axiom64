@@ -328,21 +328,87 @@ void test_firmware_gap(const ax::PciFunction& pci) {
     Acpi::PciRootWindows roots{
         {{high, 0x50000, 7, 0, false}, {high, 0x10000, 0, 0, false}, {low, 0x10000, 0, 0, false}},
         3};
+    PciMemoryInventory occupied{};
+    occupied.add(high + 0x5000, 0x2000);
+    occupied.add(low + 0x2000, 0x1000);
+    auto preview = [&](uint64_t size, uint64_t& address) {
+        return pci_preview_memory_bar(pci, size, roots, board, occupied, address);
+    };
     uint64_t address = 0;
     pci.write32(0x10, 4); // Unassigned 64-bit memory BAR.
-    assert(pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == high + 0x5000);
+    assert(preview(0x1000, address) && address == high + 0x7000);
     assert(pci.read32(0x10) == 4);
     roots.entries[1].prefetchable = true;
-    assert(pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == low + 0x2000);
+    assert(preview(0x1000, address) && address == low + 0x3000);
     roots.entries[1].prefetchable = false;
     pci.write32(0x10, 0);
-    assert(pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == low + 0x2000);
-    assert(!pci_preview_memory_bar(pci, 0x900, roots, board, address));
-    assert(!pci_preview_memory_bar(pci, 0x10000, roots, board, address));
+    assert(preview(0x1000, address) && address == low + 0x3000);
+    assert(!preview(0x900, address));
+    assert(!preview(0x10000, address));
     board.incomplete = true;
-    assert(!pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == low + 0x2000);
+    assert(!preview(0x1000, address) && address == low + 0x3000);
+    board.incomplete = false;
+    occupied.incomplete = true;
+    assert(!preview(0x1000, address) && address == low + 0x3000);
     boot_info = {};
-    std::puts("PCI_FIRMWARE_GAP_PASS alignment boot_map motherboard width prefetch incomplete");
+    std::puts(
+        "PCI_FIRMWARE_GAP_PASS alignment boot_map motherboard occupancy width prefetch incomplete");
+}
+
+void test_memory_inventory(const ax::PciFunction& pci) {
+    using namespace ax;
+    for (unsigned offset = 0; offset < 4096; offset += 4)
+        pci.write32(offset, 0);
+    pci.write32(0x10, 0xd0020008);
+    pci.write32(0x14, 0x00123004);
+    pci.write32(0x18, 7);
+    pci.write32(0x1c, 0xc001);
+    pci.write32(0x30, 0xcabc0801);
+    PciMemoryInventory inventory{};
+    pci_record_memory(pci, inventory);
+    const auto& ranges = inventory.ranges;
+    assert(inventory.count == 3 && !inventory.incomplete);
+    assert(ranges[0].base == 0xd0020000 && ranges[0].size == 0x20000);
+    assert(ranges[1].base == 0x700123000 && ranges[1].size == 0x1000);
+    assert(ranges[2].base == 0xcabc0800 && ranges[2].size == 0x800);
+    assert(pci.read32(0x10) == 0xd0020008 && pci.read32(0x18) == 7);
+
+    pci.write32(0x100, 0x00010010); // SR-IOV extended capability.
+    pci.write16(0x108, 1);
+    inventory.count = 0;
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 3 && inventory.incomplete);
+    pci.write32(0x100, 0x10010002); // A self-referential extended capability.
+    inventory.incomplete = false;
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+    pci.write32(0x100, 0);
+
+    pci.write32(0x0c, 1u << 16); // Type 1 header.
+    pci.write32(0x10, 0);
+    pci.write32(0x14, 0);
+    pci.write32(0x18, 0x00010100);
+    pci.write32(0x20, 0xc010c010);
+    pci.write32(0x24, 0x00910081);
+    pci.write32(0x28, 2);
+    pci.write32(0x2c, 2);
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 2 && !inventory.incomplete);
+    assert(ranges[0].base == 0xc0100000 && ranges[0].size == 0x100000);
+    assert(ranges[1].base == 0x200800000 && ranges[1].size == 0x200000);
+    pci.write32(0x20, 0x0010fff0);
+    pci.write32(0x24, 0x0000fff0);
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(!inventory.count && !inventory.incomplete);
+    pci.write32(0x24, 0x0000fff2);
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+    inventory.count = sizeof(inventory.ranges) / sizeof(*inventory.ranges);
+    inventory.incomplete = false;
+    assert(!inventory.add(0xa0000000, 4096) && inventory.incomplete);
+    std::puts("PCI_MEMORY_INVENTORY_PASS bar32 bar64 rom bridge malformed sriov capacity");
 }
 
 uint32_t bridge_config[2][16];
@@ -473,6 +539,7 @@ int main() {
     test_msix(pci);
     test_apertures();
     test_firmware_gap(pci);
+    test_memory_inventory(pci);
     test_bridge_windows();
     assert(munmap(page, 4096) == 0);
 }

@@ -36,6 +36,7 @@ constexpr unsigned register_bytes = lpss_capabilities + sizeof(uint32_t);
 struct ProbeResources {
     Acpi::PciRootWindows windows;
     Acpi::MotherboardResources board;
+    PciMemoryInventory* inventory;
     unsigned controllers;
 };
 
@@ -57,10 +58,12 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command,
             if (measured == PciBarStatus::valid) {
                 log("LPSS I2C: BAR0 unassigned bytes=%x\n", size);
                 uint64_t gap;
-                if (pci_preview_memory_bar(pci, size, resources.windows, resources.board, gap))
-                    log("LPSS I2C: BAR0 firmware gap base=%x bytes=%x\n", gap, size);
+                if (resources.inventory &&
+                    pci_preview_memory_bar(pci, size, resources.windows, resources.board,
+                                           *resources.inventory, gap))
+                    log("LPSS I2C: BAR0 candidate base=%x bytes=%x\n", gap, size);
                 else
-                    log("LPSS I2C: BAR0 no validated firmware gap\n");
+                    log("LPSS I2C: BAR0 no candidate\n");
                 return true;
             }
             if (measured == PciBarStatus::restore_failed)
@@ -139,7 +142,15 @@ void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks) {
             resources.board.memory[i].size);
     log("PCI motherboard memory: ranges=%u incomplete=%u\n", uint64_t(resources.board.count),
         uint64_t(resources.board.incomplete));
+    resources.inventory = static_cast<PciMemoryInventory*>(alloc(sizeof(PciMemoryInventory)));
+    if (resources.inventory)
+        pci_memory_inventory(*resources.inventory);
+    log("PCI occupied memory: ranges=%u incomplete=%u\n",
+        uint64_t(resources.inventory ? resources.inventory->count : 0),
+        uint64_t(!resources.inventory || resources.inventory->incomplete));
     pci_scan(probe, &resources);
+    if (resources.inventory)
+        release(resources.inventory);
     log("LPSS I2C: controllers=%u\n", uint64_t(resources.controllers));
 }
 } // namespace ax

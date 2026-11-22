@@ -122,7 +122,11 @@ void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t li
 Acpi::ReadRegions pci_firmware_read_regions();
 void pci_scan(void (*visit)(const PciFunction&));
 void pci_scan(void (*visit)(const PciFunction&, void*), void* context);
-// Preview an aligned root window gap against firmware reservations, before checking PCI ownership.
+// Records occupied configuration-space ranges without writing to the device.
+void pci_record_memory(const PciFunction&, PciMemoryInventory&);
+void pci_memory_inventory(PciMemoryInventory&);
+// Preview an aligned root window gap with firmware and PCI exclusions.
 bool pci_preview_memory_bar(const PciFunction&, uint64_t size, const Acpi::PciRootWindows&,
-                            const Acpi::MotherboardResources&, uint64_t& base);
+                            const Acpi::MotherboardResources&, const PciMemoryInventory&,
+                            uint64_t& base);
 } // namespace ax

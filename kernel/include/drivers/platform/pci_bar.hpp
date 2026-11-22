@@ -42,6 +42,27 @@ struct PciBar {
     }
 };
 
+struct PciMemoryInventory {
+    struct Range {
+        uint64_t base, size;
+    };
+
+    Range ranges[512];
+    unsigned count = 0;
+    bool incomplete = false;
+
+    bool add(uint64_t base, uint64_t size) {
+        if (!size)
+            return true;
+        if (size > UINT64_MAX - base || count == sizeof(ranges) / sizeof(*ranges)) {
+            incomplete = true;
+            return false;
+        }
+        ranges[count++] = {base, size};
+        return true;
+    }
+};
+
 namespace PciMemoryGap {
 inline uint64_t overlap_end(uint64_t start, uint64_t end, uint64_t base, uint64_t size) {
     if (!size || base >= end)

@@ -120,10 +120,13 @@ It also reports fixed PCI host bridge memory windows from ACPI. These windows
 describe forwarding ranges. The probe lists motherboard reservations that
 firmware describes through ACPI and flags an incomplete list. For an
 unassigned BAR0, it measures the requested size and looks for an aligned gap
-outside the boot memory map, PCI configuration windows, and motherboard
-reservations. This is a preview. Before programming the BAR, the allocator
-also needs to account for PCI devices and bridge windows already using the
-range.
+outside the boot memory map, PCI configuration windows, motherboard
+reservations, and existing PCI resources. The PCI inventory reads assigned
+BARs, ROMs, and bridge windows without probing other devices for their sizes.
+It uses the programmed alignment to bound each BAR, so it can exclude more
+space than a device actually occupies. If the inventory is incomplete, the
+probe reports no candidate. The address is a preview and still needs validation
+against platform MMIO that firmware does not describe in these tables.
 
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and

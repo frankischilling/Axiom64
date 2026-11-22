@@ -50,6 +50,7 @@ struct EcamWindow {
 
 EcamWindow windows[Acpi::Mcfg::max_regions];
 unsigned window_count;
+bool ecam_incomplete;
 Acpi::PciPinRoutes pin_routes;
 Acpi::PciBridges bridges;
 bool bridges_discovered;
@@ -95,6 +96,7 @@ void pci_configure_ecam(const Acpi::Mcfg& mcfg) {
     for (unsigned i = 0; i < mcfg.count; ++i) {
         const auto& region = mcfg.regions[i];
         if (!ecam_allowed(region, limit)) {
+            ecam_incomplete = true;
             log("PCI ECAM: rejected aperture segment=%u buses=%u-%u\n", uint64_t(region.segment),
                 uint64_t(region.first_bus), uint64_t(region.last_bus));
             continue;
@@ -507,10 +509,100 @@ Acpi::ReadRegions pci_firmware_read_regions() {
     return {firmware_read_nvs, read_pci_field<true>, &bridges};
 }
 
+static bool unsupported_memory_resources(const PciFunction& pci) {
+    if (pci.find_capability(0x14)) // Enhanced Allocation can define additional ranges.
+        return true;
+    if (!pci.configuration)
+        return pci.find_capability(0x10) != 0;
+    for (uint16_t offset = 0x100; offset;) {
+        const uint32_t header = pci.read32(offset);
+        if (!header || header == UINT32_MAX)
+            return false;
+        if (uint16_t(header) == 0x10) { // SR-IOV
+            if (offset > 0xff4 || (pci.read16(offset + 8) & 1))
+                return true; // The PF's VF BARs are separate from standard BARs.
+        }
+        const uint16_t next = header >> 20;
+        if (next && (next <= offset || (next & 3)))
+            return true;
+        offset = next;
+    }
+    return false;
+}
+
+void pci_record_memory(const PciFunction& pci, PciMemoryInventory& inventory) {
+    const unsigned header = pci.read8(0x0e) & 0x7f;
+    if (header > 1) {
+        inventory.incomplete = true;
+        return;
+    }
+    if (unsupported_memory_resources(pci))
+        inventory.incomplete = true;
+
+    const unsigned count = header ? 2 : 6;
+    for (unsigned index = 0; index < count; ++index) {
+        const unsigned offset = 0x10 + 4 * index;
+        const uint32_t low = pci.read32(offset);
+        if (low & 1) // I/O BAR
+            continue;
+        const unsigned type = low & 6;
+        uint64_t base = low & ~15u;
+        if (type == 4) {
+            if (++index == count) {
+                inventory.incomplete = true;
+                break;
+            }
+            base |= uint64_t(pci.read32(offset + 4)) << 32;
+        } else if (type == 6 || (type == 2 && base >= (1ull << 20))) {
+            inventory.incomplete = true;
+            continue;
+        }
+        // A programmed BAR is aligned to its size. The lowest address bit
+        // bounds its decoded span without masking registers on a live device.
+        if (base)
+            inventory.add(base, base & (0 - base));
+    }
+    const uint64_t rom = pci.read32(header ? 0x38 : 0x30) & ~0x7ffu;
+    if (rom)
+        inventory.add(rom, rom & (0 - rom));
+
+    if (!header || (!pci.read8(0x19) && !(pci.read16(4) & 2)))
+        return;
+    const auto read = [&](uint16_t offset, uint8_t, uint32_t& value) {
+        value = pci.read32(offset);
+        return true;
+    };
+    const bool kinds[]{false, true};
+    for (bool prefetchable : kinds) {
+        uint64_t base, limit;
+        if (!PciBridgeWindows::memory_bounds(read, prefetchable, base, limit) ||
+            (base <= limit && limit == UINT64_MAX)) {
+            inventory.incomplete = true;
+            continue;
+        }
+        if (base <= limit)
+            inventory.add(base, limit - base + 1);
+    }
+}
+
+void pci_memory_inventory(PciMemoryInventory& inventory) {
+    inventory.count = 0;
+    inventory.incomplete = ecam_incomplete;
+    scan_pci_functions([&](const PciFunction& pci) { pci_record_memory(pci, inventory); });
+    // A failed ECAM mapping can hide functions with no legacy configuration path.
+    for (unsigned i = 0; i < window_count; ++i) {
+        const auto& window = windows[i];
+        for (unsigned bus = window.region.first_bus; bus <= window.region.last_bus; ++bus)
+            if (!window.buses[bus].address)
+                inventory.incomplete = true;
+    }
+}
+
 bool pci_preview_memory_bar(const PciFunction& pci, uint64_t size,
                             const Acpi::PciRootWindows& roots,
-                            const Acpi::MotherboardResources& board, uint64_t& base) {
-    if (board.incomplete)
+                            const Acpi::MotherboardResources& board,
+                            const PciMemoryInventory& inventory, uint64_t& base) {
+    if (board.incomplete || inventory.incomplete)
         return false;
     const uint32_t bar = pci.read32(0x10);
     if (bar & 3)
@@ -529,6 +621,8 @@ bool pci_preview_memory_bar(const PciFunction& pci, uint64_t size,
         }
         for (unsigned i = 0; i < board.count; ++i)
             include(board.memory[i].base, board.memory[i].size);
+        for (unsigned i = 0; i < inventory.count; ++i)
+            include(inventory.ranges[i].base, inventory.ranges[i].size);
         for (unsigned i = 0; i < window_count; ++i) {
             const auto& region = windows[i].region;
             include(region.bus_address(region.first_bus),

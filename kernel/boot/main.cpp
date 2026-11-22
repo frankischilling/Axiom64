@@ -119,7 +119,7 @@ BootInfo boot_info;
     const bool usb_keyboard_probe = arguments.has("usb.xhci=keyboard-probe");
     if (usb_keyboard_probe || arguments.has("usb.xhci=probe"))
         xhci_probe(usb_keyboard_probe);
-    devices_init();
+    devices_init(arguments.has("fbconsole"));
     net_init();
     log("Entering userspace in Ring 3\n");
     start_init(init);

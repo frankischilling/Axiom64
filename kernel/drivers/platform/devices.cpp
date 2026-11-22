@@ -28,6 +28,7 @@
 #include "drivers/block/block.hpp"
 #include "drivers/block/floppy.hpp"
 #include "drivers/block/nvme.hpp"
+#include "drivers/platform/fb_console.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
@@ -56,9 +57,38 @@ struct InputQueue {
 
 static InputQueue keyboard_events, mouse_events;
 static uint8_t keys[96];
-static bool extended;
+static bool extended, console_keyboard, console_caps_lock;
 static uint8_t mouse_packet[3], mouse_offset, mouse_buttons;
 static bool mouse_ack_pending;
+
+static bool console_output(char character) {
+    fb_console_put(character);
+    return !serial_present() || serial_put(character);
+}
+
+static bool key_down(unsigned code) {
+    return (keys[code / 8] & (1u << (code % 8))) != 0;
+}
+
+static unsigned char console_key(unsigned code) {
+    // The i8042 driver publishes translated set-1 positions to evdev and the console.
+    static constexpr char plain[] =
+        "\0\033"
+        "1234567890-=\177\tqwertyuiop[]\n\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
+    static constexpr char shifted[] =
+        "\0\033"
+        "!@#$%^&*()_+\177\tQWERTYUIOP{}\n\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
+    static_assert(sizeof(plain) == sizeof(shifted) && sizeof(plain) == 59);
+    if (code == 96) // Keypad Enter.
+        return '\n';
+    if (code >= sizeof(plain) || key_down(56) || key_down(100))
+        return 0;
+    const auto letter = plain[code] >= 'a' && plain[code] <= 'z';
+    if (letter && (key_down(29) || key_down(97)))
+        return plain[code] - 'a' + 1;
+    const bool shift = key_down(42) || key_down(54);
+    return shift != (letter && console_caps_lock) ? shifted[code] : plain[code];
+}
 
 static void terminal_signal(int pgid, int signal) {
     if (pgid <= 0)
@@ -211,8 +241,11 @@ static void terminal_input(ByteQueue& input, ByteQueue* echo, const Terminal& te
                 queue_put(*echo, 8);
                 queue_put(*echo, ' ');
                 queue_put(*echo, 8);
-            } else
-                log("\b \b");
+            } else {
+                console_output('\b');
+                console_output(' ');
+                console_output('\b');
+            }
         }
         return;
     }
@@ -221,7 +254,7 @@ static void terminal_input(ByteQueue& input, ByteQueue* echo, const Terminal& te
         if (echo)
             queue_put(*echo, c);
         else
-            putchar(c);
+            console_output(c);
     }
 }
 
@@ -316,7 +349,7 @@ static bool controller_wait(bool output) {
     return false;
 }
 
-void devices_init() {
+void devices_init(bool display_console) {
     framebuffer = boot_info.framebuffer.address ? &boot_info.framebuffer : nullptr;
     if (framebuffer) {
         tag("/dev/fb0", Device::framebuffer);
@@ -341,6 +374,8 @@ void devices_init() {
         subsystem->owned = true;
         log("Framebuffer: %ux%u pitch=%u bpp=%u\n", framebuffer->width, framebuffer->height,
             framebuffer->pitch, uint64_t(framebuffer->bpp));
+        if (display_console)
+            console_keyboard = fb_console_init(*framebuffer);
     }
     legacy_pnp_init();
     tag("/dev/console", Device::serial, 0x501);
@@ -756,10 +791,9 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     }
     if (h->node->device == Device::serial || h->node->device == Device::tty ||
         h->node->device == Device::vt) {
-        if (serial_present())
-            for (size_t i = 0; i < len; i++)
-                if (!serial_put(bytes[i]))
-                    return i ? int64_t(i) : -5;
+        for (size_t i = 0; i < len; i++)
+            if (!console_output(bytes[i]))
+                return i ? int64_t(i) : -5;
         return len;
     }
     return -19;
@@ -1099,6 +1133,8 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         if (arg > 1)
             return -22;
         vt_mode = arg;
+        if (!h->pty)
+            fb_console_graphics(arg != 0);
         return 0;
     case 0x4b44:
         return output(arg, &keyboard_mode, 4);
@@ -1213,14 +1249,23 @@ void devices_poll() {
                 }
                 extended = false;
             }
+            const bool pressed = !(byte & 128);
+            const bool before = code < sizeof(keys) * 8 && key_down(code);
             if (code < sizeof(keys) * 8) {
-                if (byte & 128)
+                if (!pressed)
                     keys[code / 8] &= ~(1 << (code % 8));
                 else
                     keys[code / 8] |= 1 << (code % 8);
             }
-            event(keyboard_events, 1, code, (byte & 128) ? 0 : 1);
+            event(keyboard_events, 1, code, pressed ? 1 : 0);
             event(keyboard_events, 0, 0, 0);
+            if (console_keyboard && !vt_mode && pressed) {
+                if (code == 58 && !before)
+                    console_caps_lock = !console_caps_lock;
+                if (auto character = console_key(code))
+                    terminal_input(console_input, nullptr, console_terminal, console_pgid,
+                                   character);
+            }
         }
     }
 }

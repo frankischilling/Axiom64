@@ -45,6 +45,8 @@ constexpr unsigned legacy_preserved = (7 << 1) | (255 << 5) | (7 << 17);
 constexpr unsigned legacy_event_status = 7u << 29;
 constexpr unsigned ring_size = 64, max_scratchpads = 128, max_controllers = 4;
 constexpr unsigned timeout_ticks = 100, commands_to_check = 130;
+constexpr unsigned root_port_detection_ticks = 25;
+constexpr unsigned intel_reset_delay_us = 1000;
 constexpr unsigned descriptor_size = 18, device_pages = 5, keyboard_report_size = 8;
 constexpr unsigned configuration_header_size = 9;
 constexpr unsigned enable_slot = 9, address_device = 11, configure_endpoint = 12,
@@ -220,12 +222,15 @@ struct Controller {
                                 timeout_ticks);
     }
 
-    bool initialize() {
+    bool initialize(bool intel) {
         if (!DevicePoll::wait([&] { return !(read(operational, status_reg) & not_ready); },
                               timeout_ticks) ||
             !stop())
             return false;
         write(operational, command_reg, reset);
+        // Intel xHCI controllers need a quiet interval after asserting HCRST.
+        if (intel && !clock_delay_us(intel_reset_delay_us))
+            return false;
         if (!DevicePoll::wait(
                 [&] {
                     return !(read(operational, command_reg) & reset) &&
@@ -670,7 +675,12 @@ void probe(const PciFunction& pci) {
     pci.write16(4, (original & ~7u) | pci_memory | pci_master | pci_intx_disable);
     unsigned completed = 0, connected = 0;
     if ((pci.read16(4) & (pci_memory | pci_master)) == (pci_memory | pci_master) &&
-        controller.initialize()) {
+        controller.initialize(pci.read16(0) == 0x8086)) {
+        // Powered ports can still be detecting connected devices after Run.
+        clock_refresh();
+        const uint64_t started = ticks;
+        DevicePoll::wait([&] { return ticks - started >= root_port_detection_ticks; },
+                         root_port_detection_ticks + 1);
         if (probe_mode != ProbeMode::keyboard)
             while (completed < commands_to_check && controller.command())
                 ++completed;

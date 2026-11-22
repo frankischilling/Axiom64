@@ -162,6 +162,7 @@ struct Value {
 
 struct Frame {
     enum class LoopControl { none, stop, next };
+    static constexpr unsigned max_names = 128;
 
     struct Named {
         uint32_t name;
@@ -170,26 +171,27 @@ struct Frame {
 
     const Value* arguments;
     unsigned count;
+    Named (&names)[max_names];
+    unsigned& used_names;
+    unsigned first_name;
     Value locals[8]{};
-    Named names[8]{};
-    unsigned named = 0;
     unsigned loops = 0;
     LoopControl loop_control = LoopControl::none;
 
     Value* find(const Name& name) {
         if (name.absolute || name.parents || name.path.count != 1)
             return nullptr;
-        for (unsigned i = 0; i < named; ++i)
+        for (unsigned i = first_name; i < used_names; ++i)
             if (names[i].name == name.path.segments[0])
                 return &names[i].value;
         return nullptr;
     }
 
     bool add(const Name& name, Value value) {
-        if (name.absolute || name.parents || name.path.count != 1 ||
-            named == sizeof(names) / sizeof(*names) || find(name))
+        if (name.absolute || name.parents || name.path.count != 1 || used_names == max_names ||
+            find(name))
             return false;
-        names[named++] = {name.path.segments[0], value};
+        names[used_names++] = {name.path.segments[0], value};
         return true;
     }
 };
@@ -211,6 +213,9 @@ struct Namespace {
     unsigned capacity, index_mask;
     Value values[4096];
     uint8_t buffers[8192];
+    // Active methods share this arena. Each nested method releases its own tail on return.
+    Frame::Named method_names[Frame::max_names];
+    unsigned used_method_names;
     unsigned count;
     unsigned steps;
     unsigned used_values;
@@ -324,9 +329,13 @@ struct Namespace {
 
     bool method(const Object& object, const Value* args, unsigned count, Value& result,
                 unsigned depth = 0) {
-        Frame frame{args, count};
-        return object.kind == Kind::Method && count == object.arguments &&
-               execute(object.content, object.path, frame, result, depth);
+        if (object.kind != Kind::Method || count != object.arguments)
+            return false;
+        const unsigned first = used_method_names;
+        Frame frame{args, count, method_names, used_method_names, first};
+        const bool ok = execute(object.content, object.path, frame, result, depth);
+        used_method_names = first;
+        return ok;
     }
 
     bool config(const Path& scope, uint32_t segment, Value& result, unsigned depth = 0) {

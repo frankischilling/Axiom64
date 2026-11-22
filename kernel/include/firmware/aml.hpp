@@ -124,6 +124,20 @@ struct ReadRegions {
 // Decode fixed, identity-mapped memory apertures. An aperture is not a reservation.
 bool decode_pci_root_windows(const DefinitionBlocks&, PciRootWindows&, ReadRegions = {});
 
+struct MemoryReservation {
+    uint64_t base, size;
+};
+
+struct MotherboardResources {
+    MemoryReservation memory[128];
+    unsigned count;
+    bool incomplete;
+};
+
+// Validated PNP0C01/PNP0C02 ranges may be listed even if other declarations fail.
+// An incomplete result cannot be used by an allocator as an exclusion list.
+bool decode_motherboard_resources(const DefinitionBlocks&, MotherboardResources&, ReadRegions = {});
+
 struct I2cHidInterrupt {
     enum class Source : uint8_t { none, legacy_irq, gsi, gpio };
     enum class Polarity : uint8_t { active_high, active_low, both_edges };

@@ -42,6 +42,39 @@ struct PciBar {
     }
 };
 
+namespace PciMemoryGap {
+inline uint64_t overlap_end(uint64_t start, uint64_t end, uint64_t base, uint64_t size) {
+    if (!size || base >= end)
+        return 0;
+    const uint64_t last = size > UINT64_MAX - base ? UINT64_MAX : base + size;
+    return last > start ? last : 0;
+}
+
+// The callback returns the exclusive end of an occupied range overlapping [base, end).
+template <class Exclusions>
+bool find(uint64_t begin, uint64_t limit, uint64_t size, const Exclusions& exclusions,
+          uint64_t& base) {
+    if (!size || (size & (size - 1)))
+        return false;
+    const uint64_t mask = size - 1;
+    while (begin < limit && begin <= UINT64_MAX - mask) {
+        const uint64_t candidate = (begin + mask) & ~mask;
+        if (candidate >= limit || size > limit - candidate)
+            return false;
+        const uint64_t end = candidate + size;
+        const uint64_t blocked = exclusions(candidate, end);
+        if (!blocked) {
+            base = candidate;
+            return true;
+        }
+        if (blocked <= candidate)
+            return false;
+        begin = blocked;
+    }
+    return false;
+}
+} // namespace PciMemoryGap
+
 namespace PciBarProbe {
 enum class Assignment { assigned, unassigned };
 

@@ -32,7 +32,12 @@ namespace {
 constexpr uint16_t memory_decode = 2, intx_disabled = 1 << 10;
 constexpr unsigned component_type = 0xfc, lpss_capabilities = 0x2fc;
 constexpr unsigned register_bytes = lpss_capabilities + sizeof(uint32_t);
-unsigned controllers;
+
+struct ProbeResources {
+    Acpi::PciRootWindows windows;
+    Acpi::MotherboardResources board;
+    unsigned controllers;
+};
 
 bool set_command(const PciFunction& pci, uint16_t command) {
     if (pci.read16(4) != command)
@@ -40,7 +45,8 @@ bool set_command(const PciFunction& pci, uint16_t command) {
     return pci.read16(4) == command;
 }
 
-bool probe_registers(const PciFunction& pci, uint16_t quiet_command) {
+bool probe_registers(const PciFunction& pci, uint16_t quiet_command,
+                     const ProbeResources& resources) {
     PciBar bar;
     uint64_t address;
     const auto result = pci.probe_bar(0, PciBarSpace::memory, bar);
@@ -50,6 +56,11 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command) {
             const auto measured = pci.measure_unassigned_memory_bar(0, size);
             if (measured == PciBarStatus::valid) {
                 log("LPSS I2C: BAR0 unassigned bytes=%x\n", size);
+                uint64_t gap;
+                if (pci_preview_memory_bar(pci, size, resources.windows, resources.board, gap))
+                    log("LPSS I2C: BAR0 firmware gap base=%x bytes=%x\n", gap, size);
+                else
+                    log("LPSS I2C: BAR0 no validated firmware gap\n");
                 return true;
             }
             if (measured == PciBarStatus::restore_failed)
@@ -70,13 +81,14 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command) {
     return true;
 }
 
-void probe(const PciFunction& pci) {
+void probe(const PciFunction& pci, void* context) {
     const uint32_t id = pci.read32(0);
     const auto device = uint16_t(id >> 16);
     if (uint16_t(id) != 0x8086 || device < 0x06e8 || device > 0x06eb ||
         (pci.read32(8) >> 16) != 0x0c80 || (pci.read8(0x0e) & 0x7f))
         return;
-    ++controllers;
+    auto& resources = *static_cast<ProbeResources*>(context);
+    ++resources.controllers;
 
     const auto initial = pci.power_state();
     const uint16_t command = pci.read16(4);
@@ -97,7 +109,8 @@ void probe(const PciFunction& pci) {
     const bool awake = pci.set_power_state(PciPowerState::d0);
     log("LPSS I2C: wake=%u power=%u BAR0=%x:%x\n", uint64_t(awake), uint64_t(pci.power_state()),
         uint64_t(pci.read32(0x14)), uint64_t(pci.read32(0x10)));
-    const bool bar_intact = !awake || !set_command(pci, quiet) || probe_registers(pci, quiet);
+    const bool bar_intact =
+        !awake || !set_command(pci, quiet) || probe_registers(pci, quiet, resources);
 
     // Leave bus mastering off unless the original power and command can be restored.
     const bool settled = awake || pci.power_state() == initial;
@@ -109,18 +122,24 @@ void probe(const PciFunction& pci) {
 } // namespace
 
 void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks) {
-    Acpi::PciRootWindows windows{};
-    if (Acpi::decode_pci_root_windows(blocks, windows, pci_firmware_read_regions()))
-        for (unsigned i = 0; i < windows.count; ++i) {
-            const auto& window = windows.entries[i];
+    ProbeResources resources{};
+    const auto providers = pci_firmware_read_regions();
+    if (Acpi::decode_pci_root_windows(blocks, resources.windows, providers))
+        for (unsigned i = 0; i < resources.windows.count; ++i) {
+            const auto& window = resources.windows.entries[i];
             log("PCI root window: segment=%u bus=%x base=%x bytes=%x prefetch=%u\n",
                 uint64_t(window.segment), uint64_t(window.bus), window.base, window.size,
                 uint64_t(window.prefetchable));
         }
     else
         log("PCI root window: no usable ACPI memory aperture\n");
-    controllers = 0;
-    pci_scan(probe);
-    log("LPSS I2C: controllers=%u\n", uint64_t(controllers));
+    Acpi::decode_motherboard_resources(blocks, resources.board, providers);
+    for (unsigned i = 0; i < resources.board.count; ++i)
+        log("PCI motherboard memory: base=%x bytes=%x\n", resources.board.memory[i].base,
+            resources.board.memory[i].size);
+    log("PCI motherboard memory: ranges=%u incomplete=%u\n", uint64_t(resources.board.count),
+        uint64_t(resources.board.incomplete));
+    pci_scan(probe, &resources);
+    log("LPSS I2C: controllers=%u\n", uint64_t(resources.controllers));
 }
 } // namespace ax

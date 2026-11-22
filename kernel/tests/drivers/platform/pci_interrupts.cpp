@@ -26,6 +26,7 @@
 #include <cassert>
 #include <cstdio>
 #include <sys/mman.h>
+#include "boot/boot.hpp"
 #include "drivers/platform/pci.hpp"
 #include "drivers/platform/pci_bridge.hpp"
 
@@ -313,6 +314,37 @@ void test_apertures() {
     std::puts("PCI_UNASSIGNED_BAR_PASS size absence readback restore");
 }
 
+void test_firmware_gap(const ax::PciFunction& pci) {
+    using namespace ax;
+    constexpr uint64_t high = 0x4000000000, low = 0xd0000000;
+    const BootMemory blocked[]{{high, 0x1000, BootMemoryKind::reserved},
+                               {high + 0x3100, 0x1000, BootMemoryKind::usable}};
+    boot_info.memory_context = blocked;
+    boot_info.memory_count = 2;
+    boot_info.memory_at = [](const void* context, size_t i) {
+        return static_cast<const BootMemory*>(context)[i];
+    };
+    Acpi::MotherboardResources board{{{high + 0xff0, 0x2100}, {low, 0x2000}}, 2, false};
+    Acpi::PciRootWindows roots{
+        {{high, 0x50000, 7, 0, false}, {high, 0x10000, 0, 0, false}, {low, 0x10000, 0, 0, false}},
+        3};
+    uint64_t address = 0;
+    pci.write32(0x10, 4); // Unassigned 64-bit memory BAR.
+    assert(pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == high + 0x5000);
+    assert(pci.read32(0x10) == 4);
+    roots.entries[1].prefetchable = true;
+    assert(pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == low + 0x2000);
+    roots.entries[1].prefetchable = false;
+    pci.write32(0x10, 0);
+    assert(pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == low + 0x2000);
+    assert(!pci_preview_memory_bar(pci, 0x900, roots, board, address));
+    assert(!pci_preview_memory_bar(pci, 0x10000, roots, board, address));
+    board.incomplete = true;
+    assert(!pci_preview_memory_bar(pci, 0x1000, roots, board, address) && address == low + 0x2000);
+    boot_info = {};
+    std::puts("PCI_FIRMWARE_GAP_PASS alignment boot_map motherboard width prefetch incomplete");
+}
+
 uint32_t bridge_config[2][16];
 
 bool read_bridge(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, uint16_t offset,
@@ -398,6 +430,8 @@ void test_bridge_windows() {
 } // namespace
 
 namespace ax {
+BootInfo boot_info{};
+
 void log(const char*, ...) {
 }
 
@@ -438,6 +472,7 @@ int main() {
     test_msi(pci);
     test_msix(pci);
     test_apertures();
+    test_firmware_gap(pci);
     test_bridge_windows();
     assert(munmap(page, 4096) == 0);
 }

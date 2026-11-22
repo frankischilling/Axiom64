@@ -556,37 +556,41 @@ bool routing(Namespace& space, PciPinRoutes& output, PciBridges* bridges) {
     return output.count != 0;
 }
 
-bool accept_root_window(unsigned tag, Cursor item, uint16_t segment, uint8_t bus,
-                        PciRootWindows& windows) {
-    unsigned width;
-    switch (tag) {
-    case 0x87:
-        width = 4;
-        break; // DWord Address Space
-    case 0x88:
-        width = 2;
-        break; // Word Address Space
-    case 0x8a:
-    case 0x8b:
-        width = 8;
-        break; // QWord and Extended Address Space
-    default:
-        return true;
-    }
-    const bool extended = tag == 0x8b;
+struct AddressResource {
     uint64_t type, general, flags;
-    if (!item.read(1, type) || !item.read(1, general) || !item.read(1, flags))
+    uint64_t granularity, minimum, maximum, translation, length, attributes;
+};
+
+bool address_resource_tag(unsigned tag) {
+    return tag == 0x87 || tag == 0x88 || tag == 0x8a || tag == 0x8b;
+}
+
+bool read_address_resource(unsigned tag, Cursor item, AddressResource& address) {
+    const unsigned width = tag == 0x87 ? 4 : tag == 0x88 ? 2 : 8;
+    if (!item.read(1, address.type) || !item.read(1, address.general) ||
+        !item.read(1, address.flags))
         return false;
-    if (extended) {
+    if (tag == 0x8b) {
         uint64_t revision;
         if (!item.read(2, revision) || revision != 1)
             return false;
     }
-    uint64_t granularity, minimum, maximum, translation, length, attributes = 0;
-    if (!item.read(width, granularity) || !item.read(width, minimum) ||
-        !item.read(width, maximum) || !item.read(width, translation) || !item.read(width, length) ||
-        (extended && (!item.read(8, attributes) || item.left)))
+    return item.read(width, address.granularity) && item.read(width, address.minimum) &&
+           item.read(width, address.maximum) && item.read(width, address.translation) &&
+           item.read(width, address.length) &&
+           (tag != 0x8b || (item.read(8, address.attributes) && !item.left));
+}
+
+bool accept_root_window(unsigned tag, Cursor item, uint16_t segment, uint8_t bus,
+                        PciRootWindows& windows) {
+    if (!address_resource_tag(tag))
+        return true;
+    AddressResource address{};
+    if (!read_address_resource(tag, item, address))
         return false;
+    const auto& [type, general, flags, granularity, minimum, maximum, translation, length,
+                 attributes] = address;
+    const bool extended = tag == 0x8b;
     // Only Extended Address Space defines the consumer bit on a PCI root bridge.
     if (type || (general & ~1u) != 0x0c || (extended && (general & 1)) || (flags & 0xf9) != 1 ||
         !length || granularity || translation)
@@ -655,6 +659,108 @@ bool pci_root_windows(Namespace& space, PciRootWindows& output) {
     return output.count != 0;
 }
 
+bool add_motherboard_range(MotherboardResources& result, uint64_t base, uint64_t size) {
+    if (!size)
+        return true;
+    if (size > UINT64_MAX - base || result.count == sizeof(result.memory) / sizeof(*result.memory))
+        return false;
+    result.memory[result.count++] = {base, size};
+    return true;
+}
+
+bool reserve_motherboard_item(unsigned tag, Cursor item, MotherboardResources& result) {
+    if (tag == 0x86) { // Memory32Fixed
+        uint64_t base, length;
+        return item.skip(1) && item.read(4, base) && item.read(4, length) && !item.left &&
+               length <= (1ull << 32) - base && add_motherboard_range(result, base, length);
+    }
+    if (tag == 0x81 || tag == 0x85) { // Memory24 and Memory32
+        const unsigned width = tag == 0x81 ? 2 : 4;
+        const unsigned shift = tag == 0x81 ? 8 : 0;
+        uint64_t minimum, maximum, length;
+        if (!item.skip(1) || !item.read(width, minimum) || !item.read(width, maximum) ||
+            !item.skip(width) || !item.read(width, length) || item.left)
+            return false;
+        if (!length)
+            return true;
+        // Minimum and maximum describe possible base addresses.
+        return maximum >= minimum && length <= (1ull << (8 * width)) - maximum &&
+               add_motherboard_range(result, minimum << shift,
+                                     (maximum - minimum + length) << shift);
+    }
+    if (!address_resource_tag(tag))
+        return true;
+    AddressResource address{};
+    if (!read_address_resource(tag, item, address))
+        return false;
+    if (address.type || !address.length)
+        return true;
+    if (address.maximum < address.minimum || address.maximum == UINT64_MAX)
+        return false;
+    const uint64_t span = address.maximum - address.minimum + 1;
+    if (address.length > span || address.translation > UINT64_MAX - address.maximum)
+        return false;
+    return add_motherboard_range(result, address.minimum + address.translation, span);
+}
+
+bool motherboard_ranges(Cursor resources, MotherboardResources& result) {
+    size_t payload;
+    if (!resource_payload(resources, payload))
+        return false;
+    resources.left = payload;
+    while (resources.left) {
+        const unsigned tag = resources.peek();
+        resources.skip(1);
+        uint64_t length = tag & 7;
+        Cursor item;
+        if (((tag & 0x80) && !resources.read(2, length)) || !resources.take(length, item) ||
+            !reserve_motherboard_item(tag, item, result))
+            return false;
+    }
+    return true;
+}
+
+bool motherboard_id(Value id) {
+    if (id.type == Type::Integer)
+        return id.number == 0x010cd041 || id.number == 0x020cd041;
+    return id.type == Type::String && id.content.left == 7 &&
+           !memcmp(id.content.next, "PNP0C0", 6) &&
+           (id.content.next[6] == '1' || id.content.next[6] == '2');
+}
+
+bool motherboard_compatible(Value id) {
+    if (id.type != Type::Package)
+        return motherboard_id(id);
+    for (unsigned i = 0; i < id.number; ++i)
+        if (motherboard_id(id.entries[i]))
+            return true;
+    return false;
+}
+
+bool collect_motherboard_device(Namespace& space, const Object& device,
+                                MotherboardResources& result) {
+    const auto& path = device.path;
+    Value id{}, compatible{}, status{}, current{};
+    if (space.child(path, name_segment("_HID")) && !space.config(path, name_segment("_HID"), id))
+        return false;
+    if (!motherboard_id(id)) {
+        if (!space.child(path, name_segment("_CID")))
+            return true;
+        if (!space.config(path, name_segment("_CID"), compatible))
+            return false;
+        if (!motherboard_compatible(compatible))
+            return true;
+    }
+    if (space.child(path, name_segment("_STA"))) {
+        if (!space.config(path, name_segment("_STA"), status) || status.type != Type::Integer)
+            return false;
+        if (!(status.number & 1))
+            return true;
+    }
+    return space.config(path, name_segment("_CRS"), current) && current.type == Type::Buffer &&
+           motherboard_ranges(current.content, result);
+}
+
 const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
                              uint8_t slot, uint8_t function, uint8_t pin, bool& ambiguous) {
     const PciPinRoute* exact = nullptr;
@@ -696,6 +802,32 @@ bool decode_pci_root_windows(const DefinitionBlocks& blocks, PciRootWindows& res
     if (!ok)
         result.count = 0;
     return ok;
+}
+
+bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardResources& result,
+                                  ReadRegions regions) {
+    result.count = 0;
+    result.incomplete = false;
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+    if (!space) {
+        result.incomplete = true;
+        return false;
+    }
+    for (unsigned i = 0; i < space->count; ++i) {
+        const auto& device = space->objects[i];
+        if (device.kind != Kind::Device || !space->child(device.path, name_segment("_CRS")))
+            continue;
+        const unsigned values = space->used_values, bytes = space->used_bytes;
+        const unsigned count = result.count;
+        if (!collect_motherboard_device(*space, device, result)) {
+            result.incomplete = true;
+            result.count = count;
+        }
+        space->used_values = values;
+        space->used_bytes = bytes;
+    }
+    release(space);
+    return true;
 }
 
 bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result,

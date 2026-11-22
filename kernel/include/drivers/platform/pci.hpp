@@ -33,6 +33,8 @@ namespace Acpi {
 struct Mcfg;
 struct DefinitionBlocks;
 struct ReadRegions;
+struct PciRootWindows;
+struct MotherboardResources;
 } // namespace Acpi
 
 enum class PciPowerState : uint8_t { d0, d1, d2, d3hot, unavailable };
@@ -119,4 +121,8 @@ void pci_configure_ecam(const Acpi::Mcfg&);
 void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t link_gsis);
 Acpi::ReadRegions pci_firmware_read_regions();
 void pci_scan(void (*visit)(const PciFunction&));
+void pci_scan(void (*visit)(const PciFunction&, void*), void* context);
+// Preview an aligned root window gap against firmware reservations, before checking PCI ownership.
+bool pci_preview_memory_bar(const PciFunction&, uint64_t size, const Acpi::PciRootWindows&,
+                            const Acpi::MotherboardResources&, uint64_t& base);
 } // namespace ax

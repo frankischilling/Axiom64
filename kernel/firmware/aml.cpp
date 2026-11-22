@@ -1097,6 +1097,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->steps = 32768;
     space->used_values = 0;
     space->used_bytes = 0;
+    space->used_method_names = 0;
     space->persistent_bytes = 0;
     space->integer_mask = blocks.dsdt.table && blocks.dsdt.length >= 36 && blocks.dsdt.table[8] >= 2
                               ? UINT64_MAX

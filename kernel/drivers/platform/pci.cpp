@@ -389,7 +389,7 @@ void PciIntx::stop(const PciFunction& pci) {
 }
 
 static unsigned scan_bus(uint16_t segment, unsigned bus, volatile uint8_t* ecam,
-                         void (*visit)(const PciFunction&)) {
+                         const auto& visit) {
     if (segment && !ecam)
         return 0;
     unsigned count = 0;
@@ -414,7 +414,7 @@ static unsigned scan_bus(uint16_t segment, unsigned bus, volatile uint8_t* ecam,
     return count;
 }
 
-static unsigned scan_pci_functions(void (*visit)(const PciFunction&)) {
+static unsigned scan_pci_functions(const auto& visit) {
     unsigned count = 0;
     for (unsigned bus = 0; bus < 256; ++bus) {
         volatile uint8_t* ecam = nullptr;
@@ -507,6 +507,52 @@ Acpi::ReadRegions pci_firmware_read_regions() {
     return {firmware_read_nvs, read_pci_field<true>, &bridges};
 }
 
+bool pci_preview_memory_bar(const PciFunction& pci, uint64_t size,
+                            const Acpi::PciRootWindows& roots,
+                            const Acpi::MotherboardResources& board, uint64_t& base) {
+    if (board.incomplete)
+        return false;
+    const uint32_t bar = pci.read32(0x10);
+    if (bar & 3)
+        return false;
+    const bool prefetchable = bar & 8;
+    const bool wide = bar & 4;
+    const uint64_t limit = physical_address_limit();
+    auto exclude = [&](uint64_t start, uint64_t end) {
+        uint64_t blocked = 0;
+        auto include = [&](uint64_t address, uint64_t length) {
+            blocked = max(blocked, PciMemoryGap::overlap_end(start, end, address, length));
+        };
+        for (size_t i = 0; i < boot_info.memory_count; ++i) {
+            const auto entry = boot_info.memory_at(boot_info.memory_context, i);
+            include(entry.base, entry.length);
+        }
+        for (unsigned i = 0; i < board.count; ++i)
+            include(board.memory[i].base, board.memory[i].size);
+        for (unsigned i = 0; i < window_count; ++i) {
+            const auto& region = windows[i].region;
+            include(region.bus_address(region.first_bus),
+                    (region.last_bus - region.first_bus + 1) * Acpi::EcamRegion::bus_bytes);
+        }
+        return blocked;
+    };
+    auto within = [&](uint64_t floor, uint64_t ceiling) {
+        for (unsigned i = 0; i < roots.count; ++i) {
+            const auto& window = roots.entries[i];
+            if (pci.segment != window.segment || pci.bus != window.bus ||
+                (!prefetchable && window.prefetchable) || window.size > UINT64_MAX - window.base)
+                continue;
+            if (PciMemoryGap::find(max(floor, window.base), min(ceiling, window.base + window.size),
+                                   size, exclude, base))
+                return true;
+        }
+        return false;
+    };
+    constexpr uint64_t four_gib = 1ull << 32;
+    constexpr uint64_t legacy_end = 1ull << 20;
+    return (wide && within(four_gib, limit)) || within(legacy_end, min(four_gib, limit));
+}
+
 PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const {
     PciBar candidate;
     const auto status =
@@ -580,5 +626,11 @@ void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint
 void pci_scan(void (*visit)(const PciFunction&)) {
     discover_bridges();
     log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(visit)));
+}
+
+void pci_scan(void (*visit)(const PciFunction&, void*), void* context) {
+    discover_bridges();
+    const auto call = [&](const PciFunction& pci) { visit(pci, context); };
+    log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(call)));
 }
 } // namespace ax

@@ -117,9 +117,13 @@ Comet Lake LPSS I²C controllers. It reports the BAR before and after a D0
 transition and reads the controller identity from a validated aperture.
 The probe restores the original power state and PCI command after the check.
 It also reports fixed PCI host bridge memory windows from ACPI. These windows
-describe forwarding ranges. BAR allocation also needs the occupied ranges
-within each window. For an unassigned BAR0, the probe measures the requested
-size without assigning an address.
+describe forwarding ranges. The probe lists motherboard reservations that
+firmware describes through ACPI and flags an incomplete list. For an
+unassigned BAR0, it measures the requested size and looks for an aligned gap
+outside the boot memory map, PCI configuration windows, and motherboard
+reservations. This is a preview. Before programming the BAR, the allocator
+also needs to account for PCI devices and bridge windows already using the
+range.
 
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and

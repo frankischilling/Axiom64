@@ -468,7 +468,7 @@ void i2c_hid_cases() {
 
 Bytes address_window(uint8_t tag, uint8_t general, uint8_t flags, uint64_t base, uint64_t end,
                      uint64_t size, uint64_t translation = 0, uint64_t attributes = 0) {
-    const unsigned width = tag == 0x87 ? 4 : 8;
+    const unsigned width = tag == 0x87 ? 4 : tag == 0x88 ? 2 : 8;
     const bool extended = tag == 0x8b;
     Bytes bytes{tag, uint8_t(3 + width * 5 + (extended ? 10 : 0)), 0, 0, general, flags};
     if (extended)
@@ -528,6 +528,79 @@ void root_window_cases() {
     const auto bad_range = address_window(0x8a, 0x0c, 1, 0x6000000000, 0x6000000fff, 0x2000);
     assert(!inspect(sequence({low, bad_range, {0x79, 0}}), true, windows) && !windows.count);
     std::puts("ACPI_PCI_ROOT_WINDOWS_PASS fixed_ranges checksum bounds disabled_root");
+}
+
+void motherboard_resource_cases() {
+    using namespace ax::Acpi;
+    const Bytes board_id{0x0c, 0x41, 0xd0, 0x0c, 2};
+    const Bytes fixed{0x86, 9, 0, 0, 0, 0, 0x24, 0xfd, 0, 0x10, 0, 0};
+    const Bytes mem24{0x81, 9, 0, 1, 0, 0xb0, 0x20, 0xb0, 0, 0, 0x10, 0};
+    const auto translated =
+        address_window(0x8a, 0x0d, 0, 0x4000000000, 0x4000001fff, 0x2000, 0x10000);
+    const auto valid = sequence({fixed, mem24, translated, {0x4b, 0xf8, 0x0c, 8, 0x79, 0}});
+    const auto other_device = block(
+        {0x5b, 0x82}, sequence({name("MEM0"), data("_HID", {0x0c, 0x41, 0xd0, 0x03, 3}),
+                                data("_CID", package(1, sequence({{0x0d}, name("PNP0C01"), {0}}))),
+                                buffer("_CRS", sequence({fixed, {0x79, 0}}))}));
+    auto inspect = [&](const Bytes& resources, const Bytes& status, MotherboardResources& result) {
+        auto board =
+            block({0x5b, 0x82}, sequence({name("MBRD"), data("_HID", board_id),
+                                          data("_STA", status), buffer("_CRS", resources)}));
+        const auto table = definition(sequence({other_device, board}));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_motherboard_resources(blocks, result);
+    };
+    MotherboardResources result{};
+    assert(inspect(valid, {1}, result) && result.count == 4 && !result.incomplete);
+    const auto& ranges = result.memory;
+    assert(ranges[0].base == 0xfd240000 && ranges[0].size == 0x1000);
+    assert(ranges[1].base == ranges[0].base && ranges[1].size == ranges[0].size);
+    assert(ranges[2].base == 0xb00000 && ranges[2].size == 0x3000);
+    assert(ranges[3].base == 0x4000010000 && ranges[3].size == 0x2000);
+    assert(inspect(valid, {0}, result) && result.count == 1 && !result.incomplete);
+    assert(inspect(valid, {0x0d, 'x', 0}, result) && result.count == 1 && result.incomplete);
+
+    auto bad_checksum = valid;
+    bad_checksum.back() = 1;
+    assert(inspect(bad_checksum, {1}, result) && result.count == 1 && result.incomplete);
+    const auto overflow =
+        address_window(0x8a, 0x0d, 0, UINT64_MAX - 0xfff, UINT64_MAX, 0x1000, 0x10000);
+    assert(inspect(sequence({fixed, overflow, {0x79, 0}}), {1}, result) && result.count == 1 &&
+           result.incomplete);
+    const Bytes wrapping32{0x86, 9, 0, 1, 0, 0xf0, 0xff, 0xff, 0, 0x20, 0, 0, 0x79, 0};
+    assert(inspect(wrapping32, {1}, result) && result.count == 1 && result.incomplete);
+
+    auto scoped_names = [&](unsigned count) {
+        Bytes locals;
+        for (unsigned i = 0; i < count; ++i) {
+            char local[16];
+            std::snprintf(local, sizeof(local), "N%03u", i);
+            auto object = data(local, {0});
+            locals.insert(locals.end(), object.begin(), object.end());
+        }
+        const auto nested = block(
+            {0x14}, sequence({name("NEST"), {0}, data("N000", {0x0a, 42}), {0xa4}, name("N000")}));
+        const auto enabled =
+            sequence({{0x90, 0x93}, name("NEST"), {0x0a, 42, 0x93}, name("N000"), {0}});
+        const auto resources =
+            block({0x14}, sequence({name("_CRS"),
+                                    {0},
+                                    locals,
+                                    block({0xa0}, sequence({enabled, {0xa4}, name("RSRC")})),
+                                    {0xa4},
+                                    block({0x11}, {0})}));
+        auto device =
+            block({0x5b, 0x82}, sequence({name("MEM1"), data("_HID", board_id), nested, resources,
+                                          buffer("RSRC", sequence({fixed, {0x79, 0}}))}));
+        const auto table = definition(sequence({device, other_device}));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_motherboard_resources(blocks, result);
+    };
+    assert(scoped_names(12) && result.count == 2 && !result.incomplete);
+    assert(scoped_names(129) && result.count == 1 && result.incomplete);
+    std::puts("ACPI_MOTHERBOARD_MEMORY_PASS fixed variable translated inactive partial");
 }
 
 unsigned nvs_reads;
@@ -919,6 +992,7 @@ int main() {
     programmable_cases();
     i2c_hid_cases();
     root_window_cases();
+    motherboard_resource_cases();
     nvs_field_cases();
     diagnostic_pci_cases();
     host_bridge_bitfields();

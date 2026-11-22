@@ -197,7 +197,17 @@ int main(void) {
     close(file);
     unlink("/tmp/shared-file");
 
+    // A graphical seat can leave the system console in raw mode.
+    int console = open("/dev/console", O_RDWR | O_NOCTTY);
+    CHECK(console >= 0);
+    struct termios console_saved;
+    CHECK(tcgetattr(console, &console_saved) == 0);
+    struct termios console_raw = console_saved;
+    cfmakeraw(&console_raw);
+    CHECK(tcsetattr(console, TCSANOW, &console_raw) == 0);
     int master = posix_openpt(O_RDWR | O_NOCTTY);
+    CHECK(tcsetattr(console, TCSANOW, &console_saved) == 0);
+    close(console);
     CHECK(master >= 0);
     unsigned pty_id;
     CHECK(syscall(SYS_ioctl, master, (long)(int32_t)0x80045430, &pty_id) == 0);
@@ -208,6 +218,13 @@ int main(void) {
     CHECK(slave >= 0);
     struct termios term;
     CHECK(tcgetattr(slave, &term) == 0);
+    CHECK((term.c_lflag & (ECHO | ICANON)) == (ECHO | ICANON));
+    CHECK((term.c_oflag & (OPOST | ONLCR)) == (OPOST | ONLCR));
+    CHECK(write(master, "a", 1) == 1);
+    CHECK(read(master, data, 1) == 1 && data[0] == 'a');
+    CHECK(tcflush(slave, TCIFLUSH) == 0);
+    CHECK(write(slave, "a\nb\n", 4) == 4);
+    CHECK(read(master, data, 6) == 6 && !memcmp(data, "a\r\nb\r\n", 6));
     cfmakeraw(&term);
     CHECK(tcsetattr(slave, TCSANOW, &term) == 0);
     CHECK(write(master, "pty-input", 9) == 9);

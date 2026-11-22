@@ -12,6 +12,10 @@ compression traversal. TCP reads consume exactly one framed response, discard
 unowned frames within the original deadline and wait for the entire declared body
 before accepting a bounded answer. The upstream lookup buffer limit remains.
 
+The scheduling patch forwards `sched_getparam`, `sched_getscheduler`,
+`sched_setparam`, and `sched_setscheduler` to the kernel. Applications can use
+the scheduling policy and priority values available on Axiom64.
+
 `scripts/build_musl.py` builds each provider with its own headers and startup
 objects. It retains upstream notices, a build/input/product manifest and the
 patched transport source under `build/musl`. The host toolchain and resolver files

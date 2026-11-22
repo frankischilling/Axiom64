@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <sched.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -67,6 +68,40 @@ static void child_status(pid_t child, int expected) {
     CHECK(waitpid(child, &status, 0) == child);
     CHECK(WIFEXITED(status));
     CHECK(WEXITSTATUS(status) == expected);
+}
+
+static void scheduler_parameters(void) {
+    struct sched_param parameter = {.sched_priority = -1};
+    CHECK(sched_getscheduler(0) == SCHED_OTHER);
+    CHECK(sched_getscheduler(getpid()) == SCHED_OTHER);
+    CHECK(sched_getparam(0, &parameter) == 0 && parameter.sched_priority == 0);
+    CHECK(sched_get_priority_min(SCHED_OTHER) == 0 && sched_get_priority_max(SCHED_OTHER) == 0);
+    CHECK(sched_get_priority_min(SCHED_FIFO) == 1 && sched_get_priority_max(SCHED_FIFO) == 99);
+    CHECK(sched_get_priority_min(SCHED_RR) == 1 && sched_get_priority_max(SCHED_RR) == 99);
+    CHECK(sched_get_priority_max(100) == -1 && errno == EINVAL);
+    CHECK(sched_getscheduler(-1) == -1 && errno == EINVAL);
+    CHECK(sched_getscheduler(INT32_MAX) == -1 && errno == ESRCH);
+    CHECK(syscall(SYS_sched_getparam, 0, 0ul) == -1 && errno == EINVAL);
+    CHECK(syscall(SYS_sched_getparam, 0, 1ul) == -1 && errno == EFAULT);
+    CHECK(sched_setparam(0, &parameter) == 0);
+    CHECK(sched_setscheduler(0, SCHED_OTHER, &parameter) == 0);
+    parameter.sched_priority = 1;
+    CHECK(sched_setparam(0, &parameter) == -1 && errno == EINVAL);
+    CHECK(sched_setscheduler(0, SCHED_OTHER, &parameter) == -1 && errno == EINVAL);
+    if (geteuid() == 0) {
+        pid_t parent = getpid(), child = fork();
+        CHECK(child >= 0);
+        if (!child) {
+            CHECK(setuid(65534) == 0);
+            parameter.sched_priority = 0;
+            CHECK(sched_getscheduler(parent) == SCHED_OTHER);
+            CHECK(sched_setparam(parent, &parameter) == -1 && errno == EPERM);
+            CHECK(sched_setparam(0, &parameter) == 0);
+            _exit(0);
+        }
+        child_status(child, 0);
+    }
+    printf("ABI_SCHEDULER_PARAMETERS_PASS linkage=%s\n", ABI_LINKAGE);
 }
 
 static uintptr_t read_gs_base(void) {
@@ -733,6 +768,7 @@ int main(int argc, char** argv) {
     CHECK(after.tv_sec > before.tv_sec || after.tv_nsec >= before.tv_nsec + 20000000);
     shared_file_table_pressure();
     anonymous_address_reservations();
+    scheduler_parameters();
     user_gs_base(argv[0]);
     puts("ABI_TESTS_PASS linkage=" ABI_LINKAGE);
     return 0;

@@ -208,13 +208,6 @@ static Entry* entry(Node* node) {
     return static_cast<Entry*>(node->filesystem_data);
 }
 
-static Task* task(int pid) {
-    for (auto& candidate : tasks)
-        if (candidate.state != State::empty && candidate.process && candidate.pid == pid)
-            return &candidate;
-    return nullptr;
-}
-
 static void decimal(int value, char output[16]) {
     Text text{output, 0, 15};
     text.number(unsigned(value));

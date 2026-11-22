@@ -2,6 +2,11 @@
 
 Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS and GS bases, FPU state, signal mask, alternate stack, and wait state.
 
+The Linux scheduler calls report `SCHED_OTHER` and priority zero for each
+thread. `sched_setparam` and `sched_setscheduler` accept priority zero for an
+authorized caller using that policy. The priority range queries use Linux's
+values. Changing to a different scheduling policy returns `EOPNOTSUPP`.
+
 ## Resource ownership
 
 | Resource | Lifetime and sharing |

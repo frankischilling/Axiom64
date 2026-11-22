@@ -46,6 +46,7 @@ enum class Capability : unsigned {
     sys_ptrace = 19,
     sys_admin = 21,
     sys_boot = 22,
+    sys_nice = 23,
     sys_resource = 24,
     sys_chroot = 18
 };

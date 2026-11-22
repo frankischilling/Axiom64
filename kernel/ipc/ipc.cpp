@@ -67,7 +67,11 @@ bool socket_mount_busy(Mount* mount) {
     return false;
 }
 
-static Socket* allocate_socket(unsigned type = 1) {
+static bool unix_socket_type(unsigned type) {
+    return type == 1 || type == 2 || type == Socket::seqpacket_type;
+}
+
+static Socket* allocate_socket(unsigned type) {
     static uint64_t next_generation = 1;
     if (next_generation == UINT64_MAX)
         return nullptr;
@@ -78,7 +82,7 @@ static Socket* allocate_socket(unsigned type = 1) {
             socket.credentials = {current->process->pid, current->credentials.user.effective,
                                   current->credentials.group.effective};
             socket.type = type;
-            if (type == 2 && !(socket.datagram_send = UnixSendBudget::create())) {
+            if (socket.uses_record_queue() && !(socket.datagram_send = UnixSendBudget::create())) {
                 socket.used = false;
                 return nullptr;
             }
@@ -137,10 +141,12 @@ void socket_close(Socket* s) {
 }
 
 bool socket_ready(Socket* s, bool write) {
-    if (s->type == 2)
-        return write ? socket_datagram_writable(*s) : s->read_closed || s->datagrams.readable();
     if (s->listener)
         return !write && (s->queue_size || s->read_closed);
+    if (s->uses_record_queue()) {
+        bool ended = s->type == Socket::seqpacket_type ? s->receive_eof() : s->read_closed;
+        return write ? socket_datagram_writable(*s) : ended || s->datagrams.readable();
+    }
     if (write)
         return !s->peer || s->write_closed || s->peer->read_closed ||
                s->peer->stream.size() < UnixStreamQueue::capacity;
@@ -163,13 +169,16 @@ void Socket::consume_stream(size_t length, UnixRights*& rights) {
 }
 
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
-    if (s->type == 2) {
+    if (s->uses_record_queue()) {
+        bool sequenced = s->type == Socket::seqpacket_type;
+        if (sequenced && !s->connected)
+            return -107;
         if (!len)
             return 0;
         const uint8_t* bytes;
         size_t length;
         if (!s->datagrams.front(bytes, length))
-            return s->read_closed ? 0 : -11;
+            return (sequenced ? s->receive_eof() : s->read_closed) ? 0 : -11;
         socket_datagram_receive_wakeup(*s);
         len = min(len, length);
         if (len)
@@ -215,7 +224,7 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
 
 int64_t socket_write(Task& task, Socket* s, const void* data, size_t len,
                      uint32_t datagram_entry_limit) {
-    if (s->type == 2) {
+    if (s->uses_record_queue()) {
         if (s->pass_credentials)
             if (int error = socket_unix_autobind(*s))
                 return error;
@@ -387,14 +396,13 @@ uint32_t readiness(Handle* h, const Task* task) {
         if (events & 4)
             events |= socket_write_events;
     }
-    if (h->socket && h->socket->type == 1) {
+    if (h->socket && h->socket->type != 2) {
         auto socket = h->socket;
         if (events & 1)
             events |= read_events;
         if (events & 4)
             events |= socket_write_events;
-        bool read_closed = socket->read_closed || socket->peer_closed ||
-                           (socket->peer && socket->peer->write_closed);
+        bool read_closed = socket->receive_eof();
         bool write_closed = socket->write_closed || socket->peer_closed ||
                             (socket->peer && socket->peer->read_closed);
         if (read_closed)
@@ -838,11 +846,11 @@ int64_t ipc_syscall(Frame* f) {
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
         return netlink_syscall(*current, *f);
-    if (s && (s->type == 1 || s->type == 2) && f->rax == 49)
+    if (s && f->rax == 49)
         return socket_unix_bind(*current, *s, b, c);
     if (s && s->type == 2 && f->rax == 42)
         return socket_datagram_connect(*current, *s, b, uint32_t(c));
-    if (s && s->type != 1 && (f->rax == 42 || f->rax == 49 || f->rax == 50))
+    if (s && s->type == 2 && f->rax == 50)
         return -95;
     if ((f->rax == 41 && a == 2) ||
         (h && h->inet &&
@@ -863,7 +871,7 @@ int64_t ipc_syscall(Frame* f) {
     case 41: {
         if (a != 1)
             return -97;
-        if (((b & 0xf) != 1 && (b & 0xf) != 2) || (b & ~uint64_t(0x8080f)) || c)
+        if (!unix_socket_type(b & 0xf) || (b & ~uint64_t(0x8080f)) || c)
             return -93;
         // libc also uses unbound Unix datagram descriptors for interface ioctls.
         // Named datagram endpoints remain separate from socketpair data queues.
@@ -910,7 +918,7 @@ int64_t ipc_syscall(Frame* f) {
             target = file_node(target);
         }
         for (auto& other : sockets)
-            if (other.used && other.type == 1 && other.listener &&
+            if (other.used && other.type == s->type && other.listener &&
                 (!addr.abstract() ? file_node(other.bound_node) == target
                                   : other.local_name->address().same(addr)))
                 listener = &other;
@@ -918,7 +926,7 @@ int64_t ipc_syscall(Frame* f) {
             return -111;
         if (listener->queue_size >= listener->backlog)
             return -11;
-        auto server = allocate_socket();
+        auto server = allocate_socket(s->type);
         if (!server)
             return -12;
         server->connected = true;
@@ -957,7 +965,7 @@ int64_t ipc_syscall(Frame* f) {
         if (b == 1 || b == 2)
             s->write_closed = true;
         epoll_notify_source(s, readiness(h, current));
-        if (s->type == 1)
+        if (s->type != 2)
             if (auto peer = s->peer; peer && peer->description)
                 epoll_notify_source(peer, readiness(peer->description, current));
         return 0;
@@ -972,7 +980,7 @@ int64_t ipc_syscall(Frame* f) {
             return -107;
         return socket_unix_output_name(*current, s->peer_name, b, c);
     case 53: {
-        if (a != 1 || ((b & 0xf) != 1 && (b & 0xf) != 2) || c || (b & ~uint64_t(0x8080f)))
+        if (a != 1 || !unix_socket_type(b & 0xf) || c || (b & ~uint64_t(0x8080f)))
             return -95;
         if (!current->memory->space.valid(d, 8, true))
             return -14;
@@ -1022,7 +1030,7 @@ int64_t ipc_syscall(Frame* f) {
             s->pass_credentials = value != 0;
             return 0;
         }
-        if (s->type == 2 && (c == 7 || c == 8)) {
+        if (s->uses_record_queue() && (c == 7 || c == 8)) {
             if (f->r8 < sizeof(uint32_t))
                 return -22;
             uint32_t value;
@@ -1069,7 +1077,7 @@ int64_t ipc_syscall(Frame* f) {
                     : c == 4           ? 0
                     : c == 7 || c == 8 ? int(UnixStreamQueue::capacity)
                                        : -1;
-        if (s->type == 2 && (c == 7 || c == 8))
+        if (s->uses_record_queue() && (c == 7 || c == 8))
             value = c == 7 ? s->datagram_send->size() : s->datagram_receive;
         if (value < 0)
             return -92;

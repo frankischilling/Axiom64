@@ -169,6 +169,11 @@ becomes writable or a full connected peer queue is read. A peek can wake
 the waiter while the queue stays full. The send budget stays with queued records when the original socket closes
 and cannot wake a replacement socket in the same slot.
 
+Unix `SOCK_SEQPACKET` supports socket pairs and named listen/connect/accept. A
+read consumes one ordered record, and `recvmsg` reports truncation and carries
+credentials and file descriptors. Poll reports peer write shutdown through
+`POLLRDHUP`. Once the queued records are read, receives return EOF.
+
 These references are released when the attempt ends, including on
 timeout, interruption, and task exit. `make test-descriptor-wait-lifetime`
 checks all four wait syscalls on pipes and Unix stream sockets, with

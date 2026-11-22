@@ -27,17 +27,21 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
 #include <sys/sysmacros.h>
 #include <sys/uio.h>
+#include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -220,6 +224,96 @@ static void proc_usage(void) {
     puts("ABI_PROC_USAGE_PASS linkage=" ABI_LINKAGE);
 }
 
+static void seqpacket_pair(void) {
+    int pair[2], type = 0, enabled = 1;
+    socklen_t length = sizeof(type);
+    CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, pair) == 0);
+    CHECK(getsockopt(pair[0], SOL_SOCKET, SO_TYPE, &type, &length) == 0 && type == SOCK_SEQPACKET);
+    CHECK(fcntl(pair[1], F_GETFD) == FD_CLOEXEC && (fcntl(pair[1], F_GETFL) & O_NONBLOCK));
+    CHECK(setsockopt(pair[1], SOL_SOCKET, SO_PASSCRED, &enabled, sizeof(enabled)) == 0);
+    struct sockaddr_un ignored = {.sun_family = AF_UNIX, .sun_path = "/missing-axiom-seqpacket"};
+    CHECK(sendto(pair[0], "hello", 5, MSG_EOR, (struct sockaddr*)&ignored, sizeof(ignored)) == 5);
+    CHECK(write(pair[0], "two", 3) == 3);
+    char actual[16];
+    struct iovec vector = {.iov_base = actual, .iov_len = 2};
+
+    union {
+        struct cmsghdr alignment;
+        char bytes[CMSG_SPACE(sizeof(struct ucred))];
+    } control;
+    struct sockaddr_un address;
+    struct msghdr message = {.msg_name = &address,
+                             .msg_namelen = sizeof(address),
+                             .msg_iov = &vector,
+                             .msg_iovlen = 1,
+                             .msg_control = control.bytes,
+                             .msg_controllen = sizeof(control.bytes)};
+    CHECK(recvmsg(pair[1], &message, MSG_PEEK | MSG_TRUNC) == 5);
+    CHECK(!memcmp(actual, "he", 2) && (message.msg_flags & MSG_TRUNC) && !message.msg_namelen);
+    struct cmsghdr* header = CMSG_FIRSTHDR(&message);
+    CHECK(header && header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_CREDENTIALS);
+    struct ucred credentials;
+    memcpy(&credentials, CMSG_DATA(header), sizeof(credentials));
+    CHECK(credentials.pid == getpid() && credentials.uid == getuid() &&
+          credentials.gid == getgid());
+    CHECK(recv(pair[1], actual, sizeof(actual), 0) == 5 && !memcmp(actual, "hello", 5));
+    CHECK(read(pair[1], actual, sizeof(actual)) == 3 && !memcmp(actual, "two", 3));
+    CHECK(recv(pair[1], actual, sizeof(actual), 0) == -1 && errno == EAGAIN);
+    CHECK(send(pair[0], "", 0, 0) == 0 && recv(pair[1], actual, sizeof(actual), 0) == 0);
+
+    enabled = 0;
+    CHECK(setsockopt(pair[1], SOL_SOCKET, SO_PASSCRED, &enabled, sizeof(enabled)) == 0);
+    int file = open("/dev/null", O_RDONLY);
+    CHECK(file >= 0);
+    vector.iov_len = 1;
+    actual[0] = 'F';
+    message.msg_name = NULL;
+    message.msg_namelen = 0;
+    message.msg_controllen = CMSG_SPACE(sizeof(file));
+    header = CMSG_FIRSTHDR(&message);
+    CHECK(header);
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    header->cmsg_len = CMSG_LEN(sizeof(file));
+    memcpy(CMSG_DATA(header), &file, sizeof(file));
+    CHECK(sendmsg(pair[0], &message, 0) == 1 && close(file) == 0);
+    CHECK(recvmsg(pair[1], &message, MSG_CMSG_CLOEXEC) == 1 && actual[0] == 'F');
+    header = CMSG_FIRSTHDR(&message);
+    CHECK(header && header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS);
+    memcpy(&file, CMSG_DATA(header), sizeof(file));
+    CHECK(fcntl(file, F_GETFD) == FD_CLOEXEC && read(file, actual, 1) == 0 && close(file) == 0);
+
+    CHECK(shutdown(pair[0], SHUT_WR) == 0);
+    struct pollfd ready = {.fd = pair[1], .events = POLLIN | POLLRDHUP};
+    CHECK(poll(&ready, 1, 0) == 1 && ready.revents == (POLLIN | POLLRDHUP));
+    CHECK(recv(pair[1], actual, sizeof(actual), 0) == 0);
+    CHECK(send(pair[1], "reply", 5, 0) == 5 && recv(pair[0], actual, sizeof(actual), 0) == 5);
+    CHECK(close(pair[0]) == 0);
+    CHECK(poll(&ready, 1, 0) == 1 && ready.revents == (POLLIN | POLLRDHUP | POLLHUP));
+    CHECK(send(pair[1], "x", 1, MSG_NOSIGNAL) == -1 && errno == EPIPE);
+    CHECK(close(pair[1]) == 0);
+}
+
+static void seqpacket_listener(void) {
+    int listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    int client = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    CHECK(listener >= 0 && client >= 0);
+    struct sockaddr_un address = {.sun_family = AF_UNIX};
+    int name = snprintf(address.sun_path + 1, sizeof(address.sun_path) - 1, "seqpacket-%ld",
+                        (long)getpid());
+    CHECK(name > 0 && (size_t)name < sizeof(address.sun_path) - 1);
+    socklen_t size = offsetof(struct sockaddr_un, sun_path) + 1 + name;
+    CHECK(bind(listener, (struct sockaddr*)&address, size) == 0 && listen(listener, 4) == 0);
+    CHECK(connect(client, (struct sockaddr*)&address, size) == 0);
+    CHECK(send(client, "before accept", 13, 0) == 13);
+    int server = accept4(listener, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    char actual[32];
+    CHECK(server >= 0 && read(server, actual, sizeof(actual)) == 13);
+    CHECK(!memcmp(actual, "before accept", 13));
+    CHECK(close(server) == 0 && close(client) == 0 && close(listener) == 0);
+    puts("ABI_UNIX_SEQPACKET_PASS linkage=" ABI_LINKAGE);
+}
+
 static void extended_metadata(int directory, int fd) {
     struct stat old;
     struct statx info;
@@ -393,6 +487,8 @@ int main(int argc, char** argv) {
     executable_link();
     proc_cmdline(argv[0]);
     proc_usage();
+    seqpacket_pair();
+    seqpacket_listener();
     proc_system_stats();
     proc_mount_inventory();
 

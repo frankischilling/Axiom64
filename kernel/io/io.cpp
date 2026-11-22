@@ -216,13 +216,27 @@ static int64_t timeout_result(Task& task, const IoRequest& request) {
 
 static int prepare_unix_datagram(Task& task, IoRequest& request) {
     const auto& f = request.call;
+    const bool seqpacket = request.handle->socket->type == Socket::seqpacket_type;
     if (request.accept)
         return -95;
     if (request.positioned)
         return -29;
     unsigned allowed = request.write ? 0x4040 : 2 | 0x20 | 0x40 | 0x100 | 0x40000000;
+    if (request.write && seqpacket)
+        allowed |= 0x80; // MSG_EOR is accepted for complete records.
     if (request.flags & ~allowed)
         return -95;
+    auto destination = [&](uint64_t address, uint32_t length) {
+        if (seqpacket) {
+            // A connected record socket validates the supplied buffer and sends to its peer.
+            char ignored[128];
+            if (length > sizeof(ignored))
+                return -22;
+            return task.memory->space.copy_in(ignored, address, length) ? 0 : -14;
+        }
+        request.unix_named = true;
+        return socket_unix_address(task, address, length, request.unix_name);
+    };
     if (f.rax == 19 || f.rax == 20) {
         if (int error = import_vectors(task, request, f.rsi, f.rdx))
             return error;
@@ -235,10 +249,8 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
                                               request.unix_credentials, request.unix_rights))
                 return error;
         if (request.write && message.name && message.name_length) {
-            if (int error =
-                    socket_unix_address(task, message.name, message.name_length, request.unix_name))
+            if (int error = destination(message.name, message.name_length))
                 return error;
-            request.unix_named = true;
         }
         if (!request.write) {
             request.address_pointer = message.name;
@@ -260,9 +272,8 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         request.packet_length += vector.length;
     }
     if (f.rax == 44 && f.r8 && uint32_t(f.r9)) {
-        if (int error = socket_unix_address(task, f.r8, uint32_t(f.r9), request.unix_name))
+        if (int error = destination(f.r8, uint32_t(f.r9)))
             return error;
-        request.unix_named = true;
     }
     if (f.rax == 45 && f.r8) {
         request.address_pointer = f.r8;
@@ -339,7 +350,8 @@ static int prepare(Task& task, IoRequest& request) {
         return request.positioned && int64_t(f.r10) >= 0 ? -29 : -22;
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
-    if (request.handle->socket && request.handle->socket->type == 2)
+    if (auto socket = request.handle->socket;
+        socket && socket->uses_record_queue() && (!request.accept || socket->type == 2))
         return prepare_unix_datagram(task, request);
     if (request.handle->packet || (request.handle->inet && !inet_stream(request.handle->inet)) ||
         request.handle->inet6 || request.handle->netlink)
@@ -861,6 +873,9 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
 static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     auto socket = request.handle->socket;
     const auto& f = request.call;
+    const bool seqpacket = socket->type == Socket::seqpacket_type;
+    if (seqpacket && !socket->connected)
+        return -107;
     if (request.write) {
         if (!request.unix_record) {
             if (int error = socket->datagram_error) {
@@ -907,7 +922,8 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
         socket->datagram_error = 0;
         return -error;
     }
-    if (!present && !(socket->read_closed && request.stream_blocking))
+    bool ended = seqpacket ? socket->receive_eof() : socket->read_closed && request.stream_blocking;
+    if (!present && !ended)
         return -11;
     if (present)
         socket_datagram_receive_wakeup(*socket);
@@ -927,7 +943,8 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     uint32_t address_length = 0;
     if (request.address_pointer) {
         uint8_t address[111];
-        if (auto source = socket->datagrams.source_name())
+        if (auto source = socket->datagrams.source_name();
+            source && (!seqpacket || source->address().length))
             address_length = source->address().output(address, sizeof(address));
         if (address_length && !copy_packet_output(task, request.address_pointer, address,
                                                   min(request.address_capacity, address_length)))
@@ -1417,7 +1434,7 @@ static int64_t attempt(Task& task, IoRequest& request) {
         int result = file_lock_try(h, uint32_t(f.rsi));
         return result == -11 && !(f.rsi & 4) ? would_block : result;
     }
-    if (h->socket && h->socket->type == 2) {
+    if (h->socket && h->socket->uses_record_queue() && (!request.accept || h->socket->type == 2)) {
         int64_t result = unix_datagram_attempt(task, request);
         return result == -11 && request.stream_blocking ? would_block : result;
     }
@@ -1873,7 +1890,7 @@ bool io_resume(Task& task) {
     int64_t result = would_block;
     if (request->pipe_target || request->locking || request->handle->packet ||
         request->handle->inet || request->handle->netlink ||
-        (request->handle->socket && request->handle->socket->type == 2 &&
+        (request->handle->socket && request->handle->socket->uses_record_queue() &&
          (request->unix_record || request->handle->socket->write_closed ||
           request->handle->socket->datagram_error)) ||
         handle_ready(request->handle, request->write, &task) || (request->handle->flags & 04000))

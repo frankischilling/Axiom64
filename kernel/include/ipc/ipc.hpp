@@ -34,6 +34,8 @@ struct PeerCredentials {
 };
 
 struct Socket {
+    static constexpr uint16_t seqpacket_type = 5;
+
     bool used, listener, pending, connected, read_closed, write_closed, peer_closed;
     uint16_t type;
     uint64_t generation, peer_generation;
@@ -55,6 +57,14 @@ struct Socket {
     bool pass_credentials = false;
     Handle* description = nullptr;
     Socket* accepting = nullptr;
+
+    bool uses_record_queue() const {
+        return type == 2 || type == seqpacket_type;
+    }
+
+    bool receive_eof() const {
+        return read_closed || peer_closed || (peer && peer->write_closed);
+    }
 
     void publish_stream(UnixStreamRecord*, size_t, const UnixMessageCredentials&, UnixRights*&,
                         UnixAddressName* sender);

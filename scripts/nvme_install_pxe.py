@@ -138,6 +138,8 @@ def main():
     parser.add_argument('--address', type=IPv4Interface, required=True, help='IPv4 address and prefix')
     parser.add_argument('--client', type=IPv4Address, required=True, help='allowed build-host address')
     parser.add_argument('--interface', default='eth0', help='guest Ethernet interface')
+    parser.add_argument('--usb-keyboard', action='store_true',
+                        help='enable a directly attached USB boot keyboard')
     args = parser.parse_args()
     if args.client not in args.address.network or args.client == args.address.ip:
         parser.error('choose two addresses on the maintenance subnet')
@@ -152,7 +154,10 @@ def main():
         setup(files, args, public_key)
         archive = work / 'maintenance.cpio'
         write_cpio(archive, files)
-        build_medium('pxe', args.output, args.kernel, archive, ' fbconsole')
+        options = ' fbconsole'
+        if args.usb_keyboard:
+            options += ' usb.xhci=keyboard'
+        build_medium('pxe', args.output, args.kernel, archive, options)
     print(f'PXE maintenance tree: {args.output}')
 
 

@@ -29,6 +29,7 @@
 #include "drivers/block/floppy.hpp"
 #include "drivers/block/nvme.hpp"
 #include "drivers/platform/fb_console.hpp"
+#include "drivers/usb/xhci.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
@@ -56,9 +57,10 @@ struct InputQueue {
 };
 
 static InputQueue keyboard_events, mouse_events;
-static uint8_t keys[96];
+static uint8_t keys[96], ps2_keys[96], usb_keys[96];
 static bool extended, console_keyboard, console_caps_lock;
 static uint8_t mouse_packet[3], mouse_offset, mouse_buttons;
+static bool ps2_present;
 static bool mouse_ack_pending;
 
 static bool console_output(char character) {
@@ -419,8 +421,18 @@ void devices_init(bool display_console) {
         make_node("/dev/input", directory | 0755);
     tag("/dev/input/event0", Device::keyboard);
     tag("/dev/input/event1", Device::mouse);
-    while (in8(0x64) & 1)
+    for (unsigned i = 0; i < 256; i++) {
+        uint8_t status = in8(0x64);
+        if (status == 0xff)
+            return;
+        if (!(status & 1)) {
+            ps2_present = true;
+            break;
+        }
         in8(0x60);
+    }
+    if (!ps2_present)
+        return;
     if (controller_wait(false))
         out8(0x64, 0xa8);
     if (controller_wait(false))
@@ -1162,15 +1174,45 @@ static void event(InputQueue& q, uint16_t type, uint16_t code, int32_t value) {
                                     value};
 }
 
+static void keyboard_event(uint8_t* source, unsigned code, bool pressed) {
+    if (code >= sizeof(keys) * 8)
+        return;
+    const unsigned offset = code / 8, mask = 1u << (code % 8);
+    const bool before = key_down(code), repeat = pressed && (source[offset] & mask);
+    if (pressed)
+        source[offset] |= mask;
+    else
+        source[offset] &= ~mask;
+    keys[offset] = ps2_keys[offset] | usb_keys[offset];
+    const bool down = key_down(code);
+    if (!repeat && before == down)
+        return;
+    event(keyboard_events, 1, code, down ? 1 : 0);
+    event(keyboard_events, 0, 0, 0);
+    if (console_keyboard && !vt_mode && down) {
+        if (code == 58 && !before)
+            console_caps_lock = !console_caps_lock;
+        if (auto character = console_key(code))
+            terminal_input(console_input, nullptr, console_terminal, console_pgid, character);
+    }
+}
+
+void usb_keyboard_event(unsigned code, bool pressed) {
+    keyboard_event(usb_keys, code, pressed);
+}
+
 void devices_poll() {
     floppy_poll();
     Pcm::poll();
+    xhci_keyboard_poll();
     for (unsigned i = 0; i < 64; i++) {
         int c = serial_read();
         if (c < 0)
             break;
         terminal_input(console_input, nullptr, console_terminal, console_pgid, c);
     }
+    if (!ps2_present)
+        return;
     for (unsigned i = 0; i < 32 && (in8(0x64) & 1); i++) {
         uint8_t status = in8(0x64), byte = in8(0x60);
         if (status & 0x20) {
@@ -1249,23 +1291,7 @@ void devices_poll() {
                 }
                 extended = false;
             }
-            const bool pressed = !(byte & 128);
-            const bool before = code < sizeof(keys) * 8 && key_down(code);
-            if (code < sizeof(keys) * 8) {
-                if (!pressed)
-                    keys[code / 8] &= ~(1 << (code % 8));
-                else
-                    keys[code / 8] |= 1 << (code % 8);
-            }
-            event(keyboard_events, 1, code, pressed ? 1 : 0);
-            event(keyboard_events, 0, 0, 0);
-            if (console_keyboard && !vt_mode && pressed) {
-                if (code == 58 && !before)
-                    console_caps_lock = !console_caps_lock;
-                if (auto character = console_key(code))
-                    terminal_input(console_input, nullptr, console_terminal, console_pgid,
-                                   character);
-            }
+            keyboard_event(ps2_keys, code, !(byte & 128));
         }
     }
 }

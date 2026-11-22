@@ -47,6 +47,11 @@ accepts a PS/2 keyboard and keeps serial input and output available. Xorg
 takes over the screen in graphics mode. Console text and keyboard input
 return when the virtual terminal returns to text mode.
 
+Add `--kernel-option usb.xhci=keyboard` to use a USB boot-protocol keyboard
+attached to an xHCI root port. The kernel selects one keyboard at boot and
+shares its input with the text console and evdev. This path covers the boot
+keyboard protocol on a root port. USB hubs and hotplug are separate work.
+
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
 It reports device numbers and capacities in KiB. For an NVMe drive such as
 `/dev/nvme0n1`, check `model`, `serial`, and `firmware_rev` under

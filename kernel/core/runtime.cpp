@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/base.hpp"
+#include "drivers/usb/xhci.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/audio/pcm.hpp"
@@ -155,6 +156,10 @@ void log(const char* s, ...) {
 [[noreturn]] void poweroff(int status) {
     net_shutdown();
     Pcm::shutdown();
+    if (!xhci_keyboard_shutdown()) {
+        log("USB_SHUTDOWN_FAIL\n");
+        status = 1;
+    }
     int error = shutdown_filesystems();
     if (error) {
         log("FILESYSTEM_SHUTDOWN_FAIL errno=%d\n", int64_t(-error));

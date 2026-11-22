@@ -26,4 +26,7 @@
 
 namespace ax {
 void xhci_probe(bool keyboard_reports);
+void xhci_keyboard_init();
+void xhci_keyboard_poll();
+bool xhci_keyboard_shutdown();
 } // namespace ax

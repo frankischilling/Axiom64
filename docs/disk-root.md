@@ -53,12 +53,13 @@ accepts a PS/2 keyboard and keeps serial input and output available. Xorg
 takes over the screen in graphics mode. Console text and keyboard input
 return when the virtual terminal returns to text mode.
 
-Add `--kernel-option usb.xhci=keyboard` to use a USB boot-protocol keyboard
-attached to an xHCI root port. The kernel selects one keyboard at boot and
-shares its input with the text console and evdev. Plug in the keyboard before
-powering on. The controller has time to detect attached devices before the
-scan. This path covers the boot keyboard protocol on a root port. USB hubs
-and hotplug are separate work.
+Add `--kernel-option usb.xhci=keyboard` to enable USB boot keyboards and mice.
+Plug them into xHCI root ports before powering on. Axiom64 reads up to eight
+devices on the first controller with supported input. Keyboards feed the text
+console and evdev. Mice send relative movement and three button events to
+evdev. For a composite device, the driver uses one boot interface and prefers
+the keyboard. Scroll wheels, USB hubs, and discovery after boot require
+additional driver support.
 
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
 It reports device numbers and capacities in KiB. For an NVMe drive such as

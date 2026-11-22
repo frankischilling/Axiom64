@@ -59,7 +59,7 @@ struct InputQueue {
 static InputQueue keyboard_events, mouse_events;
 static uint8_t keys[96], ps2_keys[96], usb_keys[96];
 static bool extended, console_keyboard, console_caps_lock;
-static uint8_t mouse_packet[3], mouse_offset, mouse_buttons;
+static uint8_t mouse_packet[3], mouse_offset, ps2_mouse_buttons, usb_mouse_buttons;
 static bool ps2_present;
 static bool mouse_ack_pending;
 
@@ -1201,6 +1201,24 @@ void usb_keyboard_event(unsigned code, bool pressed) {
     keyboard_event(usb_keys, code, pressed);
 }
 
+static void mouse_event(uint8_t& source, int dx, int dy, uint8_t buttons) {
+    const auto before = ps2_mouse_buttons | usb_mouse_buttons;
+    source = buttons & 7;
+    const auto after = ps2_mouse_buttons | usb_mouse_buttons;
+    if (dx)
+        event(mouse_events, 2, 0, dx);
+    if (dy)
+        event(mouse_events, 2, 1, dy);
+    for (unsigned k = 0; k < 3; ++k)
+        if ((before ^ after) & (1 << k))
+            event(mouse_events, 1, 272 + k, (after >> k) & 1);
+    event(mouse_events, 0, 0, 0);
+}
+
+void usb_mouse_event(int dx, int dy, uint8_t buttons) {
+    mouse_event(usb_mouse_buttons, dx, dy, buttons);
+}
+
 void devices_poll() {
     floppy_poll();
     Pcm::poll();
@@ -1230,15 +1248,7 @@ void devices_poll() {
             uint8_t buttons = mouse_packet[0] & 7;
             int dx = mouse_packet[1] - (mouse_packet[0] & 0x10 ? 256 : 0),
                 dy = mouse_packet[2] - (mouse_packet[0] & 0x20 ? 256 : 0);
-            if (dx)
-                event(mouse_events, 2, 0, dx);
-            if (dy)
-                event(mouse_events, 2, 1, -dy);
-            for (unsigned k = 0; k < 3; k++)
-                if ((buttons ^ mouse_buttons) & (1 << k))
-                    event(mouse_events, 1, 272 + k, (buttons >> k) & 1);
-            mouse_buttons = buttons;
-            event(mouse_events, 0, 0, 0);
+            mouse_event(ps2_mouse_buttons, dx, -dy, buttons);
         } else {
             if (byte == 0xfa)
                 continue;

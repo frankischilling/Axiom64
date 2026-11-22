@@ -1816,6 +1816,58 @@
       "source_commit": "d1a58b83bd3186946ce6c0d5e1ee2bf9a8592bec"
     },
     {
+      "name": "openssh-keygen",
+      "version": "10.0_p1-r11",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/openssh-keygen-10.0_p1-r11.apk",
+      "archive": "openssh-keygen-10.0_p1-r11.apk",
+      "sha256": "59ef4542f5e6e61fb32e3ece3442e9ec8575ea22096edc1a5aad03b6c28ee6bb",
+      "license": "SSH-OpenSSH",
+      "upstream": "https://www.openssh.com/portable.html",
+      "origin": "openssh",
+      "source_commit": "b34a72e54b17f64d5b00e50eeb428b2963d2ea7a",
+      "installed_only": true
+    },
+    {
+      "name": "openssh-server",
+      "version": "10.0_p1-r11",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/openssh-server-10.0_p1-r11.apk",
+      "archive": "openssh-server-10.0_p1-r11.apk",
+      "sha256": "9a40af11bd5a81360df0fb498685ba13de9c736fda8dea23b4ec85b352a38303",
+      "license": "SSH-OpenSSH",
+      "upstream": "https://www.openssh.com/portable.html",
+      "origin": "openssh",
+      "source_commit": "b34a72e54b17f64d5b00e50eeb428b2963d2ea7a",
+      "installed_only": true
+    },
+    {
+      "name": "openssh-server-common",
+      "version": "10.0_p1-r11",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/openssh-server-common-10.0_p1-r11.apk",
+      "archive": "openssh-server-common-10.0_p1-r11.apk",
+      "sha256": "95f9a9073ae00fd9587f1e4ca87159ae53ed6355b897472de2bdcec56c1776a6",
+      "license": "SSH-OpenSSH",
+      "upstream": "https://www.openssh.com/portable.html",
+      "origin": "openssh",
+      "source_commit": "b34a72e54b17f64d5b00e50eeb428b2963d2ea7a",
+      "installed_only": true
+    },
+    {
+      "name": "openssh-sftp-server",
+      "version": "10.0_p1-r11",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/openssh-sftp-server-10.0_p1-r11.apk",
+      "archive": "openssh-sftp-server-10.0_p1-r11.apk",
+      "sha256": "e9344b149bdc49e18f8826d19ebca9d0d0623c6500c92314d83ffd96cd344bb7",
+      "license": "SSH-OpenSSH",
+      "upstream": "https://www.openssh.com/portable.html",
+      "origin": "openssh",
+      "source_commit": "b34a72e54b17f64d5b00e50eeb428b2963d2ea7a",
+      "installed_only": true
+    },
+    {
       "name": "p11-kit",
       "version": "0.26.2-r0",
       "repository": "main",
@@ -1875,6 +1927,19 @@
       "upstream": "https://gitea.treehouse.systems/ariadne/pkgconf",
       "origin": "pkgconf",
       "source_commit": "5be535df8a0565ca60a69a44601937d4288e353c"
+    },
+    {
+      "name": "pure-ftpd",
+      "version": "1.0.52-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/pure-ftpd-1.0.52-r0.apk",
+      "archive": "pure-ftpd-1.0.52-r0.apk",
+      "sha256": "8b9788eeaf9aea132145e2ec539580124f74e197c7750355d9ac1282a48a3095",
+      "license": "ISC",
+      "upstream": "https://pureftpd.org/",
+      "origin": "pure-ftpd",
+      "source_commit": "a5b6162457ff4748254d0aa70baf7146847c7c2f",
+      "installed_only": true
     },
     {
       "name": "py3-pygments",

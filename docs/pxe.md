@@ -106,6 +106,36 @@ If PXE succeeds but SSH cannot connect, check that the guest shows the correct
 address and the SSH listener is running. On Windows with WSL or VPN adapters,
 check that the client routes `192.168.100.200` through physical Ethernet.
 
+### SSH on an installed desktop
+
+The installed desktop includes OpenSSH. Sign in on the console first and set up
+the server on the installed disk. Save the build PC's public key in
+`~/.ssh/authorized_keys` with mode `0600` and set the `.ssh` directory to `0700`.
+Use a dedicated key for the test machine.
+
+```sh
+sudo accountctl group-add sshd 74
+sudo accountctl user-add sshd 74 sshd /home/sshd /bin/nologin
+sudo ssh-keygen -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key
+sudo cp /etc/ssh/sshd_config.example /etc/ssh/sshd_config
+sudo chmod 600 /etc/ssh/sshd_config
+```
+
+Run those commands once. In `/etc/ssh/sshd_config`, set `ListenAddress` to the
+Blade's configured wired address and set `AllowUsers` to the account allowed
+to connect. For a direct cable with the addresses above, use `192.168.100.200`
+and `admin@192.168.100.3`. Then check the configuration and start the server.
+
+```sh
+sudo /usr/sbin/sshd -t
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+sudo /usr/sbin/sshd -D -e
+```
+
+Connect from the build PC and compare that fingerprint. Use the normal account
+name for SSH, SFTP, and SCP. The account setup and keys persist across reboots.
+Start the listener again from the console when needed.
+
 ## FTP compatibility test
 
 The lab FTP image ran Pure-FTPd on TCP `2121` with a separate `benchftp` account
@@ -129,3 +159,22 @@ To check active FTP, replace `--ftp-pasv` on both commands with
 `--ftp-port 192.168.100.3`. Active mode needs the build PC to accept the
 server's data connection on that adapter. The lab checked both modes over
 the Blade's direct cable.
+
+### FTP on an installed desktop
+
+For an installed-image FTP check, create a locked local account and a separate
+FTP login. Use an unused UID and GID of at least `1001` on the test machine.
+`pure-pw` prompts for the FTP password and confines `transfer` to the account's
+home directory.
+
+```sh
+sudo accountctl group-add benchftp 1001
+sudo accountctl user-add benchftp 1001 benchftp /home/benchftp /bin/nologin
+sudo /usr/bin/pure-pw useradd transfer -u benchftp -d /home/benchftp -m
+sudo /usr/sbin/pure-ftpd -4 -A -E -H -l puredb:/etc/pureftpd.pdb \
+    -u 1001 -S 192.168.100.200,2121 -c 2 -p 52100:52103
+```
+
+Use `--user transfer` in the client commands above. Stop the listener when the
+file check is done. Use `sudo /usr/bin/pure-pw passwd transfer -m` to change
+the FTP password before the next run.

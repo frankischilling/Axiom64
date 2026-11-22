@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "boot/boot.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
@@ -34,6 +35,7 @@
 #include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
+#include "process/scheduler.hpp"
 #include "process/cpu.hpp"
 #include "mm/barrier.hpp"
 #include "mm/file_mapping.hpp"
@@ -1698,10 +1700,21 @@ static int64_t dispatch(Frame* f, Task* running) {
         return seconds;
     }
     case 204: {
-        if (b < 8)
+        uint64_t mask[(max_boot_processors + 63) / 64]{};
+        const unsigned count = scheduler_cpu_count();
+        const unsigned bytes = ((count + 63) / 64) * sizeof(mask[0]);
+        if (b < bytes)
             return -22;
-        uint64_t cpu = 1;
-        return copy_result(c, &cpu, 8) ? -14 : 8;
+        for (unsigned cpu = 0; cpu < count; ++cpu)
+            mask[cpu / 64] |= 1ull << (cpu % 64);
+        return copy_result(c, mask, bytes) ? -14 : bytes;
+    }
+    case 309: {
+        const uint32_t cpu = scheduler_cpu_number(), node = 0;
+        return (a && copy_result(a, &cpu, sizeof(cpu))) ||
+                       (b && copy_result(b, &node, sizeof(node)))
+                   ? -14
+                   : 0;
     }
     case 217: {
         int64_t result = getdents(a, b, c);
@@ -1941,6 +1954,7 @@ static int64_t dispatch(Frame* f, Task* running) {
 }
 
 extern "C" Frame* handle_syscall(Frame* f) {
+    KernelGuard guard;
     cpu_account(current_task());
     asm volatile("fxsave64 %0" : "=m"(current_task()->fpu));
     clock_refresh();

@@ -619,13 +619,26 @@ static void proc_system_stats(void) {
           available <= total && fclose(file) == 0);
 
     file = fopen("/proc/stat", "r");
-    char aggregate[256], core[256];
-    CHECK(file && fgets(aggregate, sizeof(aggregate), file) && fgets(core, sizeof(core), file));
-    CHECK(!strncmp(aggregate, "cpu  ", 5) && !strncmp(core, "cpu0 ", 5) &&
-          !strcmp(aggregate + 5, core + 5) && fclose(file) == 0);
+    char line[256];
     unsigned long long user, nice, kernel, idle;
-    CHECK(sscanf(core + 5, "%llu %llu %llu %llu", &user, &nice, &kernel, &idle) == 4 &&
+    CHECK(file && fgets(line, sizeof(line), file) &&
+          sscanf(line, "cpu %llu %llu %llu %llu", &user, &nice, &kernel, &idle) == 4 &&
           user + kernel + idle > 0 && !nice);
+    unsigned cores = 0;
+    unsigned long long user_sum = 0, kernel_sum = 0, idle_sum = 0;
+    while (fgets(line, sizeof(line), file) && !strncmp(line, "cpu", 3)) {
+        unsigned index;
+        unsigned long long core_user, core_kernel, core_idle;
+        CHECK(sscanf(line, "cpu%u %llu %llu %llu %llu", &index, &core_user, &nice, &core_kernel,
+                     &core_idle) == 5 &&
+              index == cores && !nice);
+        ++cores;
+        user_sum += core_user;
+        kernel_sum += core_kernel;
+        idle_sum += core_idle;
+    }
+    CHECK(cores && user == user_sum && kernel == kernel_sum && idle == idle_sum &&
+          fclose(file) == 0);
 
     file = fopen("/proc/uptime", "r");
     unsigned long long seconds, idle_seconds;
@@ -634,14 +647,20 @@ static void proc_system_stats(void) {
           fscanf(file, "%llu.%2u %llu.%2u", &seconds, &centiseconds, &idle_seconds,
                  &idle_centiseconds) == 4 &&
           fclose(file) == 0);
-    CHECK(seconds * 100 + centiseconds >= idle_seconds * 100 + idle_centiseconds);
+    CHECK((seconds * 100 + centiseconds) * cores >= idle_seconds * 100 + idle_centiseconds);
     CHECK(idle_seconds * 100 + idle_centiseconds >= idle);
 
     file = fopen("/proc/cpuinfo", "r");
-    char label[64];
-    unsigned processor;
-    CHECK(file && fscanf(file, "%63s : %u", label, &processor) == 2 &&
-          !strcmp(label, "processor") && processor == 0 && fclose(file) == 0);
+    CHECK(file);
+    unsigned processors = 0;
+    while (fgets(line, sizeof(line), file)) {
+        unsigned processor;
+        if (sscanf(line, "processor : %u", &processor) == 1) {
+            CHECK(processor == processors);
+            ++processors;
+        }
+    }
+    CHECK(processors == cores && fclose(file) == 0);
     puts("ABI_PROC_SYSTEM_PASS linkage=" ABI_LINKAGE);
 }
 

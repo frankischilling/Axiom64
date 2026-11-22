@@ -224,6 +224,7 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "build/boot-media-test")
     parser.add_argument("--xhci", action="store_true", help="include xHCI and USB keyboard checks")
     parser.add_argument("--smp", action="store_true", help="check processor entry, IPIs and local timers")
+    parser.add_argument("--scheduler", action="store_true", help="run userspace on twelve logical CPUs")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -308,6 +309,22 @@ def main():
                                          f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
                                          smp=count))
                 print(f"{case.name}: passed", flush=True)
+    if args.scheduler:
+        worker = output / "scheduler-init"
+        subprocess.run(["musl-gcc", "-O2", "-static", "-Wall", "-Wextra", "-Werror",
+                        ROOT / "userspace/tests/process/smp-scheduler.c", "-o", worker], check=True)
+        worker_ramfs = output / "scheduler.cpio"
+        write_cpio(worker_ramfs, {"dev": (0o40755, b""), "proc": (0o40755, b""),
+                                 "sbin": (0o40755, b""),
+                                 "sbin/init": (0o100755, worker.read_bytes())})
+        target = output / "scheduler.raw"
+        build_medium("disk", target, kernel, worker_ramfs, " test smp.scheduler")
+        for firmware in ("bios", "uefi"):
+            case = output / f"{firmware}-scheduler"
+            case.mkdir()
+            results.append(run_guest(case, "disk", firmware, target, "SMP_SCHED_RUNTIME_PASS",
+                                     worker_ramfs.stat().st_size, smp=12))
+            print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps({"kernel_sha256": digest(kernel),
         "initramfs_sha256": digest(initramfs), "boots": results}, indent=2) + "\n")
 

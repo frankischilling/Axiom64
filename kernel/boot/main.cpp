@@ -94,8 +94,11 @@ BootInfo boot_info;
     Acpi::DefinitionBlocks definitions;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
     clock_init(rsdp);
-    if (arguments.has("smp.probe"))
-        boot_probe_application_processors();
+    const bool schedule_peers = arguments.has("smp.scheduler");
+    if (schedule_peers && !clock_shared_counter_ready())
+        log("SMP: scheduler requires a shared HPET counter\n");
+    if (schedule_peers || arguments.has("smp.probe"))
+        boot_probe_application_processors(schedule_peers && clock_shared_counter_ready());
     if (arguments.has("irq=pic"))
         log("Interrupts: PIC/PIT selected by boot option\n");
     else if (have_topology)

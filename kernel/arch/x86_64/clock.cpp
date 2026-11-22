@@ -141,6 +141,10 @@ void clock_init(uint64_t rsdp) {
     clock_realtime_init();
 }
 
+bool clock_shared_counter_ready() {
+    return hpet_registers != nullptr;
+}
+
 void clock_refresh(bool timer) {
     if (hpet_registers) {
         uint64_t reading;

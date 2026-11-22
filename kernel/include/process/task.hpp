@@ -112,6 +112,7 @@ struct Process {
     ProcessLimits limits{max_fds};
     int pid = 0, parent = 0, pgid = 0, sid = 0, exit_status = 0, stop_signal = 0;
     unsigned live_threads = 1;
+    unsigned running_cpu = ~0u;
     Task* leader = nullptr;
     Pty* controlling_pty = nullptr;
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;

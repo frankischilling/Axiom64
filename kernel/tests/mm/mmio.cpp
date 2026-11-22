@@ -240,6 +240,38 @@ void cache_and_permissions() {
     assert(!no_uncached.map(r, {0x0606060606060606ull, true}));
     assert(!no_uncached.pending && no_uncached.flushes.empty());
 }
+
+void framebuffer_alias_cache() {
+    constexpr uint64_t base = 0xe0200000, wc = 0x88, large_wc = 0x1008;
+    const Range span{base + page_size, direct + base + page_size, 2};
+    auto check = [&](Fixture& fixture, uint64_t expected) {
+        const Mmio::PageTables ops{
+            &fixture, [](void* c, uint64_t p) { return static_cast<Fixture*>(c)->table(p); },
+            nullptr, nullptr, nullptr};
+        uint64_t flags;
+        return Mmio::alias_cache_flags(span, page_size, limit, ops, flags) && flags == expected;
+    };
+    Fixture leaves;
+    auto& first = *leaves.entry(span.virtual_page, 12, true);
+    auto& second = *leaves.entry(span.virtual_page + page_size, 12, true);
+    first = span.physical_page | wc | nx | 0x63;
+    second = (span.physical_page + page_size) | wc | nx | 3;
+    assert(check(leaves, wc));
+    second ^= 8;
+    assert(!check(leaves, wc));
+    second ^= 8;
+    first += page_size;
+    assert(!check(leaves, wc));
+    first = 0;
+    assert(!check(leaves, wc));
+
+    Fixture large;
+    *large.entry(span.virtual_page, 21, true) = base | large_wc | 0x83;
+    assert(check(large, wc));
+    Fixture huge;
+    *huge.entry(span.virtual_page, 30, true) = (base & ~((1ull << 30) - 1)) | 0x9b;
+    assert(check(huge, 0x18));
+}
 } // namespace
 
 int main() {
@@ -247,6 +279,7 @@ int main() {
     boot_map();
     stage_failures();
     cache_and_permissions();
+    framebuffer_alias_cache();
     std::puts("MMIO_PASS address_limits boot_reservations six_allocation_faults late_conflicts "
-              "cache permissions");
+              "cache permissions framebuffer_alias");
 }

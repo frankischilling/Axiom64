@@ -94,6 +94,10 @@ and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.
 
+Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
+On Limine x86-64 boots, this retains write-combining when the CPU supports it.
+The boot-media test maps the framebuffer and writes and reads a pixel.
+
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 
 ## Multiboot and direct QEMU boot

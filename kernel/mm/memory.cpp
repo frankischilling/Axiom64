@@ -136,17 +136,18 @@ void activate_kernel_memory() {
     write_cr3(kernel_root);
 }
 
+static const Mmio::PageTables kernel_tables{
+    nullptr, [](void*, uint64_t page) { return static_cast<uint64_t*>(physical(page)); },
+    [](void*) { return page_alloc(); }, [](void*, uint64_t page) { page_free(page); },
+    [](void*, uint64_t va) { asm volatile("invlpg (%0)" ::"r"(va)
+                                          : "memory"); }};
+
 void* map_mmio(uint64_t address, size_t length) {
     Mmio::Range range;
     if (!Mmio::range(address, length, direct_map, cpu_physical_limit, range) ||
         !Mmio::permits(range, boot_info))
         return nullptr;
-    const Mmio::PageTables tables{
-        nullptr, [](void*, uint64_t page) { return static_cast<uint64_t*>(physical(page)); },
-        [](void*) { return page_alloc(); }, [](void*, uint64_t page) { page_free(page); },
-        [](void*, uint64_t va) { asm volatile("invlpg (%0)" ::"r"(va)
-                                              : "memory"); }};
-    return Mmio::install(range, kernel_root, cpu_physical_limit, mmio_cache, tables)
+    return Mmio::install(range, kernel_root, cpu_physical_limit, mmio_cache, kernel_tables)
                ? physical(address)
                : nullptr;
 }
@@ -542,7 +543,20 @@ bool AddressSpace::prepare_mapping(uint64_t va, size_t len) {
 }
 
 bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external) {
-    if (pa % page_size || !prepare_mapping(va, len))
+    if (pa % page_size)
+        return false;
+    uint64_t cache_flags = 0;
+    if (external) {
+        // The framebuffer is also mapped in the kernel. Use the same cache type
+        // for both aliases, including write-combining provided by the bootloader.
+        if (pa > UINT64_MAX - direct_map)
+            return false;
+        const Mmio::Range source{pa, direct_map + pa, len / page_size + (len % page_size != 0)};
+        if (!Mmio::alias_cache_flags(source, kernel_root, cpu_physical_limit, kernel_tables,
+                                     cache_flags))
+            return false;
+    }
+    if (!prepare_mapping(va, len))
         return false;
     for (uint64_t offset = 0; offset < len; offset += page_size) {
         auto e = entry(va + offset);
@@ -550,7 +564,7 @@ bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, 
             page_retain(pa + offset);
         if ((*e & page_mask) && !(*e & 0x200))
             page_free(*e & page_mask);
-        *e = (pa + offset) | permissions(prot) | (external ? 0x200 : 0x400);
+        *e = (pa + offset) | permissions(prot) | cache_flags | (external ? 0x200 : 0x400);
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -592,8 +606,10 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
             *e = file_page_protection(*e, prot);
         else if (!(*e & page_mask))
             *e = reservation_permissions(prot);
-        else
-            *e = (*e & (page_mask | page_software)) | permissions(prot);
+        else {
+            const auto cache_mask = *e & 0x200 ? Mmio::leaf_cache_mask : 0;
+            *e = (*e & (page_mask | page_software | cache_mask)) | permissions(prot);
+        }
     }
     if (read_cr3() == root)
         write_cr3(root);

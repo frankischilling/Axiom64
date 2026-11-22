@@ -96,7 +96,7 @@ extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
     state->local_tables = current_stack >= stack_bottom && current_stack < stack_top &&
                           arch_init_secondary_tables(state->slot, stack_top, fault_top);
     __atomic_store_n(&state->entered, true, __ATOMIC_RELEASE);
-    // Only the BSP has interrupt and scheduler entry state.
+    // Device interrupts and the scheduler still belong to the BSP.
     for (;;)
         asm volatile("hlt");
 }
@@ -178,7 +178,7 @@ void boot_probe_application_processors() {
         } else {
             ++started;
             log("SMP: application processor apic=%u entered\n", uint64_t(cpu->lapic_id));
-            log("SMP: application processor apic=%u stack and TSS ready\n",
+            log("SMP: application processor apic=%u stack, TSS, IDT and syscall entry ready\n",
                 uint64_t(cpu->lapic_id));
         }
     }

@@ -28,6 +28,7 @@
 #include "limine.h"
 
 namespace ax {
+extern "C" [[noreturn]] void ap_enter_stack(uint64_t stack_top, void* state);
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
     LIMINE_REQUESTS_START_MARKER;
 [[gnu::used, gnu::section(".limine_requests")]] static volatile uint64_t base_revision[] =
@@ -54,12 +55,15 @@ namespace ax {
     LIMINE_REQUESTS_END_MARKER;
 
 namespace {
-constexpr unsigned max_boot_processors = 256;
 constexpr unsigned ap_timeout_ticks = 200;
+constexpr unsigned ap_stack_pages = 4, ap_fault_pages = 2;
 
 struct ApplicationProcessor {
-    uint32_t observed_apic_id;
-    bool entered;
+    uint64_t stack = 0;
+    unsigned slot = 0;
+    uint32_t observed_apic_id = 0;
+    bool entered = false;
+    bool local_tables = false;
 };
 
 ApplicationProcessor application_processors[max_boot_processors];
@@ -76,13 +80,26 @@ uint32_t current_apic_id() {
 [[noreturn]] void application_processor_entry(limine_mp_info* processor) {
     asm volatile("cli; cld" ::: "memory");
     auto state = reinterpret_cast<ApplicationProcessor*>(processor->extra_argument);
+    const auto stack_top = uint64_t(physical(state->stack + ap_stack_pages * page_size));
+    ap_enter_stack(stack_top, state);
+}
+} // namespace
+
+extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
+    auto state = static_cast<ApplicationProcessor*>(argument);
+    const auto stack_bottom = uint64_t(physical(state->stack));
+    const auto stack_top = stack_bottom + ap_stack_pages * page_size;
+    const auto fault_top = stack_top + ap_fault_pages * page_size;
+    uint64_t current_stack;
+    asm volatile("mov %%rsp,%0" : "=r"(current_stack));
     state->observed_apic_id = current_apic_id();
+    state->local_tables = current_stack >= stack_bottom && current_stack < stack_top &&
+                          arch_init_secondary_tables(state->slot, stack_top, fault_top);
     __atomic_store_n(&state->entered, true, __ATOMIC_RELEASE);
-    // The bootloader stack is retained. Only the BSP may use kernel and scheduler state.
+    // Only the BSP has interrupt and scheduler entry state.
     for (;;)
         asm volatile("hlt");
 }
-} // namespace
 
 void boot_probe_application_processors() {
     const auto response = mp_request.response;
@@ -110,6 +127,22 @@ void boot_probe_application_processors() {
     if (bootstrap != 1 || current_apic_id() != response->bsp_lapic_id) {
         log("SMP: bootstrap processor ID mismatch\n");
         return;
+    }
+    constexpr unsigned stack_pages = ap_stack_pages + ap_fault_pages;
+    for (unsigned i = 0; i < response->cpu_count; ++i) {
+        if (response->cpus[i]->lapic_id == response->bsp_lapic_id)
+            continue;
+        const auto stack = page_alloc(stack_pages);
+        if (!stack) {
+            for (unsigned prior = 0; prior < i; ++prior)
+                if (application_processors[prior].stack) {
+                    page_free(application_processors[prior].stack, stack_pages);
+                    application_processors[prior] = {};
+                }
+            log("SMP: application processor stack allocation failed\n");
+            return;
+        }
+        application_processors[i] = {.stack = stack, .slot = i};
     }
     for (unsigned i = 0; i < response->cpu_count; ++i) {
         auto cpu = response->cpus[i];
@@ -140,9 +173,13 @@ void boot_probe_application_processors() {
         } else if (state.observed_apic_id != cpu->lapic_id) {
             log("SMP: processor apic=%u observed=%u mismatch\n", uint64_t(cpu->lapic_id),
                 uint64_t(state.observed_apic_id));
+        } else if (!state.local_tables) {
+            log("SMP: processor apic=%u local tables unavailable\n", uint64_t(cpu->lapic_id));
         } else {
             ++started;
             log("SMP: application processor apic=%u entered\n", uint64_t(cpu->lapic_id));
+            log("SMP: application processor apic=%u stack and TSS ready\n",
+                uint64_t(cpu->lapic_id));
         }
     }
     log("SMP: present=%u bsp=%u application_processors=%u\n", response->cpu_count,

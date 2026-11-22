@@ -613,17 +613,21 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
     auto bytes = (uint8_t*)data;
     size_t done = 0;
     uint8_t partial[sector_size];
+    const bool synchronous = write && (h->flags & 010000); // O_SYNC includes O_DSYNC.
+    const size_t burst = synchronous ? 1 : block_direct_sectors(h->node->device_id);
     while (done < len) {
         uint64_t position = h->offset;
         size_t within = position % sector_size;
         size_t count = min(len - done, sector_size - within);
         int result;
         if (!within && len - done >= sector_size) {
-            // Keep error reporting precise: advance the handle only for completed sectors.
-            count = sector_size;
-            result =
-                write ? block_write(h->node->device_id, position / sector_size, bytes + done, 1, h)
-                      : block_read(h->node->device_id, position / sector_size, bytes + done, 1);
+            // A failed submission leaves the offset at the last completed command.
+            const size_t sectors = min(burst, (len - done) / sector_size);
+            count = sectors * sector_size;
+            result = write ? block_write(h->node->device_id, position / sector_size, bytes + done,
+                                         sectors, h)
+                           : block_read(h->node->device_id, position / sector_size, bytes + done,
+                                        sectors);
         } else {
             result = block_read(h->node->device_id, position / sector_size, partial, 1);
             if (!result) {
@@ -635,7 +639,7 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
                 }
             }
         }
-        if (!result && write && (h->flags & 010000)) // O_DSYNC; O_SYNC includes this bit.
+        if (!result && synchronous)
             result = block_flush(h->node->device_id);
         if (result)
             return done ? int64_t(done) : result;

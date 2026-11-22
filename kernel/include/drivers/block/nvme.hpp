@@ -40,6 +40,7 @@ struct NvmeIdentity {
 
 void nvme_init();
 const BlockInfo* nvme_info(unsigned slot);
+size_t nvme_transfer_limit(unsigned slot);
 NvmeAddress nvme_address(unsigned slot);
 bool nvme_identity(unsigned controller, NvmeIdentity& identity);
 int nvme_transfer(unsigned slot, uint64_t sector, void* data, size_t count, bool write);

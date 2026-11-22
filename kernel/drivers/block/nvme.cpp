@@ -390,6 +390,10 @@ const BlockInfo* nvme_info(unsigned slot) {
     return slot < disk_count ? &disks[slot].info : nullptr;
 }
 
+size_t nvme_transfer_limit(unsigned slot) {
+    return slot < disk_count ? disks[slot].controller->limit : 1;
+}
+
 NvmeAddress nvme_address(unsigned slot) {
     const auto& disk = disks[slot];
     return {disk.controller->number, disk.id};

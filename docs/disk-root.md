@@ -59,6 +59,33 @@ in through the normal account service, and types a command into kitty. It
 checks the file created by that command and saves a screenshot and serial log
 under `build/kitty-nvme-*`.
 
+## Transfer a built image to NVMe
+
+Build the standalone disk for the target's exact size in bytes, then package it
+for transfer. The bundle contains the boot and root areas and both GPT copies.
+The packer skips the unallocated space between the root and backup GPT.
+
+```sh
+python3 scripts/nvme_install.py pack build/axiom64-installed.raw build/system.axnvme
+```
+
+Record the SHA-256 printed by `pack`. From a maintenance boot with Python 3.11
+or later, stage `nvme_install.py` and the bundle in RAM or on another disk.
+Inspect the whole target drive and verify the model, serial, and size.
+
+```sh
+python3 nvme_install.py inspect /dev/nvme0n1
+python3 nvme_install.py apply system.axnvme /dev/nvme0n1 \
+    --model "$model" --serial "$serial" --sha256 "$digest"
+```
+
+The second command previews the operation with the device open read-only.
+Check the target and back up its data before adding `--write`. The write
+replaces the partition table and the boot and root areas. The tool requires an
+exclusive disk claim and checks the image digest, device identity, and sector
+size. It flushes the drive and reads the written ranges back before reporting
+success. Reboot to rescan the partitions and choose the NVMe drive in firmware.
+
 ## Boot selection
 
 Limine's kernel command line selects the root:

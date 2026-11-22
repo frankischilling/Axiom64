@@ -60,7 +60,10 @@ static int block(const char* path, uint64_t sectors, dev_t* number) {
 }
 
 static int faults(int fd) {
+    static unsigned char bulk[33 * sector];
     char buffer[8];
+    if (pread(fd, bulk, sizeof(bulk), 3099 * sector) != 32 * sector)
+        return -1;
     if (pread(fd, buffer, sizeof(buffer), 3131 * sector) != -1 || errno != EIO)
         return -1;
     if (pread(fd, buffer, sizeof(buffer), 3132 * sector) != sizeof(buffer) ||

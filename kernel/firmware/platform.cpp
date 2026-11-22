@@ -180,6 +180,24 @@ void firmware_probe_i2c_hid(const Acpi::DefinitionBlocks& blocks) {
         if (device.has_descriptor_register)
             log("ACPI I2C HID: id=%s descriptor-register=%x\n", device.hardware_id,
                 uint64_t(device.descriptor_register));
+        using Source = Acpi::I2cHidInterrupt::Source;
+        using Polarity = Acpi::I2cHidInterrupt::Polarity;
+        const auto& irq = device.interrupt;
+        if (irq.source == Source::none)
+            continue;
+        const char* source = irq.source == Source::gpio  ? "gpio"
+                             : irq.source == Source::gsi ? "gsi"
+                                                         : "isa";
+        const char* polarity = irq.polarity == Polarity::active_high  ? "high"
+                               : irq.polarity == Polarity::active_low ? "low"
+                                                                      : "both";
+        log("ACPI I2C HID: id=%s irq-source=%s line=%u trigger=%s polarity=%s shared=%u wake=%u\n",
+            device.hardware_id, source, uint64_t(irq.line), irq.edge ? "edge" : "level", polarity,
+            uint64_t(irq.shared), uint64_t(irq.wake));
+        if (irq.source == Source::gpio)
+            log("ACPI I2C HID: id=%s gpio-controller=%s pull=%u debounce-10us=%u\n",
+                device.hardware_id, irq.gpio_controller, uint64_t(irq.gpio_pull),
+                uint64_t(irq.gpio_debounce));
     }
 }
 

@@ -124,6 +124,18 @@ struct ReadRegions {
 // Decode fixed, identity-mapped memory apertures. An aperture is not a reservation.
 bool decode_pci_root_windows(const DefinitionBlocks&, PciRootWindows&, ReadRegions = {});
 
+struct I2cHidInterrupt {
+    enum class Source : uint8_t { none, legacy_irq, gsi, gpio };
+    enum class Polarity : uint8_t { active_high, active_low, both_edges };
+    Source source;
+    Polarity polarity;
+    uint32_t line;
+    bool edge, shared, wake;
+    char gpio_controller[82];
+    uint16_t gpio_debounce;
+    uint8_t gpio_pull;
+};
+
 struct I2cHidDevice {
     char hardware_id[16];
     char controller[82];
@@ -131,6 +143,7 @@ struct I2cHidDevice {
     uint16_t address, descriptor_register;
     uint8_t source_index;
     bool ten_bit, has_descriptor_register;
+    I2cHidInterrupt interrupt;
 };
 
 struct I2cHidDevices {

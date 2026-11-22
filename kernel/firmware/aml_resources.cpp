@@ -231,9 +231,88 @@ bool string_name(Cursor text, Name& name) {
     return name.path.count;
 }
 
+bool copy_resource_path(Cursor path, char (&destination)[82]) {
+    Name source{};
+    if (path.left < 2 || path.left > sizeof(destination) || path.next[path.left - 1] ||
+        !string_name({path.next, path.left - 1}, source))
+        return false;
+    memcpy(destination, path.next, path.left);
+    return true;
+}
+
+bool i2c_line_interrupt(unsigned tag, Cursor item, I2cHidInterrupt& irq) {
+    using Polarity = I2cHidInterrupt::Polarity;
+    using Source = I2cHidInterrupt::Source;
+    uint64_t flags, line;
+    if (tag == 0x89) {
+        uint64_t count;
+        // A named producer needs routing in that controller's domain.
+        if (!item.read(1, flags) || (flags & 0xe0) || !(flags & 1) || !item.read(1, count) ||
+            count != 1 || !item.read(4, line) || item.left || line == UINT32_MAX)
+            return false;
+        irq = {};
+        irq.source = Source::gsi;
+        irq.line = line;
+        irq.polarity = flags & 4 ? Polarity::active_low : Polarity::active_high;
+        irq.edge = flags & 2;
+        irq.shared = flags & 8;
+        irq.wake = flags & 16;
+        return true;
+    }
+    flags = 1;
+    if (!item.read(2, line) || !line || (line & (line - 1)) ||
+        (tag == 0x23 &&
+         (!item.read(1, flags) || (flags & 0xc0) || ((flags & 9) != 1 && (flags & 9) != 8))))
+        return false;
+    irq = {};
+    irq.source = Source::legacy_irq;
+    irq.line = __builtin_ctz(unsigned(line));
+    irq.polarity = flags & 8 ? Polarity::active_low : Polarity::active_high;
+    irq.edge = flags & 1;
+    irq.shared = flags & 16;
+    irq.wake = flags & 32;
+    return true;
+}
+
+bool i2c_gpio_interrupt(Cursor item, I2cHidInterrupt& irq) {
+    using Polarity = I2cHidInterrupt::Polarity;
+    uint64_t revision, type, general, flags, pull, debounce, pins, index, source, vendor, size;
+    const auto* descriptor = item.next - 3;
+    const size_t length = item.left + 3;
+    if (!item.read(1, revision) || revision != 1 || !item.read(1, type) || type != 0 ||
+        !item.read(2, general) || general != 1 || !item.read(2, flags) || (flags & ~0x1fu) ||
+        !item.read(1, pull) || (pull > 3 && pull < 0x80) || !item.skip(2) ||
+        !item.read(2, debounce) || !item.read(2, pins) || !item.read(1, index) || index ||
+        !item.read(2, source) || !item.read(2, vendor) || !item.read(2, size) || pins < 23 ||
+        source <= pins || ((source - pins) & 1) || vendor <= source || vendor > length ||
+        size != length - vendor)
+        return false;
+    const unsigned polarity = (flags >> 1) & 3;
+    if (polarity == 3 || (polarity == 2 && !(flags & 1)))
+        return false;
+    Cursor pin_table{descriptor + pins, source - pins};
+    uint64_t pin;
+    do {
+        if (!pin_table.read(2, pin))
+            return false;
+    } while (pin == UINT16_MAX);
+    if (!copy_resource_path({descriptor + source, vendor - source}, irq.gpio_controller))
+        return false;
+    irq.source = I2cHidInterrupt::Source::gpio;
+    irq.line = pin;
+    irq.polarity = Polarity(polarity);
+    irq.edge = flags & 1;
+    irq.shared = flags & 8;
+    irq.wake = flags & 16;
+    irq.gpio_pull = pull;
+    irq.gpio_debounce = debounce;
+    return true;
+}
+
 bool i2c_connection(Cursor resources, I2cHidDevice& device) {
     const Cursor original = resources;
     bool found = false;
+    using Source = I2cHidInterrupt::Source;
     while (resources.left) {
         const unsigned tag = resources.peek();
         resources.skip(1);
@@ -248,6 +327,17 @@ bool i2c_connection(Cursor resources, I2cHidDevice& device) {
                     sum += original.next[i];
             return found && !resources.left && !sum;
         }
+        // Prefer the first usable direct IRQ. GPIO is the fallback.
+        if (tag == 0x89 || tag == 0x22 || tag == 0x23) {
+            if (device.interrupt.source == Source::none || device.interrupt.source == Source::gpio)
+                i2c_line_interrupt(tag, item, device.interrupt);
+            continue;
+        }
+        if (tag == 0x8c) {
+            if (device.interrupt.source == Source::none)
+                i2c_gpio_interrupt(item, device.interrupt);
+            continue;
+        }
         if (tag != 0x8e) // Generic Serial Bus connection.
             continue;
         uint64_t revision, index, type;
@@ -260,17 +350,13 @@ bool i2c_connection(Cursor resources, I2cHidDevice& device) {
         if (found || (revision != 1 && revision != 2) || !item.read(1, flags) || (flags & ~6u) ||
             !item.read(2, mode) || mode > 1 || !item.read(1, version) || version != 1 ||
             !item.read(2, data_size) || !item.take(data_size, bus) || !bus.read(4, speed) ||
-            !speed || !bus.read(2, address) || address > (mode ? 0x3ffu : 0x7fu) || item.left < 2 ||
-            item.left > sizeof(device.controller) || item.next[item.left - 1])
-            return false;
-        Name resource_source{};
-        if (!string_name({item.next, item.left - 1}, resource_source))
+            !speed || !bus.read(2, address) || address > (mode ? 0x3ffu : 0x7fu) ||
+            !copy_resource_path(item, device.controller))
             return false;
         device.source_index = index;
         device.ten_bit = mode != 0;
         device.max_hz = speed;
         device.address = address;
-        memcpy(device.controller, item.next, item.left);
         found = true;
     }
     return false;

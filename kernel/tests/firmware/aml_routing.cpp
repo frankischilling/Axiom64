@@ -779,6 +779,8 @@ void namespace_buffer_fields() {
 
 void composed_i2c_resources() {
     using namespace ax::Acpi;
+    using Polarity = I2cHidInterrupt::Polarity;
+    using Source = I2cHidInterrupt::Source;
     const char* controller = "\\_SB_.PCI0.I2C0";
     const auto source = sequence({name(controller), {0}});
     const auto serial = sequence(
@@ -822,12 +824,65 @@ void composed_i2c_resources() {
         blocks.dsdt = {table.data(), 0x1000, table.size()};
         return decode_i2c_hid_devices(blocks, devices);
     };
-    const Bytes irq{0x89, 6, 0, 9, 1, 45, 0, 0, 0, 0x79, 0};
+    const Bytes irq{0x89, 6, 0, 0x1d, 1, 45, 0, 0, 0, 0x79, 0};
     I2cHidDevices devices{};
+    const auto& interrupt = devices.devices[0].interrupt;
     assert(inspect(irq, devices) && devices.count == 1);
     assert(devices.devices[0].address == 0x15 && devices.devices[0].max_hz == 400000 &&
            !std::strcmp(devices.devices[0].controller, controller));
-    assert(inspect({}, devices) && devices.count == 1);
+    assert(interrupt.source == Source::gsi && interrupt.line == 45 && !interrupt.edge &&
+           interrupt.polarity == Polarity::active_low && interrupt.shared && interrupt.wake);
+    assert(inspect({}, devices) && devices.count == 1 && interrupt.source == Source::none);
+
+    const char* gpio_controller = "\\_SB.PCI0.GPI0";
+    const auto gpio_path = sequence({name(gpio_controller), {0}});
+    const auto gpio = sequence({{0x8c, uint8_t(22 + gpio_path.size()),
+                                 0,    1,
+                                 0,    1,
+                                 0,    0x1a,
+                                 0,    1,
+                                 0,    0,
+                                 0x34, 0x12,
+                                 23,   0,
+                                 0,    25,
+                                 0,    uint8_t(25 + gpio_path.size()),
+                                 0,    0,
+                                 0,    75,
+                                 0},
+                                gpio_path,
+                                {0x79, 0}});
+    assert(inspect(gpio, devices) && devices.count == 1 && interrupt.source == Source::gpio &&
+           interrupt.line == 75 && !interrupt.edge && interrupt.polarity == Polarity::active_low &&
+           interrupt.shared && interrupt.wake && interrupt.gpio_debounce == 0x1234 &&
+           interrupt.gpio_pull == 1 && !std::strcmp(interrupt.gpio_controller, gpio_controller));
+    const Bytes gpio_without_end(gpio.begin(), gpio.end() - 2);
+    assert(inspect(sequence({gpio_without_end, irq}), devices) && devices.count == 1 &&
+           interrupt.source == Source::gsi && interrupt.line == 45 &&
+           !interrupt.gpio_controller[0]);
+    assert(inspect({0x22, 0, 0x10, 0x79, 0}, devices) && devices.count == 1 &&
+           interrupt.source == Source::legacy_irq && interrupt.line == 12 && interrupt.edge &&
+           interrupt.polarity == Polarity::active_high && !interrupt.wake);
+    auto invalid_gpio = gpio;
+    invalid_gpio[19] = 0xff;
+    assert(inspect(invalid_gpio, devices) && devices.count == 1 &&
+           interrupt.source == Source::none);
+    invalid_gpio = gpio;
+    invalid_gpio[7] = 4;
+    assert(inspect(invalid_gpio, devices) && devices.count == 1 &&
+           interrupt.source == Source::none);
+    invalid_gpio[7] = 5;
+    assert(inspect(invalid_gpio, devices) && devices.count == 1 &&
+           interrupt.source == Source::gpio && interrupt.edge &&
+           interrupt.polarity == Polarity::both_edges);
+    invalid_gpio = gpio;
+    invalid_gpio[23] = invalid_gpio[24] = 0xff;
+    assert(inspect(invalid_gpio, devices) && devices.count == 1 &&
+           interrupt.source == Source::none);
+    const Bytes named_irq{0x89, 12, 0, 1, 1, 42, 0, 0, 0, 0, 'I', 'R', 'Q', 'C', 0, 0x79, 0};
+    assert(inspect(sequence({gpio_without_end, named_irq}), devices) && devices.count == 1 &&
+           interrupt.source == Source::gpio && interrupt.line == 75);
+    std::puts("ACPI_I2C_INTERRUPT_PASS gsi isa gpio fallback malformed");
+
     assert(inspect(sequence({irq, {0, 0}}), devices) && devices.count == 1);
     assert(inspect(sequence({irq, {1}}), devices) && !devices.count);
     assert(inspect(Bytes(irq.begin(), irq.end() - 2), devices) && !devices.count);

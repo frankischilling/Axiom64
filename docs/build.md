@@ -107,7 +107,11 @@ and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.
 
-Use `hid.i2c.probe` to list HID-over-I²C resources from ACPI firmware.
+Use `hid.i2c.probe` to list HID-over-I²C resources from ACPI firmware. It
+reports the serial bus and, when available, the interrupt line or GPIO pin.
+The report keeps legacy ISA IRQs, global system interrupts, and
+controller-relative GPIO pins distinct. The probe reads the firmware
+description without enabling the interrupt.
 Use `lpss.i2c.probe` to check PCI power and the BAR0 aperture on Intel
 Comet Lake LPSS I²C controllers. It reports the BAR before and after a D0
 transition and reads the controller identity from a validated aperture.

@@ -87,6 +87,20 @@ Upload the [NVMe bundle](disk-root.md#transfer-a-built-image-to-nvme) into the
 bundle in `/home/bench`, then follow the write instructions after verifying
 the drive identity and backup.
 
+For a large desktop bundle, split it into 64 MiB parts on the build host so
+each file fits in the maintenance filesystem. Upload the entire directory
+with `put -r parts` at the SFTP prompt.
+
+```sh
+mkdir parts
+split -b 64MiB -d -a 4 system.axnvme parts/part-
+```
+
+At the maintenance console, pass `/home/bench/parts` as the bundle path and
+add `--parts`. Use the SHA-256 of the original `system.axnvme` file. The
+installer reads the pieces in order and verifies that digest before opening
+the target drive.
+
 ### Try a new kernel with the installed system
 
 After the installed disk boots on its own, record the GPT ID of its ext2 root

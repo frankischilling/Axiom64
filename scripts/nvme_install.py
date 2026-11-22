@@ -24,7 +24,7 @@
 
 """Transfer an installed image without sending its unused disk space."""
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import errno
 import fcntl
 import gzip
@@ -52,11 +52,56 @@ BLKROGET = 0x125e
 
 
 @contextmanager
-def regular_file(path):
-    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+def regular_file(path, *, directory=None):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    with os.fdopen(os.open(path, flags, dir_fd=directory), 'rb') as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError('the image must be a regular file')
         yield stream
+
+
+class BundleParts:
+    def __init__(self, streams):
+        self.streams = streams
+        self.index = 0
+
+    def read(self, size):
+        data = bytearray()
+        while len(data) < size and self.index < len(self.streams):
+            piece = self.streams[self.index].read(size - len(data))
+            if not piece:
+                self.index += 1
+                continue
+            data.extend(piece)
+        return bytes(data)
+
+    def seek(self, offset):
+        if offset != 0:
+            raise ValueError('bundle parts can only be rewound')
+        for stream in self.streams:
+            stream.seek(0)
+        self.index = 0
+        return 0
+
+
+@contextmanager
+def bundle_source(path, parts):
+    if not parts:
+        with regular_file(path) as stream:
+            yield stream
+        return
+    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        names = sorted(os.listdir(directory))
+        if not names or names != [f'part-{index:04d}' for index in range(len(names))]:
+            raise ValueError('expected an uninterrupted sequence starting with part-0000')
+        with ExitStack() as files:
+            streams = [files.enter_context(regular_file(name, directory=directory)) for name in names]
+            if any(not os.fstat(stream.fileno()).st_size for stream in streams):
+                raise ValueError('install bundle parts must be nonempty')
+            yield BundleParts(streams)
+    finally:
+        os.close(directory)
 
 
 def chunks(read, size):
@@ -144,7 +189,10 @@ def target_device(path, write=False):
 
 
 def checked_bundle(source, sha256):
-    if hashlib.file_digest(source, 'sha256').hexdigest() != sha256:
+    compressed_digest = hashlib.sha256()
+    while data := source.read(CHUNK):
+        compressed_digest.update(data)
+    if compressed_digest.hexdigest() != sha256:
         raise ValueError('install bundle SHA-256 does not match')
     source.seek(0)
     with gzip.GzipFile(fileobj=source) as stream:
@@ -189,7 +237,7 @@ def range_digest(fd, offset, size):
 
 
 def apply(args):
-    with regular_file(args.bundle) as source:
+    with bundle_source(args.bundle, args.parts) as source:
         capacity, ranges = checked_bundle(source, args.sha256.lower())
         with target_device(args.target, args.write) as (fd, identity):
             print(json.dumps(dict(device=args.target, **identity)), flush=True)
@@ -236,6 +284,7 @@ def main():
     install = commands.add_parser('apply', help='verify a bundle and target, then write if requested')
     install.add_argument('bundle', type=Path)
     install.add_argument('target')
+    install.add_argument('--parts', action='store_true', help='treat the bundle path as a parts directory')
     install.add_argument('--model', required=True)
     install.add_argument('--serial', required=True)
     install.add_argument('--sha256', required=True, metavar='DIGEST')

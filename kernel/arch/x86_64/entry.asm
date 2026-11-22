@@ -24,7 +24,7 @@
 bits 64
 default rel
 section .text
-extern handle_syscall, handle_trap, kernel_stack_top
+extern handle_syscall, handle_trap
 extern multiboot_main
 extern ap_entry_on_stack
 
@@ -62,10 +62,15 @@ ap_enter_stack:
 
 global syscall_entry
 syscall_entry:
-    mov [saved_user_rsp], rsp
-    mov rsp, [kernel_stack_top]
+    ; Use this CPU's entry data to switch stacks, then restore the task's GS base.
+    ; Interrupt entry and the syscall dispatcher do not use the kernel GS base.
+    swapgs
+    lfence
+    mov [gs:8], rsp
+    mov rsp, [gs:0]
     push qword 0x1b
-    push qword [saved_user_rsp]
+    push qword [gs:8]
+    swapgs
     push r11
     push qword 0x23
     push rcx
@@ -148,7 +153,6 @@ interrupt_table:
 %assign i i+1
 %endrep
 section .bss
-saved_user_rsp: resq 1
 alignb 16
 multiboot_stack: resb 65536
 multiboot_stack_top:

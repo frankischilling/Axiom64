@@ -148,7 +148,9 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         summaries = re.findall(r"^SMP: present=(\d+) bsp=(\d+) application_processors=(\d+)$",
                                text, re.MULTILINE)
         entered = re.findall(r"^SMP: application processor apic=(\d+) entered$", text, re.MULTILINE)
-        tables = re.findall(r"^SMP: application processor apic=(\d+) stack and TSS ready$", text, re.MULTILINE)
+        tables = re.findall(
+            r"^SMP: application processor apic=(\d+) stack, TSS, IDT and syscall entry ready$",
+            text, re.MULTILINE)
         if (len(summaries) != 1 or summaries[0][0] != str(smp) or summaries[0][2] != str(smp - 1) or
                 len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered or
                 sorted(entered) != sorted(tables)):

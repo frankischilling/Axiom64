@@ -44,8 +44,10 @@ export PATH=/bin:/usr/bin:/sbin:/usr/sbin
 /bin/busybox mkdir -p /etc/axiom64 /var/log/axiom64
 if /usr/bin/account-pam; then
     count=$(/bin/busybox grep -c denied /var/log/axiom64/login/auth.log)
-    if test "$count" -eq 5; then
+    recovered=$(/bin/busybox grep -c recovered /var/log/axiom64/login/auth.log)
+    if test "$count" -eq 5 && test "$recovered" -eq 1; then
         printf 'PAM_DENIAL_AUDIT_RECORDS=%s\n' "$count"
+        printf 'PAM_RECOVERED_LEASE_RECORDS=%s\n' "$recovered"
         printf 'ACCOUNT_PAM_GUEST_PASS\n'
     fi
 fi
@@ -108,6 +110,7 @@ def test_boot(image, firmware, log, staging):
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
                                 stderr=subprocess.STDOUT, timeout=150)
     markers = {f'Firmware: {firmware.upper()}', 'ACCOUNT_PAM_GUEST_PASS', 'PAM_DENIAL_AUDIT_RECORDS=5',
+               'PAM_RECOVERED_LEASE_RECORDS=1', 'ACCOUNT_PAM_RECOVERED_SUPERVISOR_LEASE',
                'ACCOUNT_PAM_DENIED_PASSWORD_AND_ACCOUNT', 'ACCOUNT_PAM_VERIFIED_CREDENTIAL_AND_REJECTED_IDENTITY_CHANGE',
                'ACCOUNT_PAM_REJECTED_STALE_AND_PASSWORD_CHANGE_REQUIRED', 'ACCOUNT_PAM_REJECTED_UNPRIVILEGED_CALLER',
                'nvme: controller=0 shutdown complete', 'AXIOM64_EXIT status=0'}

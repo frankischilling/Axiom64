@@ -25,7 +25,10 @@
 
 #define _GNU_SOURCE
 #include "../../accounts/database.h"
+#include "../../accounts/guard.h"
+#include "../../accounts/logbook.h"
 #include "../../accounts/password.h"
+#include <errno.h>
 #include <security/pam_appl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +46,7 @@
     } while (0)
 
 static const char database[] = "/etc/axiom64/accounts";
+static const char records[] = "/var/log/axiom64/login";
 static const char secret[] = "Fixture-only-PAM-Authentication-42";
 
 static int converse(int count, const struct pam_message** messages, struct pam_response** output,
@@ -99,6 +103,43 @@ static void denied(const char* name, const char* password) {
     CHECK(pam_end(handle, result) == PAM_SUCCESS);
 }
 
+static void session_active(int active) {
+    struct account_logbook* book = NULL;
+    CHECK(account_logbook_open(records, 0, &book) == 0);
+    CHECK(account_logbook_active(book, 1000) == active);
+    int status = account_guard_new_ids(book, 1000, (gid_t)-1);
+    CHECK(active ? status < 0 && errno == EBUSY : status == 0);
+    account_logbook_close(book);
+}
+
+static void wait_child(pid_t child) {
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+static void verify_helper_cleanup(void) {
+    pam_handle_t* handle = start("alice", secret);
+    CHECK(pam_authenticate(handle, 0) == PAM_SUCCESS && pam_open_session(handle, 0) == PAM_SUCCESS);
+    session_active(1);
+    CHECK(pam_open_session(handle, 0) == PAM_SESSION_ERR);
+    CHECK(pam_authenticate(handle, 0) == PAM_SESSION_ERR);
+    session_active(1);
+    CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
+    session_active(0);
+
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        pam_handle_t* interrupted = start("alice", secret);
+        CHECK(pam_authenticate(interrupted, 0) == PAM_SUCCESS);
+        CHECK(pam_open_session(interrupted, 0) == PAM_SUCCESS);
+        _exit(0);
+    }
+    wait_child(child);
+    session_active(0);
+    puts("ACCOUNT_PAM_RECOVERED_SUPERVISOR_LEASE");
+}
+
 int main(void) {
     CHECK(getuid() == 0 && access("/etc/pam.d/axiom64-test", R_OK) == 0);
     CHECK(access(database, F_OK) != 0);
@@ -114,13 +155,25 @@ int main(void) {
     CHECK(pam_acct_mgmt(handle, 0) == PAM_PERM_DENIED);
     CHECK(pam_authenticate(handle, 0) == PAM_SUCCESS && pam_acct_mgmt(handle, 0) == PAM_SUCCESS);
     CHECK(pam_setcred(handle, PAM_ESTABLISH_CRED) == PAM_SUCCESS);
-    CHECK(pam_open_session(handle, 0) == PAM_SUCCESS &&
-          pam_close_session(handle, 0) == PAM_SUCCESS);
+    CHECK(pam_open_session(handle, 0) == PAM_SUCCESS);
+    session_active(1);
+    pid_t inherited = fork();
+    CHECK(inherited >= 0);
+    if (!inherited) {
+        CHECK(pam_close_session(handle, 0) == PAM_PERM_DENIED);
+        CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
+        _exit(0);
+    }
+    wait_child(inherited);
+    session_active(1);
+    CHECK(pam_close_session(handle, 0) == PAM_SUCCESS);
+    session_active(0);
     CHECK(pam_setcred(handle, PAM_DELETE_CRED) == PAM_SUCCESS);
     CHECK(pam_set_item(handle, PAM_USER, "root") == PAM_SUCCESS);
     CHECK(pam_acct_mgmt(handle, 0) == PAM_PERM_DENIED);
     CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
     puts("ACCOUNT_PAM_VERIFIED_CREDENTIAL_AND_REJECTED_IDENTITY_CHANGE");
+    verify_helper_cleanup();
 
     handle = start("alice", secret);
     CHECK(pam_authenticate(handle, 0) == PAM_SUCCESS);
@@ -143,8 +196,7 @@ int main(void) {
         CHECK(pam_end(own, PAM_SUCCESS) == PAM_SUCCESS);
         _exit(0);
     }
-    int status = 0;
-    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    wait_child(child);
     puts("ACCOUNT_PAM_REJECTED_UNPRIVILEGED_CALLER");
     return 0;
 }

@@ -45,8 +45,8 @@ int account_recorded_deny(const char* records, const char* name, const char* ter
     return result < 0 ? failed(error) : 0;
 }
 
-int account_recorded_begin(void* opaque, pid_t child, const char* terminal) {
-    struct account_recorded_session* context = opaque;
+static int recorded_begin(struct account_recorded_session* context, pid_t child,
+                          const char* terminal) {
     if (!context || !context->target || context->lease)
         return failed(EINVAL);
     struct account_database* db = NULL;
@@ -78,12 +78,26 @@ int account_recorded_begin(void* opaque, pid_t child, const char* terminal) {
         account_logbook_audit(book, context->operation, actor->name, actor->uid, target->name,
                               terminal, 0) < 0)
         error = errno;
-    if (!error &&
-        account_logbook_begin(book, context->target, child, terminal, &context->lease) < 0)
-        error = errno;
+    if (!error) {
+        int result =
+            child ? account_logbook_begin(book, context->target, child, terminal, &context->lease)
+                  : account_logbook_begin_supervised(book, context->target, terminal,
+                                                     &context->lease);
+        if (result < 0)
+            error = errno;
+    }
     account_logbook_close(book);
     account_database_end(db);
     return error ? failed(error) : 0;
+}
+
+int account_recorded_begin(void* opaque, pid_t child, const char* terminal) {
+    return child > 0 ? recorded_begin(opaque, child, terminal) : failed(EINVAL);
+}
+
+int account_recorded_begin_supervised(struct account_recorded_session* context,
+                                      const char* terminal) {
+    return recorded_begin(context, 0, terminal);
 }
 
 int account_recorded_end(void* opaque, pid_t child, int status) {

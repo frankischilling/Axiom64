@@ -50,11 +50,16 @@ Password locking, password changes, shell updates and membership changes remain 
 The installed desktop profile includes a PAM module for SDDM login. It reads the
 same account database as the console, records denied attempts, and checks that
 the username and account generation are still current before the helper opens a
-session. Use the console to complete a required password change.
+session. The login journal records the privileged display-manager helper and
+protects the signed-in account until the helper closes the session. The next
+journal access recovers the record if the helper exits without closing it. Use
+the console to complete a required password change.
 
 `make test-account-pam` checks this module on disposable QEMU NVMe disks under
 BIOS and UEFI. It covers denied sign-ins, a valid account, identity changes,
-stale credentials, expired passwords, and unprivileged callers.
+stale credentials, expired passwords, and unprivileged callers. It also checks
+account protection during a session, logout, and recovery after the helper
+exits.
 
 Installing a nonroot profile sets all real/effective/saved and filesystem UID/GID values, installs supplementary groups, clears retained capabilities, and verifies the resulting credentials. Service mode additionally sets no-new-privileges. Login environment construction replaces inherited variables with the identity's HOME, USER, LOGNAME and SHELL, a fixed PATH and locale, and an optional validated terminal type. A failed credential transition must terminate the child; it must never continue an application after a partial drop.
 

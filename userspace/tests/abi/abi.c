@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #define _GNU_SOURCE
+#include <asm/prctl.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -66,6 +67,45 @@ static void child_status(pid_t child, int expected) {
     CHECK(waitpid(child, &status, 0) == child);
     CHECK(WIFEXITED(status));
     CHECK(WEXITSTATUS(status) == expected);
+}
+
+static uintptr_t read_gs_base(void) {
+    uintptr_t base = UINTPTR_MAX;
+    CHECK(syscall(SYS_arch_prctl, ARCH_GET_GS, &base) == 0);
+    return base;
+}
+
+static uint64_t read_gs_word(void) {
+    uint64_t value;
+    __asm__ volatile("movq %%gs:0, %0" : "=r"(value) : : "memory");
+    return value;
+}
+
+static void user_gs_base(const char* executable) {
+    uintptr_t saved = read_gs_base();
+    uintptr_t fs_before, fs_after;
+    CHECK(syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_before) == 0);
+    uint64_t parent_value = UINT64_C(0x123456789abcdef0);
+    CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, &parent_value) == 0);
+    CHECK(read_gs_base() == (uintptr_t)&parent_value && read_gs_word() == parent_value);
+    CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, UINTPTR_MAX) == -1 && errno == EPERM);
+    CHECK(syscall(SYS_arch_prctl, ARCH_GET_GS, 1ul) == -1 && errno == EFAULT);
+    CHECK(read_gs_word() == parent_value);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(read_gs_base() == (uintptr_t)&parent_value && read_gs_word() == parent_value);
+        uint64_t child_value = UINT64_C(0xb9876543210fedca);
+        CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, &child_value) == 0);
+        CHECK(read_gs_word() == child_value);
+        execl(executable, executable, "verify-exec-gs", (char*)0);
+        _exit(91);
+    }
+    child_status(child, 0);
+    CHECK(read_gs_base() == (uintptr_t)&parent_value && read_gs_word() == parent_value);
+    CHECK(syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_after) == 0 && fs_after == fs_before);
+    CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, saved) == 0);
+    puts("ABI_USER_GS_BASE_PASS linkage=" ABI_LINKAGE);
 }
 
 static void shared_file_table_pressure(void) {
@@ -534,6 +574,8 @@ static void relative_modes(void) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && !strcmp(argv[1], "verify-exec-gs"))
+        return read_gs_base() != 0;
     if (argc > 1 && !strcmp(argv[1], "child"))
         return 17;
     if (argc == 4 && !strcmp(argv[1], "proc-cmdline")) {
@@ -691,6 +733,7 @@ int main(int argc, char** argv) {
     CHECK(after.tv_sec > before.tv_sec || after.tv_nsec >= before.tv_nsec + 20000000);
     shared_file_table_pressure();
     anonymous_address_reservations();
+    user_gs_base(argv[0]);
     puts("ABI_TESTS_PASS linkage=" ABI_LINKAGE);
     return 0;
 }

@@ -331,6 +331,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
     if (stack)
         child->frame.rsp = stack;
     child->fs_base = (flags & clone_settls) ? tls : current->fs_base;
+    child->gs_base = current->gs_base;
     child->signal_mask = current->signal_mask;
     if (!vm || (flags & clone_vfork)) {
         child->altstack_base = current->altstack_base;
@@ -562,7 +563,7 @@ Frame* schedule(Frame* f, bool yield) {
             reclaim_released_nodes();
             current = t;
             write_cr3(t->memory->space.root);
-            arch_task(t->fs_base);
+            arch_task(t->fs_base, t->gs_base);
             asm volatile("fxrstor64 %0" ::"m"(t->fpu));
             cpu_account(t, true);
             return &t->frame;
@@ -968,6 +969,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     t->frame.ss = 0x1b;
     t->frame.rflags = 0x202;
     t->fs_base = 0;
+    t->gs_base = 0;
     t->memory->brk_base = t->memory->brk_end = align_up(image.end);
     t->memory->initial_data_size = image.data_end - image.data_start;
     t->memory->arguments = {stack.strings, stack.argument_end, stack.top};
@@ -988,7 +990,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
         if (t->files->entries[fd].cloexec)
             close_descriptor(*t->files, int(fd));
     if (t == current)
-        arch_task(0);
+        arch_task(0, 0);
     log("exec pid=%u %s (%s)\n", uint64_t(t->pid), path,
         image.interpreter[0] ? "dynamic musl" : "static ELF");
     return 0;

@@ -166,7 +166,7 @@ struct Task {
     FsContext* fs;
     SignalHandlers* handlers;
     Credentials credentials;
-    uint64_t fs_base, tid_address, signal_mask;
+    uint64_t fs_base, gs_base, tid_address, signal_mask;
     uint64_t altstack_base, altstack_size;
     PendingSignals pending_signals;
     uint64_t suspend_saved_mask;

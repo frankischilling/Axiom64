@@ -39,9 +39,11 @@ The resource table recognizes all sixteen Linux selectors. Other stored values d
 
 `mremap` can shrink or grow an ordinary private anonymous mapping. Sizes round up to page boundaries and follow the 256 MiB mapping limit. Growth requires uniform protections across the source. With `MREMAP_MAYMOVE`, an occupied tail permits relocation to a free range. The new mapping keeps the old pages and their protections, and the added pages start zeroed. The address-space and private writable data limits charge only the added pages. Failed growth preserves the old range and its neighbors.
 
-Complete `memfd` mappings can also shrink or grow, including relocation when `MREMAP_MAYMOVE` permits it. The mapping keeps its file offset and access permissions. Shared mappings continue to see the same backing pages, and dirty private pages stay private. Added pages fault from the same file, so touching a page past its end still raises `SIGBUS`. This covers the shared-memory pool resizing used by Wayland. File-backed subranges and other file types remain open.
+Complete `memfd` and ext2 mappings can also shrink or grow, including relocation when `MREMAP_MAYMOVE` permits it. The mapping keeps its file offset and access permissions. Added pages fault from the same file, so touching a page past its end raises `SIGBUS`. This supports the shared-memory pool resizing used by Wayland.
 
-File-backed mappings, shared mappings, grow-down stacks, `MREMAP_FIXED`, and `MREMAP_DONTUNMAP` remain outside this implementation.
+Private ext2 mappings read disk pages on demand. Clean mappings of the same inode share resident pages, while writes make a private copy. File writes refresh clean aliases and leave private copies intact. Truncation discards whole mapped pages past the new end, including private copies. The ext2 shared mapping path still supports reads only.
+
+File-backed subranges, other file types, shared anonymous mappings, grow-down stacks, `MREMAP_FIXED`, and `MREMAP_DONTUNMAP` remain open.
 
 ## Validation
 

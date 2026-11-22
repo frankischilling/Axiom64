@@ -72,6 +72,14 @@ void devices_init();
 
 uint64_t device_number(Node*);
 
+constexpr uint32_t device_major(uint64_t device) {
+    return ((device >> 8) & 0xfff) | ((device >> 32) & 0xfffff000);
+}
+
+constexpr uint32_t device_minor(uint64_t device) {
+    return (device & 0xff) | ((device >> 12) & 0xffffff00);
+}
+
 int device_open(Handle*);
 
 void device_close(Handle*);

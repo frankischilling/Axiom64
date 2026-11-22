@@ -87,6 +87,35 @@ static int transfer_sizes(int fd, unsigned first) {
     return 0;
 }
 
+static int partition_inventory(const dev_t* numbers) {
+    static const char* const names[] = {"nvme0n1", "nvme0n1p1", "nvme0n7", "nvme1n5"};
+    static const unsigned sizes[] = {4096, 2048, 4096, 4096};
+    const unsigned count = sizeof(names) / sizeof(names[0]);
+    FILE* file = fopen("/proc/partitions", "r");
+    if (!file)
+        return -1;
+    char line[100], name[32];
+    unsigned actual_major, actual_minor, found = 0;
+    unsigned long long kib;
+    int valid = fgets(line, sizeof(line), file) && !strcmp(line, "major minor  #blocks  name\n");
+    while (valid && fgets(line, sizeof(line), file)) {
+        if (sscanf(line, "%u %u %llu %31s", &actual_major, &actual_minor, &kib, name) != 4 ||
+            strncmp(name, "nvme", 4))
+            continue;
+        unsigned i = 0;
+        while (i < count && strcmp(name, names[i]))
+            ++i;
+        if (i == count || (found & (1u << i)) || kib != sizes[i] ||
+            actual_major != major(numbers[i]) || actual_minor != minor(numbers[i])) {
+            valid = 0;
+            break;
+        }
+        found |= 1u << i;
+    }
+    valid = valid && !ferror(file) && found == (1u << count) - 1;
+    return fclose(file) || !valid;
+}
+
 static int data(void) {
     struct stat missing;
     if (stat("/dev/nvme0n3", &missing) != -1 || errno != ENOENT ||
@@ -99,6 +128,8 @@ static int data(void) {
     const int sparse_id = block("/dev/nvme0n7", disk_sectors, &numbers[2]);
     const int other = block("/dev/nvme1n5", disk_sectors, &numbers[3]);
     if (whole < 0 || part < 0 || sparse_id < 0 || other < 0)
+        return -1;
+    if (partition_inventory(numbers))
         return -1;
     for (unsigned i = 0; i < 4; ++i)
         for (unsigned j = i + 1; j < 4; ++j)

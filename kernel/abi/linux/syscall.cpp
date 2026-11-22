@@ -368,14 +368,6 @@ static int stat_at_node(int dirfd, uint64_t path, uint32_t flags, Node*& node) {
     return stat_path_node(dirfd, path, !(flags & 0x100), node);
 }
 
-static uint32_t device_major(uint64_t device) {
-    return ((device >> 8) & 0xfff) | ((device >> 32) & 0xfffff000);
-}
-
-static uint32_t device_minor(uint64_t device) {
-    return (device & 0xff) | ((device >> 12) & 0xffffff00);
-}
-
 static int64_t statx_at(int dirfd, uint64_t path, uint32_t flags, uint32_t mask, uint64_t dst) {
     constexpr uint32_t nofollow = 0x100, no_automount = 0x800, empty_path = 0x1000;
     constexpr uint32_t sync_type = 0x6000, reserved_mask = 0x80000000;

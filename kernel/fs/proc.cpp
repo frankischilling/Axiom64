@@ -33,6 +33,7 @@
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "drivers/block/block.hpp"
+#include "drivers/platform/devices.hpp"
 #include "net/ethernet.hpp"
 #include "ipc/eventfd.hpp"
 #include "ipc/ipc.hpp"
@@ -70,6 +71,7 @@ enum class Kind {
     mounts_link,
     mounts,
     filesystem_types,
+    partitions,
     sys,
     fs,
     pipe_limit,
@@ -89,11 +91,12 @@ enum class Kind {
 // Kernel execution serializes generation. Every proc mount observes this same boot.
 char boot_identifier[37]{};
 constexpr const char* sys_directories[] = {"kernel", "net", "fs"};
-constexpr const char* root_names[] = {"self", "thread-self", "sys",    "cpuinfo",    "meminfo",
-                                      "stat", "uptime",      "mounts", "filesystems"};
-constexpr Kind root_kinds[] = {Kind::self,    Kind::thread_self, Kind::sys,
-                               Kind::cpuinfo, Kind::meminfo,     Kind::system_stat,
-                               Kind::uptime,  Kind::mounts_link, Kind::filesystem_types};
+constexpr const char* root_names[] = {"self", "thread-self", "sys",    "cpuinfo",     "meminfo",
+                                      "stat", "uptime",      "mounts", "filesystems", "partitions"};
+constexpr Kind root_kinds[] = {Kind::self,      Kind::thread_self, Kind::sys,
+                               Kind::cpuinfo,   Kind::meminfo,     Kind::system_stat,
+                               Kind::uptime,    Kind::mounts_link, Kind::filesystem_types,
+                               Kind::partitions};
 constexpr size_t root_children = sizeof(root_names) / sizeof(root_names[0]);
 static_assert(root_children == sizeof(root_kinds) / sizeof(root_kinds[0]));
 constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-hard",
@@ -112,7 +115,7 @@ static bool snapshot_file(Kind kind) {
     return kind == Kind::status || kind == Kind::stat || kind == Kind::comm ||
            kind == Kind::fdinfo || kind == Kind::cpuinfo || kind == Kind::meminfo ||
            kind == Kind::system_stat || kind == Kind::uptime || kind == Kind::mounts ||
-           kind == Kind::filesystem_types;
+           kind == Kind::filesystem_types || kind == Kind::partitions;
 }
 
 struct Entry {
@@ -1089,12 +1092,50 @@ static int mounts_snapshot(const Entry& item, Snapshot& output) {
     return 0;
 }
 
+static int partitions_snapshot(Snapshot& output) {
+    constexpr char header[] = "major minor  #blocks  name\n\n";
+    size_t capacity = sizeof(header);
+    const unsigned limit = block_device_limit();
+    for (unsigned index = 0; index < limit; ++index)
+        if (block_info(index))
+            capacity += 48 + block_name_size;
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    Text text{bytes, 0, capacity};
+    text.string(header);
+    for (unsigned index = 0; index < limit; ++index) {
+        const auto info = block_info(index);
+        if (!info)
+            continue;
+        char name[block_name_size];
+        block_device_name(index, name);
+        const auto number = block_device_number(index);
+        text.number(device_major(number), 10, 4);
+        text.string("  ");
+        text.number(device_minor(number), 10, 7);
+        text.character(' ');
+        text.number(info->sectors / 2, 10, 10);
+        text.character(' ');
+        text.string(name + sizeof("/dev/") - 1);
+        text.character('\n');
+    }
+    if (text.failed) {
+        release(bytes);
+        return -75;
+    }
+    output = {bytes, text.length};
+    return 0;
+}
+
 static int make_snapshot(Node* node, Snapshot& output) {
     auto item = entry(node);
     if (item->kind == Kind::fdinfo)
         return fdinfo(*item, output);
     if (item->kind == Kind::mounts)
         return mounts_snapshot(*item, output);
+    if (item->kind == Kind::partitions)
+        return partitions_snapshot(output);
     if (item->kind == Kind::comm) {
         auto owner = task(item->pid);
         if (!owner)

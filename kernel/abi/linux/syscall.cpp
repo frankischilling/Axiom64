@@ -1622,17 +1622,20 @@ static int64_t dispatch(Frame* f) {
                 t.process->pid == int(a ? a : current->process->pid))
                 return t.process->pgid;
         return -3;
-    case 158:
-        if (a == 0x1002) {
+    case 158: {
+        constexpr uint64_t set_gs = 0x1001, set_fs = 0x1002, get_fs = 0x1003, get_gs = 0x1004;
+        if (a == set_fs || a == set_gs) {
             if (b >= user_limit)
                 return -1;
-            current->fs_base = b;
-            arch_task(b);
+            (a == set_fs ? current->fs_base : current->gs_base) = b;
+            arch_task(current->fs_base, current->gs_base);
             return 0;
         }
-        if (a == 0x1003)
-            return copy_result(b, &current->fs_base, 8);
+        if (a == get_fs || a == get_gs)
+            return copy_result(b, a == get_fs ? &current->fs_base : &current->gs_base,
+                               sizeof(uint64_t));
         return -22;
+    }
     case 169:
         if (!capable(current->credentials, Capability::sys_boot))
             return -1;

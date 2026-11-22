@@ -94,7 +94,9 @@ void arch_init() {
     log("CPU: GDT, TSS, IDT, SYSCALL and PIT initialized\n");
 }
 
-void arch_task(uint64_t fs) {
+void arch_task(uint64_t fs, uint64_t gs) {
     wrmsr(0xc0000100, fs);
+    asm volatile("movw %0, %%gs" : : "r"(uint16_t(0)));
+    wrmsr(0xc0000101, gs);
 }
 } // namespace ax

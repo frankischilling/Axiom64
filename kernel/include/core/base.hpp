@@ -236,7 +236,7 @@ void* map_mmio(uint64_t address, size_t length);
 
 void arch_init();
 
-void arch_task(uint64_t fs);
+void arch_task(uint64_t fs, uint64_t gs);
 
 extern "C" [[noreturn]] void enter_user(Frame*);
 

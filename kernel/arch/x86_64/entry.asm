@@ -26,12 +26,20 @@ default rel
 section .text
 extern handle_syscall, handle_trap, kernel_stack_top
 extern multiboot_main
+extern ap_entry_on_stack
 
 global multiboot_entry
 multiboot_entry:
     lea rsp, [multiboot_stack_top]
     xor ebp, ebp
     call multiboot_main
+    ud2
+
+global ap_enter_stack
+ap_enter_stack:
+    mov rsp, rdi
+    mov rdi, rsi
+    call ap_entry_on_stack
     ud2
 
 %macro SAVE 0

@@ -175,6 +175,38 @@ Connect from the build PC and compare that fingerprint. Use the normal account
 name for SSH, SFTP, and SCP. The account setup and keys persist across reboots.
 Start the listener again from the console when needed.
 
+### Unattended SSH on a debug boot
+
+After the one-time account and host-key setup, save the working SSH
+configuration as `/etc/ssh/sshd_config.debug`, owned by root with mode `0600`.
+Set `ListenAddress` to the lab interface and restrict `AllowUsers` to the
+test account and build PC. Check the file with
+`sudo /usr/sbin/sshd -t -f /etc/ssh/sshd_config.debug`.
+
+Pass `--debug` to `scripts/boot_media.py` or `scripts/image.py` for hardware
+test images, or add `debug.ssh` to an existing PXE entry's kernel command line.
+The installed debug image starts SSH
+after the random-seed service succeeds and retries if the configured address
+is still coming up. It requires public-key authentication and an ordinary
+account. The server uses the same host key after reboot. Add
+`--kernel-option console.text` for an authenticated text login, or leave it
+off for the normal desktop login.
+
+For the isolated direct cable, create a root-owned directory
+`/etc/axiom64-debug-network` with mode `0700`. Save the following as
+`eth0.conf` in that directory with root ownership and mode `0600`.
+
+```ini
+axiom64-network=1
+mode=static
+address=192.168.100.200
+netmask=255.255.255.0
+```
+
+Use the appropriate interface and addresses for your lab. Debug SSH boots
+read this directory when it exists. Ordinary boots read the regular profiles
+under `/etc/network`.
+
 ## FTP compatibility test
 
 The lab FTP image ran Pure-FTPd on TCP `2121` with a separate `benchftp` account

@@ -32,11 +32,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
-static pid_t network(void) {
+static const char debug_network[] = "/etc/axiom64-debug-network";
+static const char debug_ssh_config[] = "/etc/ssh/sshd_config.debug";
+
+static pid_t network(int debug) {
     pid_t child = fork();
     if (!child) {
         int input = open("/dev/null", O_RDONLY);
@@ -44,7 +48,10 @@ static pid_t network(void) {
             dup2(input, 0);
             close(input);
         }
-        execl("/sbin/network-manager", "network-manager", (char*)0);
+        if (debug && access(debug_network, F_OK) == 0)
+            execl("/sbin/network-manager", "network-manager", "--saved", debug_network, (char*)0);
+        else
+            execl("/sbin/network-manager", "network-manager", (char*)0);
         perror("init: network manager exec");
         _exit(1);
     }
@@ -70,12 +77,59 @@ static pid_t start_system_bus(void) {
     return child;
 }
 
+static int debug_ssh_configured(void) {
+    struct stat config;
+    return lstat(debug_ssh_config, &config) == 0 && S_ISREG(config.st_mode) && config.st_uid == 0 &&
+           (config.st_mode & 0777) == 0600 && access("/usr/sbin/sshd", X_OK) == 0;
+}
+
+static pid_t start_debug_ssh(void) {
+    pid_t child = fork();
+    if (!child) {
+        int input = open("/dev/null", O_RDONLY);
+        if (input < 0 || dup2(input, STDIN_FILENO) < 0)
+            _exit(126);
+        if (input != STDIN_FILENO)
+            close(input);
+        char* const arguments[] = {"/usr/sbin/sshd",
+                                   "-D",
+                                   "-e",
+                                   "-f",
+                                   (char*)debug_ssh_config,
+                                   "-o",
+                                   "AuthenticationMethods=publickey",
+                                   "-o",
+                                   "PubkeyAuthentication=yes",
+                                   "-o",
+                                   "PasswordAuthentication=no",
+                                   "-o",
+                                   "KbdInteractiveAuthentication=no",
+                                   "-o",
+                                   "PermitRootLogin=no",
+                                   "-o",
+                                   "DisableForwarding=yes",
+                                   NULL};
+        char* const environment[] = {"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/", NULL};
+        execve(arguments[0], arguments, environment);
+        perror("init: debug SSH exec");
+        _exit(127);
+    }
+    if (child < 0)
+        perror("init: debug SSH fork");
+    return child;
+}
+
 static int monotonic(struct timespec* now) {
     if (clock_gettime(CLOCK_MONOTONIC, now) < 0) {
         perror("init: monotonic clock");
         return -1;
     }
     return 0;
+}
+
+static int enabled(const char* name) {
+    const char* value = getenv(name);
+    return value && !strcmp(value, "1");
 }
 
 static unsigned long long milliseconds(const struct timespec* now) {
@@ -121,7 +175,8 @@ int main(void) {
         execl("/bin/busybox", "busybox", "sh", script, (char*)0);
     } else {
         puts("Axiom64. Create an administrator on first boot, then log in to start a session.");
-        pid_t manager = network();
+        const int debug = enabled("AXIOM64_DEBUG_SSH");
+        pid_t manager = network(debug);
         struct timespec retry;
         if (monotonic(&retry) < 0)
             return 1;
@@ -135,13 +190,20 @@ int main(void) {
         const int bus_installed = access("/usr/libexec/axiom64-system-bus", X_OK) == 0;
         struct timespec bus_retry = retry;
         pid_t bus = bus_installed ? start_system_bus() : -1;
+        pid_t ssh = -1;
+        struct timespec ssh_retry = retry;
+        const int ssh_enabled = debug && debug_ssh_configured();
+        if (debug && !ssh_enabled)
+            fputs("Debug SSH needs a root-owned mode-0600 sshd_config.debug and OpenSSH.\n",
+                  stderr);
         bus_retry.tv_sec++;
         seed_retry.tv_sec++;
         retry.tv_sec++;
         struct init_console console;
         struct timespec console_start;
         if (monotonic(&console_start) < 0 ||
-            init_console_initialize(&console, &console_start) < 0) {
+            init_console_initialize(&console, &console_start, enabled("AXIOM64_TEXT_CONSOLE")) <
+                0) {
             perror("init: authenticated console setup");
             return 1;
         }
@@ -179,6 +241,9 @@ int main(void) {
                 if (monotonic(&bus_retry) < 0)
                     return 1;
                 bus_retry.tv_sec++;
+            } else if (child > 0 && child == ssh) {
+                fprintf(stderr, "Debug SSH exited status=%d. Retrying.\n", status);
+                ssh = -1;
             }
             struct timespec now;
             if (monotonic(&now) < 0)
@@ -189,7 +254,7 @@ int main(void) {
             }
             if (manager < 0 && (now.tv_sec > retry.tv_sec ||
                                 (now.tv_sec == retry.tv_sec && now.tv_nsec >= retry.tv_nsec))) {
-                manager = network();
+                manager = network(debug);
                 if (manager < 0)
                     perror("init: network manager fork");
                 else
@@ -210,6 +275,14 @@ int main(void) {
                 bus = start_system_bus();
                 bus_retry = now;
                 bus_retry.tv_sec++;
+            }
+            if (ssh_enabled && seeded && ssh < 0 &&
+                (now.tv_sec > ssh_retry.tv_sec ||
+                 (now.tv_sec == ssh_retry.tv_sec && now.tv_nsec >= ssh_retry.tv_nsec))) {
+                if (debug_ssh_configured())
+                    ssh = start_debug_ssh();
+                ssh_retry = now;
+                ssh_retry.tv_sec += 5;
             }
             if (!child) {
                 struct timespec interval = {0, 100000000};

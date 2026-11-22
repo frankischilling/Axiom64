@@ -81,9 +81,10 @@ boot products, and PXE packet captures under `build/boot-media-test/`. To run it
 again alongside existing results, use `python3 scripts/boot_media_test.py --output build/boot-media-next`.
 
 Add `--smp` to test the `smp.probe` boot option with one and twelve logical
-processors under BIOS and UEFI. Each application processor checks its local APIC
-ID and then parks with interrupts disabled. Userspace still runs on the bootstrap
-processor.
+processors under BIOS and UEFI. Each application processor switches to its own
+kernel stack, loads its own descriptor table and TSS, and checks its APIC ID
+before parking with interrupts disabled. Userspace runs on the bootstrap
+processor while per-CPU interrupt delivery and scheduling are under development.
 
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a

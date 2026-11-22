@@ -711,6 +711,36 @@ static void reclaim_and_copy_fault(void) {
     puts("EPOLL_LIFETIME_CASE reuse-and-copy-fault");
 }
 
+static void desktop_descriptor_capacity(void) {
+    enum { watches = 192 };
+
+    int tube[2], descriptors[watches];
+    int epoll = epoll_create1(EPOLL_CLOEXEC);
+    CHECK(epoll >= 0 && pipe2(tube, O_NONBLOCK | O_CLOEXEC) == 0);
+    for (unsigned i = 0; i < watches; ++i) {
+        descriptors[i] = fcntl(tube[0], F_DUPFD_CLOEXEC, 0);
+        CHECK(descriptors[i] >= 0);
+        watch(epoll, descriptors[i], i);
+    }
+    CHECK(descriptors[watches - 1] >= 128);
+    CHECK(write(tube[1], "D", 1) == 1);
+    struct epoll_event ready[watches];
+    uint8_t observed[watches] = {0};
+    CHECK(epoll_wait(epoll, ready, watches, 1000) == watches);
+    for (unsigned i = 0; i < watches; ++i) {
+        const unsigned token = ready[i].data.u32;
+        CHECK(token < watches && ready[i].events == EPOLLIN && !observed[token]);
+        observed[token] = 1;
+    }
+    CHECK(epoll_wait(epoll, ready, watches, 0) == 0);
+    for (unsigned i = watches; i-- > 0;) {
+        CHECK(epoll_ctl(epoll, EPOLL_CTL_DEL, descriptors[i], NULL) == 0);
+        CHECK(close(descriptors[i]) == 0);
+    }
+    CHECK(close(tube[0]) == 0 && close(tube[1]) == 0 && close(epoll) == 0);
+    puts("EPOLL_LIFETIME_CASE desktop-descriptor-capacity");
+}
+
 int main(int argc, char** argv) {
     CHECK(setvbuf(stdout, NULL, _IOLBF, 0) == 0);
     alarm(20);
@@ -748,6 +778,7 @@ int main(int argc, char** argv) {
     exclusive_registration();
     exclusive_wakeups();
     reclaim_and_copy_fault();
+    desktop_descriptor_capacity();
     printf("EPOLL_LIFETIME_PASS uid=%lu\n", (unsigned long)getuid());
     return 0;
 }

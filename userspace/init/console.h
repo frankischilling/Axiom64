@@ -32,13 +32,14 @@
 struct init_console {
     pid_t pid;
     int flags;
+    int text_console;
     struct termios original;
     struct timespec retry;
 };
 
 // Capture init's physical terminal once. The child claims a new controlling
 // session and runs only the authenticated console. Failure never starts a shell.
-int init_console_initialize(struct init_console*, const struct timespec*);
+int init_console_initialize(struct init_console*, const struct timespec*, int text_console);
 // Consume matching reaps, retire remaining physical-console workers, restore
 // flags/settings/input, and retry fork/exec failure after a real second.
 int init_console_update(struct init_console*, pid_t reaped, int status, const struct timespec*);

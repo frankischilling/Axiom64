@@ -106,9 +106,17 @@ struct EpollItem {
 };
 
 struct Epoll {
-    unsigned index, cursor;
+    unsigned index, cursor, extent;
     uint64_t notification;
     EpollItem items[max_fds];
+
+    EpollItem* begin() {
+        return items;
+    }
+
+    EpollItem* end() {
+        return items + extent;
+    }
 };
 
 int64_t ipc_syscall(Frame*);

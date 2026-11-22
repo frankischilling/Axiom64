@@ -20,6 +20,28 @@ qemu-system-x86_64 -machine pc -cpu max -m 2G \
 
 The fixture contains the same pinned init, libc, shells, tools, desktop, test programs, and licenses as the full initramfs. The builder validates archive paths and types, uses explicit ext2 features, fixes filesystem identifiers, timestamps, and ownership, and compares two independently staged images byte for byte. It runs host `e2fsck` before returning. Generated disks, staging files, and boot evidence stay outside Git. [Port sources and recipes](ports.md) remain part of the corresponding-source bundle.
 
+## Standalone system disk
+
+Build a new raw disk that can boot its installed root without an ISO or PXE server.
+
+```sh
+make -j2 build/axiom64.elf build/rootfs-desktop.cpio
+python3 scripts/boot_media.py disk build/axiom64-installed.raw --installed \
+    --initramfs build/rootfs-desktop.cpio
+```
+
+The image contains Limine, an EFI System Partition and a writable ext2 system
+partition. The boot configuration selects the system partition by its GPT ID.
+The selected archive supplies the installed desktop and tools. On first boot,
+create the administrator from the console as described in [accounts.md](accounts.md).
+Attach the image as a new VM disk. The command creates a regular image file and
+refuses an existing destination. Guided partitioning and installation to existing
+drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).
+
+`python3 scripts/nvme_test.py` boots the generated disk twice under UEFI with
+NVMe as the only boot medium. It verifies persistence across cold boots and
+checks the system partition afterward with host `e2fsck`.
+
 ## Boot selection
 
 Limine's kernel command line selects the root:

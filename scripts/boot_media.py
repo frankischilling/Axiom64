@@ -29,8 +29,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from uuid import uuid4
 
 from boot_assets import copy_limine_notices, init_path, limine_files, stage_payload
+from disk_root import build as build_root_volume
 from fetch import ROOT
 
 
@@ -39,9 +41,10 @@ ALIGNMENT = 2048
 ESP_START = 2 * ALIGNMENT
 BIOS_TYPE = "21686148-6449-6E6F-744E-656564454649"
 ESP_TYPE = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+LINUX_FS_TYPE = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 
 
-def make_disk(work, payload, limine):
+def make_disk(work, payload, limine, root_volume=None, root_id=None):
     esp = work / "esp.fat"
     image = work / "boot.raw"
     payload_bytes = sum(path.stat().st_size for path in payload.rglob("*") if path.is_file())
@@ -51,20 +54,34 @@ def make_disk(work, payload, limine):
         stream.truncate(esp_size)
     subprocess.run(["mkfs.fat", "-F", "32", "-h", str(ESP_START), "-n", "AXIOM64", esp], check=True)
     subprocess.run(["mcopy", "-s", "-i", esp, payload / "boot", payload / "EFI", "::/"], check=True)
-    with image.open("xb") as disk:
-        disk.truncate((ESP_START + ALIGNMENT) * SECTOR + esp_size)
     layout = (f"label: gpt\nsector-size: {SECTOR}\n"
               f"start={ALIGNMENT},size={ALIGNMENT},type={BIOS_TYPE},name=BIOS\n"
               f"start={ESP_START},size={esp_size // SECTOR},type={ESP_TYPE},name=AXIOM64\n")
+    end = ESP_START + esp_size // SECTOR
+    if root_volume is not None:
+        root_start = (end + ALIGNMENT - 1) // ALIGNMENT * ALIGNMENT
+        root_sectors = root_volume.stat().st_size // SECTOR
+        layout += (f"start={root_start},size={root_sectors},type={LINUX_FS_TYPE},"
+                   f"uuid={root_id},name=AXIOM64_ROOT\n")
+        end = root_start + root_sectors
+    with image.open("xb") as disk:
+        disk.truncate((end + ALIGNMENT) * SECTOR)
     subprocess.run(["sfdisk", "--quiet", image], input=layout, text=True, check=True)
     with image.open("r+b") as disk, esp.open("rb") as volume:
         disk.seek(ESP_START * SECTOR)
         shutil.copyfileobj(volume, disk)
+        if root_volume is not None:
+            disk.seek(root_start * SECTOR)
+            with root_volume.open("rb") as root:
+                shutil.copyfileobj(root, disk)
     subprocess.run([limine / "limine", "bios-install", image, "1"], check=True)
     return image
 
 
-def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/init"):
+def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/init", installed=False):
+    if installed and (kind != "disk" or any(token.startswith(("root=", "rootfstype="))
+                                            for token in options.split())):
+        raise ValueError("the installed disk requires its own root device and filesystem")
     if os.path.lexists(output):
         raise FileExistsError(output)
     limine = limine_files()
@@ -72,6 +89,15 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
     with tempfile.TemporaryDirectory(prefix=".boot-media-", dir=output.parent) as temporary:
         work = Path(temporary)
         payload = work / "payload"
+        root_volume = None
+        root_id = None
+        if installed:
+            root_id = uuid4()
+            root_volume = work / "root.ext2"
+            bootstrap = work / "bootstrap.cpio"
+            build_root_volume(source=initramfs, destination=root_volume, bootstrap_destination=bootstrap)
+            initramfs = bootstrap
+            options += f" root=PARTUUID={root_id} rootfstype=ext2"
         config = stage_payload(payload, kernel, initramfs, options, init=init, compress=True)
         if kind == "disk":
             loader = payload / "boot/limine"
@@ -87,7 +113,7 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
         copy_limine_notices(limine, loader)
         (loader / "limine.conf").write_text(config)
         if kind == "disk":
-            os.link(make_disk(work, payload, limine), output)
+            os.link(make_disk(work, payload, limine, root_volume, root_id), output)
         else:
             output.mkdir()
             try:
@@ -102,7 +128,10 @@ def main():
     parser.add_argument("kind", choices=("disk", "pxe"))
     parser.add_argument("output", type=Path, help="new raw image path or TFTP directory")
     parser.add_argument("--kernel", type=Path, default=ROOT / "build/axiom64.elf")
-    parser.add_argument("--initramfs", type=Path, default=ROOT / "build/rootfs.cpio")
+    parser.add_argument("--initramfs", type=Path, default=ROOT / "build/rootfs.cpio",
+                        help="guest archive to boot, or to install when using --installed")
+    parser.add_argument("--installed", action="store_true",
+                        help="populate a writable ext2 system partition on a new raw disk image")
     parser.add_argument("--init-path", type=init_path, default="/sbin/init", help="absolute guest PID 1 path")
     parser.add_argument("--kernel-option", action="append", default=[], help="one additional boot argument")
     args = parser.parse_args()
@@ -113,9 +142,12 @@ def main():
             parser.error(f"missing boot input {source}; run make image first")
     try:
         options = "".join(f" {token}" for token in args.kernel_option)
-        build_medium(args.kind, args.output, args.kernel, args.initramfs, options, init=args.init_path)
+        build_medium(args.kind, args.output, args.kernel, args.initramfs, options,
+                     init=args.init_path, installed=args.installed)
     except FileExistsError:
         parser.error(f"output already exists: {args.output}")
+    except ValueError as error:
+        parser.error(str(error))
     print(f"Boot media: {args.output}")
 
 

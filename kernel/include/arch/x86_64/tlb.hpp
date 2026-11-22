@@ -24,22 +24,21 @@
 #include <stdint.h>
 
 namespace ax {
-enum class TlbResult { idle, pending, invalidated, inactive, unsupported };
+constexpr uint64_t all_user_translations = UINT64_MAX;
 
-// A serialized sender owns the arguments and a single recipient services them.
-// Only queue lower-half, non-global pages. Keep the root alive until the
-// request completes, even if the sender times out.
-class TlbRequest {
-  public:
-    bool submit(uint64_t root, uint64_t address);
-    TlbResult result() const;
-    void service();
+// Switches and invalidations require interrupts disabled. The caller
+// serializes page-table writers and keeps the root and its storage alive.
+void register_tlb_cpu(uint32_t apic_id);
+void unregister_tlb_cpu();
+void switch_address_space(uint64_t root);
+bool address_space_loaded(uint64_t root);
+bool invalidate_user_translations(uint64_t root, uint64_t address = all_user_translations,
+                                  unsigned* remote_targets = nullptr);
+void service_tlb_ipi();
 
-  private:
-    uint64_t root_ = 0;
-    uint64_t address_ = 0;
-    TlbResult result_ = TlbResult::idle;
-};
+// Normal memory operations cannot release a mapping if a CPU did not confirm
+// invalidation. The diagnostic probe can instead retain its private pages.
+void sync_user_translations(uint64_t root, uint64_t address = all_user_translations);
 
 inline void invalidate_local_page(uint64_t address) {
     asm volatile("invlpg (%0)" : : "r"(address) : "memory");

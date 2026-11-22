@@ -19,9 +19,10 @@ def require(value, message):
 
 
 def audit_fixture(image, kernel_sha256, executables, script, initramfs_sha256=None):
+    require(Path(image).is_file(), 'fixture image is a regular file')
     with tempfile.TemporaryDirectory(prefix='axiom64-malformed-image-audit-') as temporary:
         directory = Path(temporary)
-        subprocess.run(['xorriso', '-osirrox', 'on', '-indev', str(image),
+        subprocess.run(['xorriso', '-osirrox', 'on', '-indev', f'stdio:{image}',
                         '-extract', '/boot/axiom64.elf', str(directory / 'kernel'),
                         '-extract', '/boot/rootfs.cpio', str(directory / 'root.cpio')],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

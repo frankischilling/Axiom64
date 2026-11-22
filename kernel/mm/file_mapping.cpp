@@ -23,6 +23,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "mm/file_mapping.hpp"
+#include "mm/tlb_batch.hpp"
 #include "fs/memfd.hpp"
 #include "fs/vfs.hpp"
 #include "ipc/shared_memory.hpp"
@@ -81,11 +82,11 @@ void finish_disk_write(DirtyDiskPage** link) {
         if (!map->shared || !map->may_write || !map->space->root || dirty->offset < map->offset ||
             dirty->offset - map->offset >= map->end - map->start)
             continue;
-        auto pte = map->space->entry(map->start + dirty->offset - map->offset);
+        const uint64_t address = map->start + dirty->offset - map->offset;
+        auto pte = map->space->entry(address);
         if (pte && (*pte & page_mask) == dirty->page) {
             *pte = file_page_permissions(*pte | page_file_cow);
-            if (read_cr3() == map->space->root)
-                write_cr3(map->space->root);
+            sync_user_translations(map->space->root, address);
         }
     }
     *link = dirty->next;
@@ -267,13 +268,15 @@ FileFault file_mapping_fault(AddressSpace& space, uint64_t address, bool write, 
             return FileFault::bus;
         }
         memcpy(physical(page), physical(source), page_size);
-        page_free(source);
+        if (!old)
+            page_free(source);
         state &= ~(page_file_cow | shared_page);
     } else
         state |= shared_page;
     *pte = file_page_permissions((state & ~page_mask) | page);
-    if (read_cr3() == space.root)
-        write_cr3(space.root);
+    sync_user_translations(space.root, align_down(address));
+    if (old && old != page)
+        page_free(old);
     return FileFault::resolved;
 }
 
@@ -284,6 +287,7 @@ void invalidate_disk_pages(Node& node, uint64_t first, uint64_t end, bool shrink
     first = align_down(first);
     for (auto map = node.disk_mappings; map; map = map->file_next) {
         uint64_t limit = min(end, map->offset + (map->end - map->start));
+        TlbBatch batch(map->space->root);
         bool invalidated = false;
         for (uint64_t offset = max(first, map->offset); offset < limit; offset += page_size) {
             auto pte = map->space->entry(map->start + offset - map->offset);
@@ -295,11 +299,11 @@ void invalidate_disk_pages(Node& node, uint64_t first, uint64_t end, bool shrink
             if (!map->shared || map->may_write)
                 flags |= page_file_cow;
             *pte = file_page_permissions(flags);
-            page_free(page);
+            batch.retire(page);
             invalidated = true;
         }
-        if (invalidated && read_cr3() == map->space->root)
-            write_cr3(map->space->root);
+        if (invalidated)
+            batch.finish();
     }
 }
 

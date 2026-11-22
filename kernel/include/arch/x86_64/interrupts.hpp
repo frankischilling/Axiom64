@@ -52,7 +52,7 @@ struct Route {
 
 using Handler = void (*)(void*);
 using LineHandler = bool (*)(void*);
-enum class SecondaryEvent { wake, timer, invalidate };
+enum class SecondaryEvent { wake, timer };
 using SecondaryHandler = void (*)(uint32_t apic_id, SecondaryEvent);
 
 struct Message {

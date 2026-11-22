@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/task.hpp"
+#include "arch/x86_64/tlb.hpp"
 #include "arch/x86_64/interrupts.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/cpu.hpp"
@@ -593,7 +594,7 @@ Frame* schedule(Frame* f, bool yield) {
                 continue;
             reclaim_released_nodes();
             set_current_task(t);
-            write_cr3(t->memory->space.root);
+            switch_address_space(t->memory->space.root);
             arch_task(t->fs_base, t->gs_base);
             asm volatile("fxrstor64 %0" ::"m"(t->fpu));
             cpu_account(t, true);
@@ -968,7 +969,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     clear_tid(t);
     io_discard(*t);
     if (t == current_task())
-        write_cr3(memory.root);
+        switch_address_space(memory.root);
     release_memory(t);
     t->memory = replacement;
     t->memory->dumpable = dumpable;

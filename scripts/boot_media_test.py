@@ -199,6 +199,8 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         shootdowns = re.findall(
             r"^SMP: application processor apic=(\d+) remote page invalidation verified$",
             text, re.MULTILINE)
+        translation_targets = re.findall(r"^SMP: translation targets=(\d+) other=(\d+)$",
+                                         text, re.MULTILINE)
         if (len(summaries) != 1 or summaries[0][0] != str(smp) or summaries[0][2] != str(smp - 1) or
                 len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered or
                 sorted(entered) != sorted(tables)):
@@ -211,6 +213,8 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             raise RuntimeError(f"SMP CPU-local task slots failed in {log}: {task_slots}")
         if sorted(shootdowns) != sorted(entered):
             raise RuntimeError(f"SMP remote page invalidation failed in {log}: {shootdowns}")
+        if translation_targets != ([(str(smp - 1), "0")] if smp > 1 else []):
+            raise RuntimeError(f"SMP translation target selection failed in {log}: {translation_targets}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
             "smp": smp, "serial_sha256": digest(log)}
 

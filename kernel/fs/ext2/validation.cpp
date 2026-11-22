@@ -27,6 +27,7 @@
 namespace ax::ext2_detail {
 namespace {
 constexpr uint32_t unknown_directory_links = UINT32_MAX;
+constexpr unsigned xattr_counts_per_page = page_size / sizeof(uint16_t);
 
 // Validate allocation, ownership and directories before staging any mount writes.
 // Checked writable dirty mounts may reconcile counters and reclaim completely
@@ -46,7 +47,8 @@ struct Validation {
     uint8_t* named_directory_parents = nullptr;
     uint16_t* modes = nullptr;
     uint32_t* links = nullptr;
-    uint16_t* xattr_references = nullptr;
+    // A volume may have very few external xattr blocks across many block groups.
+    uint64_t* xattr_pages = nullptr;
     uint32_t *references = nullptr, *parents = nullptr, *dotdots = nullptr;
     uint8_t inode_table[max_block_size]{};
     uint32_t cached_table = UINT32_MAX;
@@ -60,6 +62,34 @@ struct Validation {
         return recovery != Recovery::none;
     }
 
+    size_t xattr_page_count() const {
+        return (uint64_t(v.blocks) + xattr_counts_per_page - 1) / xattr_counts_per_page;
+    }
+
+    uint16_t xattr_references(uint32_t block) const {
+        const auto address = xattr_pages[block / xattr_counts_per_page];
+        if (!address)
+            return 0;
+        auto counts = static_cast<const uint16_t*>(physical(address));
+        return counts[block % xattr_counts_per_page];
+    }
+
+    bool record_xattr_reference(uint32_t block, uint32_t limit) {
+        auto& address = xattr_pages[block / xattr_counts_per_page];
+        if (!address) {
+            address = page_alloc();
+            if (!address)
+                return v.fail(-12);
+            memset(physical(address), 0, page_size);
+        }
+        auto page = static_cast<uint16_t*>(physical(address));
+        auto& references = page[block % xattr_counts_per_page];
+        if (references >= limit || references == UINT16_MAX)
+            return v.fail();
+        ++references;
+        return true;
+    }
+
     ~Validation() {
         release(group_free_blocks);
         release(group_free_inodes);
@@ -70,7 +100,12 @@ struct Validation {
         release(named_directory_parents);
         release(modes);
         release(links);
-        release(xattr_references);
+        if (xattr_pages) {
+            for (size_t index = 0; index < xattr_page_count(); ++index)
+                if (xattr_pages[index])
+                    page_free(xattr_pages[index]);
+            release(xattr_pages);
+        }
         release(references);
         release(parents);
         release(dotdots);
@@ -84,7 +119,10 @@ struct Validation {
         owners = (uint8_t*)alloc(block_bytes);
         modes = (uint16_t*)alloc(inode_count * sizeof(uint16_t));
         links = (uint32_t*)alloc(inode_count * sizeof(*links));
-        xattr_references = (uint16_t*)alloc(uint64_t(v.blocks) * sizeof(uint16_t));
+        const size_t xattr_bytes = xattr_page_count() * sizeof(*xattr_pages);
+        xattr_pages = static_cast<uint64_t*>(alloc(xattr_bytes));
+        if (xattr_pages)
+            memset(xattr_pages, 0, xattr_bytes);
         references = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         parents = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         dotdots = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
@@ -96,7 +134,7 @@ struct Validation {
             group_free_blocks = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
             group_free_inodes = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
         }
-        if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_references ||
+        if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_pages ||
             !references || !parents || !dotdots ||
             (recovering() && (!deleted_bits || !named_directory_parents)) ||
             (reconcile_counts && (!group_free_blocks || !group_free_inodes)))
@@ -110,7 +148,6 @@ struct Validation {
             memset(named_directory_parents, 0, inode_bytes);
         memset(modes, 0, inode_count * sizeof(uint16_t));
         memset(links, 0, inode_count * sizeof(*links));
-        memset(xattr_references, 0, uint64_t(v.blocks) * sizeof(uint16_t));
         memset(references, 0, inode_count * sizeof(uint32_t));
         memset(parents, 0, inode_count * sizeof(uint32_t));
         memset(dotdots, 0, inode_count * sizeof(uint32_t));
@@ -297,7 +334,7 @@ struct Validation {
                     if (resize || !(v.compatible & 8) || attribute < v.first ||
                         attribute >= v.blocks || v.metadata(attribute) ||
                         !bit(block_bits, attribute) ||
-                        (bit(owners, attribute) && !xattr_references[attribute]))
+                        (bit(owners, attribute) && !xattr_references(attribute)))
                         return v.fail();
                     uint8_t block[max_block_size];
                     uint32_t actual;
@@ -310,8 +347,8 @@ struct Validation {
                     if (auto body = data.xattr_body(v.inode_size);
                         body && ext2_xattr_regions_conflict(body, block))
                         return v.fail();
-                    if (++xattr_references[attribute] > actual)
-                        return v.fail();
+                    if (!record_xattr_reference(attribute, actual))
+                        return false;
                     setbit(owners, attribute, true);
                     count++;
                 }
@@ -383,14 +420,17 @@ struct Validation {
                 return v.fail();
         }
         for (uint32_t block = v.first; block < v.blocks; block++) {
-            if (xattr_references[block]) {
+            if (!bit(block_bits, block))
+                continue;
+            const auto references = xattr_references(block);
+            if (references) {
                 uint8_t data[max_block_size];
                 if (!v.read_block(block, data))
                     return false;
-                if (xattr_references[block] != u32(data + 4))
+                if (references != u32(data + 4))
                     return v.fail();
             }
-            if (bit(block_bits, block) && !v.metadata(block) && !bit(owners, block))
+            if (!v.metadata(block) && !bit(owners, block))
                 return v.fail();
         }
         return (modes[2] & 0170000) == directory ? true : v.fail();

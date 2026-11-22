@@ -32,11 +32,11 @@ python3 scripts/boot_media.py disk build/axiom64-installed.raw --installed \
 
 The image contains Limine, an EFI System Partition and a writable ext2 system
 partition. The boot configuration selects the system partition by its GPT ID.
-The installed desktop profile includes kitty and Mesa software rendering. On
-first boot, create the administrator from the console as described in
-[accounts.md](accounts.md). After login, the X11 session opens a kitty terminal
-and copies its shortcut to the user's Desktop on first use. Use
-`build/rootfs-desktop.cpio` for a smaller disk image with xterm.
+On first boot, create the administrator from the console as described in
+[accounts.md](accounts.md). After login, the installed desktop starts KDE Plasma
+with software rendering on the Xorg seat. The desktop includes shortcuts for
+Kitty, Thunar, btop, and both Freedoom campaigns. Use `build/rootfs-desktop.cpio`
+for a smaller disk image with twm and xterm.
 Attach the image as a new VM disk. The command creates a regular image file and
 refuses an existing destination. Guided partitioning and installation to existing
 drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).
@@ -65,10 +65,10 @@ the ext2 partition separately. Any remaining space is unallocated. For example,
 NVMe as the only boot medium. It verifies persistence across cold boots and
 checks the system partition afterward with host `e2fsck`.
 
-`make test-kitty` boots the installed desktop on an emulated NVMe disk, signs
-in through the normal account service, and types a command into kitty. It
-checks the file created by that command and saves a screenshot and serial log
-under `build/kitty-nvme-*`.
+`make test-kitty` boots an installed NVMe test disk with the X11 session,
+signs in through the account service, and types a command into Kitty. It checks
+the file created by that command and saves a screenshot and serial log under
+`build/kitty-nvme-*`.
 
 ## Transfer a built image to NVMe
 

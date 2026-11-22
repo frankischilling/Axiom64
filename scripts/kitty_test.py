@@ -33,7 +33,9 @@ import tempfile
 import time
 
 from boot_media import build_medium
+from disk_root import archive_entries
 from fetch import ROOT
+from newc import write_cpio
 from normal_login import ConsoleLogin
 from qmp import Qmp
 
@@ -107,8 +109,15 @@ def main():
     build = ROOT / "build"
     output = Path(tempfile.mkdtemp(prefix="kitty-nvme-", dir=build))
     disk = output / "installed.raw"
-    build_medium("disk", disk, build / "axiom64.elf", build / "rootfs-installed-desktop.cpio",
-                 installed=True)
+    archive = build / "rootfs-installed-desktop.cpio"
+    # Keep testing Kitty directly on X11, independent of the default Plasma session.
+    with tempfile.TemporaryDirectory(prefix="axiom64-kitty-root-") as root:
+        entries = archive_entries(archive)
+        entries.pop("usr/libexec/axiom64-plasma-session", None)
+        fixture = Path(root) / "x11.cpio"
+        write_cpio(fixture, entries)
+        del entries
+        build_medium("disk", disk, build / "axiom64.elf", fixture, installed=True)
     variables = output / "VARS.fd"
     shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
     serial = output / "serial.log"

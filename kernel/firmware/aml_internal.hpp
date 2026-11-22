@@ -119,6 +119,7 @@ enum class Kind : uint8_t {
     Region,
     PciField,
     DiagnosticPciField,
+    InterfaceQuery,
     MemoryField,
     BufferField
 };
@@ -131,6 +132,8 @@ enum class Type : uint8_t {
     String,
     Reference,
     ObjectReference,
+    LocalRegion,
+    LocalMemoryField,
     BufferField
 };
 
@@ -208,7 +211,7 @@ struct LinkChange {
     uint8_t previous, next;
 };
 
-struct NvsOverlayByte {
+struct MemoryOverlayByte {
     uint64_t address;
     uint8_t value, mask;
 };
@@ -231,6 +234,9 @@ struct Namespace {
     const PciBridges* bridges;
     PciConfigRead read_pci;
     NvsRead read_nvs;
+    RegisterRead read_registers;
+    void* register_context;
+    OsiQuery query_osi;
     PciLinkProgram link_program;
     LinkChange changes[4];
     unsigned change_count;
@@ -238,8 +244,8 @@ struct Namespace {
     bool change_emitted;
     bool link_evaluation;
     bool replay_initialization;
-    unsigned nvs_overlay_count;
-    NvsOverlayByte nvs_overlay[128];
+    unsigned memory_overlay_count;
+    MemoryOverlayByte memory_overlay[128];
 
     uint16_t& index_slot(const Path& path) {
         uint64_t hash = 14695981039346656037ull;
@@ -303,6 +309,11 @@ struct Namespace {
     bool memory_field_bytes(const Object&, uint8_t*, uint64_t& address, size_t& length,
                             unsigned depth);
     bool read_memory_field(const Object&, Value&, unsigned depth);
+    bool read_memory_bytes(uint64_t address, uint8_t*, size_t, bool lock, bool local);
+    bool read_local_memory(const Value& field, Value& result);
+    bool stage_memory_bits(uint64_t address, unsigned shift, unsigned bits, uint64_t number);
+    bool declare_local_region(Cursor&, const Path&, Frame&, unsigned depth);
+    bool declare_local_fields(Cursor&, Frame&);
     bool stage_memory_field(const Object&, Value, unsigned depth);
     bool stage_field(const Object&, Value, unsigned depth);
 
@@ -346,7 +357,17 @@ struct Namespace {
 
     bool method(const Object& object, const Value* args, unsigned count, Value& result,
                 unsigned depth = 0) {
-        if (object.kind != Kind::Method || count != object.arguments)
+        if (count != object.arguments)
+            return false;
+        if (object.kind == Kind::InterfaceQuery) {
+            if (!query_osi || count != 1 || args[0].type != Type::String)
+                return false;
+            const auto text = args[0].content;
+            result = {
+                Type::Integer, query_osi(text.next, text.left) ? integer_mask : 0, {}, nullptr};
+            return true;
+        }
+        if (object.kind != Kind::Method)
             return false;
         const unsigned first = used_method_names;
         Frame frame{args, count, method_names, used_method_names, first};

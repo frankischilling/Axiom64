@@ -883,6 +883,66 @@ bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardRes
     return true;
 }
 
+bool decode_intel_gpio_resources(const DefinitionBlocks& blocks, IntelGpioResources& result,
+                                 ReadRegions regions) {
+    result = {};
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+    if (!space)
+        return false;
+
+    using Model = IntelGpioResources::Model;
+    bool valid = true;
+    for (unsigned i = 0; valid && i < space->count; ++i) {
+        const auto& object = space->objects[i];
+        if (object.kind != Kind::Device || !space->child(object.path, name_segment("_CRS")))
+            continue;
+        space->used_values = 0;
+        space->used_bytes = 0;
+        Value id{};
+        if (!space->config(object.path, name_segment("_HID"), id) || id.type != Type::String ||
+            id.content.left != 7)
+            continue;
+        const auto* text = id.content.next;
+        const auto model = !memcmp(text, "INT34BB", 7)   ? Model::cannon_lake_lp
+                           : !memcmp(text, "INT3450", 7) ? Model::cannon_lake_h
+                                                         : Model::none;
+        if (model == Model::none)
+            continue;
+
+        uint64_t status;
+        if (!device_status(*space, object.path, status)) {
+            valid = false;
+            break;
+        }
+        if ((status & 3) != 3)
+            continue;
+        Value current{};
+        MotherboardResources memory{};
+        const bool low_power = model == Model::cannon_lake_lp;
+        const unsigned count = low_power ? 3 : 4;
+        valid = result.model == Model::none &&
+                space->config(object.path, name_segment("_CRS"), current) &&
+                current.type == Type::Buffer && motherboard_ranges(current.content, memory) &&
+                memory.count == count;
+        if (!valid)
+            break;
+
+        constexpr uint64_t host_mask = ~uint64_t(0xffffff);
+        const auto base = memory.memory[0].base & host_mask;
+        const uint32_t offsets[]{0x6e0000, 0x6d0000, low_power ? 0x6a0000u : 0x6b0000u, 0x6a0000u};
+        valid = base && base <= UINT32_MAX;
+        for (unsigned j = 0; valid && j < count; ++j) {
+            valid = memory.memory[j].base == base + offsets[j] && memory.memory[j].size == 0x10000;
+            result.community_base[j] = memory.memory[j].base;
+        }
+        result.model = model;
+    }
+    release(space);
+    if (!valid)
+        result = {};
+    return valid && result.model != Model::none;
+}
+
 bool decode_initialized_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result,
                                     ReadRegions regions, Namespace& inventory) {
     Path candidates[16]{};
@@ -908,6 +968,16 @@ bool decode_initialized_hid_devices(const DefinitionBlocks& blocks, I2cHidDevice
         auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
         if (!space)
             return false;
+        space->read_registers = regions.registers;
+        space->register_context = regions.register_context;
+        space->query_osi = regions.osi;
+        if (space->query_osi && !space->child({}, name_segment("_OSI"))) {
+            Path osi{{name_segment("_OSI")}, 1};
+            if (!space->add(osi, Kind::InterfaceQuery, {}, 1)) {
+                release(space);
+                return false;
+            }
+        }
         const auto* object = space->find(path);
         const auto initialization =
             object ? replay_hid_initialization(*space, path) : InitResult::rejected;

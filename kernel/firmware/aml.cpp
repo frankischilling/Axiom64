@@ -483,6 +483,13 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
             if (input.type != Type::Integer)
                 return false;
             write_buffer_bits(local->bytes, local->bit_shift, local->number, input.number);
+        } else if (local->type == Type::LocalMemoryField) {
+            Value current{};
+            return input.type == Type::Integer && read_local_memory(*local, current) &&
+                   stage_memory_bits(local->number, local->bit_shift, local->content.left,
+                                     input.number);
+        } else if (local->type == Type::LocalRegion) {
+            return false;
         } else {
             *local = input;
         }
@@ -786,6 +793,10 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     if (!read_name(stream, name) || !name.path.count)
         return false;
     if (auto local = frame ? frame->find(name) : nullptr) {
+        if (local->type == Type::LocalMemoryField)
+            return read_local_memory(*local, result);
+        if (local->type == Type::LocalRegion)
+            return false;
         if (local->type == Type::BufferField) {
             number = read_buffer_bits(local->bytes, local->bit_shift, local->number);
             result = {Type::Integer, number & integer_mask, {}, nullptr};
@@ -797,13 +808,62 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     const auto* object = lookup(scope, name);
     if (!object)
         return false;
-    if (object->kind != Kind::Method)
+    if (object->kind != Kind::Method && object->kind != Kind::InterfaceQuery)
         return value(*object, result, depth + 1);
     Value arguments[7]{};
     for (unsigned i = 0; i < object->arguments; ++i)
         if (!evaluate(stream, scope, frame, arguments[i], depth + 1))
             return false;
     return method(*object, arguments, object->arguments, result, depth + 1);
+}
+
+bool Namespace::declare_local_region(Cursor& stream, const Path& scope, Frame& frame,
+                                     unsigned depth) {
+    Name name;
+    uint64_t space;
+    Value address{}, length{};
+    if (!read_name(stream, name) || !stream.read(1, space) || space != 0 ||
+        !evaluate(stream, scope, &frame, address, depth + 1) || address.type != Type::Integer ||
+        !evaluate(stream, scope, &frame, length, depth + 1) || length.type != Type::Integer ||
+        !length.number || length.number > UINT64_MAX - address.number)
+        return false;
+    return frame.add(name, {Type::LocalRegion, address.number, {nullptr, length.number}, nullptr});
+}
+
+bool Namespace::declare_local_fields(Cursor& stream, Frame& frame) {
+    Cursor field;
+    Name name;
+    uint64_t flags;
+    if (!stream.block(field) || !read_name(field, name) || !field.read(1, flags) ||
+        (flags != 0 && flags != 1))
+        return false;
+    const auto* region = frame.find(name);
+    if (!region || region->type != Type::LocalRegion)
+        return false;
+
+    uint64_t offset = 0;
+    while (field.left) {
+        const unsigned term = field.peek();
+        unsigned bits, encoded_bytes;
+        Name field_name{};
+        if ((term == 0 ? !field.skip(1) : !read_name(field, field_name)) ||
+            !field.length(bits, encoded_bytes))
+            return false;
+        const uint64_t end = offset + bits;
+        if (end < offset || end / 8 + (end % 8 != 0) > region->content.left)
+            return false;
+        if (term && (!bits || bits > (integer_mask == UINT32_MAX ? 32u : 64u) ||
+                     !frame.add(field_name, {Type::LocalMemoryField,
+                                             region->number + offset / 8,
+                                             {nullptr, bits},
+                                             nullptr,
+                                             nullptr,
+                                             nullptr,
+                                             uint8_t(offset % 8)})))
+            return false;
+        offset = end;
+    }
+    return true;
 }
 
 bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& result,
@@ -906,18 +966,29 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
         case 0xa4: // Return
             return evaluate(stream, scope, &frame, result, depth + 1) &&
                    result.type != Type::None && !result.is_reference();
-        case 0x70:   // Store
-        case 0x84:   // ConcatenateResTemplate
-        case 0x5b:   // CondRefOf
-        case 0x99:   // ToInteger
-        case 0x72:   // Add
-        case 0x74:   // Subtract
-        case 0x77:   // Multiply
-        case 0x75:   // Increment
-        case 0x79:   // ShiftLeft
-        case 0x7a:   // ShiftRight
-        case 0x7b:   // And
-        case 0x7d: { // Or
+        case 0x5b: // Extended opcode
+            if (replay_initialization && (stream.peek() == 0x80 || stream.peek() == 0x81)) {
+                const unsigned extended = stream.peek();
+                stream.skip(1);
+                const bool declared = extended == 0x80
+                                          ? declare_local_region(stream, scope, frame, depth)
+                                          : declare_local_fields(stream, frame);
+                if (!declared)
+                    return false;
+                break;
+            }
+            [[fallthrough]]; // CondRefOf is evaluated as an expression.
+        case 0x70:           // Store
+        case 0x84:           // ConcatenateResTemplate
+        case 0x99:           // ToInteger
+        case 0x72:           // Add
+        case 0x74:           // Subtract
+        case 0x77:           // Multiply
+        case 0x75:           // Increment
+        case 0x79:           // ShiftLeft
+        case 0x7a:           // ShiftRight
+        case 0x7b:           // And
+        case 0x7d: {         // Or
             Value ignored{};
             if (!evaluate(term, scope, &frame, ignored, depth + 1))
                 return false;
@@ -1081,10 +1152,17 @@ bool Namespace::memory_field_bytes(const Object& field, uint8_t* data, uint64_t&
     if (offset >= length.number || bytes > length.number - offset)
         return false;
     address = base.number + offset;
-    if (!read_nvs(address, data, bytes, field.firmware_lock))
+    return read_memory_bytes(address, data, bytes, field.firmware_lock, false);
+}
+
+bool Namespace::read_memory_bytes(uint64_t address, uint8_t* data, size_t bytes, bool lock,
+                                  bool local) {
+    if ((!read_nvs || !read_nvs(address, data, bytes, lock)) &&
+        (!local || lock || !read_registers ||
+         !read_registers(register_context, address, data, bytes)))
         return false;
-    for (unsigned i = 0; i < nvs_overlay_count; ++i) {
-        const auto& entry = nvs_overlay[i];
+    for (unsigned i = 0; i < memory_overlay_count; ++i) {
+        const auto& entry = memory_overlay[i];
         if (entry.address < address || entry.address - address >= bytes)
             continue;
         auto& byte = data[entry.address - address];
@@ -1104,28 +1182,43 @@ bool Namespace::read_memory_field(const Object& field, Value& result, unsigned d
     return true;
 }
 
+bool Namespace::read_local_memory(const Value& field, Value& result) {
+    const unsigned bits = field.content.left;
+    uint8_t data[9]{};
+    if (!read_memory_bytes(field.number, data, (field.bit_shift + bits + 7) / 8, false, true))
+        return false;
+    result = {Type::Integer, read_buffer_bits(data, field.bit_shift, bits), {}, nullptr};
+    return true;
+}
+
 bool Namespace::stage_memory_field(const Object& field, Value input, unsigned depth) {
     uint64_t address;
     size_t bytes;
-    uint8_t data[9]{}, mask[9]{};
+    uint8_t data[9]{};
     if (link_evaluation || input.type != Type::Integer || !field.preserves_field_neighbors ||
         !memory_field_bytes(field, data, address, bytes, depth))
         return false;
-    const auto shift = field.integer % 8;
-    write_buffer_bits(data, shift, field.arguments, input.number);
-    write_buffer_bits(mask, shift, field.arguments, integer_mask);
+    return stage_memory_bits(address, field.integer % 8, field.arguments, input.number);
+}
+
+bool Namespace::stage_memory_bits(uint64_t address, unsigned shift, unsigned bits,
+                                  uint64_t number) {
+    uint8_t data[9]{}, mask[9]{};
+    const unsigned bytes = (shift + bits + 7) / 8;
+    write_buffer_bits(data, shift, bits, number);
+    write_buffer_bits(mask, shift, bits, integer_mask);
 
     // Store only the written bits so overlapping fields see the latest value.
     for (size_t byte = 0; byte < bytes; ++byte) {
         unsigned i = 0;
-        while (i < nvs_overlay_count && nvs_overlay[i].address != address + byte)
+        while (i < memory_overlay_count && memory_overlay[i].address != address + byte)
             ++i;
-        if (i == nvs_overlay_count) {
-            if (i == sizeof(nvs_overlay) / sizeof(*nvs_overlay))
+        if (i == memory_overlay_count) {
+            if (i == sizeof(memory_overlay) / sizeof(*memory_overlay))
                 return false;
-            nvs_overlay[nvs_overlay_count++] = {address + byte, 0, 0};
+            memory_overlay[memory_overlay_count++] = {address + byte, 0, 0};
         }
-        auto& entry = nvs_overlay[i];
+        auto& entry = memory_overlay[i];
         entry.value = (entry.value & ~mask[byte]) | (data[byte] & mask[byte]);
         entry.mask |= mask[byte];
     }
@@ -1181,13 +1274,16 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->bridges = bridges;
     space->read_pci = read_pci;
     space->read_nvs = read_nvs;
+    space->read_registers = nullptr;
+    space->register_context = nullptr;
+    space->query_osi = nullptr;
     space->link_program = program;
     space->change_count = 0;
     space->programming_gsi = 0;
     space->change_emitted = false;
     space->link_evaluation = false;
     space->replay_initialization = false;
-    space->nvs_overlay_count = 0;
+    space->memory_overlay_count = 0;
     auto load = [&](const DefinitionBlock& block) {
         return block.table && block.length >= 36 &&
                space->load({block.table + 36, block.length - 36}, {}, 0);

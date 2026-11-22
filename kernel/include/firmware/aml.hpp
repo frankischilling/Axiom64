@@ -115,10 +115,17 @@ struct PciRootWindows {
 // The provider validates the physical span and enforces the requested lock.
 using NvsRead = bool (*)(uint64_t address, uint8_t* bytes, size_t length, bool firmware_lock);
 
+// Read from device registers already validated by the caller. No writes reach this provider.
+using RegisterRead = bool (*)(void* context, uint64_t address, uint8_t* bytes, size_t length);
+using OsiQuery = bool (*)(const uint8_t* name, size_t length);
+
 struct ReadRegions {
     NvsRead nvs = nullptr;
     PciConfigRead pci = nullptr;
     const PciBridges* bridges = nullptr;
+    RegisterRead registers = nullptr;
+    void* register_context = nullptr;
+    OsiQuery osi = nullptr;
 };
 
 // Decode fixed, identity-mapped memory apertures. An aperture is not a reservation.
@@ -137,6 +144,14 @@ struct MotherboardResources {
 // Validated PNP0C01/PNP0C02 ranges may be listed even if other declarations fail.
 // An incomplete result cannot be used by an allocator as an exclusion list.
 bool decode_motherboard_resources(const DefinitionBlocks&, MotherboardResources&, ReadRegions = {});
+
+struct IntelGpioResources {
+    enum class Model { none, cannon_lake_lp, cannon_lake_h };
+    uint64_t community_base[4];
+    Model model;
+};
+
+bool decode_intel_gpio_resources(const DefinitionBlocks&, IntelGpioResources&, ReadRegions = {});
 
 struct I2cHidInterrupt {
     enum class Source : uint8_t { none, legacy_irq, gsi, gpio };

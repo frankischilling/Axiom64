@@ -23,6 +23,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#include "drivers/platform/intel_gpio.hpp"
 #include "firmware/aml.hpp"
 #include <cassert>
 #include <cstdio>
@@ -31,7 +32,20 @@
 #include <initializer_list>
 #include <vector>
 
+namespace {
+constexpr uint32_t gpio_bases[]{0xfd6e0000, 0xfd6d0000, 0xfd6b0000, 0xfd6a0000};
+uint32_t gpio_registers[4][0x10000 / sizeof(uint32_t)];
+} // namespace
+
 namespace ax {
+void* map_mmio(uint64_t base, size_t length) {
+    if (length == sizeof(gpio_registers[0]))
+        for (unsigned i = 0; i < 4; ++i)
+            if (base == gpio_bases[i])
+                return gpio_registers[i];
+    return nullptr;
+}
+
 void* alloc(size_t n) {
     return std::malloc(n);
 }
@@ -941,6 +955,139 @@ void hid_initialization_cases() {
               "candidate_isolation");
 }
 
+void intel_gpio_replay_cases() {
+    using namespace ax::Acpi;
+    using Model = IntelGpioResources::Model;
+    auto named_method = [](const char* label, const Bytes& body) {
+        return block({0x14}, sequence({name(label), {0}, body}));
+    };
+    auto read_gpio = [](unsigned index) {
+        const uint32_t address = gpio_bases[0] + 0x604 + 16 * index;
+        const Bytes base{0x0c, uint8_t(address), uint8_t(address >> 8), uint8_t(address >> 16),
+                         uint8_t(address >> 24)};
+        const auto region = sequence({{0x5b, 0x80}, name("PREG"), {0, 0x60, 0x0a, 4}});
+        const auto fields = block({0x5b, 0x81}, sequence({name("PREG"), {0}, name("PADW"), {32}}));
+        const auto declaration = sequence({{0x70}, base, {0x60}, region, fields});
+        // A temporary Field exists only during this invocation.
+        return block({0x14}, sequence({name("RDGP"),
+                                       {0},
+                                       declaration,
+                                       {0x70, 0x0a, 0x15},
+                                       name("PADW"),
+                                       {0xa4, 0x7b},
+                                       name("PADW"),
+                                       {0x0a, 0x7f, 0}}));
+    };
+    const auto enabled = block({0xa0}, sequence({{0x90, 0x5b, 0x12},
+                                                 name("\\_OSI"),
+                                                 {0},
+                                                 name("\\_OSI"),
+                                                 {0x0d},
+                                                 name("Windows 2015"),
+                                                 {0},
+                                                 {0x70, 1},
+                                                 name("LIVE")}));
+    const auto status = named_method("_STA", sequence({{0xa4}, name("LIVE")}));
+    const char* controller = "\\_SB_.PCI0.I2C0";
+    const auto source = sequence({name(controller), {0}});
+    const auto serial = sequence({{0x8e, uint8_t(15 + source.size()), 0, 2, 0, 1, 2, 0, 0, 1, 6, 0,
+                                   0x80, 0x1a, 0x06, 0, 0, 0},
+                                  source,
+                                  {0x79, 0}});
+    const auto field = sequence({{0x8b}, name("RBUF"), {0x0a, 16}, name("ADDR")});
+    const auto init = named_method("_INI", sequence({{0x70}, name("RDGP"), name("ADDR")}));
+    const auto pad =
+        block({0x5b, 0x82},
+              sequence({name("TPAD"), data("_HID", sequence({{0x0d}, name("PNP0C50"), {0}})),
+                        status, buffer("RBUF", serial), field, init,
+                        named_method("_CRS", sequence({{0xa4}, name("RBUF")}))}));
+
+    auto table = [&](bool low_power, bool wrong_address, unsigned pad_index) {
+        Bytes windows;
+        for (unsigned i = 0; i < 4; ++i) {
+            if (low_power && i == 2)
+                continue;
+            uint32_t base = gpio_bases[i] + (wrong_address && !i ? 0x10000 : 0);
+            const Bytes memory{0x86,
+                               9,
+                               0,
+                               1,
+                               uint8_t(base),
+                               uint8_t(base >> 8),
+                               uint8_t(base >> 16),
+                               uint8_t(base >> 24),
+                               0,
+                               0,
+                               1,
+                               0};
+            windows.insert(windows.end(), memory.begin(), memory.end());
+        }
+        windows = sequence({windows, {0x79, 0}});
+        const auto gpio =
+            block({0x5b, 0x82},
+                  sequence({name("GPI0"),
+                            data("_HID",
+                                 sequence({{0x0d}, name(low_power ? "INT34BB" : "INT3450"), {0}})),
+                            buffer("_CRS", windows)}));
+        const auto bus = bridge_device("I2C0", 21,
+                                       sequence({data("LIVE", {0}), named_method("_INI", enabled),
+                                                 read_gpio(pad_index), pad}));
+        const auto root =
+            block({0x5b, 0x82},
+                  sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}), bus, gpio}));
+        return definition(block({0x10}, sequence({name("_SB_"), root})));
+    };
+
+    const auto no_nvs = +[](uint64_t, uint8_t*, size_t, bool) { return false; };
+    for (bool low_power : {false, true}) {
+        for (auto& registers : gpio_registers) {
+            registers[0] = 0x00920000;
+            registers[0x0c / 4] = 0x600;
+        }
+        gpio_registers[0][0x604 / 4] = 0x45;
+        const auto aml = table(low_power, false, 0);
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {aml.data(), 0x1000, aml.size()};
+        IntelGpioResources gpio{};
+        assert(decode_intel_gpio_resources(blocks, gpio, {no_nvs}));
+        assert(gpio.model == (low_power ? Model::cannon_lake_lp : Model::cannon_lake_h));
+        assert(gpio.community_base[2] == gpio_bases[low_power ? 3 : 2]);
+        ax::IntelGpioPads pads{};
+        assert(pads.probe(gpio));
+        uint8_t bytes[4]{};
+        assert(!pads.read(&pads, gpio_bases[0] + 0x0c, bytes, 4));
+        assert(!pads.read(&pads, gpio_bases[0] + 0x608, bytes, 4));
+        assert(!pads.read(&pads, gpio_bases[0] + 0x607, bytes, 2));
+        assert(!pads.read(&pads, gpio_bases[0] + 0x604 + (low_power ? 68 : 51) * 16, bytes, 4));
+        assert(pads.read(&pads, gpio_bases[0] + 0x604, bytes, 4) && bytes[0] == 0x45);
+
+        I2cHidDevices devices{};
+        const ReadRegions regions{no_nvs,    nullptr, nullptr,
+                                  pads.read, &pads,   ax::intel_gpio_firmware_interface};
+        assert(decode_i2c_hid_devices(blocks, devices, regions) && !devices.count);
+        assert(
+            decode_i2c_hid_devices(blocks, devices, regions, HidDiscovery::replay_initialization));
+        assert(devices.count == 1 && devices.devices[0].address == 0x15 &&
+               !devices.initialization_failures && gpio_registers[0][0x604 / 4] == 0x45);
+
+        const auto out_of_range = table(low_power, false, low_power ? 68 : 51);
+        blocks.dsdt = {out_of_range.data(), 0x1000, out_of_range.size()};
+        assert(
+            decode_i2c_hid_devices(blocks, devices, regions, HidDiscovery::replay_initialization));
+        assert(!devices.count && devices.initialization_failures == 1);
+        const auto wrong = table(low_power, true, 0);
+        blocks.dsdt = {wrong.data(), 0x1000, wrong.size()};
+        assert(!decode_intel_gpio_resources(blocks, gpio, {no_nvs}) && gpio.model == Model::none);
+
+        blocks.dsdt = {aml.data(), 0x1000, aml.size()};
+        assert(decode_intel_gpio_resources(blocks, gpio, {no_nvs}));
+        gpio_registers[3][0x0c / 4] = 0xfffffff0;
+        assert(!pads.probe(gpio) && !pads.read(&pads, gpio_bases[0] + 0x604, bytes, 4));
+    }
+    std::puts(
+        "ACPI_INTEL_GPIO_PASS communities pad_bounds local_fields interface_probe private_writes");
+}
+
 void composed_i2c_resources() {
     using namespace ax::Acpi;
     using Polarity = I2cHidInterrupt::Polarity;
@@ -1091,4 +1238,5 @@ int main() {
     namespace_buffer_fields();
     composed_i2c_resources();
     hid_initialization_cases();
+    intel_gpio_replay_cases();
 }

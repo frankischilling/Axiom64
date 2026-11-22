@@ -148,7 +148,11 @@ supported ACPI initialization methods in a private namespace. The firmware
 memory provider still validates and locks each read. Writes to supported
 NVS fields and resource buffers affect only that replay. A candidate whose
 initialization needs an unsupported operation is skipped, and the probe
-reports how many candidates it rejected.
+reports how many candidates it rejected. On supported Intel GPIO
+controllers, the probe reads pad configuration from the communities named
+in ACPI. This lets firmware resolve an I²C device's interrupt without
+changing the pad settings. The interface query used to select those
+resources applies only inside this diagnostic.
 
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and

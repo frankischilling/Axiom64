@@ -26,6 +26,7 @@
 #include "boot/boot.hpp"
 #include "core/base.hpp"
 #include "drivers/platform/designware_i2c.hpp"
+#include "drivers/platform/intel_gpio.hpp"
 #include "drivers/platform/pci.hpp"
 #include "firmware/acpi.hpp"
 #include "firmware/aml.hpp"
@@ -260,15 +261,39 @@ void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
     ProbeResources resources{};
     resources.mode = mode;
     const auto providers = pci_firmware_read_regions();
+    Acpi::IntelGpioResources gpio{};
+    if (mode != LpssProbe::inspect)
+        Acpi::decode_intel_gpio_resources(blocks, gpio, providers);
     if (mode == LpssProbe::hid) {
         Acpi::decode_i2c_hid_devices(blocks, resources.hid, providers);
         if (!resources.hid.count) {
+            auto replay = providers;
+            IntelGpioPads pads{};
+            if (pads.probe(gpio)) {
+                replay.registers = IntelGpioPads::read;
+                replay.register_context = &pads;
+                replay.osi = intel_gpio_firmware_interface;
+                for (unsigned i = 0; i < 4 && gpio.community_base[i]; ++i)
+                    log("LPSS I2C: GPIO community=%u base=%x\n", uint64_t(i),
+                        gpio.community_base[i]);
+            }
             const bool complete = Acpi::decode_i2c_hid_devices(
-                blocks, resources.hid, providers, Acpi::HidDiscovery::replay_initialization);
+                blocks, resources.hid, replay, Acpi::HidDiscovery::replay_initialization);
             log("LPSS I2C: HID initialization rejected=%u complete=%u\n",
                 uint64_t(resources.hid.initialization_failures), uint64_t(complete));
         }
         log("LPSS I2C: HID candidates=%u\n", uint64_t(resources.hid.count));
+        for (unsigned i = 0; i < resources.hid.count; ++i) {
+            const auto& device = resources.hid.devices[i];
+            log("LPSS I2C: HID route id=%s controller=%s address=%x speed=%u descriptor=%x "
+                "gsi=%u resolved=%u\n",
+                device.hardware_id, device.controller, uint64_t(device.address),
+                uint64_t(device.max_hz), uint64_t(device.descriptor_register),
+                uint64_t(device.interrupt.source == Acpi::I2cHidInterrupt::Source::gsi
+                             ? device.interrupt.line
+                             : 0),
+                uint64_t(device.pci_controller.resolved && device.has_descriptor_register));
+        }
     }
     if (Acpi::decode_pci_root_windows(blocks, resources.windows, providers))
         for (unsigned i = 0; i < resources.windows.count; ++i) {
@@ -290,6 +315,9 @@ void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
         pci_memory_inventory(*resources.inventory);
         const unsigned before = resources.inventory->count;
         reserve_platform_memory(*resources.inventory, topology);
+        for (auto base : gpio.community_base)
+            if (base)
+                resources.inventory->add(base, 0x10000);
         log("PCI platform memory: ranges=%u\n", uint64_t(resources.inventory->count - before));
     }
     log("PCI occupied memory: ranges=%u incomplete=%u\n",

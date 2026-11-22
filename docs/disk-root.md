@@ -55,7 +55,7 @@ return when the virtual terminal returns to text mode.
 
 Add `--kernel-option usb.xhci=keyboard` to enable USB boot keyboards and mice.
 Plug them into xHCI root ports before powering on. Axiom64 reads up to eight
-devices on the first controller with supported input. Keyboards feed the text
+devices on each of up to four controllers. Keyboards feed the text
 console and evdev. Mice send relative movement and three button events to
 evdev. For a composite device, the driver uses one boot interface and prefers
 the keyboard. Scroll wheels, USB hubs, and discovery after boot require

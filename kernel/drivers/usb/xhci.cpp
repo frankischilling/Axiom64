@@ -55,6 +55,7 @@ constexpr unsigned enable_slot = 9, address_device = 11, configure_endpoint = 12
                    port_event = 34;
 constexpr uint32_t port_connected = 1, port_enabled = 2, port_reset = 1 << 4;
 constexpr uint32_t port_configuration = (1 << 9) | (3 << 14) | (7 << 25);
+uint8_t held_keys[keyboard_codes], held_buttons[3];
 
 struct Trb {
     uint64_t parameter;
@@ -236,7 +237,6 @@ struct Controller {
 
     InputDevice inputs[max_input_devices]{};
     unsigned input_count = 0;
-    uint8_t held_keys[keyboard_codes]{};
 
     unsigned pages() const {
         return scratchpads ? 5 + scratchpads : 4;
@@ -520,11 +520,15 @@ struct Controller {
             keyboard_report(input.previous, report, held_keys);
             return;
         }
-        input.previous[0] = report[0] & 7;
         uint8_t buttons = 0;
-        for (unsigned i = 0; i < input_count; ++i)
-            if (inputs[i].slot && inputs[i].protocol == BootProtocol::mouse)
-                buttons |= inputs[i].previous[0];
+        for (unsigned i = 0; i < sizeof(held_buttons); ++i) {
+            const uint8_t mask = 1u << i;
+            if ((input.previous[0] ^ report[0]) & mask)
+                held_buttons[i] += report[0] & mask ? 1 : -1;
+            if (held_buttons[i])
+                buttons |= mask;
+        }
+        input.previous[0] = report[0] & 7;
         usb_mouse_event(int8_t(report[1]), int8_t(report[2]), buttons);
     }
 
@@ -682,13 +686,18 @@ struct Controller {
 
 unsigned visited;
 ProbeMode probe_mode;
-Controller active_controller;
-PciFunction runtime_pci;
-uint16_t runtime_command;
+
+struct RuntimeController {
+    Controller controller;
+    PciFunction pci;
+    uint16_t original;
+};
+
+RuntimeController active_controllers[max_controllers];
+unsigned active_count;
 
 void probe(const PciFunction& pci) {
-    if (active_controller.dma || visited == max_controllers || pci.read16(0x0a) != 0x0c03 ||
-        pci.read8(9) != 0x30)
+    if (visited == max_controllers || pci.read16(0x0a) != 0x0c03 || pci.read8(9) != 0x30)
         return;
     ++visited;
     PciBar bar;
@@ -751,13 +760,12 @@ void probe(const PciFunction& pci) {
         }
         if (controller.input_count &&
             !(read(controller.operational, status_reg) & (halted | host_error))) {
-            active_controller = controller;
-            runtime_pci = pci;
-            runtime_command = original;
+            auto& active = active_controllers[active_count++];
+            active = {controller, pci, original};
             // Finish command and control transfers before queuing input on any slot.
-            for (unsigned i = 0; i < active_controller.input_count; ++i) {
-                const auto& input = active_controller.inputs[i];
-                active_controller.queue_input(input);
+            for (unsigned i = 0; i < active.controller.input_count; ++i) {
+                const auto& input = active.controller.inputs[i];
+                active.controller.queue_input(input);
                 log("xhci-%s-active: port=%u\n",
                     input.protocol == BootProtocol::keyboard ? "keyboard" : "mouse",
                     uint64_t(input.port));
@@ -792,21 +800,26 @@ void xhci_keyboard_init() {
 }
 
 void xhci_keyboard_poll() {
-    active_controller.poll_input();
+    for (unsigned i = 0; i < active_count; ++i)
+        active_controllers[i].controller.poll_input();
 }
 
 bool xhci_keyboard_shutdown() {
-    if (!active_controller.dma)
-        return true;
-    const bool stopped = active_controller.stop();
-    runtime_pci.write16(4, (runtime_command & ~pci_master) | pci_intx_disable);
-    if (stopped) {
-        for (const auto device : active_controller.devices)
-            if (device)
-                page_free(device, device_pages);
-        page_free(active_controller.dma, active_controller.pages());
+    bool success = true;
+    for (unsigned i = 0; i < active_count; ++i) {
+        auto& active = active_controllers[i];
+        auto& controller = active.controller;
+        const bool stopped = controller.stop();
+        active.pci.write16(4, (active.original & ~pci_master) | pci_intx_disable);
+        if (stopped) {
+            for (const auto device : controller.devices)
+                if (device)
+                    page_free(device, device_pages);
+            page_free(controller.dma, controller.pages());
+        }
+        success &= stopped;
     }
-    active_controller = Controller{};
-    return stopped;
+    active_count = 0;
+    return success;
 }
 } // namespace ax

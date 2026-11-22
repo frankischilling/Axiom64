@@ -217,8 +217,6 @@ static void shared_file_reads(void) {
     CHECK(disk != MAP_FAILED && last != MAP_FAILED && close(input) == 0);
     CHECK(mprotect(disk, page * 3, PROT_READ) == 0);
     ERROR(mprotect(last, page, PROT_READ | PROT_WRITE), EACCES);
-    errno = 0;
-    CHECK(mmap(NULL, page, PROT_WRITE, MAP_SHARED, fd, 0) == MAP_FAILED && errno == ENODEV);
     CHECK(last[0] == 'X' && disk[2 * page + 1] == 'Y' && last[3] == 0);
     CHECK(pwrite(fd, "A", 1, 2 * page) == 1);
     CHECK(last[0] == 'A' && disk[2 * page] == 'A');
@@ -250,6 +248,71 @@ static void shared_file_reads(void) {
     CHECK(last[0] == 'B' && disk[0] == 0);
     CHECK(munmap(disk, page * 3) == 0 && munmap(last, 2 * page) == 0);
     puts("EXT2_SHARED_READ_PASS");
+}
+
+static const char shared_output[] = "/tmp/ext2-volume/shared-output";
+
+static void verify_shared_output(void) {
+    int fd = open(shared_output, O_RDONLY);
+    unsigned char contents[7] = {0};
+    CHECK(fd >= 0 && pread(fd, contents, sizeof(contents), 0) == sizeof(contents));
+    CHECK(!memcmp(contents, "PCmFU!\0", sizeof(contents)));
+    CHECK(pread(fd, contents, 1, 10) == 1 && contents[0] == 'Z');
+    CHECK(pread(fd, contents, 1, 4096) == 1 && contents[0] == 0);
+    CHECK(close(fd) == 0);
+}
+
+static void shared_file_writes(void) {
+    const size_t page = 4096;
+    const char* alias_path = "/tmp/ext2-volume/shared-output-alias";
+    int fd = open(shared_output, O_CREAT | O_EXCL | O_RDWR, 0644);
+    CHECK(fd >= 0 && ftruncate(fd, 2 * page) == 0 && link(shared_output, alias_path) == 0);
+    int input = open(alias_path, O_RDONLY);
+    CHECK(input >= 0);
+    unsigned char* output = mmap(NULL, 2 * page, PROT_READ, MAP_SHARED, fd, 0);
+    unsigned char* alias = mmap(NULL, 2 * page, PROT_READ, MAP_SHARED, input, 0);
+    CHECK(output != MAP_FAILED && alias != MAP_FAILED && close(input) == 0);
+    CHECK(output[0] == 0 && alias[0] == 0);
+    CHECK(mprotect(output, 2 * page, PROT_READ | PROT_WRITE) == 0);
+    output[0] = 'M';
+    CHECK(alias[0] == 'M' && pread(fd, actual, 1, 0) == 1 && actual[0] == 'M');
+    CHECK(pwrite(fd, "P", 1, 0) == 1 && alias[0] == 'P' && output[0] == 'P');
+
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        output[1] = 'C';
+        CHECK(alias[1] == 'C');
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(alias[1] == 'C');
+
+    // The kernel copies into a clean shared page and must register the write.
+    int fds[2];
+    CHECK(pipe(fds) == 0 && write(fds[1], "m", 1) == 1);
+    CHECK(read(fds[0], output + 2, 1) == 1 && alias[2] == 'm');
+    CHECK(close(fds[0]) == 0 && close(fds[1]) == 0);
+    ERROR(msync(output + 1, page, MS_SYNC), EINVAL);
+    ERROR(msync(output, page, MS_SYNC | MS_ASYNC), EINVAL);
+    CHECK(msync(alias, page, MS_SYNC) == 0);
+    output[3] = 'F';
+    CHECK(fsync(fd) == 0);
+    output[4] = 'U';
+    output[5] = '!';
+    output[6] = 'x';
+    output[page] = 'y';
+    CHECK(ftruncate(fd, 6) == 0 && alias[5] == '!' && alias[6] == 0);
+    output[9] = 'x';
+    CHECK(pwrite(fd, "o", 1, page + 10) == 1 && alias[9] == 0 && alias[page + 10] == 'o');
+    CHECK(ftruncate(fd, 6) == 0);
+    CHECK(ftruncate(fd, 2 * page) == 0 && alias[page] == 0);
+    output[10] = 'Z';
+    CHECK(close(fd) == 0 && unlink(alias_path) == 0);
+    CHECK(munmap(output, 2 * page) == 0 && munmap(alias, 2 * page) == 0);
+    verify_shared_output();
+    puts("EXT2_SHARED_WRITE_PASS");
 }
 
 static void private_file_reads(void) {
@@ -341,6 +404,7 @@ static void write_tests(void) {
     namespace_tests();
     CHECK(close(pin) == 0);
     shared_file_reads();
+    shared_file_writes();
     private_file_reads();
     int fd = open("/tmp/ext2-volume/pattern", O_CREAT | O_RDWR, 0644);
     CHECK(fd >= 0);
@@ -423,6 +487,7 @@ static void verify_tests(int readonly_disk) {
     CHECK(fd >= 0 && pread(fd, actual, 8, triple_offset) == 8 && !memcmp(actual, "triples!", 8));
     CHECK(fstat(fd, &info) == 0 && (uint64_t)info.st_size == triple_offset + 8);
     CHECK(close(fd) == 0);
+    verify_shared_output();
     expect(open("/tmp/ext2-volume/pruned", O_RDONLY), "tiny");
     DIR* dir = opendir("/tmp/ext2-volume/many");
     CHECK(dir);

@@ -56,13 +56,26 @@ if test -x /usr/bin/kitty; then
     seed_desktop kitty-shortcut /etc/skel/Desktop/kitty.desktop ||
         printf '%s\n' 'Could not install the kitty shortcut.' >&2
 fi
+if test -x /usr/bin/btop; then
+    seed_desktop btop-shortcut /etc/skel/Desktop/btop.desktop ||
+        printf '%s\n' 'Could not install the btop shortcut.' >&2
+    if test -n "${HOME:-}"; then
+        config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/btop"
+        config="$config_dir/btop.conf"
+        if test ! -e "$config" && test ! -L "$config"; then
+            (umask 077; mkdir -p "$config_dir" && set -C && printf '%s\n' 'use_fstab = False' > "$config") ||
+                printf '%s\n' 'Could not write the btop defaults.' >&2
+        fi
+    fi
+fi
 /usr/bin/twm -f /etc/X11/system.twmrc &
 twm=$!
 sleep .2
 /usr/bin/xeyes -geometry 120x80+850+50 &
 xeyes=$!
 if test -x /usr/bin/kitty; then
-    /usr/bin/kitty --title 'Axiom64 - Terminal' /usr/libexec/desktop-terminal &
+    /usr/bin/kitty --title 'Axiom64 - Terminal' -o remember_window_size=no \
+        -o initial_window_width=90c -o initial_window_height=28c /usr/libexec/desktop-terminal &
 else
     /usr/bin/xterm -title 'Axiom64 - Terminal' -geometry 90x32+40+50 -fn fixed \
         -e /usr/libexec/desktop-terminal &

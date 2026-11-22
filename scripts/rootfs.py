@@ -183,9 +183,8 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 if installed_desktop:
-    files["etc/skel/Desktop/kitty.desktop"] = (
-        0o100755, files["usr/share/applications/kitty.desktop"][1]
-    )
+    for name in ("btop.desktop", "kitty.desktop"):
+        files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
 regular('usr/libexec/axiom64-session-bus', ROOT / 'build/desktop-session-bus')
 regular('usr/libexec/axiom64-system-bus', ROOT / 'userspace/services/system-bus.sh')

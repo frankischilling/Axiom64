@@ -191,12 +191,17 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         wakeups = re.findall(
             r"^SMP: application processor apic=(\d+) wake interrupts=(\d+)$",
             text, re.MULTILINE)
+        timers = re.findall(
+            r"^SMP: application processor apic=(\d+) local timer interrupts=(\d+)$",
+            text, re.MULTILINE)
         if (len(summaries) != 1 or summaries[0][0] != str(smp) or summaries[0][2] != str(smp - 1) or
                 len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered or
                 sorted(entered) != sorted(tables)):
             raise RuntimeError(f"SMP processor entry failed in {log}: {summaries} {entered} {tables}")
         if sorted(wakeups) != sorted((apic_id, "2") for apic_id in entered):
             raise RuntimeError(f"SMP targeted wake interrupts failed in {log}: {wakeups}")
+        if sorted(timers) != sorted((apic_id, "2") for apic_id in entered):
+            raise RuntimeError(f"SMP local timer interrupts failed in {log}: {timers}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
             "smp": smp, "serial_sha256": digest(log)}
 
@@ -205,7 +210,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/boot-media-test")
     parser.add_argument("--xhci", action="store_true", help="include xHCI and USB keyboard checks")
-    parser.add_argument("--smp", action="store_true", help="check processor entry and targeted IPIs")
+    parser.add_argument("--smp", action="store_true", help="check processor entry, IPIs and local timers")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)

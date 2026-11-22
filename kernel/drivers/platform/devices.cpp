@@ -448,6 +448,8 @@ int device_open(Handle* h) {
     if (!h->node)
         return 0;
     auto kind = h->node->device;
+    if (kind == Device::block && (h->flags & 0200)) // O_EXCL
+        return block_claim(h->node->device_id, h);
     if (kind == Device::dsp)
         return Pcm::open(*h);
     if (kind == Device::tty) {
@@ -531,6 +533,10 @@ int device_open(Handle* h) {
 }
 
 void device_close(Handle* h) {
+    if (h->node && h->node->device == Device::block) {
+        block_unclaim(h->node->device_id, h);
+        return;
+    }
     if (h->node && h->node->device == Device::dsp) {
         Pcm::close(*h);
         return;
@@ -615,15 +621,15 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
         if (!within && len - done >= sector_size) {
             // Keep error reporting precise: advance the handle only for completed sectors.
             count = sector_size;
-            result = write
-                         ? block_write(h->node->device_id, position / sector_size, bytes + done, 1)
-                         : block_read(h->node->device_id, position / sector_size, bytes + done, 1);
+            result =
+                write ? block_write(h->node->device_id, position / sector_size, bytes + done, 1, h)
+                      : block_read(h->node->device_id, position / sector_size, bytes + done, 1);
         } else {
             result = block_read(h->node->device_id, position / sector_size, partial, 1);
             if (!result) {
                 if (write) {
                     memcpy(partial + within, bytes + done, count);
-                    result = block_write(h->node->device_id, position / sector_size, partial, 1);
+                    result = block_write(h->node->device_id, position / sector_size, partial, 1, h);
                 } else {
                     memcpy(bytes + done, partial + within, count);
                 }

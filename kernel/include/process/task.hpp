@@ -30,7 +30,7 @@
 #include "process/pending_signals.hpp"
 
 namespace ax {
-constexpr unsigned max_tasks = 256, max_fds = 128;
+constexpr unsigned max_tasks = 256, max_fds = 1024;
 enum class State { empty, runnable, blocked, zombie, stopped };
 enum class Wait {
     none,
@@ -85,8 +85,8 @@ struct FileTable {
     Descriptor entries[max_fds]{};
 
     void expand(unsigned fd) {
-        if (fd >= capacity)
-            capacity = max_fds;
+        while (fd >= capacity)
+            capacity *= 2;
     }
 };
 

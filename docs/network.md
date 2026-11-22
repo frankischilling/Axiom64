@@ -12,6 +12,30 @@ Modern RX queues select up to 1024 descriptors; legacy queues retain the device-
 
 The Intel driver validates the PCI class and memory BAR, resets the controller, reads its assigned MAC, and uses separate 64-entry legacy descriptor rings with 2048-byte buffers. TX leaves one descriptor unused, copies a whole frame, and reclaims only descriptors with completion writeback. RX requires a complete, error-free frame and bounds its length before copying. Broadcast and multicast receive are enabled. The driver drops fragmented receive descriptors and limits the MTU to 1500. The 82574L leaves checksum validation to the network stack. Guest coverage uses QEMU's e1000 and e1000e models.
 
+The polled Realtek driver probes PCI `10ec:8168` and checks the MAC's hardware
+revision before programming RTL8168G registers. It preserves a
+firmware-initialized PHY, masks interrupts, and uses 64-entry RX and TX rings
+with buffers below 4 GiB. Receive accepts complete, error-free Ethernet frames,
+strips the frame checksum, and returns DMA ownership to the card. Transmit pads
+short frames and leaves one ring entry unused. When completions leave work in
+the queue, the driver rings the transmit doorbell again. If the link is up
+but the queue stops making progress, it retries the notification every
+100 ms without handing the same frame to the device twice.
+After two seconds with no transmit completions and carrier up, the driver
+reports outstanding frames as failed and attempts a MAC reset. Reset uses
+fresh rings and keeps the old DMA pages reserved until shutdown. At most two
+restarts are attempted per boot before the adapter is taken offline.
+
+On the Early 2020 Razer Blade 15 Base, a RAM-root UEFI PXE probe sent
+beacons and answered unicast and broadcast Ethernet challenges over a direct
+cable. Windows completed 32 IPv4 TCP echo sessions. The capture received 141
+of 143 one-second beacons through boot second 142. The brief gap is consistent
+with recovery. The guest's reset log was unavailable. A separate RAM boot
+with the same kernel ran key-authenticated OpenSSH and supported an
+ordinary-user command, a PTY, a 256 KiB SFTP round trip, and an SCP download.
+Deliberate link-transition checks, cold PHY initialization, and other Realtek
+revisions remain open.
+
 On the boot CPU, modern virtio-net receives both queue notifications through one MSI-X vector when the platform and device support it. The 82574L prefers a single MSI message for receive, transmit, and link-change causes. The Intel driver can use a firmware-routed INTx pin and verifies delivery with a device interrupt before relying on it. The handlers drain completed buffers with interrupts masked and update readiness. Polling in syscalls and the scheduler continues to service link changes, legacy virtio-net, and devices without a usable route. Failed adapters retain their DMA allocations and ownership records. Virtio attach cleanup frees storage only after the device acknowledges reset. The Intel driver keeps its DMA pages for the controller's lifetime. Shutdown stops the adapters before filesystem finalization. SMP, reset recovery, and hot removal remain planned.
 
 Each adapter reports its IRQ mode on a separate line with the same interface index as its inventory entry. The interrupt completion messages record actual RX and TX delivery.

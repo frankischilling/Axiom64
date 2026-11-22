@@ -35,12 +35,15 @@ void virtio_net_attach(const PciFunction&);
 
 void e1000_attach(const PciFunction&);
 
+void rtl8168g_attach(const PciFunction&);
+
 static NetAdapter* devices[max_net_devices];
 static unsigned count;
 
 static void discover(const PciFunction& pci) {
     virtio_net_attach(pci);
     e1000_attach(pci);
+    rtl8168g_attach(pci);
 }
 
 void net_init() {

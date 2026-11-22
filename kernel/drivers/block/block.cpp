@@ -483,6 +483,10 @@ int block_read(unsigned device, uint64_t sector, void* data, size_t count) {
     return transfer(device, sector, data, count, false);
 }
 
+size_t block_direct_sectors(unsigned device) {
+    return is_nvme(device) ? nvme_transfer_limit(device % max_disks - nvme_first) : 1;
+}
+
 int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* owner) {
     auto volume = volume_for(device);
     if (!volume)

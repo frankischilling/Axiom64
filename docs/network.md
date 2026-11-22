@@ -33,6 +33,8 @@ of 143 one-second beacons through boot second 142. The brief gap is consistent
 with recovery. The guest's reset log was unavailable. A separate RAM boot
 with the same kernel ran key-authenticated OpenSSH and supported an
 ordinary-user command, a PTY, a 256 KiB SFTP round trip, and an SCP download.
+A combined lab image also passed active and passive FTP file transfers over
+the same cable. See [PXE boot and remote testing](pxe.md) for the setup.
 Deliberate link-transition checks, cold PHY initialization, and other Realtek
 revisions remain open.
 

@@ -85,7 +85,8 @@ def bootstrap(destination):
             output.write(bytes(-output.tell() % 4))
 
 
-def build(profile='full', verify_reproducible=False, source=None, destination=None):
+def build(profile='full', verify_reproducible=False, source=None, destination=None, *,
+          bootstrap_destination=None):
     source = source or ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
     entries = archive_entries(source)
     for name in ['dev', 'proc', 'run', 'sys', 'tmp']:
@@ -130,7 +131,7 @@ def build(profile='full', verify_reproducible=False, source=None, destination=No
             raise RuntimeError('ext2 root fixture is not reproducible')
         duplicate.unlink()
         print('DISK_ROOT_FIXTURE_REPRODUCIBLE_PASS', flush=True)
-    bootstrap(ROOT / 'build/rootfs-bootstrap.cpio')
+    bootstrap(bootstrap_destination or ROOT / 'build/rootfs-bootstrap.cpio')
     subprocess.run(['e2fsck', '-f', '-n', str(destination)], check=True)
     print(f'Disk root: {len(entries)} entries, {capacity} bytes, {destination}', flush=True)
     return destination

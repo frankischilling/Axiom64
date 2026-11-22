@@ -62,6 +62,9 @@ network boot file under UEFI. A separate TFTP server must support the `tsize`
 option. Both media store a compressed initramfs and expand it at boot. Use the normal VM launcher
 to keep accounts and files across boots.
 
+See [PXE boot and remote testing](pxe.md) for the direct-Ethernet setup,
+firmware boot menu, and SSH, SFTP, and FTP checks on the Blade.
+
 The first Limine module supplies the initramfs. BIOS and UEFI boot logs report
 the module count and initramfs size. PID 1 defaults to `/sbin/init`. Pass
 `--init-path /absolute/path` to `scripts/image.py` or `scripts/boot_media.py`

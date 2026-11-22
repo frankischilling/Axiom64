@@ -32,6 +32,7 @@ import struct
 import subprocess
 
 from account_normal_test import write_cpio
+from boot_media import build_medium
 from boot_media_test import digest
 from disk_root import bootstrap
 from fetch import ROOT
@@ -48,17 +49,22 @@ def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, z
     command = [
         "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "384M",
         "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-nic", "none",
-        "-boot", "order=d,strict=on", "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
-        "-cdrom", str(iso), "-device", "nvme,id=nv0,serial=AXNVME0,mdts=2,max_ioqpairs=1,addr=5",
+        "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
     ]
+    if iso is not None:
+        command += ["-boot", "order=d,strict=on", "-cdrom", str(iso),
+                    "-device", "nvme,id=nv0,serial=AXNVME0,mdts=2,max_ioqpairs=1,addr=5"]
+    else:
+        command += ["-device", "nvme,id=nv0,serial=AXNVME0"]
     if dual:
         command += ["-device", "nvme,id=nv1,serial=AXNVME1,mdts=1,max_ioqpairs=1,addr=6"]
     for controller, nsid, path, logical in namespaces:
         label = f"drive{controller}_{nsid}"
         zones = ",zoned=on,zoned.zone_size=1M" if (controller, nsid) in zoned else ""
+        boot = ",bootindex=1" if iso is None else ""
         command += ["-drive", f"if=none,id={label},format=raw,cache=writeback,file={path}",
                     "-device", f"nvme-ns,drive={label},bus=nv{controller},nsid={nsid},"
-                               f"logical_block_size={logical},physical_block_size={logical}{zones}"]
+                               f"logical_block_size={logical},physical_block_size={logical}{zones}{boot}"]
     if firmware == "uefi":
         variables = directory / "VARS.fd"
         shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
@@ -82,7 +88,7 @@ def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, z
     if dual and any(f"controller=0 nsid={nsid} " in text for nsid in (3, 9)):
         raise RuntimeError("An unsupported namespace was published")
     print(f"{directory.name}: passed", flush=True)
-    return {"name": directory.name, "serial_sha256": digest(log), "iso_sha256": digest(iso)}
+    return {"name": directory.name, "serial_sha256": digest(log), "iso_sha256": digest(iso) if iso else None}
 
 
 def verify_data(primary, original, others, unsupported):
@@ -111,6 +117,43 @@ def verify_fs(path):
                                        stderr=subprocess.DEVNULL)
     if observed != PAYLOAD:
         raise RuntimeError(f"{path}: wrong ext2 file contents")
+
+
+def boot_installed_disk(output, seed):
+    archive = output / "installed.cpio"
+    files = {path.name: (0o40755, b"") for path in seed.iterdir() if path.is_dir()}
+    for name in ("sbin/init", "bin/busybox", "lib/ld-musl-x86_64.so.1", "nvme-root"):
+        path = seed / name
+        files[name] = (path.stat().st_mode, path.read_bytes())
+    write_cpio(archive, files)
+    installed = output / "installed.raw"
+    build_medium("disk", installed, ROOT / "build/axiom64.elf", archive, " test", installed=True)
+    subprocess.run(["sfdisk", "--verify", installed], check=True)
+    table = json.loads(subprocess.check_output(["sfdisk", "--json", installed]))["partitiontable"]
+    layout = table["partitions"]
+    if len(layout) != 3 or layout[2]["name"] != "AXIOM64_ROOT":
+        raise RuntimeError("installed disk has an unexpected GPT layout")
+    root = layout[2]
+    selector = f"PARTUUID={root['uuid'].lower()}"
+    results = []
+    for phase, marker in (("write", "NVME_ROOT_WRITE_PASS"), ("reboot", "NVME_ROOT_REBOOT_PASS")):
+        disk_sha256 = digest(installed)
+        result = run(output / f"installed-uefi-{phase}", "q35", "uefi", None,
+                     [(0, 1, installed, 512)],
+                     [marker, f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0"])
+        results.append(dict(result, boot_disk_sha256=disk_sha256))
+    extracted = output / "installed-check.ext2"
+    with installed.open("rb") as disk, extracted.open("xb") as volume:
+        disk.seek(root["start"] * SECTOR)
+        remaining = root["size"] * SECTOR
+        while remaining:
+            block = disk.read(min(remaining, 1024 * 1024))
+            if not block:
+                raise RuntimeError("installed root is truncated")
+            volume.write(block)
+            remaining -= len(block)
+    verify_fs(extracted)
+    return results
 
 
 def main():
@@ -146,7 +189,7 @@ def main():
     faults.write_text(''.join(f'[inject-error]\nevent = "{direction}_aio"\niotype = "{direction}"\n'
                               f'sector = "{number}"\nerrno = "5"\nonce = "off"\n\n'
                               for direction, number in (("read", 3131), ("write", 3133))))
-    cases = []
+    cases = boot_installed_disk(output, seed)
     for machine, firmware in product(("pc", "q35"), ("bios", "uefi")):
         prefix = f"{machine}-{firmware}"
         primary = primary_disk(output / f"{prefix}-primary.raw")

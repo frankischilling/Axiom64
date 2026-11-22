@@ -65,7 +65,7 @@ WORKLOADS = {
                                          'exclusive-registration', 'exclusive-pipe-readers',
                                          'exclusive-eventfd-writers', 'exclusive-signalfd',
                                          'exclusive-listener-backlog',
-                                         'reuse-and-copy-fault')),
+                                         'reuse-and-copy-fault', 'desktop-descriptor-capacity')),
     'named-pipes': ('NAMED_PIPE', ('create', 'readiness', 'capacity-and-readiness',
                                        'packet-mode', 'fifo-packet-mode', 'atomic-writev',
                                        'retained-writes', 'partial-writes',

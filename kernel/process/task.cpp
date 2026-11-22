@@ -95,14 +95,14 @@ static void release_memory(Task* t) {
 static void release_files(FileTable* table) {
     if (table && !--table->references) {
         record_lock_release(*table);
-        for (auto& fd : table->entries)
-            close_handle(fd.handle);
+        for (unsigned i = 0; i < table->capacity; ++i)
+            close_handle(table->entries[i].handle);
         release(table);
     }
 }
 
 static void copy_descriptors(FileTable& table, const FileTable& source) {
-    for (unsigned i = 0; i < max_fds; ++i) {
+    for (unsigned i = 0; i < source.capacity; ++i) {
         auto desc = source.entries[i];
         if (desc.handle) {
             table.entries[i] = desc;
@@ -1017,7 +1017,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
         if (*cursor == '/')
             basename = cursor + 1;
     t->set_name(basename, strlen(basename));
-    for (unsigned fd = 0; fd < max_fds; fd++)
+    for (unsigned fd = 0; fd < t->files->capacity; fd++)
         if (t->files->entries[fd].cloexec)
             close_descriptor(*t->files, int(fd));
     if (t == current)
@@ -1027,7 +1027,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     return 0;
 }
 
-void start_init(const char* path) {
+void start_init(const char* path, bool debug_ssh, bool text_console) {
     Task* init = new_task();
     if (!init)
         panic("init allocation");
@@ -1044,6 +1044,8 @@ void start_init(const char* path) {
                          test_mode ? "AXIOM64_TEST=1" : "AXIOM64_TEST=0",
                          test_suite,
                          test_phase,
+                         debug_ssh ? "AXIOM64_DEBUG_SSH=1" : "AXIOM64_DEBUG_SSH=0",
+                         text_console ? "AXIOM64_TEXT_CONSOLE=1" : "AXIOM64_TEXT_CONSOLE=0",
                          nullptr};
     ExecArguments arguments;
     if (arguments.capture_kernel(path, args, env, init->process->limits.soft(Resource::stack)) ||

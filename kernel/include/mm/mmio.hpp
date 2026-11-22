@@ -30,6 +30,8 @@ namespace ax {
 struct BootInfo;
 
 namespace Mmio {
+constexpr uint64_t leaf_cache_mask = (1ull << 3) | (1ull << 4) | (1ull << 7);
+
 struct Range {
     uint64_t physical_page;
     uint64_t virtual_page;
@@ -52,5 +54,7 @@ struct PageTables {
 bool range(uint64_t address, size_t length, uint64_t direct, uint64_t physical_limit, Range& out);
 bool permits(const Range&, const BootInfo&);
 bool install(const Range&, uint64_t root, uint64_t physical_limit, CacheLayout, const PageTables&);
+bool alias_cache_flags(const Range&, uint64_t root, uint64_t physical_limit, const PageTables&,
+                       uint64_t& flags);
 } // namespace Mmio
 } // namespace ax

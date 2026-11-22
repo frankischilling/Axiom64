@@ -81,9 +81,10 @@ boot products, and PXE packet captures under `build/boot-media-test/`. To run it
 again alongside existing results, use `python3 scripts/boot_media_test.py --output build/boot-media-next`.
 
 Add `--smp` to test the `smp.probe` boot option with one and twelve logical
-processors under BIOS and UEFI. Each application processor checks its local APIC
-ID and then parks with interrupts disabled. Userspace still runs on the bootstrap
-processor.
+processors under BIOS and UEFI. Each application processor switches to its own
+kernel stack, loads its own descriptor table and TSS, and checks its APIC ID
+before parking with interrupts disabled. Userspace runs on the bootstrap
+processor while per-CPU interrupt delivery and scheduling are under development.
 
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a
@@ -92,6 +93,10 @@ reports. It also boots without a controller to check that case. For descriptor
 and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.
+
+Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
+On Limine x86-64 boots, this retains write-combining when the CPU supports it.
+The boot-media test maps the framebuffer and writes and reads a pixel.
 
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 

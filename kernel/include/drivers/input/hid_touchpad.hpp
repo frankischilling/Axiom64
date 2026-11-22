@@ -32,7 +32,7 @@ constexpr unsigned max_fingers = 10, max_reports = 8;
 struct Field {
     uint16_t offset;
     uint8_t width;
-    int32_t minimum, maximum;
+    int32_t minimum, maximum, resolution;
 };
 
 struct FingerLayout {
@@ -61,6 +61,7 @@ struct Finger {
 struct Frame {
     Finger fingers[max_fingers];
     unsigned slots, contact_count;
+    uint8_t report_id;
     bool button, has_contact_count;
 };
 

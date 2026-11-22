@@ -42,6 +42,10 @@ struct Global {
     uint32_t page, size, count;
     int32_t minimum;
     int64_t maximum;
+    int32_t physical_minimum;
+    int64_t physical_maximum;
+    uint32_t unit;
+    int unit_exponent;
     uint8_t id;
 };
 
@@ -91,6 +95,29 @@ struct Parser {
     const unsigned max_input_bits;
     bool saw_report_id = false;
 
+    int32_t axis_resolution() const {
+        if (globals.maximum <= globals.minimum ||
+            globals.physical_maximum <= globals.physical_minimum)
+            return 0;
+        uint64_t coordinates = globals.maximum - globals.minimum;
+        uint64_t length = globals.physical_maximum - globals.physical_minimum;
+        int exponent = globals.unit_exponent;
+        if (globals.unit == 0x11) { // Centimeters.
+            ++exponent;
+        } else if (globals.unit == 0x13) { // Inches.
+            length *= 254;
+            --exponent;
+        } else {
+            return 0;
+        }
+        for (; exponent > 0; --exponent)
+            length *= 10;
+        for (; exponent < 0; ++exponent)
+            coordinates *= 10;
+        const uint64_t resolution = (coordinates + length / 2) / length;
+        return resolution <= INT32_MAX ? int32_t(resolution) : 0;
+    }
+
     bool global(unsigned tag, uint32_t value, unsigned width) {
         switch (tag) {
         case 0: // Usage Page
@@ -104,6 +131,20 @@ struct Parser {
         case 2: // Logical Maximum
             globals.maximum =
                 globals.minimum < 0 ? int64_t(signed_value(value, width * 8)) : int64_t(value);
+            break;
+        case 3: // Physical Minimum
+            globals.physical_minimum = signed_value(value, width * 8);
+            break;
+        case 4: // Physical Maximum
+            globals.physical_maximum = globals.physical_minimum < 0
+                                           ? int64_t(signed_value(value, width * 8))
+                                           : int64_t(value);
+            break;
+        case 5: // Unit Exponent: a signed four-bit value.
+            globals.unit_exponent = signed_value(value & 15u, 4);
+            break;
+        case 6: // Unit
+            globals.unit = value;
             break;
         case 7: // Report Size
             globals.size = value;
@@ -232,7 +273,8 @@ struct Parser {
             // Some devices describe a target position and a center position. Use the first axes.
             if (!field->width)
                 *field = {uint16_t(start + i * globals.size), uint8_t(globals.size),
-                          globals.minimum, int32_t(globals.maximum)};
+                          globals.minimum, int32_t(globals.maximum),
+                          (usage == x_usage || usage == y_usage) ? axis_resolution() : 0};
         }
         return true;
     }
@@ -369,6 +411,7 @@ Packet decode(const Layouts& layouts, const uint8_t* packet, size_t received, Fr
             !fits(report.contact_count, report.bits))
             return Packet::invalid;
         frame.slots = report.finger_count;
+        frame.report_id = id;
         frame.button = extract(payload, report.button) != 0;
         frame.has_contact_count = report.contact_count.width != 0;
         const auto contacts = extract(payload, report.contact_count);

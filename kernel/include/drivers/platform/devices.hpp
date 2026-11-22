@@ -43,7 +43,8 @@ enum class Device {
     block,
     full,
     parallel,
-    dsp
+    dsp,
+    touchpad
 };
 
 struct Terminal {

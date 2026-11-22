@@ -142,7 +142,10 @@ It restores controller settings after the transfer and reports the device
 IDs and report sizes if the descriptor is valid. The probe then reads the
 report descriptor and logs the report IDs and finger slots it recognizes.
 It requires an idle controller and a firmware-provided descriptor register.
-Live input still needs interrupt delivery and an input device.
+The Linux input layer can publish `/dev/input/event2` for an initialized
+touchpad. It reports contact slots, click state, and coordinate ranges
+through the standard event interface. The boot probe still needs a live
+interrupt-driven report source to register that device.
 
 If the resource scan finds no devices, the HID descriptor probe can replay
 supported ACPI initialization methods in a private namespace. The firmware

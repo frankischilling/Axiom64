@@ -30,11 +30,13 @@
 #include "drivers/block/nvme.hpp"
 #include "drivers/platform/fb_console.hpp"
 #include "drivers/usb/xhci.hpp"
+#include "drivers/input/touchpad.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
+#include "core/time.hpp"
 #include "core/random/primitives.hpp"
 
 namespace ax {
@@ -58,6 +60,16 @@ struct InputQueue {
 };
 
 static InputQueue keyboard_events, mouse_events;
+static TouchpadInput::State touchpad;
+static uint16_t touchpad_id[4]{};
+static bool touchpad_clickpad;
+static constexpr char touchpad_name[] = "Axiom64 I2C Touchpad";
+static constexpr char touchpad_path[] = "/dev/input/event2";
+
+static TouchpadInput::Time input_time() {
+    return {ticks, clock_realtime_ticks()};
+}
+
 static uint8_t keys[96], ps2_keys[96], usb_keys[96];
 static bool extended, console_keyboard, console_caps_lock;
 static uint8_t mouse_packet[3], mouse_offset, ps2_mouse_buttons, usb_mouse_buttons;
@@ -322,6 +334,41 @@ static bool inventory_attribute(const char* parent, const char* name, const char
     return true;
 }
 
+bool TouchpadInput::register_device(const HidTouchpad::Layouts& layouts, uint16_t vendor,
+                                    uint16_t product, uint16_t revision, bool clickpad) {
+    if (lookup(touchpad_path, false) || !touchpad.configure(layouts))
+        return false;
+    auto* node = make_node(touchpad_path, character | 0600);
+    if (!node) {
+        touchpad = {};
+        return false;
+    }
+    node->device = Device::touchpad;
+    node->uid = node->gid = 0;
+    touchpad_id[0] = 0x18; // BUS_I2C
+    touchpad_id[1] = vendor;
+    touchpad_id[2] = product;
+    touchpad_id[3] = revision;
+    touchpad_clickpad = clickpad && touchpad.has_button();
+
+    constexpr const char* paths[]{"/sys", "/sys/class", "/sys/class/input",
+                                  "/sys/class/input/event2", "/sys/class/input/event2/device"};
+    for (const auto path : paths)
+        if (!inventory_directory(path))
+            return true;
+    inventory_attribute("/sys/class/input/event2", "dev", "13:66");
+    inventory_attribute("/sys/class/input/event2/device", "name", touchpad_name);
+    return true;
+}
+
+bool TouchpadInput::submit(const HidTouchpad::Frame& frame) {
+    return touchpad.submit(frame, input_time());
+}
+
+void TouchpadInput::reset() {
+    touchpad.reset(input_time());
+}
+
 static void publish_nvme_inventory() {
     constexpr const char* parents[] = {"/sys", "/sys/class", "/sys/class/nvme"};
     bool parent_ready = false;
@@ -476,6 +523,8 @@ uint64_t device_number(Node* node) {
         return 0x0d40;
     case Device::mouse:
         return 0x0d41;
+    case Device::touchpad:
+        return 0x0d42;
     case Device::null:
         return 0x103;
     case Device::zero:
@@ -513,6 +562,8 @@ int device_open(Handle* h) {
     }
     if (kind == Device::keyboard || kind == Device::mouse)
         h->offset = (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
+    else if (kind == Device::touchpad)
+        h->offset = touchpad.position();
     if ((kind == Device::serial || kind == Device::vt) && current_task() && !(h->flags & 0400) &&
         (h->flags & 3) != 1 && !console_sid && !current_task()->process->controlling_pty &&
         !current_task()->process->controlling_console &&
@@ -618,6 +669,7 @@ bool device_has_poll(const Handle& handle) {
     case Device::vt:
     case Device::keyboard:
     case Device::mouse:
+    case Device::touchpad:
     case Device::dsp:
         return true;
     case Device::random:
@@ -643,6 +695,8 @@ bool device_ready(Handle* h, bool write) {
     if (kind == Device::keyboard || kind == Device::mouse)
         return write ||
                h->offset < (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
+    if (kind == Device::touchpad)
+        return !write && touchpad.ready(h->offset, h->input_recovery);
     if (kind == Device::serial || kind == Device::tty || kind == Device::vt)
         return write || canonical_ready(console_input, console_terminal);
     if (kind == Device::random && h->node->device_id == 8)
@@ -742,6 +796,9 @@ int64_t device_read(Handle* h, void* data, size_t len) {
         int error = random_read(data, count, h->node->device_id == 9);
         return error ? int64_t(error) : int64_t(count);
     }
+    case Device::touchpad:
+        return touchpad.read(h->offset, h->input_recovery,
+                             TouchpadInput::EventClock(h->input_clock), data, len, input_time());
     case Device::keyboard:
     case Device::mouse: {
         if (len < sizeof(InputEvent))
@@ -843,8 +900,104 @@ static int64_t output(uint64_t dst, const void* data, size_t len) {
     return current_task()->memory->space.copy_out(dst, data, len) ? 0 : -14;
 }
 
+static int64_t touchpad_ioctl(Handle& handle, uint64_t request, uint64_t arg) {
+    using namespace TouchpadInput;
+    const unsigned number = request & 255, size = (request >> 16) & 0x3fff;
+    const unsigned direction = (request >> 30) & 3;
+    if (((request >> 8) & 255) != 'E')
+        return -25;
+    auto& memory = current_task()->memory->space;
+    if (direction == 1 && number == 0xa0 && size == sizeof(int32_t)) { // EVIOCSCLOCKID
+        int32_t clock;
+        if (!memory.copy_in(&clock, arg, sizeof(clock)))
+            return -14;
+        if (clock != int(EventClock::realtime) && clock != int(EventClock::monotonic) &&
+            clock != int(EventClock::boottime))
+            return -22;
+        if (handle.input_clock != clock) {
+            handle.input_clock = clock;
+            touchpad.discard_pending(handle.offset, handle.input_recovery);
+        }
+        return 0;
+    }
+    if (direction != 2)
+        return -25;
+    if (number == 1 && size == sizeof(uint32_t)) {
+        const uint32_t version = 0x010001;
+        return output(arg, &version, sizeof(version));
+    }
+    if (number == 2 && size == sizeof(touchpad_id))
+        return output(arg, touchpad_id, sizeof(touchpad_id));
+    if (number == 0x06 || number == 0x07) {
+        const char* name = number == 0x06 ? touchpad_name : "i2c/input0";
+        const size_t length = min(size_t(size), strlen(name) + 1);
+        return output(arg, name, length) ? -14 : int64_t(length);
+    }
+    if (number == 0x08)
+        return -2;        // The device has no unique string.
+    if (number == 0x0a) { // EVIOCGMTSLOTS
+        if (size < sizeof(int32_t) || size % sizeof(int32_t))
+            return -22;
+        uint32_t code;
+        if (!memory.copy_in(&code, arg, sizeof(code)))
+            return -14;
+        int32_t values[max_slots];
+        const unsigned count = min(touchpad.capacity(), unsigned(size / sizeof(code) - 1));
+        if (code > UINT16_MAX || !touchpad.slot_values(code, values, count))
+            return -22;
+        return output(arg + sizeof(code), values, count * sizeof(*values));
+    }
+    if (number >= 0x40 && number < 0x80) { // EVIOCGABS
+        Axis axis;
+        if (size != sizeof(axis) || !touchpad.axis(number - 0x40, axis))
+            return -22;
+        return output(arg, &axis, sizeof(axis));
+    }
+
+    uint8_t bitmap[96]{};
+    const auto mark = [&](uint16_t code) { bitmap[code / 8] |= 1u << (code % 8); };
+    unsigned bytes = 0;
+    switch (number) {
+    case 0x09:                                       // EVIOCGPROP
+        bitmap[0] = 1 | (touchpad_clickpad ? 4 : 0); // POINTER, BUTTONPAD.
+        bytes = 4;
+        break;
+    case 0x18: // EVIOCGKEY
+    case 0x21: // EVIOCGBIT(EV_KEY)
+        if (touchpad.has_button() && (number == 0x21 || touchpad.key_down(btn_left)))
+            mark(btn_left);
+        if (number == 0x21 || touchpad.key_down(btn_touch))
+            mark(btn_touch);
+        for (unsigned i = 1; i <= min(touchpad.capacity(), finger_key_limit); ++i) {
+            const auto code = finger_keys[i];
+            if (number == 0x21 || touchpad.key_down(code))
+                mark(code);
+        }
+        bytes = sizeof(bitmap);
+        break;
+    case 0x20: // EVIOCGBIT(0)
+        bitmap[0] = (1 << sync) | (1 << key) | (1 << absolute);
+        bytes = 4;
+        break;
+    case 0x22: // EVIOCGBIT(EV_REL)
+        bytes = 2;
+        break;
+    case 0x23: // EVIOCGBIT(EV_ABS)
+        for (auto code : axis_codes)
+            mark(code);
+        bytes = 8;
+        break;
+    default:
+        return -25;
+    }
+    bytes = min(bytes, size);
+    return output(arg, bitmap, bytes) ? -14 : int64_t(bytes);
+}
+
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
+    if (kind == Device::touchpad)
+        return touchpad_ioctl(*h, request, arg);
     if (kind == Device::dsp)
         return Pcm::ioctl(*h, request, arg);
     if (kind == Device::random) {

@@ -21,6 +21,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/input/hid_touchpad.hpp"
+#include "drivers/input/touchpad.hpp"
 #include "drivers/platform/designware_i2c.hpp"
 #include <assert.h>
 #include <stdio.h>
@@ -205,8 +206,9 @@ void check_large_register_read() {
         0x15, 0, 0x25, 1, 0x09, 0x42, 0x09, 0x47, 0x75, 1, 0x95, 2, 0x81, 0x02, /* Flags */        \
         0x95, 6, 0x81, 1,                                                       /* Padding */      \
         0x09, 0x51, 0x25, 0x7f, 0x75, 8, 0x95, 1, 0x81, 0x02,                   /* Contact ID */   \
-        0xa4, 0x05, 1, 0x15, 0xe0, 0x26, 0xff, 3, 0x19, 0x30, 0x29, 0x31, 0x75, 16, 0x95, 2, 0x81, \
-        2, 0xb4, 0xc0 /* Signed X and Y. Pop returns to the digitizer page. */
+        0xa4, 0x05, 1, 0x15, 0xe0, 0x26, 0xff, 3, 0x19, 0x30, 0x29, 0x31, 0x45, 100, 0x55, 0x0f,   \
+        0x65, 0x11, 0x75, 16, 0x95, 2, 0x81, 2, 0xb4,                                              \
+        0xc0 /* Signed X and Y. Pop returns to the digitizer page. */
 
 void check_touchpad_layout() {
     using namespace ax::HidTouchpad;
@@ -277,6 +279,8 @@ void check_touchpad_layout() {
     assert(parse(raw, sizeof(raw), 17, layouts));
     assert(layouts.numbered && layouts.count == 1 && layouts.reports[0].id == 7 &&
            layouts.reports[0].finger_count == 2 && layouts.reports[0].bits == 112);
+    assert(layouts.reports[0].fingers[0].x.resolution == 11 &&
+           layouts.reports[0].fingers[0].y.resolution == 11);
     uint8_t packet[]{17, 0, 7, 3, 4, 0xe8, 0xff, 200, 0, 1, 6, 0xee, 2, 0xff, 3, 2, 1, 0, 0};
     Frame frame{};
     assert(decode(layouts, packet, sizeof(packet), frame) == Packet::input);
@@ -318,12 +322,97 @@ void check_touchpad_layout() {
 }
 
 #undef FINGER_ITEMS
+
+void check_touchpad_events() {
+    using namespace ax::TouchpadInput;
+    ax::HidTouchpad::Layouts layouts{};
+    layouts.count = 1;
+    auto& descriptor = layouts.reports[0];
+    descriptor.finger_count = 1;
+    descriptor.fingers[0].x = {0, 16, -25, 900, 10};
+    descriptor.fingers[0].y = {16, 16, 0, 700, 12};
+    descriptor.contact_count = {32, 8, 0, 5, 0};
+    descriptor.button.width = 1;
+    State input{};
+    assert(input.configure(layouts) && input.capacity() == 5);
+    Axis axis{};
+    assert(input.axis(abs_x, axis) && axis.minimum == -25 && axis.maximum == 900 &&
+           axis.resolution == 10);
+    assert(input.axis(mt_slot, axis) && !axis.minimum && axis.maximum == 4);
+
+    uint64_t cursor = 0, second = 0;
+    uint8_t recovery = 0, secondary_recovery = 0;
+    auto submit = [&](unsigned count, uint32_t id, int32_t x, bool confident = true) {
+        ax::HidTouchpad::Frame frame{};
+        frame.has_contact_count = true;
+        frame.report_id = 7;
+        frame.contact_count = count;
+        frame.slots = 1;
+        frame.button = count == 2;
+        frame.fingers[0] = {x, 22, id, true, confident};
+        return input.submit(frame, {120, 760});
+    };
+    assert(submit(2, 123, 15) && !input.ready(cursor, recovery));
+    assert(submit(0, 5, 40, false) && input.ready(cursor, recovery));
+    assert(input.key_down(btn_touch) && input.key_down(btn_two) && input.key_down(btn_left));
+
+    InputEvent events[32]{};
+    auto read = [&](EventClock clock = EventClock::monotonic) {
+        const auto bytes = input.read(cursor, recovery, clock, events, sizeof(events), {121, 761});
+        assert(bytes > 0 && bytes % sizeof(InputEvent) == 0);
+        const auto count = unsigned(bytes / sizeof(InputEvent));
+        assert(events[count - 1].type == sync && events[count - 1].code == report);
+        return count;
+    };
+    auto contains = [&](unsigned count, uint16_t type, uint16_t code, int32_t value) {
+        for (unsigned i = 0; i < count; ++i)
+            if (events[i].type == type && events[i].code == code && events[i].value == value)
+                return true;
+        return false;
+    };
+    const unsigned count = read();
+    assert(events[0].type == key && events[0].code == btn_touch && events[0].value == 1);
+    assert(events[0].sec == 1 && events[0].usec == 200000);
+    assert(contains(count, absolute, mt_tool, 2));
+    assert(contains(count, absolute, abs_x, 15));
+    assert(input.read(second, secondary_recovery, EventClock::realtime, events, sizeof(events),
+                      {121, 761}) == int64_t(count * sizeof(InputEvent)));
+    assert(events[0].sec == 7 && events[0].usec == 600000);
+
+    int32_t ids[5]{}, next_ids[5]{};
+    assert(input.slot_values(mt_id, ids, 5) && ids[0] >= 0 && ids[1] >= 0 && ids[2] == -1);
+    assert(submit(2, 5, 55, false) && submit(0, 123, 20));
+    const auto moved = read();
+    assert(input.slot_values(mt_id, next_ids, 5) && !memcmp(ids, next_ids, sizeof(ids)));
+    assert(contains(moved, absolute, abs_x, 20));
+    assert(submit(2, 123, 21));
+    assert(!submit(0, 123, 23) && !input.ready(cursor, recovery));
+    assert(submit(1, 123, 21));
+    assert(contains(read(), absolute, mt_id, -1));
+    assert(input.slot_values(mt_id, next_ids, 5) && next_ids[0] == ids[0] && next_ids[1] == -1);
+    input.reset({122, 762});
+    assert(contains(read(), key, btn_touch, 0) && !input.key_down(btn_left));
+
+    second = input.position();
+    for (unsigned i = 0; i < 200; ++i)
+        assert(submit(1, 55, int32_t(i)));
+    assert(input.read(second, secondary_recovery, EventClock::monotonic, events, sizeof(InputEvent),
+                      {123, 763}) == sizeof(InputEvent));
+    assert(events[0].type == sync && events[0].code == dropped && secondary_recovery == 1);
+    assert(input.read(second, secondary_recovery, EventClock::monotonic, events, sizeof(InputEvent),
+                      {123, 763}) == sizeof(InputEvent));
+    assert(events[0].type == sync && events[0].code == report);
+    assert(!input.ready(second, secondary_recovery));
+    assert(input.axis(abs_x, axis) && axis.value == 199);
+    puts("TOUCHPAD_EVDEV_STATE_PASS hybrid slots lifetimes timebases overflow");
+}
 } // namespace
 
 int main() {
     check_transfer();
     check_large_register_read();
     check_touchpad_layout();
+    check_touchpad_events();
     fflush(stdout);
 #ifdef AXIOM64_GUEST_TEST
     reboot(RB_POWER_OFF);

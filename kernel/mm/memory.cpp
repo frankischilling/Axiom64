@@ -31,25 +31,64 @@
 
 namespace ax {
 uint64_t direct_map;
-static constexpr size_t max_pages = (4ull * 1024 * 1024 * 1024) / page_size;
-static uint8_t bitmap[max_pages / 8];
-static uint8_t shared_bitmap[max_pages / 8];
-static uint16_t page_references[max_pages];
-static size_t search_page = 1;
+
+struct PageRegion {
+    PageRegion* next;
+    uint64_t base;
+    size_t pages, free_pages, search;
+    uint8_t *used, *shared;
+    uint16_t* refs;
+};
+
+static PageRegion* page_regions;
 static uint64_t kernel_root;
 static uint64_t cpu_physical_limit;
 static Mmio::CacheLayout mmio_cache;
 static size_t total_pages, free_pages, shared_pages;
 
-static bool used(size_t p) {
-    return bitmap[p / 8] & (1u << (p % 8));
+static void mark(PageRegion& region, size_t p, bool allocated) {
+    if (allocated)
+        region.used[p / 8] |= 1u << (p % 8);
+    else
+        region.used[p / 8] &= ~(1u << (p % 8));
 }
 
-static void mark(size_t p, bool allocated) {
-    if (allocated)
-        bitmap[p / 8] |= 1u << (p % 8);
-    else
-        bitmap[p / 8] &= ~(1u << (p % 8));
+static PageRegion* region_for(uint64_t address, size_t count = 1) {
+    if (!address || address % page_size)
+        return nullptr;
+    for (auto region = page_regions; region; region = region->next) {
+        if (address < region->base)
+            continue;
+        size_t offset = (address - region->base) / page_size;
+        if (offset < region->pages && count <= region->pages - offset)
+            return region;
+    }
+    return nullptr;
+}
+
+static void add_region(uint64_t base, uint64_t end) {
+    size_t pages = (end - base) / page_size;
+    size_t bitmap_size = (pages + 7) / 8;
+    size_t refs_offset = sizeof(PageRegion) + 2 * bitmap_size;
+    size_t reserved = align_up(refs_offset + pages * sizeof(uint16_t)) / page_size;
+    if (reserved >= pages)
+        return;
+    // The first pages of each usable range hold its own allocator metadata.
+    auto region = static_cast<PageRegion*>(physical(base));
+    memset(region, 0, reserved * page_size);
+    auto data = reinterpret_cast<uint8_t*>(region);
+    *region = {page_regions,
+               base,
+               pages,
+               pages - reserved,
+               reserved,
+               data + sizeof(PageRegion),
+               data + sizeof(PageRegion) + bitmap_size,
+               reinterpret_cast<uint16_t*>(data + refs_offset)};
+    for (size_t i = 0; i < reserved; ++i)
+        mark(*region, i, true);
+    page_regions = region;
+    total_pages += region->free_pages;
 }
 
 void memory_init() {
@@ -62,20 +101,29 @@ void memory_init() {
     asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
     const bool pat = d & (1u << 16);
     mmio_cache = {pat ? rdmsr(0x277) : 0x0007040600070406ull, pat};
-    memset(bitmap, 0xff, sizeof(bitmap));
-    total_pages = 0;
+    uint64_t limit = min(cpu_physical_limit, UINT64_MAX - direct_map + 1);
+    uint64_t start = 0, end = 0;
     for (size_t i = 0; i < boot_info.memory_count; i++) {
         auto e = boot_info.memory_at(boot_info.memory_context, i);
-        if (e.kind != BootMemoryKind::usable)
+        if (e.kind != BootMemoryKind::usable || e.base >= limit)
             continue;
-        uint64_t end = min(align_down(e.base + e.length) / page_size, uint64_t(max_pages));
-        for (uint64_t p = max(align_up(e.base) / page_size, uint64_t(1)); p < end; p++) {
-            if (used(p)) {
-                mark(p, false);
-                total_pages++;
-            }
+        uint64_t first = max(page_size, align_up(e.base));
+        uint64_t last = align_down(e.base + min(e.length, limit - e.base));
+        if (first >= last)
+            continue;
+        if (first == end) {
+            end = last;
+            continue;
         }
+        if (start < end)
+            add_region(start, end);
+        start = first;
+        end = last;
     }
+    if (start < end)
+        add_region(start, end);
+    if (!total_pages)
+        panic("no usable physical pages");
     free_pages = total_pages;
     log("Memory: %u MiB available, isolated four-level paging\n", uint64_t(total_pages / 256));
 }
@@ -103,42 +151,50 @@ void* map_mmio(uint64_t address, size_t length) {
                : nullptr;
 }
 
-static uint64_t allocate_pages(size_t count, size_t ceiling, size_t boundary_pages = 0) {
+static uint64_t allocate_pages(size_t count, uint64_t end, size_t boundary_pages = 0) {
     if (!count || count > free_pages)
         return 0;
-    const auto start = Dma::find_free_run(bitmap, ceiling, search_page, count, boundary_pages);
-    if (!start)
-        return 0;
-    for (size_t page = start; page < start + count; ++page) {
-        mark(page, true);
-        page_references[page] = 1;
+    for (auto region = page_regions; region; region = region->next) {
+        if (region->base >= end || count > region->free_pages)
+            continue;
+        size_t ceiling = min(region->pages, (end - region->base) / page_size);
+        size_t start = Dma::find_free_run(region->used, ceiling, region->search, count,
+                                          boundary_pages, region->base / page_size);
+        if (!start)
+            continue;
+        for (size_t page = start; page < start + count; ++page) {
+            mark(*region, page, true);
+            region->refs[page] = 1;
+        }
+        free_pages -= count;
+        region->free_pages -= count;
+        region->search = start + count;
+        uint64_t address = region->base + start * page_size;
+        memset(physical(address), 0, count * page_size);
+        return address;
     }
-    free_pages -= count;
-    search_page = start + count;
-    const uint64_t address = start * page_size;
-    memset(physical(address), 0, count * page_size);
-    return address;
+    return 0;
 }
 
 uint64_t page_alloc(size_t count) {
-    return allocate_pages(count, max_pages);
+    return allocate_pages(count, cpu_physical_limit);
 }
 
 uint64_t Dma::allocate(size_t count, Limits limits) {
     if (limits.boundary && (!power_of_two(limits.boundary) || limits.boundary < page_size))
         return 0;
-    const auto ceiling = min(min(limits.end, cpu_physical_limit) / page_size, uint64_t(max_pages));
-    return allocate_pages(count, ceiling, limits.boundary / page_size);
+    return allocate_pages(count, min(limits.end, cpu_physical_limit), limits.boundary / page_size);
 }
 
 void page_account_shared(uint64_t p, size_t count) {
-    const size_t start = p / page_size;
-    if (p % page_size || start >= max_pages || count > max_pages - start)
+    auto region = region_for(p, count);
+    if (!region)
         panic("invalid shared page range");
+    size_t start = (p - region->base) / page_size;
     for (size_t index = start; index < start + count; index++) {
-        if (!page_references[index])
+        if (!region->refs[index])
             panic("shared accounting requires an allocated page");
-        uint8_t& flags = shared_bitmap[index / 8];
+        uint8_t& flags = region->shared[index / 8];
         const uint8_t bit = 1u << (index % 8);
         if (!(flags & bit)) {
             flags |= bit;
@@ -148,16 +204,20 @@ void page_account_shared(uint64_t p, size_t count) {
 }
 
 void page_free(uint64_t p, size_t count) {
-    if (!p || p % page_size || p / page_size + count > max_pages)
+    auto region = region_for(p, count);
+    if (!region)
         panic("invalid physical free");
+    size_t start = (p - region->base) / page_size;
     for (size_t i = 0; i < count; i++) {
-        auto index = p / page_size + i;
-        if (!page_references[index])
+        size_t index = start + i;
+        if (!region->refs[index])
             panic("physical page double free");
-        if (!--page_references[index]) {
-            mark(index, false);
+        if (!--region->refs[index]) {
+            mark(*region, index, false);
             free_pages++;
-            uint8_t& flags = shared_bitmap[index / 8];
+            region->free_pages++;
+            region->search = min(region->search, index);
+            uint8_t& flags = region->shared[index / 8];
             const uint8_t bit = 1u << (index % 8);
             if (flags & bit) {
                 flags &= ~bit;
@@ -165,14 +225,15 @@ void page_free(uint64_t p, size_t count) {
             }
         }
     }
-    search_page = min(search_page, size_t(p / page_size));
 }
 
 void page_retain(uint64_t p, size_t count) {
-    if (!p || p % page_size || p / page_size + count > max_pages)
+    auto region = region_for(p, count);
+    if (!region)
         panic("invalid page retain");
+    size_t start = (p - region->base) / page_size;
     for (size_t i = 0; i < count; i++) {
-        auto& refs = page_references[p / page_size + i];
+        auto& refs = region->refs[start + i];
         if (!refs || refs == 65535)
             panic("invalid page reference");
         refs++;
@@ -180,9 +241,10 @@ void page_retain(uint64_t p, size_t count) {
 }
 
 bool page_try_retain(uint64_t p) {
-    if (!p || p % page_size || p / page_size >= max_pages)
+    auto region = region_for(p);
+    if (!region)
         panic("invalid page retain");
-    auto& refs = page_references[p / page_size];
+    auto& refs = region->refs[(p - region->base) / page_size];
     if (!refs)
         panic("invalid page reference");
     if (refs == UINT16_MAX)
@@ -192,14 +254,17 @@ bool page_try_retain(uint64_t p) {
 }
 
 unsigned page_reference_count(uint64_t p) {
-    return p && p / page_size < max_pages ? page_references[p / page_size] : 0;
+    auto region = region_for(align_down(p));
+    return region ? region->refs[(p - region->base) / page_size] : 0;
 }
 
 bool page_shared(uint64_t p, size_t count) {
-    if (!p || p / page_size + count > max_pages)
+    auto region = region_for(align_down(p), count);
+    if (!region)
         return false;
+    size_t start = (p - region->base) / page_size;
     for (size_t i = 0; i < count; i++)
-        if (page_references[p / page_size + i] > 1)
+        if (region->refs[start + i] > 1)
             return true;
     return false;
 }

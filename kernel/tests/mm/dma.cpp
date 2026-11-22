@@ -60,6 +60,9 @@ void check_selector() {
     assert(Dma::find_free_run(empty, 32, 14, 2, 16) == 14);
     assert(Dma::find_free_run(empty, 32, 0, 17, 16) == 0);
     assert(Dma::find_free_run(empty, 32, 0, 1, 0) == 1);
+    assert(Dma::find_free_run(empty, 32, 9, 3, 16, 5) == 11);
+    assert(Dma::find_free_run(empty, 32, 4, 3, 16, 5) == 4);
+    assert(Dma::find_free_run(empty, 32, 9, 3, 16, 0x100005) == 11);
 
     uint32_t used = 0;
     const size_t boundaries[]{0, 2, 4, 8, 16};

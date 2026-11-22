@@ -39,14 +39,14 @@ void retain_backing(FileMapping& mapping) {
     else
         retain(mapping.description);
     if (mapping.disk_file) {
-        mapping.file_next = mapping.disk_file->shared_mappings;
-        mapping.disk_file->shared_mappings = &mapping;
+        mapping.file_next = mapping.disk_file->disk_mappings;
+        mapping.disk_file->disk_mappings = &mapping;
     }
 }
 
 void release_mapping(FileMapping& mapping) {
     if (mapping.disk_file) {
-        auto link = &mapping.disk_file->shared_mappings;
+        auto link = &mapping.disk_file->disk_mappings;
         while (*link != &mapping)
             link = &(*link)->file_next;
         *link = mapping.file_next;
@@ -69,12 +69,14 @@ void insert_range(FileMapping& mapping) {
 uint64_t read_disk_page(Node& node, uint64_t offset) {
     // Resident aliases supply the cache. Each PTE owns one reference, so an
     // inode with no mappings retains no pages.
-    for (auto map = node.shared_mappings; map; map = map->file_next) {
+    for (auto map = node.disk_mappings; map; map = map->file_next) {
         if (offset < map->offset || offset - map->offset >= map->end - map->start)
             continue;
-        uint64_t page = *map->space->entry(map->start + offset - map->offset) & page_mask;
-        if (page)
+        uint64_t pte = *map->space->entry(map->start + offset - map->offset);
+        if (pte & shared_page) {
+            uint64_t page = pte & page_mask;
             return page_try_retain(page) ? page : 0;
+        }
     }
 
     uint64_t page = page_alloc();
@@ -122,8 +124,8 @@ uint64_t unpopulated_file_page(const FileMapping& map, int prot) {
 }
 
 int map_disk_file(Task& task, Handle& handle, uint64_t base, size_t length, uint64_t offset,
-                  int prot, bool replace) {
-    if (prot & 2)
+                  int prot, bool shared, bool replace) {
+    if (shared && (prot & 2))
         return -19;
     if (offset > INT64_MAX || length - 1 > uint64_t(INT64_MAX) - offset)
         return -75;
@@ -146,7 +148,7 @@ int map_disk_file(Task& task, Handle& handle, uint64_t base, size_t length, uint
             .offset = offset,
             .description = &handle,
             .disk_file = node,
-            .shared = true,
+            .shared = shared,
             .no_execute = node->mount->noexec};
     uint64_t initial = unpopulated_file_page(*map, prot);
     for (uint64_t va = base; va < base + length; va += page_size)
@@ -174,31 +176,53 @@ FileFault file_mapping_fault(AddressSpace& space, uint64_t address, bool write, 
         panic("file PTE without backing");
     if (offset >= map->disk_file->size)
         return FileFault::bus;
-    if (*pte & page_mask)
+    uint64_t state = *pte;
+    uint64_t old = state & page_mask;
+    bool copy = write && (state & page_file_cow);
+    if (old && !copy)
         return FileFault::protection;
-    uint64_t page = read_disk_page(*map->disk_file, offset);
-    if (!page)
+    uint64_t source = old ? old : read_disk_page(*map->disk_file, offset);
+    if (!source)
         return FileFault::bus;
-    *pte = file_page_permissions(*pte | shared_page | page);
+    uint64_t page = source;
+    if (copy) {
+        page = page_alloc();
+        if (!page) {
+            if (!old)
+                page_free(source);
+            return FileFault::bus;
+        }
+        memcpy(physical(page), physical(source), page_size);
+        page_free(source);
+        state &= ~(page_file_cow | shared_page);
+    } else
+        state |= shared_page;
+    *pte = file_page_permissions((state & ~page_mask) | page);
     if (read_cr3() == space.root)
         write_cr3(space.root);
     return FileFault::resolved;
 }
 
-void invalidate_disk_pages(Node& node, uint64_t first, uint64_t end) {
+void invalidate_disk_pages(Node& node, uint64_t first, uint64_t end, bool shrink) {
     if (first >= end)
         return;
+    uint64_t first_removed = align_up(first);
     first = align_down(first);
-    for (auto map = node.shared_mappings; map; map = map->file_next) {
+    for (auto map = node.disk_mappings; map; map = map->file_next) {
         uint64_t limit = min(end, map->offset + (map->end - map->start));
         bool invalidated = false;
         for (uint64_t offset = max(first, map->offset); offset < limit; offset += page_size) {
             auto pte = map->space->entry(map->start + offset - map->offset);
-            if (uint64_t page = *pte & page_mask) {
-                *pte = file_page_permissions(*pte & ~(page_mask | shared_page));
-                page_free(page);
-                invalidated = true;
-            }
+            uint64_t page = *pte & page_mask;
+            // A private copy survives file writes and a partial-page shrink.
+            if (!page || (!(*pte & shared_page) && !(shrink && offset >= first_removed)))
+                continue;
+            uint64_t flags = *pte & ~(page_mask | shared_page);
+            if (!map->shared)
+                flags |= page_file_cow;
+            *pte = file_page_permissions(flags);
+            page_free(page);
+            invalidated = true;
         }
         if (invalidated && read_cr3() == map->space->root)
             write_cr3(map->space->root);

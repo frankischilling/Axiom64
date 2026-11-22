@@ -476,10 +476,12 @@ static int truncate(Node* node, size_t length) {
     if (!v.load_inode(node->inode, inode))
         return v.finish(false);
     uint64_t old = file_size(inode);
-    if (length < old)
-        invalidate_disk_pages(*node, length, old);
-    if (stage_truncate(v, inode, length, SizeChange::normal))
-        return v.finish(true);
+    if (stage_truncate(v, inode, length, SizeChange::normal)) {
+        int error = v.finish(true);
+        if (!error && length < old)
+            invalidate_disk_pages(*node, length, old, true);
+        return error;
+    }
     if (v.error != -28 || !v.journal || length > old)
         return v.finish(false);
     v.discard();
@@ -488,7 +490,10 @@ static int truncate(Node* node, size_t length) {
         !stage_truncate(v, inode, length, SizeChange::stage_shrink))
         return v.finish(false);
     v.pending_shrink = inode.number;
-    return v.begin() ? 0 : v.error;
+    if (!v.begin())
+        return v.error;
+    invalidate_disk_pages(*node, length, old, true);
+    return 0;
 }
 
 static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t uid,

@@ -53,8 +53,8 @@ bool clone_file_mappings(AddressSpace&, const AddressSpace&);
 void release_file_mappings(AddressSpace&);
 
 int map_disk_file(Task&, Handle&, uint64_t base, size_t length, uint64_t offset, int protection,
-                  bool replace);
-void invalidate_disk_pages(Node&, uint64_t first, uint64_t end);
+                  bool shared, bool replace);
+void invalidate_disk_pages(Node&, uint64_t first, uint64_t end, bool shrink = false);
 uint64_t file_page_permissions(uint64_t);
 uint64_t file_page_protection(uint64_t, int protection);
 uint64_t unpopulated_file_page(const FileMapping&, int protection);

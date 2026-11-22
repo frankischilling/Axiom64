@@ -81,7 +81,7 @@ struct Node {
     unsigned lock_readers, exec_images;
     Handle* lock_writer;
     Pipe* named_pipe = nullptr;
-    FileMapping* shared_mappings = nullptr;
+    FileMapping* disk_mappings = nullptr;
 };
 
 // Relative paths retain their directory identity even when a mount covers it.

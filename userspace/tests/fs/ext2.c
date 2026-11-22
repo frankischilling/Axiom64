@@ -252,6 +252,65 @@ static void shared_file_reads(void) {
     puts("EXT2_SHARED_READ_PASS");
 }
 
+static void private_file_reads(void) {
+    const char* path = "/tmp/ext2-volume/private-input";
+    const size_t page = 4096;
+    int fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0644);
+    CHECK(fd >= 0 && pwrite(fd, "file", 4, 0) == 4);
+    CHECK(pwrite(fd, "tail", 4, page) == 4);
+    int input = open(path, O_RDONLY);
+    CHECK(input >= 0);
+    unsigned char* data = mmap(NULL, 2 * page, PROT_READ, MAP_PRIVATE, input, 0);
+    unsigned char* clean = mmap(NULL, 2 * page, PROT_READ, MAP_PRIVATE, input, 0);
+    unsigned char* first_write = mmap(NULL, page, PROT_WRITE, MAP_PRIVATE, input, 0);
+    CHECK(data != MAP_FAILED && clean != MAP_FAILED && first_write != MAP_FAILED);
+    CHECK(close(input) == 0 && data[0] == 'f' && clean[page] == 't');
+    CHECK(mprotect(data, 2 * page, PROT_READ | PROT_WRITE) == 0);
+    data[0] = 'p';
+    first_write[1] = 'w';
+    CHECK(mprotect(first_write, page, PROT_READ) == 0 && first_write[1] == 'w');
+    CHECK(first_write[0] == 'f' && clean[0] == 'f' && clean[1] == 'i');
+
+    // Copy through faulted COW pages in the kernel, then check file writes
+    // preserve private bytes while all clean aliases see the backing changes.
+    CHECK(pread(fd, data + page, 2, 0) == 2 && data[page] == 'f');
+    CHECK(pwrite(fd, "F", 1, 0) == 1 && pwrite(fd, "T", 1, page) == 1);
+    CHECK(data[0] == 'p' && data[page] == 'f' && first_write[0] == 'f');
+    CHECK(clean[0] == 'F' && clean[page] == 'T');
+
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(data[0] == 'p' && first_write[1] == 'w');
+        data[0] = 'c';
+        CHECK(clean[0] == 'F');
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(data[0] == 'p');
+
+    CHECK(ftruncate(fd, page + 1) == 0);
+    CHECK(data[page] == 'f' && clean[page] == 'T' && clean[page + 1] == 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(ftruncate(fd, page) == 0);
+        volatile const unsigned char* beyond_eof = data + page;
+        _exit(beyond_eof[0]);
+    }
+    CHECK(waitpid(child, &status, 0) == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS);
+    CHECK(ftruncate(fd, 2 * page) == 0 && data[page] == 0 && clean[page] == 0);
+    data[page] = 'r';
+    CHECK(clean[page] == 0);
+
+    CHECK(unlink(path) == 0 && close(fd) == 0);
+    CHECK(data[0] == 'p' && clean[0] == 'F');
+    CHECK(munmap(data, 2 * page) == 0 && munmap(clean, 2 * page) == 0);
+    CHECK(munmap(first_write, page) == 0);
+    puts("EXT2_PRIVATE_READ_PASS");
+}
+
 static void write_tests(void) {
     int raw = open("/dev/vda", O_RDWR);
     CHECK(raw >= 0);
@@ -282,6 +341,7 @@ static void write_tests(void) {
     namespace_tests();
     CHECK(close(pin) == 0);
     shared_file_reads();
+    private_file_reads();
     int fd = open("/tmp/ext2-volume/pattern", O_CREAT | O_RDWR, 0644);
     CHECK(fd >= 0);
     pattern(fd, 1, pattern_length, 37);

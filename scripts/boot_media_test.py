@@ -62,18 +62,37 @@ def inspect_disk(directory, image, kernel, initramfs):
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
-def run_keyboard_guest(command, log, output):
+def send_usb_input(monitor, guest, log):
+    for display, key in (("usb-video-a", "a"), ("usb-video-b", "b")):
+        for down in (True, False):
+            monitor.command("input-send-event", {"device": display, "events": [
+                {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": key}}}
+            ]})
+    monitor.command("input-send-event", {"events": [
+        {"type": "rel", "data": {"axis": "x", "value": 31}},
+        {"type": "rel", "data": {"axis": "y", "value": -19}},
+        {"type": "btn", "data": {"button": "left", "down": True}}
+    ]})
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_PRESSED",), 8)
+    monitor.command("device_del", {"id": "boot-mouse"})
+
+
+def run_keyboard_guest(command, log, output, runtime_input):
     with tempfile.TemporaryDirectory(prefix="axiom64-xhci-qmp-", dir="/tmp") as temporary:
         socket = Path(temporary) / "monitor"
         with subprocess.Popen(command + ["-qmp", f"unix:{socket},server=on,wait=off"],
                               stdin=subprocess.DEVNULL, stdout=output,
                               stderr=subprocess.STDOUT) as guest:
             try:
-                await_serial(guest, log, (b"xhci-keyboard-ready:",), 60)
+                ready = b"BOOT_USB_INPUT_READY" if runtime_input else b"xhci-keyboard-ready:"
+                await_serial(guest, log, (ready,), 60)
                 monitor = Qmp(socket)
                 try:
-                    monitor.command("send-key", {"keys": [{"type": "qcode", "data": "a"}],
-                                                 "hold-time": 350})
+                    if runtime_input:
+                        send_usb_input(monitor, guest, log)
+                    else:
+                        monitor.command("send-key", {"keys": [{"type": "qcode", "data": "a"}],
+                                                     "hold-time": 350})
                 finally:
                     monitor.close()
                 return guest.wait(timeout=15)
@@ -84,7 +103,9 @@ def run_keyboard_guest(command, log, output):
 
 def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False, xhci=None,
               smp=None):
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
+    runtime_input = xhci in ("input", "input-two-controllers")
+    machine = "pc,i8042=off" if runtime_input else "pc"
+    command = ["qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
                "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot",
                "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
     if firmware == "uefi":
@@ -104,13 +125,23 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         command += ["-nic", "none", "-boot", "order=d,strict=on", "-cdrom", medium]
     if xhci == "keyboard":
         command += ["-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0"]
+    if runtime_input:
+        command += ["-vga", "none", "-device", "VGA,id=usb-video-a",
+                    "-device", "secondary-vga,id=usb-video-b", "-device", "qemu-xhci,id=xhci",
+                    "-device", "usb-kbd,bus=xhci.0,port=1,display=usb-video-a",
+                    "-device", "usb-kbd,bus=xhci.0,port=2,display=usb-video-b"]
+        mouse_bus = "xhci"
+        if xhci == "input-two-controllers":
+            mouse_bus = "xhci-second"
+            command += ["-device", "qemu-xhci,id=xhci-second"]
+        command += ["-device", f"usb-mouse,bus={mouse_bus}.0,port=3,id=boot-mouse"]
     if smp is not None:
         threads = 2 if smp > 1 else 1
         command += ["-smp", f"cpus={smp},sockets=1,cores={smp // threads},threads={threads}"]
     log = directory / "serial.log"
     with log.open("wb") as output:
-        if xhci == "keyboard":
-            returncode = run_keyboard_guest(command, log, output)
+        if xhci == "keyboard" or runtime_input:
+            returncode = run_keyboard_guest(command, log, output, runtime_input)
         else:
             returncode = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
                                         stderr=subprocess.STDOUT, timeout=90).returncode
@@ -144,6 +175,12 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             raise RuntimeError(f"xHCI did not read the key press and release in {log}: {keys}")
     if xhci == "none" and (probes or devices or keyboards or keys):
         raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
+    if runtime_input:
+        if (sum(line.startswith("xhci-keyboard-active:") for line in lines) != 2 or
+                sum(line.startswith("xhci-mouse-active:") for line in lines) != 1 or
+                sum(line.startswith("xhci-mouse-stopped:") for line in lines) != 1 or
+                "BOOT_USB_INPUT_PASS" not in lines):
+            raise RuntimeError(f"xHCI did not deliver input from all devices in {log}")
     if smp is not None:
         summaries = re.findall(r"^SMP: present=(\d+) bsp=(\d+) application_processors=(\d+)$",
                                text, re.MULTILINE)
@@ -219,6 +256,21 @@ def main():
                 results.append(run_guest(case, "disk", firmware, target,
                                          f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
                                          xhci=device))
+                print(f"{case.name}: passed", flush=True)
+        input_ramfs = output / "usb-input.cpio"
+        write_cpio(input_ramfs, {
+            "dev": (0o40755, b""), "proc": (0o40755, b""), "sbin": (0o40755, b""),
+            "sbin/init": (0o100755, init_payload), "boot-proof": (0o100444, token.encode()),
+            "boot-usb-input": (0o100444, b""),
+        })
+        target = output / "xhci-input.raw"
+        build_medium("disk", target, kernel, input_ramfs, " test usb.xhci=keyboard")
+        for firmware in ("bios", "uefi"):
+            for device in ("input", "input-two-controllers"):
+                case = output / f"{firmware}-xhci-{device}"
+                case.mkdir()
+                results.append(run_guest(case, "disk", firmware, target, f"BOOT_MEDIA_PASS /sbin/init {token}",
+                                         input_ramfs.stat().st_size, xhci=device))
                 print(f"{case.name}: passed", flush=True)
     if args.smp:
         target = output / "smp-probe.raw"

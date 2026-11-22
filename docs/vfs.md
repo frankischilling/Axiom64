@@ -34,6 +34,12 @@ newly allocated pages and empty page tables before returning `ENOMEM`.
 
 Procfs lists descriptors under `/proc/<pid>/fd` and `/proc/<pid>/task/<tid>/fd`. The `self` and `thread-self` aliases use the calling process or thread. `/dev/fd` points to `/proc/self/fd`. Standard input, output, and error have aliases under `/dev`.
 
+`/proc/cpuinfo` reports the identity of the online boot CPU. `/proc/stat` reports
+its user, kernel, and idle time in 100 Hz ticks, including time from tasks that
+have exited. `/proc/uptime` uses the same boot and idle clocks. `/proc/meminfo`
+reports allocator totals in KiB, the block buffer size, and zero swap. Its
+`MemAvailable` count uses free allocator pages as a conservative estimate.
+
 Opening a file link reopens the existing file with an independent offset. Renamed and unlinked files stay reachable while an open descriptor holds them. Pipe links open independent endpoints on the same pipe. Anonymous pipes can reopen without waiting for a peer. An `O_PATH` handle preserves the inode after the final pipe endpoint closes. Socket and event-descriptor links expose their Linux-style names and support `stat` and `O_PATH`. An ordinary open fails with `ENXIO` when the caller has access. Looking up another process's descriptor checks its credentials and dumpability.
 
 The adjacent `fdinfo` directory reports the position, open flags, mount ID, and inode for each descriptor. Eventfd, signalfd, timerfd, epoll, and inotify add records for counters, masks, timers, and watches. An open report can finish reading a snapshot after the target descriptor closes. Reading again from offset zero resolves the current descriptor slot. Lock records and exportable inotify file handles remain pending.

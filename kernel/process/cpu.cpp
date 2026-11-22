@@ -31,6 +31,8 @@ namespace {
 Task* owner;
 uint64_t started;
 bool user;
+bool accounting_started;
+CpuTotals totals;
 
 constexpr uint64_t load_period = 501; // Five seconds plus one 100 Hz tick.
 constexpr uint64_t load_scale = 1 << 11;
@@ -82,18 +84,24 @@ LoadAverages cpu_load_averages() {
 
 void cpu_account(Task* next, bool userspace) {
     clock_refresh();
+    uint64_t elapsed = ticks - started;
     if (owner) {
-        uint64_t elapsed = ticks - started;
         auto& process = *owner->process;
         auto& task_time = user ? owner->cpu_user_ticks : owner->cpu_system_ticks;
         auto& process_time = user ? process.cpu_user_ticks : process.cpu_system_ticks;
+        auto& system_time = user ? totals.user_ticks : totals.system_ticks;
         task_time = add(task_time, elapsed);
         process_time = add(process_time, elapsed);
+        system_time = add(system_time, elapsed);
         int signal =
             process.limits.cpu_signal(add(process.cpu_user_ticks, process.cpu_system_ticks));
         if (signal)
             queue_process_signal(&process, signal, 0, 128);
-    }
+    } else if (accounting_started)
+        totals.idle_ticks = add(totals.idle_ticks, elapsed);
+    else
+        totals.system_ticks = elapsed;
+    accounting_started = true;
     owner = next;
     user = userspace;
     started = ticks;
@@ -101,6 +109,11 @@ void cpu_account(Task* next, bool userspace) {
 
 void cpu_refresh() {
     cpu_account(owner, user);
+}
+
+CpuTotals cpu_totals() {
+    cpu_refresh();
+    return totals;
 }
 
 void cpu_depart(Task& task) {

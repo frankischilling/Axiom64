@@ -34,6 +34,7 @@ from fetch import ROOT
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
+parser.add_argument("--debug", action="store_true", help="enable configured key-only SSH at boot")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root", "network"], default="full")
 parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "recovery", "queue",
                                        "invalid", "full", "all", "cond", "io", "pressure", "cache",
@@ -95,6 +96,8 @@ for filename in ["limine-bios.sys", "limine-bios-cd.bin", "limine-uefi-cd.bin"]:
 shutil.copy2(limine / "BOOTX64.EFI", staging / "EFI" / "BOOT" / "BOOTX64.EFI")
 copy_limine_notices(limine, staging / "boot" / "limine")
 options = (" test" if args.test else "") + (" trace" if args.trace else "")
+if args.debug:
+    options += " debug.ssh"
 if args.test:
     options += " suite=" + args.suite
     if disk_suite or args.suite in ["threads", "network"]:

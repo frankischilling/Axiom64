@@ -125,7 +125,7 @@ BootInfo boot_info;
         xhci_keyboard_init();
     net_init();
     log("Entering userspace in Ring 3\n");
-    start_init(init);
+    start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();
 }
 } // namespace ax

@@ -146,6 +146,14 @@ static void release_resources(Task* t) {
     t->handlers = nullptr;
 }
 
+void Task::set_name(const char* value, size_t length) {
+    size_t count = 0;
+    while (count < min(length, sizeof(name) - 1) && value[count])
+        ++count;
+    memcpy(name, value, count);
+    memset(name + count, 0, sizeof(name) - count);
+}
+
 Task* new_task() {
     if (next_pid == INT32_MAX)
         return nullptr;
@@ -313,6 +321,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         memcpy(child->process->executable, current->process->executable,
                sizeof(child->process->executable));
     }
+    memcpy(child->name, current->name, sizeof(child->name));
     child->frame = *f;
     // A new thread has the group's real parent. A new process belongs to the
     // thread that created it, even while that thread's group remains alive.
@@ -968,6 +977,11 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     size_t display_length = min(strlen(path), sizeof(t->process->executable) - 1);
     memcpy(t->process->executable, path, display_length);
     t->process->executable[display_length] = 0;
+    const char* basename = path;
+    for (auto cursor = path; *cursor; ++cursor)
+        if (*cursor == '/')
+            basename = cursor + 1;
+    t->set_name(basename, strlen(basename));
     for (unsigned fd = 0; fd < max_fds; fd++)
         if (t->files->entries[fd].cloexec)
             close_descriptor(*t->files, int(fd));

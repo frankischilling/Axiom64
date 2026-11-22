@@ -195,6 +195,19 @@ int64_t credential_syscall(Frame* frame) {
             current->memory->dumpable = frame->rsi;
             return 0;
         }
+        if (a == 15) { // PR_SET_NAME
+            char name[sizeof(current->name)]{};
+            for (size_t i = 0; i + 1 < sizeof(name); ++i) {
+                if (!space.copy_in(name + i, frame->rsi + i, 1))
+                    return -14;
+                if (!name[i])
+                    break;
+            }
+            current->set_name(name, sizeof(name));
+            return 0;
+        }
+        if (a == 16) // PR_GET_NAME
+            return space.copy_out(frame->rsi, current->name, sizeof(current->name)) ? 0 : -14;
         return credential_control(cred, a, frame->rsi, frame->rdx, frame->r10, frame->r8);
     default:
         return -38;

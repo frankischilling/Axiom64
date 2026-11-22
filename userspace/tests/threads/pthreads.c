@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -59,6 +60,44 @@ static unsigned items, produced, consumed, sum, ready;
 static int shared_fd;
 static atomic_uint detached;
 static sem_t semaphore;
+
+struct name_test {
+    sem_t ready, renamed;
+    long tid;
+};
+
+static void* named_worker(void* argument) {
+    struct name_test* test = argument;
+    char name[16];
+    CHECK(prctl(PR_GET_NAME, name, 0L, 0L, 0L) == 0 && !strcmp(name, "leader-name-lon"));
+    test->tid = syscall(SYS_gettid);
+    CHECK(sem_post(&test->ready) == 0 && sem_wait(&test->renamed) == 0);
+    CHECK(prctl(PR_GET_NAME, name, 0L, 0L, 0L) == 0 && !strcmp(name, "worker name"));
+    return NULL;
+}
+
+static void test_names(void) {
+    CHECK(prctl(PR_SET_NAME, "leader-name-longer", 0L, 0L, 0L) == 0);
+    CHECK(prctl(PR_SET_NAME, (char*)1, 0L, 0L, 0L) == -1 && errno == EFAULT);
+    CHECK(prctl(PR_GET_NAME, (char*)1, 0L, 0L, 0L) == -1 && errno == EFAULT);
+    struct name_test test;
+    CHECK(sem_init(&test.ready, 0, 0) == 0 && sem_init(&test.renamed, 0, 0) == 0);
+    pthread_t worker;
+    CHECK(pthread_create(&worker, NULL, named_worker, &test) == 0 && sem_wait(&test.ready) == 0);
+    CHECK(pthread_setname_np(worker, "worker name") == 0);
+    char name[16];
+    CHECK(pthread_getname_np(worker, name, sizeof(name)) == 0 && !strcmp(name, "worker name"));
+    CHECK(prctl(PR_GET_NAME, name, 0L, 0L, 0L) == 0 && !strcmp(name, "leader-name-lon"));
+    char path[64];
+    CHECK(snprintf(path, sizeof(path), "/proc/self/task/%ld/stat", test.tid) > 0);
+    int fd = open(path, O_RDONLY);
+    char contents[256] = {0};
+    CHECK(fd >= 0 && read(fd, contents, sizeof(contents) - 1) > 0 && close(fd) == 0);
+    CHECK(strstr(contents, " (worker name) "));
+    CHECK(sem_post(&test.renamed) == 0 && pthread_join(worker, NULL) == 0);
+    CHECK(sem_destroy(&test.ready) == 0 && sem_destroy(&test.renamed) == 0);
+    puts("THREAD_NAMES_PASS");
+}
 
 static void* identity(void* argument) {
     unsigned index = (uintptr_t)argument;
@@ -145,8 +184,13 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_gettid) == process);
     pthread_t threads[12];
     int condition_only = argc == 2 && !strcmp(argv[1], "cond");
+    if (argc == 2 && !strcmp(argv[1], "names")) {
+        test_names();
+        return 0;
+    }
     if (condition_only)
         goto cond_tests;
+    test_names();
     for (unsigned i = 0; i < 12; i++)
         CHECK(pthread_create(&threads[i], 0, identity, (void*)(uintptr_t)i) == 0);
     for (unsigned i = 0; i < 12; i++) {

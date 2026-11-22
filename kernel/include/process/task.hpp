@@ -146,6 +146,9 @@ struct Task {
     bool process_limit_exceeded;
     uint64_t start_ticks;
     uint64_t cpu_user_ticks, cpu_system_ticks;
+    char name[16];
+
+    void set_name(const char* value, size_t length);
 
     struct {
         uint64_t mask, information, deadline;

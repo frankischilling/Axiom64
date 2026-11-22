@@ -61,6 +61,7 @@ enum class Kind {
     fdinfo,
     status,
     stat,
+    comm,
     cpuinfo,
     meminfo,
     system_stat,
@@ -107,9 +108,10 @@ static bool descriptor_directory(Kind kind) {
 }
 
 static bool snapshot_file(Kind kind) {
-    return kind == Kind::status || kind == Kind::stat || kind == Kind::fdinfo ||
-           kind == Kind::cpuinfo || kind == Kind::meminfo || kind == Kind::system_stat ||
-           kind == Kind::uptime || kind == Kind::mounts || kind == Kind::filesystem_types;
+    return kind == Kind::status || kind == Kind::stat || kind == Kind::comm ||
+           kind == Kind::fdinfo || kind == Kind::cpuinfo || kind == Kind::meminfo ||
+           kind == Kind::system_stat || kind == Kind::uptime || kind == Kind::mounts ||
+           kind == Kind::filesystem_types;
 }
 
 struct Entry {
@@ -289,6 +291,13 @@ static int access_override(Node* node, unsigned mask) {
             return -3;
         return descriptor_access(*owner) ? 0 : -13;
     }
+    if (item->kind == Kind::comm && entry(node->parent)->kind == Kind::thread) {
+        auto owner = task(item->pid);
+        if (!owner)
+            return -3;
+        if (current && owner->process == current->process && !(mask & 1))
+            return 1;
+    }
     auto owner = item->kind == Kind::fd_directory ? task(item->pid) : nullptr;
     return owner && current && owner->process == current->process && !(mask & 2) ? 1 : 0;
 }
@@ -418,7 +427,8 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->parent = parent;
     node->mount = mount;
     node->filesystem_data = item;
-    node->mode = snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
+    node->mode = kind == Kind::comm                             ? regular_file | 0644
+                 : snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
                  : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ||
                          kind == Kind::exe_link || kind == Kind::mounts_link
                      ? symlink | 0777
@@ -515,6 +525,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "stat"))
         kind = Kind::stat;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "comm"))
+        kind = Kind::comm;
     else if (context->kind == Kind::process && !strcmp(name, "task"))
         kind = Kind::task_list;
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
@@ -591,11 +604,8 @@ static int status(Node* node, Snapshot& snapshot) {
         return -12;
     Text text{bytes, 0, capacity};
     text.string("Name:\t");
-    const char* name = owner->process->executable;
-    for (auto cursor = name; *cursor; cursor++)
-        if (*cursor == '/')
-            name = cursor + 1;
-    for (size_t i = 0; name[i] && i < 15; i++) {
+    const char* name = owner->name;
+    for (size_t i = 0; name[i]; i++) {
         if (name[i] == '\n')
             text.string("\\n");
         else if (name[i] == '\\')
@@ -656,12 +666,7 @@ static int stat(Node* node, Snapshot& snapshot) {
     Text text{bytes, 0, capacity};
     text.number(unsigned(owner->pid));
     text.string(" (");
-    const char* name = owner->process->executable;
-    for (auto cursor = name; *cursor; cursor++)
-        if (*cursor == '/')
-            name = cursor + 1;
-    for (size_t i = 0; name[i] && i < 15; i++)
-        text.character(name[i]);
+    text.string(owner->name);
     text.string(") ");
     text.character(owner->state == State::zombie    ? 'Z'
                    : owner->state == State::stopped ? 'T'
@@ -1055,6 +1060,19 @@ static int make_snapshot(Node* node, Snapshot& output) {
         return fdinfo(*item, output);
     if (item->kind == Kind::mounts)
         return mounts_snapshot(*item, output);
+    if (item->kind == Kind::comm) {
+        auto owner = task(item->pid);
+        if (!owner)
+            return -3;
+        size_t length = strlen(owner->name);
+        auto bytes = static_cast<char*>(alloc(length + 1));
+        if (!bytes)
+            return -12;
+        memcpy(bytes, owner->name, length);
+        bytes[length] = '\n';
+        output = {bytes, length + 1};
+        return 0;
+    }
     if (item->kind == Kind::filesystem_types) {
         constexpr char types[] =
             "nodev\tramfs\nnodev\tproc\nnodev\tmqueue\n\text2\n\text3\n\text4\n";
@@ -1328,9 +1346,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 7) {
             memcpy(name, "mounts", 7);
             result.next = 8;
-        } else if (cookie == 8 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 8) {
+            memcpy(name, "comm", 5);
             result.next = 9;
+        } else if (cookie == 9 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 10;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {
@@ -1413,12 +1434,21 @@ static int rename(Node*, Node*, const char*, Node*) {
     return -30;
 }
 
-static int64_t write(Node*, uint64_t, const void*, size_t) {
-    return -22;
+static int64_t write(Node* node, uint64_t, const void* input, size_t length) {
+    auto item = entry(node);
+    if (item->kind != Kind::comm)
+        return -22;
+    auto owner = task(item->pid);
+    if (!owner)
+        return -3;
+    if (!current || owner->process != current->process)
+        return -22;
+    owner->set_name(static_cast<const char*>(input), length);
+    return int64_t(length);
 }
 
-static int truncate(Node*, size_t) {
-    return -30;
+static int truncate(Node* node, size_t) {
+    return entry(node)->kind == Kind::comm ? 0 : -30;
 }
 
 static int setattr(Node* node, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {

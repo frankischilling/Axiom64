@@ -226,6 +226,13 @@ for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 if installed_desktop:
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
+    regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
+    autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'
+    mode, desktop = files[autostart]
+    command = b'\nExec=/usr/bin/plasmashell\n'
+    if desktop.count(command) != 1:
+        raise ValueError(f'{autostart} does not have the expected Plasma shell command')
+    files[autostart] = mode, desktop.replace(command, b'\nExec=/usr/libexec/axiom64-plasma-shell\n')
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)

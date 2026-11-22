@@ -31,14 +31,17 @@
 #include "fs/proc/integer.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"
+#include "drivers/block/block.hpp"
 #include "net/ethernet.hpp"
 #include "ipc/eventfd.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/signal_descriptor.hpp"
 #include "ipc/timerfd.hpp"
 #include "process/task.hpp"
+#include "process/cpu.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 namespace {
@@ -56,6 +59,10 @@ enum class Kind {
     fdinfo,
     status,
     stat,
+    cpuinfo,
+    meminfo,
+    system_stat,
+    uptime,
     sys,
     fs,
     pipe_limit,
@@ -75,6 +82,12 @@ enum class Kind {
 // Kernel execution serializes generation. Every proc mount observes this same boot.
 char boot_identifier[37]{};
 constexpr const char* sys_directories[] = {"kernel", "net", "fs"};
+constexpr const char* root_names[] = {"self",    "thread-self", "sys",   "cpuinfo",
+                                      "meminfo", "stat",        "uptime"};
+constexpr Kind root_kinds[] = {Kind::self,    Kind::thread_self, Kind::sys,   Kind::cpuinfo,
+                               Kind::meminfo, Kind::system_stat, Kind::uptime};
+constexpr size_t root_children = sizeof(root_names) / sizeof(root_names[0]);
+static_assert(root_children == sizeof(root_kinds) / sizeof(root_kinds[0]));
 constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-hard",
                                             "pipe-user-pages-soft"};
 
@@ -88,7 +101,9 @@ static bool descriptor_directory(Kind kind) {
 }
 
 static bool snapshot_file(Kind kind) {
-    return kind == Kind::status || kind == Kind::stat || kind == Kind::fdinfo;
+    return kind == Kind::status || kind == Kind::stat || kind == Kind::fdinfo ||
+           kind == Kind::cpuinfo || kind == Kind::meminfo || kind == Kind::system_stat ||
+           kind == Kind::uptime;
 }
 
 struct Entry {
@@ -425,13 +440,21 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     unsigned network_index = context->network_index, property = 0, fd = 0;
     uint64_t network_generation = context->network_generation;
     bool ipv4_configuration = context->ipv4_configuration || context->kind == Kind::ipv4;
-    if (context->kind == Kind::root && !strcmp(name, "self"))
-        kind = Kind::self;
-    else if (context->kind == Kind::root && !strcmp(name, "thread-self"))
-        kind = Kind::thread_self;
-    else if (context->kind == Kind::root && !strcmp(name, "sys"))
-        kind = Kind::sys;
-    else if (context->kind == Kind::sys && !strcmp(name, "kernel"))
+    if (context->kind == Kind::root) {
+        size_t index = 0;
+        while (index != root_children && strcmp(name, root_names[index]))
+            ++index;
+        if (index != root_children)
+            kind = root_kinds[index];
+        else {
+            selected_pid = pid(name);
+            auto selected = task(selected_pid);
+            if (!selected)
+                return -2;
+            group = selected->process->pid;
+            kind = Kind::process;
+        }
+    } else if (context->kind == Kind::sys && !strcmp(name, "kernel"))
         kind = Kind::kernel;
     else if (context->kind == Kind::sys && !strcmp(name, "net"))
         kind = Kind::net;
@@ -476,15 +499,8 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::random;
     else if (context->kind == Kind::random && !strcmp(name, "boot_id"))
         kind = Kind::boot_id;
-    else if (context->kind == Kind::root) {
-        selected_pid = pid(name);
-        auto selected = task(selected_pid);
-        if (!selected)
-            return -2;
-        group = selected->process->pid;
-        kind = Kind::process;
-    } else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
-               !strcmp(name, "status"))
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "status"))
         kind = Kind::status;
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "stat"))
@@ -834,10 +850,131 @@ static int fdinfo(const Entry& item, Snapshot& output) {
     return 0;
 }
 
+static void cpuid(uint32_t leaf, uint32_t (&result)[4]) {
+    uint32_t subleaf = 0;
+    asm volatile("cpuid" : "+a"(leaf), "=b"(result[1]), "+c"(subleaf), "=d"(result[3]));
+    result[0] = leaf;
+    result[2] = subleaf;
+}
+
+static void cpu_info_number(Text& text, const char* field, unsigned value) {
+    text.string(field);
+    text.string("\t: ");
+    text.number(value);
+    text.character('\n');
+}
+
+static void cpu_information(Text& text) {
+    uint32_t registers[4];
+    cpuid(0, registers);
+    const uint32_t maximum = registers[0];
+    char vendor[13]{};
+    memcpy(vendor, &registers[1], 4);
+    memcpy(vendor + 4, &registers[3], 4);
+    memcpy(vendor + 8, &registers[2], 4);
+    cpu_info_number(text, "processor", 0);
+    text.string("vendor_id\t: ");
+    text.string(vendor);
+    text.character('\n');
+    if (maximum >= 1) {
+        cpuid(1, registers);
+        uint32_t signature = registers[0];
+        unsigned family = (signature >> 8) & 15, model = (signature >> 4) & 15;
+        if (family == 6 || family == 15)
+            model |= (signature >> 12) & 0xf0;
+        if (family == 15)
+            family += (signature >> 20) & 255;
+        cpu_info_number(text, "cpu family", family);
+        cpu_info_number(text, "model", model);
+        cpu_info_number(text, "stepping", signature & 15);
+    }
+    cpuid(0x80000000, registers);
+    if (registers[0] >= 0x80000004) {
+        char brand[49]{};
+        for (unsigned part = 0; part < 3; ++part) {
+            cpuid(0x80000002 + part, registers);
+            memcpy(brand + part * sizeof(registers), registers, sizeof(registers));
+        }
+        const char* name = brand;
+        while (*name == ' ')
+            ++name;
+        text.string("model name\t: ");
+        text.string(name);
+        text.character('\n');
+    }
+    text.character('\n');
+}
+
+static void mem_kib(Text& text, const char* label, uint64_t bytes) {
+    text.string(label);
+    text.string(": ");
+    text.number(bytes / 1024, 10, 8);
+    text.string(" kB\n");
+}
+
+static void cpu_stat_line(Text& text, const char* label, const CpuTotals& totals) {
+    text.string(label);
+    text.number(totals.user_ticks);
+    text.string(" 0 ");
+    text.number(totals.system_ticks);
+    text.character(' ');
+    text.number(totals.idle_ticks);
+    text.string(" 0 0 0 0 0 0\n");
+}
+
+static void uptime_seconds(Text& text, uint64_t value) {
+    text.number(value / 100);
+    text.character('.');
+    text.number(value % 100, 10, 2, '0');
+}
+
+static int system_snapshot(Kind kind, Snapshot& output) {
+    constexpr size_t capacity = 1024;
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    Text text{bytes, 0, capacity};
+    if (kind == Kind::cpuinfo)
+        cpu_information(text);
+    else if (kind == Kind::meminfo) {
+        auto ram = physical_memory_stats();
+        mem_kib(text, "MemTotal", ram.total);
+        mem_kib(text, "MemFree", ram.free);
+        mem_kib(text, "MemAvailable", ram.free);
+        mem_kib(text, "Buffers", block_buffer_bytes());
+        mem_kib(text, "SwapTotal", 0);
+        mem_kib(text, "SwapFree", 0);
+    } else {
+        auto totals = cpu_totals();
+        if (kind == Kind::uptime) {
+            uptime_seconds(text, ticks);
+            text.character(' ');
+            uptime_seconds(text, totals.idle_ticks);
+            text.character('\n');
+        } else {
+            cpu_stat_line(text, "cpu  ", totals);
+            cpu_stat_line(text, "cpu0 ", totals);
+            const auto realtime = clock_realtime_ticks();
+            text.string("btime ");
+            text.number(realtime > ticks ? (realtime - ticks) / 100 : 0);
+            text.character('\n');
+        }
+    }
+    if (text.failed) {
+        release(bytes);
+        return -75;
+    }
+    output = {bytes, text.length};
+    return 0;
+}
+
 static int make_snapshot(Node* node, Snapshot& output) {
     auto item = entry(node);
     if (item->kind == Kind::fdinfo)
         return fdinfo(*item, output);
+    if (item->kind == Kind::cpuinfo || item->kind == Kind::meminfo ||
+        item->kind == Kind::system_stat || item->kind == Kind::uptime)
+        return system_snapshot(item->kind, output);
     return item->kind == Kind::stat ? stat(node, output) : status(node, output);
 }
 
@@ -1048,8 +1185,8 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         return 1;
     }
     char name[256];
-    if (context->kind == Kind::root && cookie < 5) {
-        const char* link = cookie == 2 ? "self" : cookie == 3 ? "thread-self" : "sys";
+    if (context->kind == Kind::root && cookie < root_children + 2) {
+        const char* link = root_names[cookie - 2];
         Node* selected = nullptr;
         int error = lookup(node, link, selected);
         if (error)
@@ -1061,7 +1198,7 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         return 1;
     }
     if (context->kind == Kind::root || context->kind == Kind::task_list) {
-        uint64_t bias = context->kind == Kind::root ? 5 : 2;
+        uint64_t bias = context->kind == Kind::root ? root_children + 2 : 2;
         int selected_pid = 0;
         for (auto& candidate : tasks) {
             if (candidate.state == State::empty || !candidate.process ||

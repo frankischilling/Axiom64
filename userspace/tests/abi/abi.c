@@ -34,6 +34,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <sys/sysmacros.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
@@ -134,6 +135,43 @@ static void extended_metadata(int directory, int fd) {
     puts("ABI_STATX_PASS linkage=" ABI_LINKAGE);
 }
 
+static void proc_system_stats(void) {
+    struct sysinfo system;
+    CHECK(sysinfo(&system) == 0);
+    FILE* file = fopen("/proc/meminfo", "r");
+    unsigned long long total, free, available;
+    CHECK(file && fscanf(file, "MemTotal: %llu kB\nMemFree: %llu kB\nMemAvailable: %llu kB", &total,
+                         &free, &available) == 3);
+    CHECK(total == (uint64_t)system.totalram * system.mem_unit / 1024 && free == available &&
+          available <= total && fclose(file) == 0);
+
+    file = fopen("/proc/stat", "r");
+    char aggregate[256], core[256];
+    CHECK(file && fgets(aggregate, sizeof(aggregate), file) && fgets(core, sizeof(core), file));
+    CHECK(!strncmp(aggregate, "cpu  ", 5) && !strncmp(core, "cpu0 ", 5) &&
+          !strcmp(aggregate + 5, core + 5) && fclose(file) == 0);
+    unsigned long long user, nice, kernel, idle;
+    CHECK(sscanf(core + 5, "%llu %llu %llu %llu", &user, &nice, &kernel, &idle) == 4 &&
+          user + kernel + idle > 0 && !nice);
+
+    file = fopen("/proc/uptime", "r");
+    unsigned long long seconds, idle_seconds;
+    unsigned centiseconds, idle_centiseconds;
+    CHECK(file &&
+          fscanf(file, "%llu.%2u %llu.%2u", &seconds, &centiseconds, &idle_seconds,
+                 &idle_centiseconds) == 4 &&
+          fclose(file) == 0);
+    CHECK(seconds * 100 + centiseconds >= idle_seconds * 100 + idle_centiseconds);
+    CHECK(idle_seconds * 100 + idle_centiseconds >= idle);
+
+    file = fopen("/proc/cpuinfo", "r");
+    char label[64];
+    unsigned processor;
+    CHECK(file && fscanf(file, "%63s : %u", label, &processor) == 2 &&
+          !strcmp(label, "processor") && processor == 0 && fclose(file) == 0);
+    puts("ABI_PROC_SYSTEM_PASS linkage=" ABI_LINKAGE);
+}
+
 static void relative_modes(void) {
     CHECK(mkdir("/tmp/abi-chmod", 0700) == 0);
     int parent = open("/tmp/abi-chmod", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -194,6 +232,7 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0x7ffffffffffe, 8) == -1 && errno == EFAULT);
     relative_modes();
     executable_link();
+    proc_system_stats();
 
     char* memory = mmap(0, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(memory != MAP_FAILED);

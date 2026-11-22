@@ -34,6 +34,10 @@ struct CpuUsage {
     uint64_t user_ticks, system_ticks;
 };
 
+struct CpuTotals {
+    uint64_t user_ticks, system_ticks, idle_ticks;
+};
+
 struct LoadAverages {
     uint64_t one, five, fifteen;
 };
@@ -42,10 +46,12 @@ struct LoadAverages {
 void cpu_sample_load();
 LoadAverages cpu_load_averages();
 
-// Switch accounting ownership with interrupts disabled. A null owner excludes idle time.
+// Switch accounting ownership with interrupts disabled. A null owner leaves
+// elapsed time out of process accounting.
 void cpu_account(Task* next = nullptr, bool userspace = false);
 
 void cpu_refresh();
+CpuTotals cpu_totals();
 
 void cpu_depart(Task&);
 

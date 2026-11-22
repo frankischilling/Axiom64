@@ -29,6 +29,7 @@
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
@@ -113,6 +114,8 @@ BootInfo boot_info;
     vfs_init(boot_info.initramfs, boot_info.initramfs_size);
     block_init();
     boot_root_init(arguments, init);
+    if (arguments.has("usb.xhci=probe"))
+        xhci_probe();
     devices_init();
     net_init();
     log("Entering userspace in Ring 3\n");

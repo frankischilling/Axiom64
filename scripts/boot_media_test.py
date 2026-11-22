@@ -28,6 +28,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 import secrets
 import shutil
 import subprocess
@@ -59,7 +60,7 @@ def inspect_disk(directory, image, kernel, initramfs):
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
-def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False):
+def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False, xhci=None):
     command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
                "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot",
                "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
@@ -78,6 +79,8 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
                     "-object", f"filter-dump,id=capture,netdev=pxe,file={directory / 'pxe.pcap'}"]
     else:
         command += ["-nic", "none", "-boot", "order=d,strict=on", "-cdrom", medium]
+    if xhci == "keyboard":
+        command += ["-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0"]
     log = directory / "serial.log"
     with log.open("wb") as output:
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
@@ -90,12 +93,21 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
     if (result.returncode != (3 if invalid else 1) or not expected <= lines or entered == invalid or
             any(token in text for token in ("PANIC:", "FAULT pid=", "FILESYSTEM_SHUTDOWN_FAIL"))):
         raise RuntimeError(f"unexpected guest result in {log}: " + "\n".join(text.splitlines()[-15:]))
-    return {"medium": kind, "firmware": firmware, "invalid": invalid, "serial_sha256": digest(log)}
+    probes = [line for line in text.splitlines() if line.startswith("xhci:")]
+    if xhci == "keyboard" and (len(probes) != 1 or not re.fullmatch(
+            r"xhci: pci=[0-9a-f]+:[0-9a-f]+\.[0-7] commands=130 ports=8 connected=1 stopped=1",
+            probes[0])):
+        raise RuntimeError(f"xHCI did not complete both rings in {log}: {probes}")
+    if xhci == "none" and probes:
+        raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
+    return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
+            "serial_sha256": digest(log)}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/boot-media-test")
+    parser.add_argument("--xhci", action="store_true", help="include xHCI ring and absent-device checks")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -143,6 +155,17 @@ def main():
             case.mkdir()
             results.append(run_guest(case, kind, firmware, medium, marker, initramfs.stat().st_size, invalid=invalid))
             print(f"{case.name}: passed", flush=True)
+    if args.xhci:
+        target = output / "xhci-probe.raw"
+        build_medium("disk", target, kernel, initramfs, " test usb.xhci=probe", init=alternate)
+        for firmware in ("bios", "uefi"):
+            for device in ("none", "keyboard"):
+                case = output / f"{firmware}-xhci-{device}"
+                case.mkdir()
+                results.append(run_guest(case, "disk", firmware, target,
+                                         f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
+                                         xhci=device))
+                print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps({"kernel_sha256": digest(kernel),
         "initramfs_sha256": digest(initramfs), "boots": results}, indent=2) + "\n")
 

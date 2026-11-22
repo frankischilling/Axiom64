@@ -160,5 +160,47 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
     out = {base, size, index};
     return valid;
 }
+
+// The caller owns a quiescent Type 0 function and measured BAR0 while unassigned.
+// The address must already have passed the platform ownership check.
+template <class Config, class Access>
+PciBarStatus test_unassigned_memory(const Config& pci, uint64_t base, uint64_t size,
+                                    uint64_t physical_limit, const Access& access) {
+    using enum PciBarStatus;
+    constexpr uint16_t command_register = 4, low_register = 0x10, high_register = 0x14;
+    constexpr uint16_t memory_enable = 2;
+    const uint32_t original = pci.read32(low_register);
+    const bool wide = original & 4;
+    const uint16_t quiet = pci.read16(command_register);
+    if ((pci.read8(0x0e) & 0x7f) || (quiet & 7) || (original & ~12u) ||
+        (wide && pci.read32(high_register)) || !base || size < 16 || (size & (size - 1)) ||
+        (base & (size - 1)) || base >= physical_limit || size > physical_limit - base ||
+        (!wide && (base >= (1ull << 32) || size > (1ull << 32) - base)))
+        return invalid;
+
+    const uint32_t low = uint32_t(base) | original;
+    const uint32_t high = base >> 32;
+    pci.write32(low_register, low);
+    if (wide)
+        pci.write32(high_register, high);
+    bool accepted = false;
+    if (pci.read32(low_register) == low && (!wide || pci.read32(high_register) == high)) {
+        const uint16_t memory = quiet | memory_enable;
+        pci.write16(command_register, memory);
+        accepted = pci.read16(command_register) == memory && access(base);
+    }
+
+    // A half-written 64-bit BAR must never decode. Confirm the command before restoring it.
+    if (pci.read16(command_register) != quiet)
+        pci.write16(command_register, quiet);
+    if (pci.read16(command_register) != quiet)
+        return restore_failed;
+    pci.write32(low_register, original);
+    if (wide)
+        pci.write32(high_register, 0);
+    if (pci.read32(low_register) != original || (wide && pci.read32(high_register)))
+        return restore_failed;
+    return accepted ? valid : invalid;
+}
 } // namespace PciBarProbe
 } // namespace ax

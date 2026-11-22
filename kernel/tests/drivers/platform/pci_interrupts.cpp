@@ -314,6 +314,61 @@ void test_apertures() {
     std::puts("PCI_UNASSIGNED_BAR_PASS size absence readback restore");
 }
 
+void test_temporary_memory_bar() {
+    using namespace ax;
+    using enum PciBarStatus;
+    constexpr uint64_t address = 0x200001000, limit = 1ull << 36;
+    ConfigModel pci;
+    pci.flags = 0x400;
+    pci.bars[0] = 4;
+    unsigned accesses = 0;
+    auto check = [&](bool accepts) {
+        return PciBarProbe::test_unassigned_memory(pci, address, 4096, limit, [&](uint64_t base) {
+            assert(base == address && pci.flags == 0x402);
+            assert(pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+            ++accesses;
+            return accepts;
+        });
+    };
+    assert(check(true) == valid && accesses == 1);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    assert(check(false) == invalid && accesses == 2);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    pci.refuse_enable = true;
+    assert(check(true) == invalid && accesses == 2);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    pci.refuse_enable = false;
+    pci.refuse_restore = true; // Refuse the candidate write.
+    assert(check(true) == invalid && accesses == 2);
+    pci.refuse_restore = false;
+    assert(PciBarProbe::test_unassigned_memory(pci, address, 4096, limit, [&](uint64_t) {
+               pci.refuse_restore = true;
+               return true;
+           }) == restore_failed);
+    assert(pci.flags == 0x400 && pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+
+    pci = {};
+    pci.flags = 0x400;
+    pci.bars[0] = 4;
+    assert(PciBarProbe::test_unassigned_memory(pci, address, 4096, limit, [&](uint64_t) {
+               pci.refuse_quiet = true;
+               return true;
+           }) == restore_failed);
+    assert(pci.flags == 0x402 && pci.bar_writes == 2 && pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+
+    pci = {};
+    pci.flags = 0x400;
+    assert(check(true) == invalid && !pci.bar_writes); // A 32-bit BAR cannot hold this address.
+    constexpr uint64_t address32 = 0xf0001000;
+    assert(PciBarProbe::test_unassigned_memory(pci, address32, 4096, limit, [&](uint64_t base) {
+               return base == address32 && pci.flags == 0x402 && pci.bars[0] == address32;
+           }) == valid);
+    assert(pci.flags == 0x400 && !pci.bars[0] && pci.bar_writes == 2);
+    pci.flags |= 4;
+    assert(check(true) == invalid && pci.bar_writes == 2);
+    std::puts("PCI_TEMPORARY_BAR_PASS width32 width64 command_guard reject restore_failure");
+}
+
 void test_firmware_gap(const ax::PciFunction& pci) {
     using namespace ax;
     constexpr uint64_t high = 0x4000000000, low = 0xd0000000;
@@ -538,6 +593,7 @@ int main() {
     test_msi(pci);
     test_msix(pci);
     test_apertures();
+    test_temporary_memory_bar();
     test_firmware_gap(pci);
     test_memory_inventory(pci);
     test_bridge_windows();

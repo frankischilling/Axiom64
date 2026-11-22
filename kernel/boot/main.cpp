@@ -104,8 +104,9 @@ BootInfo boot_info;
     else
         log("Interrupts: PIC/PIT fallback, no validated MADT\n");
     firmware_configure_pci_interrupts(rsdp, topology, definitions);
-    if (arguments.has("lpss.i2c.probe"))
-        intel_lpss_i2c_probe(definitions);
+    const bool lpss_bar_test = arguments.has("lpss.i2c.bar-test");
+    if (lpss_bar_test || arguments.has("lpss.i2c.probe"))
+        intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, lpss_bar_test);
     if (arguments.has("hid.i2c.probe"))
         firmware_probe_i2c_hid(definitions);
     random_init(!arguments.has("random.trust_cpu=off"), arguments.has("random.trust_virtio=on"));

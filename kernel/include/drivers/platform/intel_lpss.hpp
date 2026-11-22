@@ -27,7 +27,9 @@
 namespace ax {
 namespace Acpi {
 struct DefinitionBlocks;
-}
+struct InterruptTopology;
+} // namespace Acpi
 
-void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks&);
+void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks&, const Acpi::InterruptTopology*,
+                          bool test_bar);
 } // namespace ax

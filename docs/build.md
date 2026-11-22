@@ -124,9 +124,16 @@ outside the boot memory map, PCI configuration windows, motherboard
 reservations, and existing PCI resources. The PCI inventory reads assigned
 BARs, ROMs, and bridge windows without probing other devices for their sizes.
 It uses the programmed alignment to bound each BAR, so it can exclude more
-space than a device actually occupies. If the inventory is incomplete, the
-probe reports no candidate. The address is a preview and still needs validation
-against platform MMIO that firmware does not describe in these tables.
+space than a device actually occupies. The inventory also excludes the local
+and I/O APICs and the HPET register pages. If the inventory is incomplete, the
+probe reports no candidate.
+
+Use `lpss.i2c.bar-test` to try a candidate on an unassigned LPSS BAR0 during
+early boot. The test keeps bus mastering and interrupts disabled, checks BAR
+readback, and reads the DesignWare identity through the temporary mapping.
+It then restores the BAR, power state and PCI command. A failed readback or
+identity check rejects the trial address. The controller still needs a driver
+to enable it for use.
 
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and

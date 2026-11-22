@@ -23,8 +23,10 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/intel_lpss.hpp"
+#include "boot/boot.hpp"
 #include "core/base.hpp"
 #include "drivers/platform/pci.hpp"
+#include "firmware/acpi.hpp"
 #include "firmware/aml.hpp"
 
 namespace ax {
@@ -32,18 +34,82 @@ namespace {
 constexpr uint16_t memory_decode = 2, intx_disabled = 1 << 10;
 constexpr unsigned component_type = 0xfc, lpss_capabilities = 0x2fc;
 constexpr unsigned register_bytes = lpss_capabilities + sizeof(uint32_t);
+constexpr uint32_t designware_i2c = 0x44570140;
 
 struct ProbeResources {
     Acpi::PciRootWindows windows;
     Acpi::MotherboardResources board;
     PciMemoryInventory* inventory;
     unsigned controllers;
+    bool test_bar;
 };
+
+void reserve_platform_memory(PciMemoryInventory& inventory,
+                             const Acpi::InterruptTopology* topology) {
+    if (!topology) {
+        inventory.incomplete = true;
+        return;
+    }
+    inventory.add(topology->local_apic, page_size);
+    for (unsigned i = 0; i < topology->io_apic_count; ++i)
+        inventory.add(topology->io_apics[i].address, page_size);
+    uint32_t leaf = 1, b, c, features;
+    asm volatile("cpuid" : "+a"(leaf), "=b"(b), "=c"(c), "=d"(features));
+    if ((features & (1u << 9)) && (features & (1u << 5))) {
+        constexpr uint32_t apic_base_msr = 0x1b;
+        constexpr uint64_t apic_base_mask = 0x000ffffffffff000ull;
+        const uint64_t apic = rdmsr(apic_base_msr) & apic_base_mask;
+        if (apic && apic != topology->local_apic)
+            inventory.add(apic, page_size);
+    }
+    Acpi::Hpet hpet;
+    if (Acpi::find_hpet(boot_info.rsdp, firmware_read, nullptr, hpet)) {
+        const uint64_t start = hpet.address & ~(page_size - 1);
+        const uint64_t end = (hpet.address + 1024 + page_size - 1) & ~(page_size - 1);
+        inventory.add(start, end - start);
+    }
+}
 
 bool set_command(const PciFunction& pci, uint16_t command) {
     if (pci.read16(4) != command)
         pci.write16(4, command);
     return pci.read16(4) == command;
+}
+
+uint32_t report_identity(const volatile uint32_t* registers, uint64_t base, uint64_t size) {
+    const uint32_t capabilities = registers[lpss_capabilities / 4];
+    const uint32_t component = registers[component_type / 4];
+    log("LPSS I2C: BAR0 base=%x bytes=%x caps=%x component=%x\n", base, size,
+        uint64_t(capabilities), uint64_t(component));
+    return component;
+}
+
+bool test_unassigned_bar(const PciFunction& pci, uint64_t size, const ProbeResources& resources) {
+    log("LPSS I2C: BAR0 unassigned bytes=%x\n", size);
+    uint64_t gap;
+    if (resources.inventory)
+        pci_record_memory(pci, *resources.inventory); // D0 can restore other BARs on this function.
+    if (!resources.inventory ||
+        !pci_preview_memory_bar(pci, size, resources.windows, resources.board, *resources.inventory,
+                                gap)) {
+        log("LPSS I2C: BAR0 no candidate\n");
+        return true;
+    }
+    log("LPSS I2C: BAR0 candidate base=%x bytes=%x\n", gap, size);
+    if (!resources.test_bar || size < register_bytes)
+        return true;
+    const auto result = PciBarProbe::test_unassigned_memory(
+        pci, gap, size, physical_address_limit(), [&](uint64_t address) {
+            auto* registers = static_cast<volatile uint32_t*>(map_mmio(address, register_bytes));
+            return registers && report_identity(registers, address, size) == designware_i2c;
+        });
+    log("LPSS I2C: BAR0 temporary test accepted=%u address-restored=%u\n",
+        uint64_t(result == PciBarStatus::valid), uint64_t(result != PciBarStatus::restore_failed));
+    if (result == PciBarStatus::restore_failed) {
+        resources.inventory->incomplete = true;
+        return false;
+    }
+    return true;
 }
 
 bool probe_registers(const PciFunction& pci, uint16_t quiet_command,
@@ -55,17 +121,8 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command,
         if (result == PciBarStatus::invalid) {
             uint64_t size;
             const auto measured = pci.measure_unassigned_memory_bar(0, size);
-            if (measured == PciBarStatus::valid) {
-                log("LPSS I2C: BAR0 unassigned bytes=%x\n", size);
-                uint64_t gap;
-                if (resources.inventory &&
-                    pci_preview_memory_bar(pci, size, resources.windows, resources.board,
-                                           *resources.inventory, gap))
-                    log("LPSS I2C: BAR0 candidate base=%x bytes=%x\n", gap, size);
-                else
-                    log("LPSS I2C: BAR0 no candidate\n");
-                return true;
-            }
+            if (measured == PciBarStatus::valid)
+                return test_unassigned_bar(pci, size, resources);
             if (measured == PciBarStatus::restore_failed)
                 return false;
         }
@@ -77,10 +134,7 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command,
         log("LPSS I2C: cannot enable memory aperture\n");
         return true;
     }
-    const uint32_t capabilities = registers[lpss_capabilities / 4];
-    const uint32_t component = registers[component_type / 4];
-    log("LPSS I2C: BAR0 base=%x bytes=%x caps=%x component=%x\n", bar.base, bar.size,
-        uint64_t(capabilities), uint64_t(component));
+    report_identity(registers, bar.base, bar.size);
     return true;
 }
 
@@ -113,19 +167,21 @@ void probe(const PciFunction& pci, void* context) {
     log("LPSS I2C: wake=%u power=%u BAR0=%x:%x\n", uint64_t(awake), uint64_t(pci.power_state()),
         uint64_t(pci.read32(0x14)), uint64_t(pci.read32(0x10)));
     const bool bar_intact =
-        !awake || !set_command(pci, quiet) || probe_registers(pci, quiet, resources);
+        !awake || (set_command(pci, quiet) && probe_registers(pci, quiet, resources));
 
     // Leave bus mastering off unless the original power and command can be restored.
     const bool settled = awake || pci.power_state() == initial;
-    const bool restored = settled && set_command(pci, quiet) && pci.set_power_state(initial) &&
-                          bar_intact && set_command(pci, command);
+    const bool restored = bar_intact && settled && set_command(pci, quiet) &&
+                          pci.set_power_state(initial) && set_command(pci, command);
     log("LPSS I2C: restored=%u power=%u command=%x\n", uint64_t(restored),
         uint64_t(pci.power_state()), uint64_t(pci.read16(4)));
 }
 } // namespace
 
-void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks) {
+void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
+                          const Acpi::InterruptTopology* topology, bool test_bar) {
     ProbeResources resources{};
+    resources.test_bar = test_bar;
     const auto providers = pci_firmware_read_regions();
     if (Acpi::decode_pci_root_windows(blocks, resources.windows, providers))
         for (unsigned i = 0; i < resources.windows.count; ++i) {
@@ -143,8 +199,12 @@ void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks) {
     log("PCI motherboard memory: ranges=%u incomplete=%u\n", uint64_t(resources.board.count),
         uint64_t(resources.board.incomplete));
     resources.inventory = static_cast<PciMemoryInventory*>(alloc(sizeof(PciMemoryInventory)));
-    if (resources.inventory)
+    if (resources.inventory) {
         pci_memory_inventory(*resources.inventory);
+        const unsigned before = resources.inventory->count;
+        reserve_platform_memory(*resources.inventory, topology);
+        log("PCI platform memory: ranges=%u\n", uint64_t(resources.inventory->count - before));
+    }
     log("PCI occupied memory: ranges=%u incomplete=%u\n",
         uint64_t(resources.inventory ? resources.inventory->count : 0),
         uint64_t(!resources.inventory || resources.inventory->incomplete));

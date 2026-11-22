@@ -220,7 +220,15 @@ bool PciFunction::set_power_state(PciPowerState requested) const {
                                                                    : 0;
     // PME status is write-one-to-clear.
     write16(offset, (saved & ~(power_state_mask | pme_status)) | uint16_t(requested));
-    return (!delay || clock_delay_us(delay)) && power_state() == requested;
+    // The clock helper bounds each wait by its poll count. Use short waits to
+    // cover the required settling time even on a fast processor.
+    for (unsigned remaining = delay; remaining;) {
+        const unsigned interval = min(remaining, 1000u);
+        if (!clock_delay_us(interval))
+            return false;
+        remaining -= interval;
+    }
+    return power_state() == requested;
 }
 
 bool PciMsi::start(const PciFunction& pci, Irq::Handler handler, void* context) {

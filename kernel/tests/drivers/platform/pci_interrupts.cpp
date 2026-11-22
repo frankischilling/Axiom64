@@ -64,9 +64,9 @@ void test_power_state(const ax::PciFunction& pci) {
     assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 10000);
     assert(pci.read16(pmcsr) == pme_enable); // A zero write leaves hardware PME status alone.
     assert(!pci.set_power_state(d1));
-    assert(pci.set_power_state(d2) && pci.power_state() == d2 && delay_us == 200);
-    assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 200);
-    assert(pci.set_power_state(d3hot) && pci.power_state() == d3hot && delay_us == 10000);
+    assert(pci.set_power_state(d2) && pci.power_state() == d2 && delay_us == 10200);
+    assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 10400);
+    assert(pci.set_power_state(d3hot) && pci.power_state() == d3hot && delay_us == 20400);
     clock_ready = false;
     assert(!pci.set_power_state(d0));
     clock_ready = true;
@@ -379,8 +379,10 @@ void log(const char*, ...) {
 }
 
 bool clock_delay_us(unsigned microseconds) {
-    delay_us = microseconds;
-    return clock_ready;
+    if (!clock_ready || microseconds > 1000)
+        return false;
+    delay_us += microseconds;
+    return true;
 }
 
 void* map_mmio(uint64_t address, size_t bytes) {

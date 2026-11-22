@@ -63,6 +63,45 @@ static void child_status(pid_t child, int expected) {
     CHECK(WEXITSTATUS(status) == expected);
 }
 
+static void shared_file_table_pressure(void) {
+    enum { workers = 12, files_per_worker = 100 };
+
+    for (unsigned round = 0; round < 8; ++round) {
+        int ready[2], release[2];
+        CHECK(pipe(ready) == 0 && pipe(release) == 0);
+        pid_t children[workers];
+        for (unsigned i = 0; i < workers; ++i) {
+            children[i] = fork();
+            CHECK(children[i] >= 0);
+            if (children[i])
+                continue;
+            CHECK(close(ready[0]) == 0 && close(release[1]) == 0);
+            int files[files_per_worker];
+            for (unsigned j = 0; j < files_per_worker; ++j) {
+                files[j] = open("/dev/null", O_RDONLY | O_CLOEXEC);
+                CHECK(files[j] >= 0);
+            }
+            CHECK(write(ready[1], "+", 1) == 1 && close(ready[1]) == 0);
+            char byte;
+            CHECK(read(release[0], &byte, 1) == 0);
+            if (round % 2 == 0)
+                for (unsigned j = 0; j < files_per_worker; ++j)
+                    CHECK(close(files[j]) == 0);
+            _exit(0);
+        }
+        CHECK(close(ready[1]) == 0 && close(release[0]) == 0);
+        char byte;
+        for (unsigned i = 0; i < workers; ++i)
+            CHECK(read(ready[0], &byte, 1) == 1 && byte == '+');
+        int fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+        CHECK(fd >= 0 && write(fd, "+", 1) == 1 && close(fd) == 0);
+        CHECK(close(ready[0]) == 0 && close(release[1]) == 0);
+        for (unsigned i = 0; i < workers; ++i)
+            child_status(children[i], 0);
+    }
+    puts("ABI_OPEN_DESCRIPTION_PRESSURE_PASS linkage=" ABI_LINKAGE);
+}
+
 static void executable_path(const char* expected) {
     char path[256];
     ssize_t length = readlink("/proc/self/exe", path, sizeof(path));
@@ -382,6 +421,7 @@ int main(int argc, char** argv) {
     CHECK(nanosleep(&delay, 0) == 0);
     CHECK(clock_gettime(CLOCK_MONOTONIC, &after) == 0);
     CHECK(after.tv_sec > before.tv_sec || after.tv_nsec >= before.tv_nsec + 20000000);
+    shared_file_table_pressure();
     puts("ABI_TESTS_PASS linkage=" ABI_LINKAGE);
     return 0;
 }

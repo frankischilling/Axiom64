@@ -59,8 +59,50 @@ Timestamp node_now() {
 Node nodes[16384];
 size_t node_count;
 Node* root_node;
-static Handle handles[max_handles];
+constexpr unsigned handles_per_chunk = 64;
+static_assert(max_handles % handles_per_chunk == 0);
+// Waiters can retain a slot's address and generation. Keep each chunk in place
+// and recycle its slots only after the last reference and its teardown finish.
+static Handle* handle_chunks[max_handles / handles_per_chunk];
+static unsigned handle_chunk_count;
+static Handle* free_handles;
 static uint64_t next_generation = 1;
+
+static void recycle_handle(Handle& handle) {
+    handle.references = 0;
+    handle.next_free = free_handles;
+    free_handles = &handle;
+}
+
+static Handle* allocate_handle(int& error) {
+    if (!free_handles) {
+        if (handle_chunk_count == max_handles / handles_per_chunk) {
+            error = -23;
+            return nullptr;
+        }
+        auto chunk = static_cast<Handle*>(alloc(sizeof(Handle) * handles_per_chunk));
+        if (!chunk) {
+            error = -12;
+            return nullptr;
+        }
+        handle_chunks[handle_chunk_count++] = chunk;
+        for (unsigned i = handles_per_chunk; i; --i)
+            recycle_handle(chunk[i - 1]);
+    }
+    auto handle = free_handles;
+    free_handles = handle->next_free;
+    return handle;
+}
+
+template <typename Predicate> static bool any_open_handle(Predicate matches) {
+    for (unsigned chunk = 0; chunk < handle_chunk_count; ++chunk)
+        for (unsigned slot = 0; slot < handles_per_chunk; ++slot) {
+            const auto& handle = handle_chunks[chunk][slot];
+            if (handle.references && matches(handle))
+                return true;
+        }
+    return false;
+}
 
 bool normalize(const char* cwd, const char* path, char* result, size_t cap) {
     char input[2048];
@@ -739,9 +781,8 @@ bool node_referenced(Node* node) {
         }
         return false;
     };
-    for (auto& handle : handles)
-        if (handle.references && references(handle.node))
-            return true;
+    if (any_open_handle([&](const Handle& handle) { return references(handle.node); }))
+        return true;
     for (auto& task : tasks)
         if (task.state != State::empty && task.state != State::zombie && task.fs &&
             (references(task.fs->cwd_node) || references(task.fs->root_node)))
@@ -776,20 +817,20 @@ void reclaim_released_nodes() {
 }
 
 bool node_open_for_write(const Node* node) {
-    for (const auto& handle : handles)
-        if (handle.references && handle.node == node && (handle.flags & 3) &&
-            !(handle.flags & 010000000))
-            return true;
-    return false;
+    return any_open_handle([node](const Handle& handle) {
+        return handle.node == node && (handle.flags & 3) && !(handle.flags & 010000000);
+    });
 }
 
 static bool mount_busy(Mount* mount, bool writers_only) {
     if (!writers_only && socket_mount_busy(mount))
         return true;
-    for (auto& h : handles)
-        if (h.references && h.node && h.node->mount == mount &&
-            (!writers_only || ((h.flags & 3) && (h.node->mode & 0170000) == regular_file)))
-            return true;
+    if (any_open_handle([mount, writers_only](const Handle& handle) {
+            return handle.node && handle.node->mount == mount &&
+                   (!writers_only ||
+                    ((handle.flags & 3) && (handle.node->mode & 0170000) == regular_file));
+        }))
+        return true;
     for (auto& task : tasks)
         if (!writers_only && task.state != State::empty && task.state != State::zombie &&
             ((task.fs->cwd_node && task.fs->cwd_node->mount == mount) ||
@@ -1030,31 +1071,28 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
             *error = -26;
         return nullptr;
     }
-    if (error)
-        *error = -23;
-    for (auto& h : handles)
-        if (!h.references) {
-            h = {n, nullptr, 0, flags, 1, false};
-            h.generation = next_generation++;
-            if (current) {
-                h.opener_uid = current->credentials.user.filesystem;
-                h.opener_gid = current->credentials.group.filesystem;
-            }
-            int result = flags & 010000000 ? 0 : device_open(&h);
-            if (result) {
-                h.references = 0;
-                if (error)
-                    *error = result;
-                return nullptr;
-            }
-            if (error)
-                *error = 0;
+    int result = 0;
+    auto handle = allocate_handle(result);
+    if (handle) {
+        *handle = {n, nullptr, 0, flags, 1, false};
+        handle->generation = next_generation++;
+        if (current) {
+            handle->opener_uid = current->credentials.user.filesystem;
+            handle->opener_gid = current->credentials.group.filesystem;
+        }
+        result = flags & 010000000 ? 0 : device_open(handle);
+        if (result) {
+            recycle_handle(*handle);
+            handle = nullptr;
+        } else {
             if (is_memfd(n))
                 memfd_open(n);
             retain_descriptor_inode(n);
-            return &h;
         }
-    return nullptr;
+    }
+    if (error)
+        *error = result;
+    return handle;
 }
 
 Handle* pipe_handle(Pipe* p, bool writer) {
@@ -1143,6 +1181,7 @@ void close_handle(Handle* h) {
         memfd_close(retired_node);
     else
         posix_queue_reap(retired_node);
+    recycle_handle(*h);
 }
 
 bool handle_has_poll(const Handle& handle) {

@@ -1,6 +1,19 @@
 """Small synchronous QEMU monitor client used by the boot harness."""
 import json
 import socket
+import time
+
+
+def await_serial(vm, log, markers, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        data = log.read_bytes()
+        for marker in markers:
+            if marker in data:
+                return marker
+        if time.monotonic() >= deadline or vm.poll() is not None:
+            raise RuntimeError(f"Missing {markers!r}. See {log}")
+        time.sleep(0.1)
 
 
 class Qmp:

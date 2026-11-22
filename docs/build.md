@@ -77,11 +77,12 @@ boot products, and PXE packet captures under `build/boot-media-test/`. To run it
 again alongside existing results, use `python3 scripts/boot_media_test.py --output build/boot-media-next`.
 
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
-ring wrap, and the device descriptor under BIOS and UEFI. The test boots with
-an emulated xHCI controller and keyboard and checks a second boot with no
-controller. The `usb.xhci=probe` boot option reads a connected root device's
-descriptor and then halts the controller. Keyboard input still requires
-configuration, interrupt transfers, and HID report handling.
+ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a
+key press through QEMU and checks the press and release from the keyboard's HID
+reports. It also boots without a controller to check that case. For descriptor
+and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
+also read key reports on a root-port boot keyboard. Both options halt the
+controller before userspace starts.
 
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 

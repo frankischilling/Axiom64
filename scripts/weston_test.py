@@ -34,10 +34,10 @@ import time
 from account_normal_test import write_cpio
 from boot_media_test import digest
 from disk_root import archive_entries
-from doom_test import await_serial, screenshot
+from doom_test import screenshot
 from fetch import ROOT
 from legacy_ata_test import image
-from qmp import Qmp
+from qmp import Qmp, await_serial
 
 
 def fixture(rootfs, destination):

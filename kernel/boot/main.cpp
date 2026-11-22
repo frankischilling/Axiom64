@@ -114,8 +114,9 @@ BootInfo boot_info;
     vfs_init(boot_info.initramfs, boot_info.initramfs_size);
     block_init();
     boot_root_init(arguments, init);
-    if (arguments.has("usb.xhci=probe"))
-        xhci_probe();
+    const bool usb_keyboard_probe = arguments.has("usb.xhci=keyboard-probe");
+    if (usb_keyboard_probe || arguments.has("usb.xhci=probe"))
+        xhci_probe(usb_keyboard_probe);
     devices_init();
     net_init();
     log("Entering userspace in Ring 3\n");

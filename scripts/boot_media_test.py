@@ -33,10 +33,12 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from account_normal_test import write_cpio
 from boot_media import ESP_START, SECTOR, build_medium
 from fetch import ROOT
+from qmp import Qmp, await_serial
 
 
 def digest(path):
@@ -58,6 +60,26 @@ def inspect_disk(directory, image, kernel, initramfs):
     if digest(directory / "disk-axiom64.elf") != digest(kernel):
         raise RuntimeError("disk kernel differs from the original")
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
+
+
+def run_keyboard_guest(command, log, output):
+    with tempfile.TemporaryDirectory(prefix="axiom64-xhci-qmp-", dir="/tmp") as temporary:
+        socket = Path(temporary) / "monitor"
+        with subprocess.Popen(command + ["-qmp", f"unix:{socket},server=on,wait=off"],
+                              stdin=subprocess.DEVNULL, stdout=output,
+                              stderr=subprocess.STDOUT) as guest:
+            try:
+                await_serial(guest, log, (b"xhci-keyboard-ready:",), 60)
+                monitor = Qmp(socket)
+                try:
+                    monitor.command("send-key", {"keys": [{"type": "qcode", "data": "a"}],
+                                                 "hold-time": 350})
+                finally:
+                    monitor.close()
+                return guest.wait(timeout=15)
+            finally:
+                if guest.poll() is None:
+                    guest.kill()
 
 
 def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False, xhci=None):
@@ -83,18 +105,23 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         command += ["-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0"]
     log = directory / "serial.log"
     with log.open("wb") as output:
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
-                                stderr=subprocess.STDOUT, timeout=90)
+        if xhci == "keyboard":
+            returncode = run_keyboard_guest(command, log, output)
+        else:
+            returncode = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
+                                        stderr=subprocess.STDOUT, timeout=90).returncode
     text = log.read_text(errors="replace")
     lines = set(text.splitlines())
     expected = {f"Firmware: {firmware.upper()}", marker, f"AXIOM64_EXIT status={int(invalid)}",
                 f"Boot modules: count=1 initramfs_bytes={module_bytes}"}
     entered = "Entering userspace in Ring 3" in lines
-    if (result.returncode != (3 if invalid else 1) or not expected <= lines or entered == invalid or
+    if (returncode != (3 if invalid else 1) or not expected <= lines or entered == invalid or
             any(token in text for token in ("PANIC:", "FAULT pid=", "FILESYSTEM_SHUTDOWN_FAIL"))):
         raise RuntimeError(f"unexpected guest result in {log}: " + "\n".join(text.splitlines()[-15:]))
     probes = [line for line in text.splitlines() if line.startswith("xhci:")]
     devices = [line for line in text.splitlines() if line.startswith("xhci-device:")]
+    keyboards = [line for line in text.splitlines() if line.startswith("xhci-keyboard:")]
+    keys = [line for line in text.splitlines() if line.startswith("xhci-key:")]
     if xhci == "keyboard" and (len(probes) != 1 or not re.fullmatch(
             r"xhci: pci=[0-9a-f]+:[0-9a-f]+\.[0-7] commands=130 ports=8 connected=1 stopped=1",
             probes[0])):
@@ -103,7 +130,15 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             r"xhci-device: port=[1-8] speed=[1-5] vendor=627 product=1 configurations=1",
             devices[0])):
         raise RuntimeError(f"xHCI did not read the keyboard descriptor in {log}: {devices}")
-    if xhci == "none" and (probes or devices):
+    if xhci == "keyboard" and (len(keyboards) != 1 or not re.fullmatch(
+            r"xhci-keyboard: port=[1-8] configuration=1 interface=0 endpoint=81 packet=8 interval=[1-9][0-9]*",
+            keyboards[0])):
+        raise RuntimeError(f"xHCI did not configure the keyboard in {log}: {keyboards}")
+    if xhci == "keyboard":
+        port = devices[0].split()[1]
+        if keys != [f"xhci-key: {port} usage=4 pressed=1", f"xhci-key: {port} usage=4 pressed=0"]:
+            raise RuntimeError(f"xHCI did not read the key press and release in {log}: {keys}")
+    if xhci == "none" and (probes or devices or keyboards or keys):
         raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
             "serial_sha256": digest(log)}
@@ -112,7 +147,7 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/boot-media-test")
-    parser.add_argument("--xhci", action="store_true", help="include xHCI ring and absent-device checks")
+    parser.add_argument("--xhci", action="store_true", help="include xHCI and USB keyboard checks")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -162,7 +197,7 @@ def main():
             print(f"{case.name}: passed", flush=True)
     if args.xhci:
         target = output / "xhci-probe.raw"
-        build_medium("disk", target, kernel, initramfs, " test usb.xhci=probe", init=alternate)
+        build_medium("disk", target, kernel, initramfs, " test usb.xhci=keyboard-probe", init=alternate)
         for firmware in ("bios", "uefi"):
             for device in ("none", "keyboard"):
                 case = output / f"{firmware}-xhci-{device}"

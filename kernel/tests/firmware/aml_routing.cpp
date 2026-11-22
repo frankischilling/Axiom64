@@ -630,6 +630,61 @@ void diagnostic_pci_cases() {
     std::puts("ACPI_DIAGNOSTIC_PCI_PASS word_access parent_scope absent_function");
 }
 
+unsigned host_bridge_reads;
+
+bool read_host_bridge(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
+                      uint16_t offset, uint8_t width, uint32_t& value) {
+    ++host_bridge_reads;
+    if (segment != 2 || bus != 0x40 || slot || function || offset != 0x60 || width != 2)
+        return false;
+    value = 0xbead;
+    return true;
+}
+
+void host_bridge_bitfields() {
+    using namespace ax::Acpi;
+    const auto crs =
+        sequence({address_window(0x87, 0x0c, 1, 0xfe000000, 0xfe000fff, 0x1000), {0x79, 0}});
+    const auto ready =
+        block({0xa0}, sequence({{0x93}, name("PXSZ"), {0x0a, 0x15, 0xa4, 0x0a, 15}}));
+    const auto status = block({0x14}, sequence({name("_STA"), {0}, ready, {0xa4, 0}}));
+    const auto current = block({0x14}, sequence({name("_CRS"),
+                                                 {0, 0x8a},
+                                                 name("BUF0"),
+                                                 {0x0a, 14},
+                                                 name("MAX0"),
+                                                 {0x8a},
+                                                 name("BUF0"),
+                                                 {0x0a, 22},
+                                                 name("LEN0"),
+                                                 {0x70, 0x0b, 0, 0x20},
+                                                 name("LEN0"),
+                                                 {0x74, 0x72, 0x0c, 0, 0, 0, 0xfe},
+                                                 name("LEN0"),
+                                                 {0, 1},
+                                                 name("MAX0"),
+                                                 {0xa4},
+                                                 name("BUF0")}));
+    auto inspect = [&](uint8_t length) {
+        const auto region = sequence({{0x5b, 0x80}, name("HBUS"), {2, 0x0a, 0x60, 0x0a, length}});
+        const auto fields =
+            block({0x5b, 0x81}, sequence({name("HBUS"), {2, 0, 3}, name("PXSZ"), {6}}));
+        const auto table = definition(
+            block({0x5b, 0x82}, sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}),
+                                          data("_SEG", {0x0a, 2}), data("_BBN", {0x0a, 0x40}),
+                                          region, fields, status, buffer("BUF0", crs), current})));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        PciRootWindows windows{};
+        return decode_pci_root_windows(blocks, windows, {read_test_nvs, read_host_bridge}) &&
+               windows.count == 1 && windows.entries[0].segment == 2 &&
+               windows.entries[0].bus == 0x40 && windows.entries[0].size == 0x2000;
+    };
+    assert(inspect(2) && host_bridge_reads == 1);
+    assert(!inspect(1) && host_bridge_reads == 1);
+    std::puts("ACPI_HOST_BRIDGE_FIELDS_PASS root_function bit_slice access_bounds");
+}
+
 void firmware_control_cases() {
     using namespace ax::Acpi;
     auto inspect = [](const Bytes& body) {
@@ -721,6 +776,66 @@ void namespace_buffer_fields() {
     assert(!inspect(1));
     std::puts("ACPI_BUFFER_FIELDS_PASS persistent_bytes bounds overlapping_bit");
 }
+
+void composed_i2c_resources() {
+    using namespace ax::Acpi;
+    const char* controller = "\\_SB_.PCI0.I2C0";
+    const auto source = sequence({name(controller), {0}});
+    const auto serial = sequence(
+        {{0x8e, uint8_t(15 + source.size()), 0, 2, 0, 1, 2, 0, 0, 1, 6, 0, 0, 0, 0, 0, 0, 0},
+         source,
+         {0x79, 0}});
+    const auto build = block({0x14}, sequence({name("BLDR"),
+                                               {0},
+                                               buffer("IIC0", serial),
+                                               {0x8a},
+                                               name("IIC0"),
+                                               {0x0a, 12},
+                                               name("SPD0"),
+                                               {0x8b},
+                                               name("IIC0"),
+                                               {0x0a, 16},
+                                               name("ADR0"),
+                                               {0x8d},
+                                               name("IIC0"),
+                                               {0x0a, 128},
+                                               name("BIT0"),
+                                               {0x70, 0x0c, 0x80, 0x1a, 0x06, 0},
+                                               name("SPD0"),
+                                               {0x70, 0x0a, 0x14},
+                                               name("ADR0"),
+                                               {0x70, 1},
+                                               name("BIT0"),
+                                               {0xa4},
+                                               name("IIC0")}));
+    const auto method =
+        block({0x14},
+              sequence({name("_CRS"), {0, 0x84}, name("BLDR"), name("IRQ0"), {0x61, 0xa4, 0x61}}));
+    auto inspect = [&](const Bytes& irq, I2cHidDevices& devices) {
+        const auto table = definition(sequence(
+            {build,
+             block({0x5b, 0x82},
+                   sequence({name("TPD0"), data("_HID", sequence({{0x0d}, name("ELAN0406"), {0}})),
+                             data("_CID", {0x0c, 0x41, 0xd0, 0x0c, 0x50}), buffer("IRQ0", irq),
+                             method}))}));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_i2c_hid_devices(blocks, devices);
+    };
+    const Bytes irq{0x89, 6, 0, 9, 1, 45, 0, 0, 0, 0x79, 0};
+    I2cHidDevices devices{};
+    assert(inspect(irq, devices) && devices.count == 1);
+    assert(devices.devices[0].address == 0x15 && devices.devices[0].max_hz == 400000 &&
+           !std::strcmp(devices.devices[0].controller, controller));
+    assert(inspect({}, devices) && devices.count == 1);
+    assert(inspect(sequence({irq, {0, 0}}), devices) && devices.count == 1);
+    assert(inspect(sequence({irq, {1}}), devices) && !devices.count);
+    assert(inspect(Bytes(irq.begin(), irq.end() - 2), devices) && !devices.count);
+    auto invalid_checksum = irq;
+    invalid_checksum.back() = 1;
+    assert(inspect(invalid_checksum, devices) && !devices.count);
+    std::puts("ACPI_I2C_COMPOSED_CRS_PASS mutable_fields serial_bus checksum malformed_end");
+}
 } // namespace
 
 int main() {
@@ -751,6 +866,8 @@ int main() {
     root_window_cases();
     nvs_field_cases();
     diagnostic_pci_cases();
+    host_bridge_bitfields();
     firmware_control_cases();
     namespace_buffer_fields();
+    composed_i2c_resources();
 }

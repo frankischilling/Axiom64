@@ -122,6 +122,8 @@ memory. They honor the firmware global lock for fields that require it and
 skip discovery if they cannot acquire the lock safely.
 The probes can follow conditional namespace references and hold firmware
 resource buffers in a private copy when AML declares writable fields.
+They can read packed PCI configuration fields and assemble resource templates
+that firmware builds across several AML methods.
 
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.

@@ -30,6 +30,7 @@
 namespace ax {
 struct Handle;
 struct Node;
+struct Task;
 
 struct FileMapping {
     AddressSpace* space;
@@ -37,10 +38,11 @@ struct FileMapping {
     uint64_t start, end, offset;
     Handle* description = nullptr;
 
-    // Memory-file mappings also participate in their backing object's list.
+    // Demand-paged mappings also participate in their backing object's list.
     Node* memory_file = nullptr;
+    Node* disk_file = nullptr;
     FileMapping* file_next = nullptr;
-    bool shared = false, may_write = false;
+    bool shared = false, may_write = false, no_execute = false;
 };
 
 void attach_file_mapping(FileMapping&);
@@ -49,4 +51,14 @@ void move_file_mapping(FileMapping&, uint64_t start, size_t length);
 int unmap_file_mappings(AddressSpace&, uint64_t base, size_t length);
 bool clone_file_mappings(AddressSpace&, const AddressSpace&);
 void release_file_mappings(AddressSpace&);
+
+int map_disk_file(Task&, Handle&, uint64_t base, size_t length, uint64_t offset, int protection,
+                  bool replace);
+void invalidate_disk_pages(Node&, uint64_t first, uint64_t end);
+uint64_t file_page_permissions(uint64_t);
+uint64_t file_page_protection(uint64_t, int protection);
+uint64_t unpopulated_file_page(const FileMapping&, int protection);
+
+enum class FileFault { outside, protection, bus, resolved };
+FileFault file_mapping_fault(AddressSpace&, uint64_t address, bool write, bool execute);
 } // namespace ax

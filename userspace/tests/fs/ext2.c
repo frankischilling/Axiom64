@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,6 +203,55 @@ static void namespace_tests(void) {
     ERROR(umount(volume), EBUSY); // The next open inode keeps its volume mounted.
 }
 
+static void shared_file_reads(void) {
+    const char* path = "/tmp/ext2-volume/shared-input";
+    const char* link_path = "/tmp/ext2-volume/shared-alias";
+    const size_t page = 4096;
+    int fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0644);
+    CHECK(fd >= 0 && pwrite(fd, "XYZ", 3, 2 * page) == 3);
+    CHECK(link(path, link_path) == 0);
+    int input = open(link_path, O_RDONLY);
+    CHECK(input >= 0);
+    unsigned char* disk = mmap(NULL, page * 3, PROT_NONE, MAP_SHARED, input, 0);
+    unsigned char* last = mmap(NULL, page, PROT_READ, MAP_SHARED, input, 2 * page);
+    CHECK(disk != MAP_FAILED && last != MAP_FAILED && close(input) == 0);
+    CHECK(mprotect(disk, page * 3, PROT_READ) == 0);
+    ERROR(mprotect(last, page, PROT_READ | PROT_WRITE), EACCES);
+    errno = 0;
+    CHECK(mmap(NULL, page, PROT_WRITE, MAP_SHARED, fd, 0) == MAP_FAILED && errno == ENODEV);
+    CHECK(last[0] == 'X' && disk[2 * page + 1] == 'Y' && last[3] == 0);
+    CHECK(pwrite(fd, "A", 1, 2 * page) == 1);
+    CHECK(last[0] == 'A' && disk[2 * page] == 'A');
+    last = mremap(last, page, 2 * page, MREMAP_MAYMOVE);
+    CHECK(last != MAP_FAILED && last[0] == 'A');
+    ERROR(mprotect(last + page, page, PROT_READ | PROT_WRITE), EACCES);
+
+    // Exercise a kernel copy from an untouched page of a shared mapping.
+    int ends[2];
+    unsigned char first;
+    CHECK(pipe(ends) == 0 && write(ends[1], disk, 1) == 1);
+    CHECK(read(ends[0], &first, 1) == 1 && first == 0);
+    CHECK(close(ends[0]) == 0 && close(ends[1]) == 0);
+
+    CHECK(munmap(disk + page, page) == 0);
+    CHECK(ftruncate(fd, 2 * page + 1) == 0 && last[1] == 0 && disk[2 * page] == 'A');
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(last[0] == 'A' && ftruncate(fd, page) == 0);
+        volatile const unsigned char* beyond_eof = last;
+        _exit(beyond_eof[0]);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS);
+    CHECK(ftruncate(fd, 3 * page + 1) == 0 && last[0] == 0 && last[page] == 0);
+    CHECK(pwrite(fd, "B", 1, 2 * page) == 1 && disk[2 * page] == 'B');
+    CHECK(unlink(path) == 0 && unlink(link_path) == 0 && close(fd) == 0);
+    CHECK(last[0] == 'B' && disk[0] == 0);
+    CHECK(munmap(disk, page * 3) == 0 && munmap(last, 2 * page) == 0);
+    puts("EXT2_SHARED_READ_PASS");
+}
+
 static void write_tests(void) {
     int raw = open("/dev/vda", O_RDWR);
     CHECK(raw >= 0);
@@ -231,6 +281,7 @@ static void write_tests(void) {
           after.f_ffree == before.f_ffree);
     namespace_tests();
     CHECK(close(pin) == 0);
+    shared_file_reads();
     int fd = open("/tmp/ext2-volume/pattern", O_CREAT | O_RDWR, 0644);
     CHECK(fd >= 0);
     pattern(fd, 1, pattern_length, 37);
@@ -240,8 +291,6 @@ static void write_tests(void) {
     ((unsigned char*)mapping)[37] = 0;
     CHECK(pread(fd, actual, 1, 37) == 1 && actual[0] == 17);
     CHECK(munmap(mapping, 4096) == 0);
-    errno = 0;
-    CHECK(mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0) == MAP_FAILED && errno == ENODEV);
     CHECK(fsync(fd) == 0 && close(fd) == 0);
     fd = open("/tmp/ext2-volume/trim", O_CREAT | O_RDWR, 0644);
     CHECK(fd >= 0);

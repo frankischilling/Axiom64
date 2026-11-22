@@ -28,7 +28,6 @@
 #include "mm/file_mapping.hpp"
 #include "mm/mmio.hpp"
 #include "mm/stack.hpp"
-#include "fs/memfd.hpp"
 
 namespace ax {
 uint64_t direct_map;
@@ -473,7 +472,7 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = *e & page_file ? memfd_page_protection(*e, prot)
+        *e = *e & page_file ? file_page_protection(*e, prot)
                             : (*e & (page_mask | page_software)) | permissions(prot);
     }
     if (read_cr3() == root)
@@ -490,7 +489,7 @@ bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
         if (e && ((*e & 5) == 5) && (!write || (*e & 2)))
             continue;
         if (e && (*e & page_file)) {
-            if (memfd_fault(space, p, write, false) != MemfdFault::resolved)
+            if (file_mapping_fault(space, p, write, false) != FileFault::resolved)
                 return false;
         } else if (!grow_user_stack(*this, max(p, va), 1, write)) {
             return false;

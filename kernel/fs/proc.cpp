@@ -58,6 +58,7 @@ enum class Kind {
     fd_directory,
     fd_link,
     exe_link,
+    root_link,
     fdinfo_directory,
     fdinfo,
     status,
@@ -255,17 +256,23 @@ static int link_descriptor(const Entry& item, Handle*& handle) {
     return descriptor_access(*owner) ? 0 : -13;
 }
 
-static int link_executable(const Entry& item, Node*& target) {
+static int link_process_path(const Entry& item, Node*& target) {
     auto owner = task(item.pid);
-    if (!owner || !owner->memory || !(target = owner->memory->exec_dentry))
+    if (!owner)
+        return -2;
+    if (item.kind == Kind::root_link)
+        target = owner->fs ? owner->fs->root_node : nullptr;
+    else
+        target = owner->memory ? owner->memory->exec_dentry : nullptr;
+    if (!target)
         return -2;
     return descriptor_access(*owner) ? 0 : -13;
 }
 
 static int follow_link(Node* node, Node*& target) {
     auto item = entry(node);
-    if (item->kind == Kind::exe_link) {
-        int error = link_executable(*item, target);
+    if (item->kind == Kind::exe_link || item->kind == Kind::root_link) {
+        int error = link_process_path(*item, target);
         return error ? error : 1;
     }
     if (item->kind != Kind::fd_link)
@@ -428,7 +435,8 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
                  : snapshot_file(kind) || kind == Kind::cmdline || kind == Kind::boot_id
                      ? regular_file | 0444
                  : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ||
-                         kind == Kind::exe_link || kind == Kind::mounts_link
+                         kind == Kind::exe_link || kind == Kind::root_link ||
+                         kind == Kind::mounts_link
                      ? symlink | 0777
                  : kind == Kind::fd_directory ? directory | 0500
                                               : directory | 0555;
@@ -540,6 +548,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "exe"))
         kind = Kind::exe_link;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "root"))
+        kind = Kind::root_link;
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "mounts"))
         kind = Kind::mounts;
@@ -1249,11 +1260,12 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
     }
     if (kind == Kind::mounts_link)
         return copy("self/mounts", sizeof("self/mounts") - 1, offset, output, length);
-    if (kind == Kind::exe_link) {
+    if (kind == Kind::exe_link || kind == Kind::root_link) {
         Node* target = nullptr;
-        int error = link_executable(*entry(node), target);
-        return error ? error
-                     : file_link(target, is_memfd(file_node(target)), offset, output, length);
+        if (int error = link_process_path(*entry(node), target))
+            return error;
+        return file_link(target, kind == Kind::exe_link && is_memfd(file_node(target)), offset,
+                         output, length);
     }
     if (kind == Kind::fd_link) {
         Handle* handle = nullptr;
@@ -1474,9 +1486,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 9) {
             memcpy(name, "cmdline", 8);
             result.next = 10;
-        } else if (cookie == 10 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 10) {
+            memcpy(name, "root", 5);
             result.next = 11;
+        } else if (cookie == 11 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 12;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {

@@ -52,6 +52,7 @@ struct Route {
 
 using Handler = void (*)(void*);
 using LineHandler = bool (*)(void*);
+using IpiHandler = void (*)(uint32_t apic_id);
 
 struct Message {
     uint32_t address;
@@ -95,6 +96,11 @@ constexpr bool isa_route(uint32_t gsi, uint16_t flags, const GsiRange* ranges, u
 void interrupt_init_legacy();
 void interrupt_init_apic(const Acpi::InterruptTopology&);
 bool interrupt_apic_ready();
+// Prepare on the boot processor before releasing secondary processors. Send
+// with interrupts masked so the two xAPIC ICR writes stay together.
+bool interrupt_prepare_ipi(Irq::IpiHandler);
+bool interrupt_enable_secondary_ipi();
+bool interrupt_send_ipi(uint32_t destination);
 // Called with interrupts masked on the boot CPU. Retired vectors stay reserved
 // until reboot so a message already posted by a stopped device cannot be reused.
 bool interrupt_register_message(Irq::Handler, void* context, Irq::Message&);

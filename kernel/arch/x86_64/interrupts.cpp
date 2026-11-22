@@ -26,6 +26,7 @@
  */
 #include "arch/x86_64/interrupts.hpp"
 #include "core/base.hpp"
+#include "drivers/platform/poll.hpp"
 #include "firmware/acpi.hpp"
 
 namespace ax {
@@ -38,6 +39,9 @@ constexpr uint32_t lvt_mask = 1 << 16;
 constexpr uint32_t ioapic_smi = 2 << 8;
 constexpr uint32_t ioapic_delivery_mask = 7 << 8;
 constexpr uint32_t task_priority = 0x80, end_of_interrupt = 0xb0, spurious_register = 0xf0;
+constexpr unsigned icr_low = 0x300, icr_high = 0x310, icr_msr = 0x830;
+constexpr uint32_t icr_busy = 1 << 12;
+constexpr uint8_t wake_vector = 0xf1;
 constexpr unsigned max_controllers = 16;
 constexpr unsigned first_message_vector = 0x40, past_message_vector = 0x80;
 
@@ -46,6 +50,7 @@ constexpr unsigned lvt_registers[] = {0x320, 0x350, 0x360, 0x370, 0x340, 0x330, 
 
 struct LocalApic {
     volatile uint32_t* mmio;
+    uint64_t address;
     bool x2;
 
     uint32_t read(unsigned reg) const {
@@ -61,6 +66,11 @@ struct LocalApic {
 
     bool in_service(unsigned vector) const {
         return read(0x100 + (vector >> 5) * 16) & (1u << (vector & 31));
+    }
+
+    uint32_t id() const {
+        const uint32_t id = read(0x20);
+        return x2 ? id : (id >> 24);
     }
 };
 
@@ -80,6 +90,8 @@ struct IoApic {
 };
 
 LocalApic local;
+LocalApic ipi_local;
+Irq::IpiHandler ipi_handler;
 IoApic controllers[max_controllers];
 Irq::GsiRange controller_ranges[max_controllers];
 unsigned controller_count;
@@ -140,32 +152,45 @@ void dispatch_line(void* context) {
     }
 }
 
-bool local_apic(const Acpi::InterruptTopology& topology, LocalApic& result, unsigned& id,
-                unsigned& lvt_count) {
+bool locate_local_apic(LocalApic& result, uint64_t expected_address) {
     uint32_t a = 1, b, c, d;
     asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
     if (!(d & (1 << 9)))
         return false;
     uint64_t base = rdmsr(apic_base_msr);
-    if (!(base & apic_global_enable) || (base & apic_address_mask) != topology.local_apic)
+    result.address = base & apic_address_mask;
+    if (!(base & apic_global_enable) || !result.address ||
+        (expected_address && result.address != expected_address))
         return false;
     result.x2 = base & apic_x2_mode;
     if (result.x2) {
         if (!(c & (1 << 21)))
             return false;
     } else {
-        result.mmio = static_cast<volatile uint32_t*>(map_mmio(topology.local_apic, page_size));
+        result.mmio = static_cast<volatile uint32_t*>(map_mmio(result.address, page_size));
         if (!result.mmio)
             return false;
     }
-    uint32_t version = result.read(0x30);
-    lvt_count = ((version >> 16) & 255) + 1;
+    return true;
+}
+
+unsigned local_apic_lvt_count(const LocalApic& apic) {
+    const uint32_t version = apic.read(0x30);
+    const unsigned lvt_count = ((version >> 16) & 255) + 1;
     if ((version & 255) < 0x10 || lvt_count < 4 ||
         lvt_count > sizeof(lvt_registers) / sizeof(*lvt_registers))
+        return 0;
+    return lvt_count;
+}
+
+bool local_apic(const Acpi::InterruptTopology& topology, LocalApic& result, unsigned& id,
+                unsigned& lvt_count) {
+    if (!topology.local_apic || !locate_local_apic(result, topology.local_apic))
         return false;
-    id = result.read(0x20);
-    if (!result.x2)
-        id >>= 24;
+    lvt_count = local_apic_lvt_count(result);
+    if (!lvt_count)
+        return false;
+    id = result.id();
     if (id >= 255)
         return false; // An I/O APIC physical destination has eight bits. 0xff broadcasts.
     for (unsigned i = 0; i < topology.processor_count; ++i)
@@ -319,6 +344,55 @@ bool interrupt_apic_ready() {
     return timer_route == TimerRoute::Apic;
 }
 
+bool interrupt_prepare_ipi(Irq::IpiHandler handler) {
+    if (!handler || ipi_handler || !locate_local_apic(ipi_local, 0) ||
+        !local_apic_lvt_count(ipi_local))
+        return false;
+    ipi_handler = handler;
+    log("SMP: IPI transport=%s\n", ipi_local.x2 ? "x2APIC" : "xAPIC");
+    return true;
+}
+
+bool interrupt_enable_secondary_ipi() {
+    if (!ipi_handler)
+        return false;
+    const uint64_t base = rdmsr(apic_base_msr);
+    if (!(base & apic_global_enable) || (base & apic_address_mask) != ipi_local.address ||
+        bool(base & apic_x2_mode) != ipi_local.x2)
+        return false;
+    const unsigned count = local_apic_lvt_count(ipi_local);
+    if (!count)
+        return false;
+    for (unsigned i = 0; i < count; ++i) {
+        const unsigned reg = lvt_registers[i];
+        const uint32_t previous = ipi_local.read(reg);
+        if ((previous & ioapic_delivery_mask) != ioapic_smi)
+            ipi_local.write(reg, previous | lvt_mask);
+    }
+    // Only accept reserved high-priority vectors while the AP is parked.
+    ipi_local.write(task_priority, 0xe0);
+    ipi_local.write(spurious_register,
+                    (ipi_local.read(spurious_register) & ~0x10ffu) | 0x100 | Irq::spurious);
+    return true;
+}
+
+bool interrupt_send_ipi(uint32_t destination) {
+    if (!ipi_handler)
+        return false;
+    if (ipi_local.x2) {
+        // x2APIC WRMSR does not order earlier memory writes before delivery.
+        asm volatile("mfence; lfence" ::: "memory");
+        wrmsr(icr_msr, (uint64_t(destination) << 32) | wake_vector);
+        return true;
+    }
+    if (destination >= 255 ||
+        !DevicePoll::wait([] { return !(ipi_local.read(icr_low) & icr_busy); }, 20))
+        return false;
+    ipi_local.write(icr_high, destination << 24);
+    ipi_local.write(icr_low, wake_vector);
+    return true;
+}
+
 bool interrupt_register_message(Irq::Handler handler, void* context, Irq::Message& result) {
     if (timer_route != TimerRoute::Apic || !handler || next_message_vector == past_message_vector)
         return false;
@@ -430,6 +504,13 @@ bool interrupt_dispatch(uint64_t vector) {
     // The LAPIC never puts its spurious vector in the in-service register.
     if (vector == Irq::spurious)
         return false;
+    if (vector == wake_vector && ipi_handler) {
+        if (ipi_local.in_service(wake_vector)) {
+            ipi_local.write(end_of_interrupt, 0);
+            ipi_handler(ipi_local.id());
+        }
+        return false;
+    }
     if ((local.x2 || local.mmio) && local.in_service(unsigned(vector))) {
         if (vector >= first_message_vector && vector < next_message_vector) {
             const auto handler = messages[vector - first_message_vector];

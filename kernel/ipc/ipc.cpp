@@ -485,7 +485,7 @@ static bool epoll_readable(Epoll& epoll, EpollScan& scan) {
     const uint64_t bit = 1ull << epoll.index;
     if (!(scan.scanned & bit)) {
         scan.scanned |= bit;
-        for (auto& item : epoll.items)
+        for (auto& item : epoll)
             if (epoll_item_events(item, scan)) {
                 scan.readable |= bit;
                 break;
@@ -508,8 +508,8 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
     epoll_refresh(*poll, nullptr, 0, visited);
     unsigned ready = 0, start = poll->cursor;
     EpollScan scan{&task};
-    for (unsigned offset = 0; offset < max_fds; offset++) {
-        unsigned index = (start + offset) % max_fds;
+    for (unsigned offset = 0; offset < poll->extent; offset++) {
+        unsigned index = (start + offset) % poll->extent;
         auto& item = poll->items[index];
         // The fd is part of the registration key. Delivery follows the live description.
         uint32_t mask = epoll_item_events(item, scan);
@@ -522,7 +522,7 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
             item.pending = 0;
         if (item.event.events & (1u << 30))
             item.enabled = false;
-        poll->cursor = (index + 1) % max_fds;
+        poll->cursor = (index + 1) % poll->extent;
         if (++ready == count)
             break;
     }
@@ -723,7 +723,7 @@ static void epoll_refresh(Epoll& epoll, const void* source, uint32_t events, uin
         return;
     visited |= bit;
     bool notified = false;
-    for (auto& item : epoll.items) {
+    for (auto& item : epoll) {
         if (!item.enabled || item.exclusive_owner || item.signal_wait_queue || !item.live())
             continue;
         uint32_t pending = 0;
@@ -767,7 +767,7 @@ void epoll_signal_notify(const SignalHandlers& handlers) {
         if (!poll)
             continue;
         bool notified = false;
-        for (auto& item : poll->items)
+        for (auto& item : *poll)
             if (item.enabled && !item.exclusive_owner &&
                 item.signal_wait_queue == handlers.descriptor_wait_queue && item.live()) {
                 uint32_t pending = item.event.events & 1;
@@ -808,7 +808,7 @@ static bool epoll_can_nest(const Epoll& parent, const Epoll& child) {
     uint64_t children[64]{}, parents[64]{};
     for (auto poll : epolls)
         if (poll)
-            for (auto& item : poll->items)
+            for (auto& item : *poll)
                 if (item.live() && item.handle->epoll) {
                     unsigned index = item.handle->epoll->index;
                     children[poll->index] |= 1ull << index;
@@ -823,7 +823,7 @@ static bool epoll_can_nest(const Epoll& parent, const Epoll& child) {
 }
 
 void epoll_close(Epoll* poll) {
-    for (auto& item : poll->items)
+    for (auto& item : *poll)
         epoll_unlink_exclusive(item);
     for (auto& entry : epolls)
         if (entry == poll)
@@ -1147,8 +1147,9 @@ int64_t ipc_syscall(Frame* f) {
         if ((event.events & epoll_exclusive) &&
             (operation != 1 || target->epoll || (event.events & ~epoll_exclusive_events)))
             return -22;
+        auto& epoll = *h->epoll;
         EpollItem* item = nullptr;
-        for (auto& existing : h->epoll->items)
+        for (auto& existing : epoll)
             if (existing.used && existing.fd == int(c) && existing.handle == target &&
                 existing.generation == target->generation)
                 item = &existing;
@@ -1157,6 +1158,8 @@ int64_t ipc_syscall(Frame* f) {
                 return -2;
             epoll_unlink_exclusive(*item);
             item->used = false;
+            while (epoll.extent && !epoll.items[epoll.extent - 1].used)
+                --epoll.extent;
             return 0;
         }
         if (operation == 1 && item)
@@ -1170,11 +1173,13 @@ int64_t ipc_syscall(Frame* f) {
         if (operation == 1 && target->epoll && !epoll_can_nest(*h->epoll, *target->epoll))
             return -40;
         if (!item)
-            for (auto& candidate : h->epoll->items)
+            for (auto& candidate : epoll)
                 if (!candidate.live()) {
                     item = &candidate;
                     break;
                 }
+        if (!item && epoll.extent < max_fds)
+            item = &epoll.items[epoll.extent++];
         if (!item)
             return -28;
         uint64_t wait_queue = 0;

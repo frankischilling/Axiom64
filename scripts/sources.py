@@ -124,6 +124,8 @@ def prepare():
     inputs.extend((curl_sources(), ca_sources()))
     from build_doom import source_inputs as doom_sources
     inputs.extend(doom_sources())
+    from build_cupidfetch import source_inputs as cupidfetch_sources
+    inputs.append(cupidfetch_sources())
     password = LOCK['libxcrypt']
     signature = verify(download(password['signature_url'], CACHE / 'libxcrypt-upstream' /
                                 (password['archive'] + '.asc')), password['signature_sha256'], 'sha256')

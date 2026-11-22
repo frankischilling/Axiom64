@@ -70,6 +70,11 @@ building the kernel and desktop archive. Each campaign boots from its own
 UEFI NVMe disk. The test checks both launchers, plays a level with keyboard
 input, compares rendered frames, and records the emulated HD Audio output.
 
+The image includes `cupidfetch` for a terminal system report. An ordinary
+user can run `cupidfetch --json` to read the Axiom64 identity, kernel release,
+uptime, CPU, and memory. The builder compiles CupidFetch from pinned source
+and includes its license in the image and source bundle.
+
 Launch either campaign from the X11 Games menu or with
 `freedoom 1` and `freedoom 2`. Both have desktop entries under
 `/usr/share/applications`. The authenticated desktop seeds matching

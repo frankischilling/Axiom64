@@ -80,6 +80,13 @@
     "signature_sha256": "bdccf2057a7c4ae377b40e832cb8c632ae8b532d4fb64cc7b843066eee748f89",
     "signing_primary_fingerprint": "B146647E45A7B33947AB226B2A2C87D161692D40"
   },
+  "cupidfetch": {
+    "revision": "b3269b98f3130c2972e2b78b77a04cca5d7c729d",
+    "license": "GPL-2.0-only",
+    "archive": "cupidfetch-b3269b98.tar.gz",
+    "url": "https://codeload.github.com/cupidthecat/cupidfetch/tar.gz/b3269b98f3130c2972e2b78b77a04cca5d7c729d",
+    "sha256": "1d65fea84a8a7b242771694eeeb574ffd3f82211f07bcd8ee1bc492bbe3cc0e7"
+  },
   "chocolate_doom": {
     "version": "3.1.1",
     "revision": "410d96855b5df5410ff591a90efeafa889119224",

@@ -44,7 +44,16 @@ ESP_TYPE = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 LINUX_FS_TYPE = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 
 
-def make_disk(work, payload, limine, root_volume=None, root_id=None):
+def copy_volume(source, disk):
+    # The destination is a new, zero-filled image. Preserve holes in empty volumes.
+    while chunk := source.read(1024 * 1024):
+        if chunk.count(0) == len(chunk):
+            disk.seek(len(chunk), os.SEEK_CUR)
+        else:
+            disk.write(chunk)
+
+
+def make_disk(work, payload, limine, root_volume=None, root_id=None, *, disk_bytes=None):
     esp = work / "esp.fat"
     image = work / "boot.raw"
     payload_bytes = sum(path.stat().st_size for path in payload.rglob("*") if path.is_file())
@@ -64,24 +73,36 @@ def make_disk(work, payload, limine, root_volume=None, root_id=None):
         layout += (f"start={root_start},size={root_sectors},type={LINUX_FS_TYPE},"
                    f"uuid={root_id},name=AXIOM64_ROOT\n")
         end = root_start + root_sectors
+    required_bytes = (end + ALIGNMENT) * SECTOR
+    if disk_bytes is not None and disk_bytes < required_bytes:
+        raise ValueError(f"the partition layout needs at least {required_bytes} disk bytes")
     with image.open("xb") as disk:
-        disk.truncate((end + ALIGNMENT) * SECTOR)
+        disk.truncate(disk_bytes if disk_bytes is not None else required_bytes)
     subprocess.run(["sfdisk", "--quiet", image], input=layout, text=True, check=True)
     with image.open("r+b") as disk, esp.open("rb") as volume:
         disk.seek(ESP_START * SECTOR)
-        shutil.copyfileobj(volume, disk)
+        copy_volume(volume, disk)
         if root_volume is not None:
             disk.seek(root_start * SECTOR)
             with root_volume.open("rb") as root:
-                shutil.copyfileobj(root, disk)
+                copy_volume(root, disk)
     subprocess.run([limine / "limine", "bios-install", image, "1"], check=True)
     return image
 
 
-def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/init", installed=False):
+def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/init", installed=False,
+                 disk_bytes=None, root_mib=None):
     if installed and (kind != "disk" or any(token.startswith(("root=", "rootfstype="))
                                             for token in options.split())):
         raise ValueError("the installed disk requires its own root device and filesystem")
+    if disk_bytes is not None and (kind != "disk" or not 0 < disk_bytes < (1 << 63) or
+                                   disk_bytes % SECTOR):
+        raise ValueError("disk bytes require a disk image and a positive multiple of 512")
+    if root_mib is not None and (not installed or root_mib <= 0):
+        raise ValueError("root MiB require an installed disk and a positive size")
+    root_bytes = root_mib * 1024 * 1024 if root_mib is not None else None
+    if root_bytes is not None and disk_bytes is not None and root_bytes >= disk_bytes:
+        raise ValueError("the root partition must fit alongside the boot partitions")
     if os.path.lexists(output):
         raise FileExistsError(output)
     limine = limine_files()
@@ -95,7 +116,8 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
             root_id = uuid4()
             root_volume = work / "root.ext2"
             bootstrap = work / "bootstrap.cpio"
-            build_root_volume(source=initramfs, destination=root_volume, bootstrap_destination=bootstrap)
+            build_root_volume(source=initramfs, destination=root_volume, bootstrap_destination=bootstrap,
+                              capacity_bytes=root_bytes)
             initramfs = bootstrap
             options += f" root=PARTUUID={root_id} rootfstype=ext2"
         config = stage_payload(payload, kernel, initramfs, options, init=init, compress=True)
@@ -113,7 +135,7 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
         copy_limine_notices(limine, loader)
         (loader / "limine.conf").write_text(config)
         if kind == "disk":
-            os.link(make_disk(work, payload, limine, root_volume, root_id), output)
+            os.link(make_disk(work, payload, limine, root_volume, root_id, disk_bytes=disk_bytes), output)
         else:
             output.mkdir()
             try:
@@ -132,6 +154,8 @@ def main():
                         help="guest archive to boot, or to install when using --installed")
     parser.add_argument("--installed", action="store_true",
                         help="populate a writable ext2 system partition on a new raw disk image")
+    parser.add_argument("--disk-bytes", type=int, help="exact capacity of the raw disk image in bytes")
+    parser.add_argument("--root-mib", type=int, help="capacity of the installed ext2 root in MiB")
     parser.add_argument("--init-path", type=init_path, default="/sbin/init", help="absolute guest PID 1 path")
     parser.add_argument("--kernel-option", action="append", default=[], help="one additional boot argument")
     args = parser.parse_args()
@@ -143,7 +167,8 @@ def main():
     try:
         options = "".join(f" {token}" for token in args.kernel_option)
         build_medium(args.kind, args.output, args.kernel, args.initramfs, options,
-                     init=args.init_path, installed=args.installed)
+                     init=args.init_path, installed=args.installed,
+                     disk_bytes=args.disk_bytes, root_mib=args.root_mib)
     except FileExistsError:
         parser.error(f"output already exists: {args.output}")
     except ValueError as error:

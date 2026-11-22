@@ -26,6 +26,7 @@
 import argparse
 from itertools import product
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -127,13 +128,24 @@ def boot_installed_disk(output, seed):
         files[name] = (path.stat().st_mode, path.read_bytes())
     write_cpio(archive, files)
     installed = output / "installed.raw"
-    build_medium("disk", installed, ROOT / "build/axiom64.elf", archive, " test", installed=True)
+    size = 1536 * 1024 * 1024
+    root_mib = 512
+    build_medium("disk", installed, ROOT / "build/axiom64.elf", archive, " test", installed=True,
+                 disk_bytes=size, root_mib=root_mib)
+    if installed.stat().st_size != size:
+        raise RuntimeError("installed disk has the wrong capacity")
     subprocess.run(["sfdisk", "--verify", installed], check=True)
     table = json.loads(subprocess.check_output(["sfdisk", "--json", installed]))["partitiontable"]
     layout = table["partitions"]
     if len(layout) != 3 or layout[2]["name"] != "AXIOM64_ROOT":
         raise RuntimeError("installed disk has an unexpected GPT layout")
     root = layout[2]
+    if root["size"] * SECTOR != root_mib * 1024 * 1024:
+        raise RuntimeError("installed ext2 partition has the wrong capacity")
+    with installed.open("rb") as disk:
+        disk.seek(-SECTOR, os.SEEK_END)
+        if disk.read(8) != b"EFI PART":
+            raise RuntimeError("backup GPT header is missing from the last sector")
     selector = f"PARTUUID={root['uuid'].lower()}"
     results = []
     for phase, marker in (("write", "NVME_ROOT_WRITE_PASS"), ("reboot", "NVME_ROOT_REBOOT_PASS")):

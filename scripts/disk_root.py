@@ -86,7 +86,7 @@ def bootstrap(destination):
 
 
 def build(profile='full', verify_reproducible=False, source=None, destination=None, *,
-          bootstrap_destination=None):
+          bootstrap_destination=None, capacity_bytes=None):
     source = source or ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
     entries = archive_entries(source)
     for name in ['dev', 'proc', 'run', 'sys', 'tmp']:
@@ -96,6 +96,10 @@ def build(profile='full', verify_reproducible=False, source=None, destination=No
     length = sum(len(data) for mode, data in entries.values() if stat.S_ISREG(mode))
     unit = 64 * 1024 * 1024
     capacity = max(256 * 1024 * 1024, ((length * 2 + unit + unit - 1) // unit) * unit)
+    if capacity_bytes is not None:
+        if capacity_bytes < capacity or capacity_bytes % 4096:
+            raise ValueError(f"the root image needs a 4 KiB-aligned size of at least {capacity // (1024 * 1024)} MiB")
+        capacity = capacity_bytes
     if destination is None:
         destination = ROOT / 'build' / ('root-disk.raw' if profile == 'full' else 'root-disk-desktop.raw')
     environment = dict(os.environ, E2FSPROGS_FAKE_TIME='1700000000')

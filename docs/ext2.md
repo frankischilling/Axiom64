@@ -29,7 +29,16 @@ The backend accepts Linux-created revision 0/1 filesystems with 1,024-, 2,048-, 
 
 Filesystem operations include file and directory creation, short and block-backed symlinks, hard links, unlink/rmdir, rename/replacement, truncation, enumeration, modes, timestamps, `statfs`, `fsync`, and `fdatasync`. Statistics report allocated sectors. Open descriptions, running executables, current and root directories, and bound Unix sockets can retain unlinked inodes. Dropping the last reference queues reclamation before returning to userspace. Filesystem sync retries deferred cleanup after an I/O error. A read-only remount returns `EBUSY` while an unlinked inode is still referenced. Classic time fields store signed 32-bit seconds. Extended inode records store access, change and modification times with nanoseconds and later dates when the respective fields fit. New inodes on `extra_isize` volumes honor the superblock's minimum and desired field space. [Ext4 inode timestamps](https://docs.kernel.org/filesystems/ext4/inodes.html#inode-timestamps)
 
-File mappings retain the open file description after descriptor close. The inode and its blocks stay allocated until the last mapping ends, including after fork and partial unmap. Private mappings and read-only shared mappings load the pages they use from disk. Clean aliases see later file writes. Private writes copy the page for that mapping, leaving the inode and its other aliases unchanged. A whole page past EOF raises `SIGBUS`. Writable shared mappings return `ENODEV`.
+File mappings retain the open file description after descriptor close. Private
+and shared mappings load pages on demand. A private write copies the page for
+that mapping. A writable `MAP_SHARED` mapping requires a read-write descriptor
+and a writable mount. Mapped writes are visible through ordinary reads and
+other mappings of the inode, including across processes and hard links.
+
+Use `msync(MS_SYNC)` or `fsync` to wait for writeback and detect I/O errors.
+Unmap and process exit also attempt writeback. Failed writeback stays available
+for a later sync. A shrink discards data past the new end of the file, and
+access to a whole page beyond EOF raises `SIGBUS`.
 
 The kernel preserves reserved descriptor blocks and the resize inode. Volume resizing remains in development. Inode-body and external attributes share one namespace. A replacement that outgrows the inode can move to an external block in the same journal transaction. External blocks support shared-block copy-on-write. Stored ACL namespaces, fragments, bad-block lists, device/FIFO inodes, compression, filesystem block counts beyond 32 bits, and `meta_bg` return `EOPNOTSUPP` before writes. [Attributes and file capabilities](file-capabilities.md)
 

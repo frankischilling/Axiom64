@@ -408,8 +408,11 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
             size_t start = (offset + done) % v.block_size,
                    bytes = min(count - done, v.block_size - start);
             if (!v.map_block(inode, (offset + done) / v.block_size, false, block, 0) ||
-                (block && !v.read_block(block, data)))
+                (block && !v.read_block(block, data))) {
+                if (done)
+                    overlay_disk_pages(*node, offset, out, done);
                 return done ? int64_t(done) : v.error;
+            }
             if (block)
                 memcpy(out + done, data + start, bytes);
             else
@@ -420,16 +423,16 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
         node->atime = node_now();
         static_cast<Entry*>(node->filesystem_data)->atime_dirty = true;
     }
+    overlay_disk_pages(*node, offset, out, done);
     return done;
 }
 
-static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t length) {
+static int64_t write_unmapped(Node* node, uint64_t offset, const void* buffer, size_t length) {
     auto& v = volume(node);
     if (offset > UINT64_MAX - length)
         return -27;
     if (!v.begin())
         return v.error;
-    invalidate_disk_pages(*node, offset, offset + length);
     Inode inode;
     uint8_t data[max_block_size];
     bool success = v.load_inode(node->inode, inode);
@@ -458,6 +461,21 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
     return result ? result : int64_t(length);
 }
 
+static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t length) {
+    if (!length)
+        return 0;
+    if (offset > UINT64_MAX - length)
+        return -27;
+    uint64_t end = offset + length;
+    // Commit and invalidate the old partial page before a sparse extension.
+    // Bytes written to its padding must not become file contents as EOF moves.
+    uint64_t first = end > node->size ? min(offset, node->size) : offset;
+    if (int error = flush_disk_pages(*node->mount, node, first, end))
+        return error;
+    invalidate_disk_pages(*node, first, end);
+    return write_unmapped(node, offset, buffer, length);
+}
+
 static bool stage_truncate(Volume& v, Inode& inode, size_t length, SizeChange change) {
     if (!v.size(inode, length, change))
         return false;
@@ -469,6 +487,8 @@ static bool stage_truncate(Volume& v, Inode& inode, size_t length, SizeChange ch
 }
 
 static int truncate(Node* node, size_t length) {
+    if (int error = flush_disk_pages(*node->mount, node, 0, min<uint64_t>(length, node->size)))
+        return error;
     auto& v = volume(node);
     if (!v.begin())
         return v.error;
@@ -478,8 +498,12 @@ static int truncate(Node* node, size_t length) {
     uint64_t old = file_size(inode);
     if (stage_truncate(v, inode, length, SizeChange::normal)) {
         int error = v.finish(true);
-        if (!error && length < old)
+        if (!error && length < old) {
+            discard_disk_pages(*node, align_up(length));
             invalidate_disk_pages(*node, length, old, true);
+        } else if (!error && length > old) {
+            invalidate_disk_pages(*node, old, length);
+        }
         return error;
     }
     if (v.error != -28 || !v.journal || length > old)
@@ -492,6 +516,7 @@ static int truncate(Node* node, size_t length) {
     v.pending_shrink = inode.number;
     if (!v.begin())
         return v.error;
+    discard_disk_pages(*node, align_up(length));
     invalidate_disk_pages(*node, length, old, true);
     return 0;
 }
@@ -751,7 +776,9 @@ static void reclaim_queued(Mount* mount) {
     }
 }
 
-static int sync(Mount* mount, Node*, bool) {
+static int sync(Mount* mount, Node* node, bool) {
+    if (int error = flush_disk_pages(*mount, node))
+        return error;
     auto& v = *static_cast<Volume*>(mount->data);
     if (!v.begin())
         return v.error;
@@ -791,6 +818,9 @@ static int remount(Mount* mount, bool readonly) {
         return -30;
     if (!readonly && !v.writable_safe)
         return -117;
+    if (readonly)
+        if (int error = flush_disk_pages(*mount))
+            return error;
     if (readonly)
         for (auto entry = v.entries.first(); entry; entry = entry->next)
             if (entry->number && !entry->node.hardlink && !entry->node.links)
@@ -1070,6 +1100,14 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
 }
 
 } // namespace
+
+int64_t write_disk_page(Node& node, uint64_t offset, const void* buffer, size_t length) {
+    return write_unmapped(&node, offset, buffer, length);
+}
+
+int flush_disk_device(Node& node) {
+    return block_flush(volume(&node).device);
+}
 
 const FilesystemOps ext2_ops = {
     .lookup = lookup,

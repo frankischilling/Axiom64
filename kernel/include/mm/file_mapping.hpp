@@ -29,6 +29,7 @@
 
 namespace ax {
 struct Handle;
+struct Mount;
 struct Node;
 struct Task;
 
@@ -55,6 +56,12 @@ void release_file_mappings(AddressSpace&);
 int map_disk_file(Task&, Handle&, uint64_t base, size_t length, uint64_t offset, int protection,
                   bool shared, bool replace);
 void invalidate_disk_pages(Node&, uint64_t first, uint64_t end, bool shrink = false);
+void overlay_disk_pages(Node&, uint64_t offset, void* buffer, size_t length);
+int flush_disk_pages(Mount&, Node* = nullptr, uint64_t first = 0, uint64_t end = UINT64_MAX);
+void discard_disk_pages(Node&, uint64_t first);
+int sync_file_mappings(AddressSpace&, uint64_t start, size_t length, unsigned flags);
+int64_t write_disk_page(Node&, uint64_t offset, const void* buffer, size_t length);
+int flush_disk_device(Node&);
 uint64_t file_page_permissions(uint64_t);
 uint64_t file_page_protection(uint64_t, int protection);
 uint64_t unpopulated_file_page(const FileMapping&, int protection);

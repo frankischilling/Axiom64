@@ -78,6 +78,11 @@ The kernel grows its shared pool of open file descriptions on demand up to 8,192
 
 The namespace is global and kernel filesystem calls are serialized on one CPU. [Credential policy](credentials.md) enforces DAC, ownership, sticky/set-ID rules, chroot and read-only/nosuid/nodev/noexec mounts. Bind mounts, stacked mounts, runtime root replacement, mount namespaces, lazy/forced unmount, extended access controls, further mount options and additional filesystem types remain in the VFS roadmap. Boot-time ext2 root selection is described in [disk-root support](disk-root.md).
 
-Regular file mappings keep a reference to the open description for each surviving range, including after descriptor close. Private ext2 mappings copy file bytes eagerly. Read-only shared ext2 mappings load pages on access and share resident pages across aliases and forks. File writes and shrink operations invalidate the affected pages. The last partial page is zero-filled and access to a whole page beyond EOF raises `SIGBUS`. Writable shared ext2 mappings and writeback remain planned. Ext2 can reject a read-only remount while an unlinked inode is referenced.
+Regular file mappings keep an open description alive after descriptor close,
+fork, and partial unmap. Ext2 faults file pages in on demand. Private writes
+copy a page. Writable shared mappings keep the same data visible through file
+reads and other mappings. `msync(MS_SYNC)` and `fsync` flush the data to disk.
+File size changes invalidate affected pages. Access to a whole page beyond EOF
+raises `SIGBUS`. See [writable ext2 volumes](ext2.md) for writeback behavior.
 
 The interface follows the concepts described in the [Linux VFS documentation](https://www.kernel.org/doc/html/latest/filesystems/vfs.html). Supported mount behavior is checked against the Linux [mount](https://man7.org/linux/man-pages/man2/mount.2.html) and [umount](https://man7.org/linux/man-pages/man2/umount.2.html) contracts; the limits above identify the current subset.

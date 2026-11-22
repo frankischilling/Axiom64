@@ -1214,9 +1214,7 @@ static int64_t dispatch(Frame* f) {
     case 25:
         return remap_memory(*current, a, b, c, d);
     case 26:
-        if (a % page_size || (c & ~7) || (c & 5) == 5)
-            return -22;
-        return current->memory->space.valid(a, b) ? 0 : -12;
+        return sync_file_mappings(current->memory->space, a, b, unsigned(c));
     case 28:
         return current->memory->space.valid(a, b) ? 0 : -12;
     case 29:

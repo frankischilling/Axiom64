@@ -1305,9 +1305,7 @@ int write_handle_limit(Handle* h, size_t& length) {
     return write_handle_limit_at(current, *h, offset, length);
 }
 
-int64_t write_regular_at(Task* task, Handle& handle, uint64_t& offset, const void* buf,
-                         size_t len) {
-    auto node = handle.node;
+int prepare_regular_write(Task* task, Node* node) {
     if (node_readonly(node))
         return -30;
     if (int error = node_drop_file_capabilities(node))
@@ -1322,6 +1320,14 @@ int64_t write_regular_at(Task* task, Handle& handle, uint64_t& offset, const voi
                 return error;
         }
     }
+    return 0;
+}
+
+int64_t write_regular_at(Task* task, Handle& handle, uint64_t& offset, const void* buf,
+                         size_t len) {
+    auto node = handle.node;
+    if (int error = prepare_regular_write(task, node))
+        return error;
     int64_t count = node->mount->ops->write(node, offset, buf, len);
     if (count > 0) {
         offset += count;

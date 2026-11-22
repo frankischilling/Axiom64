@@ -327,8 +327,8 @@
       "id": "F07",
       "title": "SMP scheduling and kernel synchronization",
       "milestone": "M2",
-      "state": "planned",
-      "current": "The scheduler runs one CPU with fixed process and descriptor limits.",
+      "state": "partial",
+      "current": "Secondary CPUs load their own processor tables and syscall stacks. The boot probe checks directed wake interrupts and two local APIC timer expirations on each secondary CPU. The scheduler still runs one CPU with fixed process and descriptor limits.",
       "scope": [
         "Application-processor startup, per-CPU state, and interprocessor interrupts",
         "Kernel threads, run queues, CPU affinity, priorities, and fairness",
@@ -347,7 +347,9 @@
         "F05",
         "F06"
       ],
-      "evidence": [],
+      "evidence": [
+        "BIOS and UEFI boot-media tests check processor entry, directed wake interrupts, and local APIC timer delivery with one and twelve logical CPUs."
+      ],
       "branch": "feature/f07-smp-scheduling-and-kernel-synchronization",
       "issue": "https://github.com/frankischilling/Axiom64/issues/7"
     },

@@ -59,6 +59,8 @@ namespace {
 constexpr unsigned ap_timeout_ticks = 200;
 constexpr unsigned ap_stack_pages = 4, ap_fault_pages = 2;
 constexpr unsigned ap_wakeups = 2, ap_wakeup_timeout_ticks = 20;
+constexpr unsigned ap_timer_firings = 2, ap_timer_timeout_ticks = 50;
+constexpr uint32_t ap_timer_count = 32768;
 
 struct ApplicationProcessor {
     uint64_t stack = 0;
@@ -68,15 +70,20 @@ struct ApplicationProcessor {
     bool entered = false;
     bool local_tables = false;
     bool wakeup_ready = false;
+    bool wakeups_verified = false; // Written and read by the boot CPU only.
     unsigned wakeups = 0;
+    unsigned timer_firings = 0;
+    bool timer_checked = false;
 };
 
 ApplicationProcessor application_processors[max_boot_processors];
 
-void record_wakeup(uint32_t apic_id) {
+void record_secondary_event(uint32_t apic_id, Irq::SecondaryEvent event) {
     for (auto& state : application_processors)
         if (state.stack && state.expected_apic_id == apic_id) {
-            __atomic_fetch_add(&state.wakeups, 1, __ATOMIC_RELEASE);
+            auto& counter =
+                event == Irq::SecondaryEvent::wake ? state.wakeups : state.timer_firings;
+            __atomic_fetch_add(&counter, 1, __ATOMIC_RELEASE);
             return;
         }
 }
@@ -90,6 +97,16 @@ unsigned probe_wakeups(const ApplicationProcessor& state) {
             break;
     }
     return __atomic_load_n(&state.wakeups, __ATOMIC_ACQUIRE);
+}
+
+void probe_local_timer(ApplicationProcessor& state) {
+    for (unsigned firing = 0; firing < ap_timer_firings; ++firing) {
+        interrupt_arm_secondary_timer(ap_timer_count);
+        while (__atomic_load_n(&state.timer_firings, __ATOMIC_RELAXED) == firing)
+            asm volatile("sti; hlt; cli" ::: "memory");
+    }
+    interrupt_stop_secondary_timer();
+    __atomic_store_n(&state.timer_checked, true, __ATOMIC_RELEASE);
 }
 
 uint32_t current_apic_id() {
@@ -124,9 +141,11 @@ extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
                           state->observed_apic_id == state->expected_apic_id &&
                           interrupt_enable_secondary_ipi();
     __atomic_store_n(&state->entered, true, __ATOMIC_RELEASE);
-    if (state->wakeup_ready)
+    if (state->wakeup_ready) {
         while (__atomic_load_n(&state->wakeups, __ATOMIC_ACQUIRE) < ap_wakeups)
             asm volatile("sti; hlt; cli" ::: "memory");
+        probe_local_timer(*state);
+    }
     // Device interrupts and the scheduler still belong to the BSP.
     for (;;)
         asm volatile("hlt");
@@ -176,7 +195,7 @@ void boot_probe_application_processors() {
         application_processors[i] = {
             .stack = stack, .slot = i, .expected_apic_id = response->cpus[i]->lapic_id};
     }
-    if (response->cpu_count > 1 && !interrupt_prepare_ipi(record_wakeup))
+    if (response->cpu_count > 1 && !interrupt_prepare_secondary(record_secondary_event))
         log("SMP: IPI transport unavailable\n");
     for (unsigned i = 0; i < response->cpu_count; ++i) {
         auto cpu = response->cpus[i];
@@ -199,7 +218,7 @@ void boot_probe_application_processors() {
     unsigned started = 0;
     for (unsigned i = 0; i < response->cpu_count; ++i) {
         const auto cpu = response->cpus[i];
-        const auto& state = application_processors[i];
+        auto& state = application_processors[i];
         if (cpu->lapic_id == response->bsp_lapic_id)
             continue;
         if (!__atomic_load_n(&state.entered, __ATOMIC_ACQUIRE)) {
@@ -217,7 +236,25 @@ void boot_probe_application_processors() {
             const unsigned wakeups = state.wakeup_ready ? probe_wakeups(state) : 0;
             log("SMP: application processor apic=%u wake interrupts=%u\n", uint64_t(cpu->lapic_id),
                 uint64_t(wakeups));
+            state.wakeups_verified = wakeups == ap_wakeups;
         }
+    }
+    DevicePoll::wait(
+        [&] {
+            for (const auto& state : application_processors)
+                if (state.wakeups_verified &&
+                    !__atomic_load_n(&state.timer_checked, __ATOMIC_ACQUIRE))
+                    return false;
+            return true;
+        },
+        ap_timer_timeout_ticks);
+    for (const auto& state : application_processors) {
+        if (!state.wakeups_verified)
+            continue;
+        const unsigned firings =
+            __atomic_load_n(&state.timer_checked, __ATOMIC_ACQUIRE) ? state.timer_firings : 0;
+        log("SMP: application processor apic=%u local timer interrupts=%u\n",
+            uint64_t(state.expected_apic_id), uint64_t(firings));
     }
     log("SMP: present=%u bsp=%u application_processors=%u\n", response->cpu_count,
         uint64_t(response->bsp_lapic_id), uint64_t(started));

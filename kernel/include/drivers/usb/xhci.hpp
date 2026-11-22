@@ -25,5 +25,5 @@
 #pragma once
 
 namespace ax {
-void xhci_probe();
+void xhci_probe(bool keyboard_reports);
 } // namespace ax

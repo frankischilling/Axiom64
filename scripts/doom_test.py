@@ -42,7 +42,7 @@ from build_doom import WADS, verify_engine
 from disk_root import archive_entries
 from fetch import ROOT
 from legacy_ata_test import image
-from qmp import Qmp
+from qmp import Qmp, await_serial
 
 
 def installed_applications(files, output):
@@ -134,18 +134,6 @@ x11_stop
         "etc/group": (0o100644, b"root:x:0:\naudio:x:29:player\n"),
     }
     write_cpio(path, {**files, **accounts, "sbin/init": (0o100755, script.encode())})
-
-
-def await_serial(vm, log, markers, timeout):
-    deadline = time.monotonic() + timeout
-    while True:
-        data = log.read_bytes()
-        for marker in markers:
-            if marker in data:
-                return marker
-        if time.monotonic() >= deadline or vm.poll() is not None:
-            raise RuntimeError(f"Missing {markers!r}. See {log}")
-        time.sleep(0.1)
 
 
 def screenshot(qmp, path):

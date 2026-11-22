@@ -113,7 +113,17 @@ bool normalize(const char* cwd, const char* path, char* result, size_t cap) {
     return true;
 }
 
-static Mount mounts[16];
+static Mount mounts[mount_table_limit];
+
+const Mount* next_mount(unsigned& cursor) {
+    while (cursor < sizeof(mounts) / sizeof(mounts[0])) {
+        const auto& item = mounts[cursor++];
+        if (item.active)
+            return &item;
+    }
+    return nullptr;
+}
+
 static uint64_t next_mount_id = 1;
 
 static Mount* mounted_on(Node* point) {
@@ -131,13 +141,13 @@ Node* directory_parent(Node* node) {
     return node->parent ? node->parent : node;
 }
 
-void node_path(Node* node, char* result, size_t cap, bool include_unlinked) {
+void node_path(Node* node, char* result, size_t cap, bool include_unlinked, Node* boundary) {
     if (!cap)
         return;
     result[0] = 0;
     Node* chain[128];
     size_t count = 0;
-    Node* root = current ? current->fs->root_node : root_node;
+    Node* root = boundary ? boundary : current ? current->fs->root_node : root_node;
     while (node && node != root && count < 128) {
         if (node == node->mount->root && node->mount->point) {
             node = node->mount->point;

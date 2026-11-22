@@ -33,4 +33,5 @@ inline bool ext_volume_type(const char* type) {
 }
 
 int ext2_mount(Mount*, Node* device, bool check_dirty = false);
+unsigned ext2_mount_device(const Mount&);
 } // namespace ax

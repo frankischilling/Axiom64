@@ -159,6 +159,8 @@ struct Mount {
     bool nosuid = false, nodev = false, noexec = false;
 };
 
+inline constexpr unsigned mount_table_limit = 16;
+
 extern const FilesystemOps ramfs_ops;
 
 Node* ramfs_root(Mount*, uint32_t);
@@ -295,5 +297,6 @@ int64_t write_regular_at(Task*, Handle&, uint64_t&, const void*, size_t);
 bool handle_has_poll(const Handle&);
 bool handle_ready(Handle*, bool write, const Task*);
 
-void node_path(Node*, char*, size_t, bool include_unlinked = false);
+void node_path(Node*, char*, size_t, bool include_unlinked = false, Node* boundary = nullptr);
+const Mount* next_mount(unsigned& cursor);
 } // namespace ax

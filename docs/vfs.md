@@ -36,6 +36,8 @@ Procfs lists descriptors under `/proc/<pid>/fd` and `/proc/<pid>/task/<tid>/fd`.
 
 `/proc/<pid>/cmdline` and the corresponding thread files read the live NUL-delimited argument strings. They support partial reads, byte offsets, and Linux-style process title rewrites into the contiguous initial environment area. A zombie returns an empty command line.
 
+Process and thread `stat` records include elapsed CPU time in 100 Hz ticks, CPU time from reaped children, mapped bytes, and resident pages. The corresponding `status` files report `VmSize` and `VmRSS` in KiB. The resident count includes backed user pages and excludes device mappings and unpopulated file pages.
+
 `/proc/cpuinfo` reports the identity of the online boot CPU. `/proc/stat` reports
 its user, kernel, and idle time in 100 Hz ticks, including time from tasks that
 have exited. `/proc/uptime` uses the same boot and idle clocks. `/proc/meminfo`

@@ -163,6 +163,63 @@ static void proc_cmdline(const char* binary) {
     puts("ABI_PROC_CMDLINE_PASS linkage=" ABI_LINKAGE);
 }
 
+struct proc_usage {
+    uint64_t cpu_ticks, virtual_bytes, resident_pages;
+};
+
+static struct proc_usage read_proc_usage(void) {
+    char data[640] = {0};
+    int fd = open("/proc/self/stat", O_RDONLY);
+    CHECK(fd >= 0 && read(fd, data, sizeof(data) - 1) > 0 && close(fd) == 0);
+    char* end_name = strrchr(data, ')');
+    CHECK(end_name && end_name[1] == ' ' && end_name[3] == ' ');
+    char* cursor = end_name + 4;
+    struct proc_usage usage = {0};
+    for (unsigned field = 4; field <= 24; ++field) {
+        char* end;
+        uint64_t value = strtoull(cursor, &end, 10);
+        CHECK(end > cursor && *end == ' ');
+        cursor = end + 1;
+        if (field == 14 || field == 15)
+            usage.cpu_ticks += value;
+        else if (field == 23)
+            usage.virtual_bytes = value;
+        else if (field == 24)
+            usage.resident_pages = value;
+    }
+    return usage;
+}
+
+static void proc_usage(void) {
+    const size_t size = 16 * 1024 * 1024;
+    const size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    CHECK(page == 4096);
+    struct proc_usage initial = read_proc_usage();
+    volatile char* mapping =
+        mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapping != MAP_FAILED);
+    for (size_t i = 0; i < size; i += page)
+        mapping[i] = 'A';
+    struct timespec started, sample;
+    CHECK(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &started) == 0);
+    do {
+        for (unsigned i = 0; i < 50000; ++i)
+            __asm__ volatile("" ::: "memory");
+        CHECK(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &sample) == 0);
+    } while ((sample.tv_sec - started.tv_sec) * INT64_C(1000000000) + sample.tv_nsec -
+                 started.tv_nsec <
+             150000000);
+    struct proc_usage used = read_proc_usage();
+    CHECK(used.cpu_ticks > initial.cpu_ticks);
+    CHECK(used.virtual_bytes >= initial.virtual_bytes + size);
+    CHECK(used.resident_pages >= initial.resident_pages + size / (2 * page));
+    CHECK(munmap((void*)mapping, size) == 0);
+    struct proc_usage released = read_proc_usage();
+    CHECK(released.virtual_bytes <= used.virtual_bytes - size);
+    CHECK(released.resident_pages + size / (2 * page) <= used.resident_pages);
+    puts("ABI_PROC_USAGE_PASS linkage=" ABI_LINKAGE);
+}
+
 static void extended_metadata(int directory, int fd) {
     struct stat old;
     struct statx info;
@@ -335,6 +392,7 @@ int main(int argc, char** argv) {
     relative_modes();
     executable_link();
     proc_cmdline(argv[0]);
+    proc_usage();
     proc_system_stats();
     proc_mount_inventory();
 

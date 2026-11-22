@@ -642,6 +642,13 @@ static int status(Node* node, Snapshot& snapshot) {
             text.character(' ');
         }
     text.character('\n');
+    if (owner->memory) {
+        text.string("VmSize:\t");
+        text.number(owner->memory->space.mapped_size() / 1024);
+        text.string(" kB\nVmRSS:\t");
+        text.number(owner->memory->space.resident_size() / 1024);
+        text.string(" kB\n");
+    }
     text.field("Threads", owner->process->live_threads ? owner->process->live_threads : 1);
     text.bits("SigPnd", owner->pending_signals.mask());
     text.bits("ShdPnd", owner->process->pending_signals.mask());
@@ -668,6 +675,8 @@ static int stat(Node* node, Snapshot& snapshot) {
     auto bytes = static_cast<char*>(alloc(capacity));
     if (!bytes)
         return -12;
+    bool thread = entry(node->parent)->kind == Kind::thread;
+    auto usage = cpu_usage(*owner, thread);
     Text text{bytes, 0, capacity};
     text.number(unsigned(owner->pid));
     text.string(" (");
@@ -695,6 +704,18 @@ static int stat(Node* node, Snapshot& snapshot) {
         case 8:
             text.string("-1");
             continue;
+        case 14:
+            value = usage.user_ticks;
+            break;
+        case 15:
+            value = usage.system_ticks;
+            break;
+        case 16:
+            value = owner->process->children_user_ticks;
+            break;
+        case 17:
+            value = owner->process->children_system_ticks;
+            break;
         case 18:
             value = 20;
             break;
@@ -704,6 +725,15 @@ static int stat(Node* node, Snapshot& snapshot) {
         case 22:
             value = owner->pid == owner->process->pid ? owner->process->start_ticks
                                                       : owner->start_ticks;
+            break;
+        case 23:
+            value = owner->memory ? owner->memory->space.mapped_size() : 0;
+            break;
+        case 24:
+            value = owner->memory ? owner->memory->space.resident_size() / page_size : 0;
+            break;
+        case 25:
+            value = owner->process->limits.soft(Resource::resident);
             break;
         case 31:
             value = owner->pending_signals.mask() & 0x7fffffff;

@@ -632,9 +632,9 @@ build/axiom64.elf: $(KERNEL_OBJECTS) kernel/arch/x86_64/linker.ld
 	ld -nostdlib -static -z max-page-size=0x1000 -T kernel/arch/x86_64/linker.ld $(KERNEL_OBJECTS) -o $@
 build/axiom64-multiboot.elf: build/axiom64.elf scripts/multiboot_image.py kernel/arch/x86_64/multiboot.asm kernel/arch/x86_64/multiboot.ld
 	$(PYTHON) -B scripts/multiboot_image.py $< $@ --nasm "$(NASM)"
-build/abi-static: userspace/tests/abi/abi.c
+build/abi-static: userspace/tests/abi/abi.c scripts/compile_uapi_client.py scripts/linux_uapi.py ports.lock.json
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $<
 build/file-lock-static: userspace/tests/fs/file-lock.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
@@ -658,9 +658,9 @@ build/clock-elapsed-tests: userspace/tests/time/elapsed.c
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 test-clock:
 	$(PYTHON) scripts/clock_test.py
-build/abi-dynamic: userspace/tests/abi/abi.c
+build/abi-dynamic: userspace/tests/abi/abi.c scripts/compile_uapi_client.py scripts/linux_uapi.py ports.lock.json
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $<
 build/init: userspace/init/main.c userspace/init/console.c userspace/init/console.h userspace/init/seed_records.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -o $@

@@ -70,6 +70,7 @@ struct MemoryContext {
     uint64_t initial_data_size = 0;
     SharedMemoryMapping* shared = nullptr;
     Node* exec_file = nullptr;
+    Node* exec_dentry = nullptr;
 };
 
 struct FileTable {

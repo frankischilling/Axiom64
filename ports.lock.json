@@ -195,6 +195,19 @@
       "source_commit": "b24a4cdf2a2e4b41de4d78979aa9aae0d1383ebc"
     },
     {
+      "name": "font-dejavu",
+      "version": "2.37-r6",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/font-dejavu-2.37-r6.apk",
+      "archive": "font-dejavu-2.37-r6.apk",
+      "sha256": "e28077cd39ee9b24c270b88e07604b68cfdf85910a2d1b439c2123f9a63ff48c",
+      "license": "Bitstream-Vera",
+      "upstream": "https://dejavu-fonts.github.io/",
+      "origin": "font-dejavu",
+      "source_commit": "59420f440b2e664f7be1a6e135a3175aab56cd51",
+      "installed_only": true
+    },
+    {
       "name": "font-misc-misc",
       "version": "1.1.3-r1",
       "repository": "main",
@@ -265,6 +278,19 @@
       "upstream": "https://gcc.gnu.org",
       "origin": "gcc",
       "source_commit": "fbf60319be3bbaf6dd32ef55cc6fb7189e05c266"
+    },
+    {
+      "name": "gdbm",
+      "version": "1.24-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/gdbm-1.24-r0.apk",
+      "archive": "gdbm-1.24-r0.apk",
+      "sha256": "cb524a457ffbd9c79c6711d9ee883a64a5a9bc6aec4f4b4d047ee67527ac6e6d",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/gdbm/",
+      "origin": "gdbm",
+      "source_commit": "cf76e1b436494c60e0c188400007dbf78bbff5f0",
+      "installed_only": true
     },
     {
       "name": "glib",
@@ -349,6 +375,84 @@
       "upstream": "http://www.digip.org/jansson/",
       "origin": "jansson",
       "source_commit": "9161ac3604718ebb3c85b5795f0a084d45362571"
+    },
+    {
+      "name": "kitty",
+      "version": "0.42.1-r5",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/kitty-0.42.1-r5.apk",
+      "archive": "kitty-0.42.1-r5.apk",
+      "sha256": "48f64c304945d5c7c0c8e5aeaf32f10ec68470259159024c97d63b08a4182106",
+      "license": "GPL-3.0-only",
+      "upstream": "https://sw.kovidgoyal.net/kitty/",
+      "origin": "kitty",
+      "source_commit": "1bc8dfc63cf800c7eb2516197fd0b13ff862a073",
+      "installed_only": true
+    },
+    {
+      "name": "kitty-kitten",
+      "version": "0.42.1-r5",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/kitty-kitten-0.42.1-r5.apk",
+      "archive": "kitty-kitten-0.42.1-r5.apk",
+      "sha256": "c9b12076a089d3ccbe8b83d237e14d6b6b18705b0b7e58c5530887a86556fa37",
+      "license": "GPL-3.0-only",
+      "upstream": "https://sw.kovidgoyal.net/kitty/",
+      "origin": "kitty",
+      "source_commit": "1bc8dfc63cf800c7eb2516197fd0b13ff862a073",
+      "installed_only": true
+    },
+    {
+      "name": "kitty-terminfo",
+      "version": "0.42.1-r5",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/kitty-terminfo-0.42.1-r5.apk",
+      "archive": "kitty-terminfo-0.42.1-r5.apk",
+      "sha256": "1d790493fe311e1b3a3f874b955a744f384deee7b2daf4e7fe987bfd30f16af7",
+      "license": "GPL-3.0-only",
+      "upstream": "https://sw.kovidgoyal.net/kitty/",
+      "origin": "kitty",
+      "source_commit": "1bc8dfc63cf800c7eb2516197fd0b13ff862a073",
+      "installed_only": true
+    },
+    {
+      "name": "kitty-x11",
+      "version": "0.42.1-r5",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/kitty-x11-0.42.1-r5.apk",
+      "archive": "kitty-x11-0.42.1-r5.apk",
+      "sha256": "56ab92dd0689b43ce6531f7e94c6a323c9939a28af84f6294ae9666dc76ea35f",
+      "license": "GPL-3.0-only",
+      "upstream": "https://sw.kovidgoyal.net/kitty/",
+      "origin": "kitty",
+      "source_commit": "1bc8dfc63cf800c7eb2516197fd0b13ff862a073",
+      "installed_only": true
+    },
+    {
+      "name": "lcms2",
+      "version": "2.19-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/lcms2-2.19-r0.apk",
+      "archive": "lcms2-2.19-r0.apk",
+      "sha256": "7f73e98a2d6983358a075843e12b8fe71277a51154d59047449f6a3626c64c1e",
+      "license": "MIT",
+      "upstream": "https://www.littlecms.com",
+      "origin": "lcms2",
+      "source_commit": "c18abc13b5191e9d886a47526415c5db490df195",
+      "installed_only": true
+    },
+    {
+      "name": "less",
+      "version": "679-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/less-679-r0.apk",
+      "archive": "less-679-r0.apk",
+      "sha256": "785251971c119ab3d5b4c5548793b7e8f9fb9db7138306ddbdc7f7fa3115a3bc",
+      "license": "GPL-3.0-or-later OR BSD-2-Clause",
+      "upstream": "https://www.greenwoodsoftware.com/less/",
+      "origin": "less",
+      "source_commit": "7a5f1241d7636ff96ede08e351b28d7258bea389",
+      "installed_only": true
     },
     {
       "name": "libatomic",
@@ -663,6 +767,19 @@
       "source_commit": "3fefbe8dda8b3e85458edb190e2f3a69ad16035c"
     },
     {
+      "name": "libpanelw",
+      "version": "6.5_p20250503-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libpanelw-6.5_p20250503-r0.apk",
+      "archive": "libpanelw-6.5_p20250503-r0.apk",
+      "sha256": "046257a4535a9ced124595a33053948f6bf8b2f02988fefd1108f514d213ad4b",
+      "license": "X11",
+      "upstream": "https://invisible-island.net/ncurses/",
+      "origin": "ncurses",
+      "source_commit": "3fefbe8dda8b3e85458edb190e2f3a69ad16035c",
+      "installed_only": true
+    },
+    {
       "name": "libpciaccess",
       "version": "0.18.1-r0",
       "repository": "main",
@@ -819,6 +936,19 @@
       "source_commit": "56abd9107430e190174cbc368cf4d9faa6bdd758"
     },
     {
+      "name": "libxcursor",
+      "version": "1.2.3-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxcursor-1.2.3-r0.apk",
+      "archive": "libxcursor-1.2.3-r0.apk",
+      "sha256": "4ddd38c0a03c051d2ab5ddb9e7ea5e5a7233aa0998d85de58c0becf5da366918",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org/",
+      "origin": "libxcursor",
+      "source_commit": "1d6d12ed6f5cc1fc2e382d0bdc6fc90712745e8a",
+      "installed_only": true
+    },
+    {
       "name": "libxcvt",
       "version": "0.1.3-r0",
       "repository": "community",
@@ -853,6 +983,19 @@
       "upstream": "https://xorg.freedesktop.org/",
       "origin": "libxext",
       "source_commit": "614e9166706cec427fc3d907b8d981390a42e088"
+    },
+    {
+      "name": "libxfixes",
+      "version": "6.0.1-r4",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxfixes-6.0.1-r4.apk",
+      "archive": "libxfixes-6.0.1-r4.apk",
+      "sha256": "f890b8e6b55956484fe6f170037e79f0fd71447a4b38ad115ca4d437c114e04d",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org/",
+      "origin": "libxfixes",
+      "source_commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "installed_only": true
     },
     {
       "name": "libxfont2",
@@ -901,6 +1044,19 @@
       "upstream": "https://xkbcommon.org/",
       "origin": "libxkbcommon",
       "source_commit": "0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9"
+    },
+    {
+      "name": "libxkbcommon-x11",
+      "version": "1.8.1-r2",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxkbcommon-x11-1.8.1-r2.apk",
+      "archive": "libxkbcommon-x11-1.8.1-r2.apk",
+      "sha256": "cd55cae866d4e2047b88f7e961a13d308251f0e0b320bca61d2a23aab1c860e2",
+      "license": "MIT AND MIT-open-group AND HPND AND HPND-sell-variant AND LicenseRef-digital-equipment-corporation",
+      "upstream": "https://xkbcommon.org/",
+      "origin": "libxkbcommon",
+      "source_commit": "0bbcc16cbd21758cab1ee29c487e85ba8dc4f3b9",
+      "installed_only": true
     },
     {
       "name": "libxkbfile",
@@ -999,6 +1155,19 @@
       "source_commit": "1d33cdc5eccb275f8411d55b72958858dc4f53fd"
     },
     {
+      "name": "libxxhash",
+      "version": "0.8.3-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libxxhash-0.8.3-r0.apk",
+      "archive": "libxxhash-0.8.3-r0.apk",
+      "sha256": "e3140cf609508b32db2aec81c8736e7db5d96c351857c99b364a6d1a913bb850",
+      "license": "BSD-2-Clause",
+      "upstream": "https://cyan4973.github.io/xxHash/",
+      "origin": "xxhash",
+      "source_commit": "6e7967375f3dc136a45daa394d61ff677d9485f3",
+      "installed_only": true
+    },
+    {
       "name": "linux-headers",
       "version": "6.14.2-r0",
       "repository": "main",
@@ -1018,7 +1187,10 @@
       "archive": "llvm20-libs-20.1.8-r0.apk",
       "sha256": "d0926e20a9e2e65f03f673c1d9d2e69f807e5858920146a0eaedaa68b30fe443",
       "license": "Apache-2.0",
-      "upstream": "https://llvm.org/"
+      "upstream": "https://llvm.org/",
+      "origin": "llvm20",
+      "source_commit": "9cf763a63d7ef49e00a4c6becac86468771fe592",
+      "installed_only": true
     },
     {
       "name": "m4",
@@ -1052,7 +1224,23 @@
       "archive": "mesa-25.1.9-r0.apk",
       "sha256": "aa23ac67f7ba4d0d0330246e9313992c057fe33905072b32f4eb6bf9326cb7a3",
       "license": "MIT AND SGI-B-2.0 AND BSL-1.0",
-      "upstream": "https://www.mesa3d.org"
+      "upstream": "https://www.mesa3d.org",
+      "origin": "mesa",
+      "source_commit": "dd9d35b82a5100ea5a3440943a74ab3bf71db4e5",
+      "installed_only": true
+    },
+    {
+      "name": "mesa-dri-gallium",
+      "version": "25.1.9-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/mesa-dri-gallium-25.1.9-r0.apk",
+      "archive": "mesa-dri-gallium-25.1.9-r0.apk",
+      "sha256": "2372fc8068a3f2a2029b7284deb3c8f7b57e49fa3de8c708fc008c72744b3fbb",
+      "license": "MIT AND SGI-B-2.0 AND BSL-1.0",
+      "upstream": "https://www.mesa3d.org",
+      "origin": "mesa",
+      "source_commit": "dd9d35b82a5100ea5a3440943a74ab3bf71db4e5",
+      "installed_only": true
     },
     {
       "name": "mesa-egl",
@@ -1091,6 +1279,19 @@
       "source_commit": "dd9d35b82a5100ea5a3440943a74ab3bf71db4e5"
     },
     {
+      "name": "mesa-utils",
+      "version": "9.0.0-r6",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/mesa-utils-9.0.0-r6.apk",
+      "archive": "mesa-utils-9.0.0-r6.apk",
+      "sha256": "086acbb57b088d905d9efdc7bc50363f59e08096494b3e4ecdae389ae65ce173",
+      "license": "custom",
+      "upstream": "https://mesa3d.org",
+      "origin": "mesa-demos",
+      "source_commit": "6bd45b53fb316dc01bda59f5feaf1e127eb64f22",
+      "installed_only": true
+    },
+    {
       "name": "mkfontscale",
       "version": "1.2.3-r1",
       "repository": "main",
@@ -1113,6 +1314,19 @@
       "upstream": "http://www.multiprecision.org/",
       "origin": "mpc1",
       "source_commit": "84a227baf001b6e0208e3352b294e4d7a40e93de"
+    },
+    {
+      "name": "mpdecimal",
+      "version": "4.0.1-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/mpdecimal-4.0.1-r0.apk",
+      "archive": "mpdecimal-4.0.1-r0.apk",
+      "sha256": "28f3d868efbc1e9093b95f4a3f6e74393acd4a37292fcb5c0e0e0612fe83fff3",
+      "license": "BSD-2-Clause",
+      "upstream": "https://www.bytereef.org/mpdecimal/index.html",
+      "origin": "mpdecimal",
+      "source_commit": "c0519b85456e9b838e3142e1d233aab0b433b476",
+      "installed_only": true
     },
     {
       "name": "mpfr4",
@@ -1173,6 +1387,19 @@
       "upstream": "https://www.nasm.us",
       "origin": "nasm",
       "source_commit": "35052d7065f369f499758533b04be9c9d8e1d733"
+    },
+    {
+      "name": "ncurses",
+      "version": "6.5_p20250503-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/ncurses-6.5_p20250503-r0.apk",
+      "archive": "ncurses-6.5_p20250503-r0.apk",
+      "sha256": "c6788ddcf2e5dbe54a1ae60efaadfb77cd9f509cc620f4cec694c1b3b92ac326",
+      "license": "X11",
+      "upstream": "https://invisible-island.net/ncurses/",
+      "origin": "ncurses",
+      "source_commit": "3fefbe8dda8b3e85458edb190e2f3a69ad16035c",
+      "installed_only": true
     },
     {
       "name": "ncurses-terminfo-base",
@@ -1245,6 +1472,32 @@
       "upstream": "https://gitea.treehouse.systems/ariadne/pkgconf",
       "origin": "pkgconf",
       "source_commit": "5be535df8a0565ca60a69a44601937d4288e353c"
+    },
+    {
+      "name": "py3-pygments",
+      "version": "2.19.1-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/py3-pygments-2.19.1-r1.apk",
+      "archive": "py3-pygments-2.19.1-r1.apk",
+      "sha256": "a7af30d3a54790ea6ef8f3a24c19ffb81ec1691470d70dd28976c09423c497e7",
+      "license": "BSD-2-Clause",
+      "upstream": "https://pygments.org/",
+      "origin": "py3-pygments",
+      "source_commit": "f15642665ff290eb83a8c70c124c15f230fda7bb",
+      "installed_only": true
+    },
+    {
+      "name": "python3",
+      "version": "3.12.16-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/python3-3.12.16-r0.apk",
+      "archive": "python3-3.12.16-r0.apk",
+      "sha256": "4bd1bf5b980cdf906c04a507258cfae8b44b3070d82b7c4cbf77ef2552bbdb06",
+      "license": "PSF-2.0",
+      "upstream": "https://www.python.org/",
+      "origin": "python3",
+      "source_commit": "712199df117586aee4a5a8138360636deafcae27",
+      "installed_only": true
     },
     {
       "name": "readline",
@@ -1341,7 +1594,23 @@
       "archive": "spirv-tools-1.4.313.0-r0.apk",
       "sha256": "aee0231895638719480f05cc328b45d132afb09030f8957d5ba3a930cc06b9c2",
       "license": "Apache-2.0",
-      "upstream": "https://github.com/KhronosGroup/SPIRV-Tools"
+      "upstream": "https://github.com/KhronosGroup/SPIRV-Tools",
+      "origin": "spirv-tools",
+      "source_commit": "5e92a103a8ac7baea97f089965f902c4b738c191",
+      "installed_only": true
+    },
+    {
+      "name": "sqlite-libs",
+      "version": "3.49.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/sqlite-libs-3.49.2-r1.apk",
+      "archive": "sqlite-libs-3.49.2-r1.apk",
+      "sha256": "7af9a58595642de91ea35d3d070cd38d969680a720ce76b14966859e6fb4af99",
+      "license": "blessing",
+      "upstream": "https://www.sqlite.org/",
+      "origin": "sqlite",
+      "source_commit": "dac9cea7503a4e9b84d647aab2492d733ac4ac8c",
+      "installed_only": true
     },
     {
       "name": "twm",

@@ -25,15 +25,18 @@ The fixture contains the same pinned init, libc, shells, tools, desktop, test pr
 Build a new raw disk that can boot its installed root without an ISO or PXE server.
 
 ```sh
-make -j2 build/axiom64.elf build/rootfs-desktop.cpio
+make -j2 build/axiom64.elf build/rootfs-installed-desktop.cpio
 python3 scripts/boot_media.py disk build/axiom64-installed.raw --installed \
-    --initramfs build/rootfs-desktop.cpio
+    --initramfs build/rootfs-installed-desktop.cpio
 ```
 
 The image contains Limine, an EFI System Partition and a writable ext2 system
 partition. The boot configuration selects the system partition by its GPT ID.
-The selected archive supplies the installed desktop and tools. On first boot,
-create the administrator from the console as described in [accounts.md](accounts.md).
+The installed desktop profile includes kitty and Mesa software rendering. On
+first boot, create the administrator from the console as described in
+[accounts.md](accounts.md). After login, the X11 session opens a kitty terminal
+and copies its shortcut to the user's Desktop on first use. Use
+`build/rootfs-desktop.cpio` for a smaller disk image with xterm.
 Attach the image as a new VM disk. The command creates a regular image file and
 refuses an existing destination. Guided partitioning and installation to existing
 drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).
@@ -41,6 +44,11 @@ drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27
 `python3 scripts/nvme_test.py` boots the generated disk twice under UEFI with
 NVMe as the only boot medium. It verifies persistence across cold boots and
 checks the system partition afterward with host `e2fsck`.
+
+`make test-kitty` boots the installed desktop on an emulated NVMe disk, signs
+in through the normal account service, and types a command into kitty. It
+checks the file created by that command and saves a screenshot and serial log
+under `build/kitty-nvme-*`.
 
 ## Boot selection
 

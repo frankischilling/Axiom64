@@ -42,8 +42,14 @@ import tempfile
 import json
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--profile", choices=["full", "desktop"], default="full")
+root_archives = {
+    "full": "rootfs.cpio",
+    "desktop": "rootfs-desktop.cpio",
+    "installed-desktop": "rootfs-installed-desktop.cpio",
+}
+parser.add_argument("--profile", choices=root_archives, default="full")
 args = parser.parse_args()
+installed_desktop = args.profile == "installed-desktop"
 expected_musl = json.loads((ROOT / "sources.lock.json").read_text())["build_musl"]["version"]
 build_musl = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", "musl-dev"], text=True)
 if build_musl != expected_musl:
@@ -134,13 +140,10 @@ weston_payloads = {
     "weston-shell-desktop": ("usr/lib/weston/desktop-shell.so",),
     "weston-clients": ("usr/bin/weston-simple-shm",),
 }
-for package, archive in packages():
+for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
-    # This image uses fbdev with GLX disabled; no Mesa or LLVM payload is needed.
-    if package["name"] in {"mesa", "llvm20-libs", "spirv-tools"}:
-        continue
-    if args.profile == "desktop" and package["name"] in {
+    if args.profile != "full" and package["name"] in {
         "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
         "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
         "libisoburn", "libisofs", "xorriso"
@@ -179,6 +182,10 @@ for path in ("usr/share/applications", "etc/skel", "etc/skel/Desktop"):
 for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
+if installed_desktop:
+    files["etc/skel/Desktop/kitty.desktop"] = (
+        0o100755, files["usr/share/applications/kitty.desktop"][1]
+    )
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
 regular('usr/libexec/axiom64-session-bus', ROOT / 'build/desktop-session-bus')
 regular('usr/libexec/axiom64-system-bus', ROOT / 'userspace/services/system-bus.sh')
@@ -220,7 +227,7 @@ def entry(stream, path, mode, data, inode):
     stream.write(b"\0" * (-stream.tell() % 4))
 
 
-destination = ROOT / "build" / ("rootfs-desktop.cpio" if args.profile == "desktop" else "rootfs.cpio")
+destination = ROOT / "build" / root_archives[args.profile]
 with destination.open("wb") as stream:
     for inode, (path, (mode, data)) in enumerate(sorted(files.items()), start=1):
         entry(stream, path, mode, data, inode)

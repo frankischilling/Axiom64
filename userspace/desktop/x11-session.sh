@@ -25,7 +25,12 @@
 # Explicit isolated desktop fixture. Normal login uses an authenticated seat.
 x11_server() {
     mkdir -p /tmp/.X11-unix /var/log
-    /usr/libexec/Xorg :0 -config /etc/X11/xorg.conf -nolisten tcp -noreset -ac -retro -dumbSched -extension GLX -logfile /var/log/Xorg.0.log > /tmp/xorg-output 2>&1 &
+    set --
+    if ! test -r /usr/lib/dri/swrast_dri.so; then
+        set -- -extension GLX
+    fi
+    /usr/libexec/Xorg :0 -config /etc/X11/xorg.conf -nolisten tcp -noreset -ac -retro -dumbSched \
+        "$@" -logfile /var/log/Xorg.0.log > /tmp/xorg-output 2>&1 &
     xorg=$!
     ready=0
     for attempt in $(seq 1 100); do

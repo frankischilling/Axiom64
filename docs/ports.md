@@ -4,9 +4,16 @@ The kernel implements the Linux x86-64 ABI itself. The host builds static tests,
 
 Native development tools are GCC 14.2.0, binutils 2.44, Make 4.4.1, and NASM 2.16.03. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. The native toolchain test assembles an x86-64 ELF object and links and calls it from C. It also checks compiler diagnostics and builds a C++ shared library inside the guest. A separate executable loads the library with `dlopen`, catches its exceptions across the library boundary, and verifies that two threads use independent thread-local state.
 
-Both image profiles ship the pinned Alpine D-Bus 1.16.2 daemon, tools and client library. The source bundle carries the upstream sources, notices and Alpine recipe. The test probe builds against the matching development headers, which stay out of the boot images. See [the D-Bus service and session setup](accounts.md#d-bus).
+All image profiles ship the pinned Alpine D-Bus 1.16.2 daemon, tools and client library. The source bundle carries the upstream sources, notices and Alpine recipe. The test probe builds against the matching development headers, which stay out of the boot images. See [the D-Bus service and session setup](accounts.md#d-bus).
 
-Both profiles ship Weston 14.0.2 with the X11 backend, Pixman renderer, desktop shell, terminal, shared-memory demo, and `wayland-info`. The port locks record the packages and sources. The builder selects the nested desktop and its supporting libraries from those packages. Weston creates a private socket directory for each invocation and removes it on normal exit or handled signals. A login-wide `XDG_RUNTIME_DIR`, standalone DRM/KMS, accelerated rendering and Xwayland remain open.
+The [installed desktop profile](disk-root.md) adds kitty 0.42.1, its X11 backend,
+the `kitten` helper, terminal definitions, Python, and DejaVu fonts. Mesa
+llvmpipe provides OpenGL for the framebuffer X server. The source bundle
+includes the pinned Alpine recipes, the Go runtime and modules linked into
+`kitten`, and the release archive for its bundled symbol font. The full and
+desktop profiles use the smaller framebuffer session with xterm.
+
+All profiles ship Weston 14.0.2 with the X11 backend, Pixman renderer, desktop shell, terminal, shared-memory demo, and `wayland-info`. The port locks record the packages and sources. The builder selects the nested desktop and its supporting libraries from those packages. Weston creates a private socket directory for each invocation and removes it on normal exit or handled signals. A login-wide `XDG_RUNTIME_DIR`, standalone DRM/KMS, accelerated rendering and Xwayland remain open.
 
 `make test-guest-kernel` imports the kernel sources into an isolated guest and builds `build/axiom64.elf` using the installed GNU tools and NASM. It verifies the source digests inside Axiom64, checks the ext2 export, and packages the resulting ELF with the existing root filesystem for the full BIOS and UEFI boot suite. Set `AXIOM64_KERNEL_BUILD_ACCEL=kvm` to accelerate compilation on hosts with KVM. Results and the exported kernel are retained under `build/guest-kernel-*`.
 

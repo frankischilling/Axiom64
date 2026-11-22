@@ -265,8 +265,8 @@ int software_params(Task& task, uint64_t argument) {
     SoftwareParams parameters{};
     if (!input(task, argument, parameters))
         return fault;
+    // A start threshold larger than the ring leaves start under caller control.
     if (!parameters.avail_min || parameters.avail_min > buffer_frames ||
-        parameters.start_threshold > playback.software.boundary ||
         parameters.stop_threshold > playback.software.boundary || parameters.timestamp_mode < 0 ||
         parameters.timestamp_mode > 1 || parameters.timestamp_type > 2 ||
         parameters.silence_threshold || parameters.silence_size)
@@ -327,8 +327,7 @@ int64_t write_frames(Task& task, uint64_t argument) {
     if (!input(task, argument, transfer) || output(task, argument, int64_t(0)))
         return fault;
     const auto device = refresh();
-    const auto frames =
-        min(transfer.frames, uint64_t(min(device.space / frame_bytes, period_frames)));
+    const auto frames = min(transfer.frames, uint64_t(device.space / frame_bytes));
     int64_t result;
     if (playback.state == State::xrun)
         result = xrun;
@@ -340,12 +339,26 @@ int64_t write_frames(Task& task, uint64_t argument) {
         result = again;
     else {
         uint8_t samples[Pcm::output_period_bytes];
-        const size_t length = frames * frame_bytes;
-        if (!task.memory->space.copy_in(samples, transfer.address, length))
-            return fault;
-        result = write(samples, length);
-        if (result > 0)
-            result /= frame_bytes;
+        uint64_t done = 0;
+        result = 0;
+        while (done < frames) {
+            const auto offset = done * frame_bytes;
+            const auto count = min(frames - done, uint64_t(period_frames));
+            const auto length = count * frame_bytes;
+            if (transfer.address > UINT64_MAX - offset ||
+                !task.memory->space.copy_in(samples, transfer.address + offset, length)) {
+                result = fault;
+                break;
+            }
+            const auto bytes = write(samples, length);
+            if (bytes <= 0) {
+                result = bytes;
+                break;
+            }
+            done += bytes / frame_bytes;
+        }
+        if (done)
+            result = int64_t(done);
     }
     const int error = output(task, argument, result);
     return error ? error : min(result, int64_t(0));

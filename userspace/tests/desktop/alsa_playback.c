@@ -165,14 +165,14 @@ int main(void) {
 
     CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_PREPARE) == 0);
     // Keep the ring primed until drain, with no explicit START.
-    software.start_threshold = software.boundary;
+    software.start_threshold = INT64_MAX;
     CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_SW_PARAMS, &software) == 0);
-    int16_t silence[period][2] = {0};
-    for (int i = 0; i < periods; ++i) {
-        struct snd_xferi transfer = {.buf = silence, .frames = period};
-        CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &transfer) == 0 &&
-              transfer.result == period);
-    }
+    static int16_t silence[period * periods][2];
+    struct snd_xferi transfer = {.buf = silence, .frames = period * periods};
+    CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &transfer) == 0 &&
+          transfer.result == period * periods);
+    CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_STATUS, &status) == 0);
+    CHECK(status.state == SNDRV_PCM_STATE_PREPARED && status.hw_ptr == 0);
     CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_DRAIN) == 0);
 
     CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_HW_FREE) == 0);

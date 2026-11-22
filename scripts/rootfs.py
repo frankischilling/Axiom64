@@ -151,7 +151,7 @@ for notice in sorted((ROOT / "build" / "licenses").rglob("*")):
 # Select Weston's CPU-rendered X11 backend and desktop shell. The Alpine
 # packages also contain modules for transports and renderers that need separate
 # kernel interfaces and dependencies.
-weston_payloads = {
+package_payloads = {
     "weston": (
         "usr/bin/weston", "usr/lib/weston/libexec_weston.so.0*",
         "usr/libexec/weston-desktop-shell", "usr/libexec/weston-keyboard",
@@ -161,6 +161,7 @@ weston_payloads = {
     "weston-backend-x11": ("usr/lib/libweston-14/x11-backend.so",),
     "weston-shell-desktop": ("usr/lib/weston/desktop-shell.so",),
     "weston-clients": ("usr/bin/weston-simple-shm",),
+    "openssh-server-common": (),  # The installed server requires a local configuration.
 }
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
@@ -173,7 +174,7 @@ for package, archive in packages(include_installed=installed_desktop):
     }:
         continue
     with tarfile.open(archive, "r:gz", ignore_zeros=True) as stream:
-        overlay_tar(files, stream, include=weston_payloads.get(package["name"]))
+        overlay_tar(files, stream, include=package_payloads.get(package["name"]))
 
 # Override both the installed interpreter and native development libc after APK imports.
 for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **download_files(),
@@ -213,6 +214,9 @@ if installed_desktop:
         0o100644, b"[Default Applications]\ninode/directory=thunar.desktop;\n"
     )
     compile_desktop_data()
+    directory("etc/ssh")
+    directory("var/empty")
+    regular("etc/ssh/sshd_config.example", ROOT / "userspace/services/sshd_config", 0o100644)
 regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
 regular('usr/libexec/axiom64-session-bus', ROOT / 'build/desktop-session-bus')
 regular('usr/libexec/axiom64-system-bus', ROOT / 'userspace/services/system-bus.sh')

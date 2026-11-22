@@ -48,7 +48,8 @@ constexpr bool fits(uint64_t address, size_t bytes, Limits limits) {
 // Return contiguous, zeroed pages. The caller must stop DMA before page_free.
 uint64_t allocate(size_t pages, Limits limits);
 
-// Read the allocator's used-page bitmap. Page zero is never returned.
+// Read a region bitmap, using its physical start for DMA boundary checks.
+// Index zero is reserved and is also the no-run return value.
 size_t find_free_run(const uint8_t* bitmap, size_t ceiling, size_t cursor, size_t count,
-                     size_t boundary_pages);
+                     size_t boundary_pages, size_t first_pfn = 0);
 } // namespace ax::Dma

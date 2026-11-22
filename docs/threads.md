@@ -75,6 +75,7 @@ and UEFI.
 | `FUTEX_WAKE_BITSET` | Wake waiters whose mask intersects the requested mask |
 | `FUTEX_REQUEUE` | Wake a bounded number and move additional waiters to another key |
 | `FUTEX_CMP_REQUEUE` | Check the source value before waking/requeuing |
+| `FUTEX_WAKE_OP` | Update the second word atomically, wake the first queue, and wake the second queue when the old value matches the comparison |
 
 `FUTEX_PRIVATE_FLAG` keys words by memory-context identity and virtual address. Shared operations key the current resident physical page and offset. A queued shared waiter retains its backing page; unmapping and reusing the same virtual address cannot turn a new allocation into the old wait key. Requeue retains the destination before releasing the old page. This identity model covers the current eager-copy/shared-page mappings; demand paging, COW, and broader file mapping support need a corresponding identity design.
 

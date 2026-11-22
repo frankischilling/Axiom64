@@ -54,6 +54,7 @@ enum {
     WAKE = 1,
     REQUEUE = 3,
     CMP_REQUEUE = 4,
+    WAKE_OP = 5,
     WAIT_BITSET = 9,
     WAKE_BITSET = 10,
     PRIVATE = 128
@@ -114,7 +115,71 @@ static void expect_child(pid_t child, int expected) {
           WEXITSTATUS(status) == expected);
 }
 
+static uint32_t encode_op(unsigned op, int operand, unsigned compare, int argument) {
+    return (op << 28) | (compare << 24) | (((uint32_t)operand & 0xfff) << 12) |
+           ((uint32_t)argument & 0xfff);
+}
+
+static void check_wake_op(void) {
+    const struct {
+        unsigned op;
+        int operand;
+        uint32_t first, expected;
+    } updates[] = {
+        {0, -17, 10, (uint32_t)-17}, {1, -3, 10, 7}, {2 | 8, 4, 1, 17}, {3, 6, 247, 241},
+        {4, 15, 241, 254},
+    };
+
+    uint32_t word[2] = {7, 0};
+    for (size_t i = 0; i < sizeof(updates) / sizeof(updates[0]); i++) {
+        word[1] = updates[i].first;
+        uint32_t code = encode_op(updates[i].op, updates[i].operand, 0, word[1]);
+        CHECK(futex(word, WAKE_OP | PRIVATE, 1, (void*)1, word + 1, code) == 0);
+        CHECK(word[1] == updates[i].expected);
+    }
+    CHECK(futex(word, WAKE_OP | PRIVATE, 1, (void*)1, word + 1, encode_op(7, 1, 0, 0)) == -1 &&
+          errno == ENOSYS && word[1] == 254);
+    CHECK(futex(word, WAKE_OP | PRIVATE, 1, (void*)1, word + 1, encode_op(0, 8, 6, 0)) == -1 &&
+          errno == ENOSYS && word[1] == 8);
+    uint32_t code = encode_op(0, 3, 0, 8);
+    CHECK(futex(word, WAKE_OP | PRIVATE, 1, (void*)1, NULL, code) == -1 && errno == EFAULT);
+    CHECK(futex(word, WAKE_OP | PRIVATE, 1, (void*)1, (void*)((char*)word + 1), code) == -1 &&
+          errno == EINVAL);
+    uint32_t* mapped = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapped != MAP_FAILED);
+    *mapped = 42;
+    CHECK(mprotect(mapped, 4096, PROT_READ) == 0);
+    CHECK(futex(word, WAKE_OP | PRIVATE, 1, (void*)1, mapped, code) == -1 && errno == EFAULT &&
+          *mapped == 42);
+    CHECK(mprotect(mapped, 4096, PROT_READ | PROT_WRITE) == 0);
+
+    for (int private = 0; private <= PRIVATE; private += PRIVATE) {
+        uint32_t* pair = private ? word : mapped;
+        pair[0] = 7;
+        pair[1] = (uint32_t)-3;
+        pthread_t threads[2];
+        struct Waiter args[] = {{.word = pair, .op = WAIT | private, .value = 7},
+                                {.word = pair + 1, .op = WAIT | private, .value = -3}};
+        atomic_store(&entered, 0);
+        for (size_t i = 0; i < 2; i++)
+            CHECK(pthread_create(&threads[i], 0, waiter, &args[i]) == 0);
+        await_waiters(2);
+        // The comparison uses the signed value before the update.
+        int compare = private ? 2 : 5;
+        CHECK(futex(pair, WAKE_OP | private, 1, (void*)1, pair + 1, encode_op(1, 4, compare, -1)) ==
+              (private ? 2 : 1));
+        CHECK(pair[0] == 7 && pair[1] == 1);
+        if (!private)
+            CHECK(futex(pair + 1, WAKE, 1, 0, 0, 0) == 1);
+        for (size_t i = 0; i < 2; i++)
+            CHECK(pthread_join(threads[i], 0) == 0);
+    }
+    CHECK(munmap(mapped, 4096) == 0);
+    puts("FUTEX_WAKE_OP_PASS");
+}
+
 int main(void) {
+    check_wake_op();
     uint32_t words[2] = {44, 44};
     struct timespec immediate = {0, 0}, invalid = {0, 1000000000};
     CHECK(futex(words, WAIT | PRIVATE, 43, 0, 0, 0) == -1 && errno == EAGAIN);

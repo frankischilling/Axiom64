@@ -32,17 +32,19 @@ struct Key {
     uint32_t* word;
 };
 
+enum class WordAccess { key_only, read, write };
+
 static int make_key(Task* task, uint64_t address, bool private_key, Key& key,
-                    bool read_word = true) {
+                    WordAccess access = WordAccess::read) {
     if (address & 3)
         return -22;
     if (address >= user_limit || 4 > user_limit - address)
         return -14;
-    if (private_key && !read_word) {
+    if (private_key && access == WordAccess::key_only) {
         key = {task->memory, address, 0, nullptr};
         return 0;
     }
-    if (!task->memory->space.valid(address, 4))
+    if (!task->memory->space.valid(address, 4, access == WordAccess::write))
         return -14;
     auto entry = task->memory->space.entry(address);
     if (*entry & 0x200)
@@ -79,13 +81,7 @@ static bool matches(const Task& task, const Key& key, uint32_t bitset) {
            task.futex.identity == key.identity && (task.futex.bitset & bitset);
 }
 
-int futex_wake(Task* caller, uint64_t address, int count, bool private_key, uint32_t bitset) {
-    if (!bitset)
-        return -22;
-    Key key{};
-    int error = make_key(caller, address, private_key, key, false);
-    if (error)
-        return error;
+static int wake_waiters(const Key& key, int count, uint32_t bitset) {
     int woken = 0;
     // Linux's legacy FUTEX_WAKE tests the signed limit after the first wake.
     int limit = count > 0 ? count : 1;
@@ -94,6 +90,78 @@ int futex_wake(Task* caller, uint64_t address, int count, bool private_key, uint
             complete(task, 0);
             woken++;
         }
+    return woken;
+}
+
+int futex_wake(Task* caller, uint64_t address, int count, bool private_key, uint32_t bitset) {
+    if (!bitset)
+        return -22;
+    Key key{};
+    int error = make_key(caller, address, private_key, key, WordAccess::key_only);
+    return error ? error : wake_waiters(key, count, bitset);
+}
+
+static int change_word(uint32_t* word, uint32_t encoding) {
+    uint32_t operand = uint32_t(int32_t(encoding << 8) >> 20);
+    int comparison = int32_t(encoding << 20) >> 20;
+    if (encoding & (1u << 31))
+        operand = 1u << (operand & 31);
+
+    int32_t old;
+    switch ((encoding >> 28) & 7) {
+    case 0:
+        old = __atomic_exchange_n(word, operand, __ATOMIC_SEQ_CST);
+        break;
+    case 1:
+        old = __atomic_fetch_add(word, operand, __ATOMIC_SEQ_CST);
+        break;
+    case 2:
+        old = __atomic_fetch_or(word, operand, __ATOMIC_SEQ_CST);
+        break;
+    case 3:
+        old = __atomic_fetch_and(word, ~operand, __ATOMIC_SEQ_CST);
+        break;
+    case 4:
+        old = __atomic_fetch_xor(word, operand, __ATOMIC_SEQ_CST);
+        break;
+    default:
+        return -38;
+    }
+
+    // Linux applies the operation before rejecting an unknown comparison.
+    switch ((encoding >> 24) & 15) {
+    case 0:
+        return old == comparison;
+    case 1:
+        return old != comparison;
+    case 2:
+        return old < comparison;
+    case 3:
+        return old <= comparison;
+    case 4:
+        return old > comparison;
+    case 5:
+        return old >= comparison;
+    default:
+        return -38;
+    }
+}
+
+static int wake_op(const Frame& frame, bool private_key) {
+    Key first{}, second{};
+    if (int error = make_key(current, frame.rdi, private_key, first, WordAccess::key_only))
+        return error;
+    if (int error = make_key(current, frame.r8, private_key, second, WordAccess::write))
+        return error;
+
+    // The syscall runs with interrupts masked on the current single CPU.
+    // No waiter can change either queue between the update and the wakes.
+    int compare = change_word(second.word, uint32_t(frame.r9));
+    if (compare < 0)
+        return compare;
+    int woken = wake_waiters(first, int(frame.rdx), UINT32_MAX);
+    if (compare)
+        woken += wake_waiters(second, int(frame.r10), UINT32_MAX);
     return woken;
 }
 
@@ -115,21 +183,24 @@ int64_t futex_syscall(Frame* frame) {
     uint32_t op = frame->rsi, command = op & 127, bitset = frame->r9;
     bool private_key = op & 128;
     if ((op & ~511u) || (command != 0 && command != 1 && command != 3 && command != 4 &&
-                         command != 9 && command != 10))
+                         command != 5 && command != 9 && command != 10))
         return -38;
     if ((op & 256) && command != 0 && command != 9)
         return -38;
     if (command == 1 || command == 10)
         return futex_wake(current, address, int(frame->rdx), private_key,
                           command == 10 ? bitset : UINT32_MAX);
+    if (command == 5)
+        return wake_op(*frame, private_key);
     if (command == 3 || command == 4) {
         int wake_count = int(frame->rdx), move_count = int(frame->r10);
         if (wake_count < 0 || move_count < 0)
             return -22;
         Key source{}, target{};
-        int error = make_key(current, address, private_key, source, command == 4);
+        int error = make_key(current, address, private_key, source,
+                             command == 4 ? WordAccess::read : WordAccess::key_only);
         if (!error)
-            error = make_key(current, frame->r8, private_key, target, false);
+            error = make_key(current, frame->r8, private_key, target, WordAccess::key_only);
         if (error)
             return error;
         if (command == 4 && __atomic_load_n(source.word, __ATOMIC_SEQ_CST) != bitset)

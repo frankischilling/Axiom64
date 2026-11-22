@@ -470,6 +470,23 @@
       ]
     },
     {
+      "origin": "btop",
+      "commit": "2eb781fdf074ebb5d30fe90569aa6262a50ad9d3",
+      "license": "Apache-2.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/2eb781fdf074ebb5d30fe90569aa6262a50ad9d3/community/btop/APKBUILD",
+      "recipe_sha256": "8bb2a04eb9d136a0eb313a2c83636e7012a0d78b38b38ac0fa6a6fd237056392",
+      "files": [
+        {
+          "name": "btop-1.4.0.tar.gz",
+          "sha512": "7b7c63daf68192893ae4533c04ea70dcd6f253e188b1c842f2ebebac0b28e51431edef6ccfce5b25b3adbd5b2b637fc832bce7d5d64d664c2bf5c4672be75c8f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/btop-1.4.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2eb781fdf074ebb5d30fe90569aa6262a50ad9d3/community/btop/btop-1.4.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "busybox",
       "commit": "2e97d754a30d558f15524b8e422303c8a96832df",
       "license": "GPL-2.0-only",

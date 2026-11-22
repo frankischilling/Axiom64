@@ -13,6 +13,12 @@ includes the pinned Alpine recipes, the Go runtime and modules linked into
 `kitten`, and the release archive for its bundled symbol font. The full and
 desktop profiles use the smaller framebuffer session with xterm.
 
+The installed desktop also ships btop 1.4.0. It reads live CPU and memory data,
+process names and arguments, and mounted filesystem capacity. The first desktop
+login adds a btop shortcut and creates a default configuration that uses the
+live mount table. Existing user configurations take precedence. Network and disk
+throughput still need hardware validation.
+
 All profiles ship Weston 14.0.2 with the X11 backend, Pixman renderer, desktop shell, terminal, shared-memory demo, and `wayland-info`. The port locks record the packages and sources. The builder selects the nested desktop and its supporting libraries from those packages. Weston creates a private socket directory for each invocation and removes it on normal exit or handled signals. A login-wide `XDG_RUNTIME_DIR`, standalone DRM/KMS, accelerated rendering and Xwayland remain open.
 
 `make test-guest-kernel` imports the kernel sources into an isolated guest and builds `build/axiom64.elf` using the installed GNU tools and NASM. It verifies the source digests inside Axiom64, checks the ext2 export, and packages the resulting ELF with the existing root filesystem for the full BIOS and UEFI boot suite. Set `AXIOM64_KERNEL_BUILD_ACCEL=kvm` to accelerate compilation on hosts with KVM. Results and the exported kernel are retained under `build/guest-kernel-*`.

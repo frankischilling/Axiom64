@@ -62,6 +62,19 @@
       "source_commit": "0b8db0af6fbe8b8bc7e50e5f64b2f88bc0d6aa16"
     },
     {
+      "name": "btop",
+      "version": "1.4.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/btop-1.4.0-r0.apk",
+      "archive": "btop-1.4.0-r0.apk",
+      "sha256": "0a43a4de05f11c61191b601fbb061a2be55db02afb04ed05378a8623003e161c",
+      "license": "Apache-2.0",
+      "upstream": "https://github.com/aristocratos/btop",
+      "origin": "btop",
+      "source_commit": "2eb781fdf074ebb5d30fe90569aa6262a50ad9d3",
+      "installed_only": true
+    },
+    {
       "name": "busybox",
       "version": "1.37.0-r20",
       "repository": "main",

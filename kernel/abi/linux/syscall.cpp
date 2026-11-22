@@ -1791,6 +1791,8 @@ static int64_t dispatch(Frame* f) {
         int error = stat_at_node(a, b, d, node);
         return error ? error : stat_node(node, c);
     }
+    case 436:
+        return close_task_descriptors(*current, unsigned(a), unsigned(b), unsigned(c));
     case 269:
     case 439: {
         return access_file(a, b, c, f->rax == 439 ? d : 0);

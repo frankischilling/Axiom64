@@ -119,6 +119,30 @@ static FileTable* copy_files(const FileTable* source) {
     return table;
 }
 
+int close_task_descriptors(Task& task, unsigned first, unsigned last, unsigned flags) {
+    constexpr unsigned unshare = 1u << 1, cloexec = 1u << 2;
+    if (first > last || (flags & ~(unshare | cloexec)))
+        return -22;
+    if ((flags & unshare) && task.files->references > 1) {
+        auto files = copy_files(task.files);
+        if (!files)
+            return -12;
+        release_files(task.files);
+        task.files = files;
+    }
+    auto& files = *task.files;
+    for (unsigned fd = first; fd < files.capacity && fd <= last; ++fd) {
+        auto& entry = files.entries[fd];
+        if (!entry.handle)
+            continue;
+        if (flags & cloexec)
+            entry.cloexec = true;
+        else
+            close_descriptor(files, fd);
+    }
+    return 0;
+}
+
 static void release_resources(Task* t) {
     message_queue_discard(*t);
     posix_queue_discard(*t);

@@ -70,6 +70,42 @@ static void child_status(pid_t child, int expected) {
     CHECK(WEXITSTATUS(status) == expected);
 }
 
+struct RangeTest {
+    int first;
+    int second;
+};
+
+static int unshare_range(void* argument) {
+    const struct RangeTest* range = argument;
+    CHECK(syscall(SYS_close_range, range->first, range->first, 2) == 0);
+    CHECK(fcntl(range->first, F_GETFD) == -1 && errno == EBADF);
+    CHECK(syscall(SYS_close_range, range->second, UINT32_MAX, 4) == 0);
+    CHECK(fcntl(range->second, F_GETFD) == FD_CLOEXEC);
+    return 0;
+}
+
+static void descriptor_ranges(void) {
+    int first = open("/dev/null", O_RDONLY);
+    CHECK(first >= 0);
+    int second = dup(first);
+    CHECK(second > first);
+    CHECK(syscall(SYS_close_range, second, first, 0) == -1 && errno == EINVAL);
+    CHECK(syscall(SYS_close_range, first, second, 1) == -1 && errno == EINVAL);
+    CHECK(syscall(SYS_close_range, UINT32_MAX, UINT32_MAX, 0) == 0);
+    struct RangeTest range = {first, second};
+    char stack[32768] __attribute__((aligned(16)));
+    pid_t child = clone(unshare_range, stack + sizeof(stack), CLONE_FILES | SIGCHLD, &range);
+    CHECK(child >= 0);
+    child_status(child, 0);
+    CHECK(fcntl(first, F_GETFD) == 0 && fcntl(second, F_GETFD) == 0);
+    CHECK(syscall(SYS_close_range, first, first, 4) == 0);
+    CHECK(fcntl(first, F_GETFD) == FD_CLOEXEC && fcntl(second, F_GETFD) == 0);
+    CHECK(syscall(SYS_close_range, first, second, 0) == 0);
+    CHECK(fcntl(first, F_GETFD) == -1 && errno == EBADF);
+    CHECK(fcntl(second, F_GETFD) == -1 && errno == EBADF);
+    puts("ABI_CLOSE_RANGE_PASS linkage=" ABI_LINKAGE);
+}
+
 static void scheduler_parameters(void) {
     struct sched_param parameter = {.sched_priority = -1};
     CHECK(sched_getscheduler(0) == SCHED_OTHER);
@@ -767,6 +803,7 @@ int main(int argc, char** argv) {
     CHECK(clock_gettime(CLOCK_MONOTONIC, &after) == 0);
     CHECK(after.tv_sec > before.tv_sec || after.tv_nsec >= before.tv_nsec + 20000000);
     shared_file_table_pressure();
+    descriptor_ranges();
     anonymous_address_reservations();
     scheduler_parameters();
     user_gs_base(argv[0]);

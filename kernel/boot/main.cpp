@@ -94,6 +94,8 @@ BootInfo boot_info;
     Acpi::DefinitionBlocks definitions;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
     clock_init(rsdp);
+    if (arguments.has("smp.probe"))
+        boot_probe_application_processors();
     if (arguments.has("irq=pic"))
         log("Interrupts: PIC/PIT selected by boot option\n");
     else if (have_topology)

@@ -222,7 +222,7 @@ int allocate_fd(Task*, Handle*, int start = 0, bool cloexec = false);
 Frame* schedule(Frame*, bool yield = false);
 
 int close_task_descriptors(Task&, unsigned first, unsigned last, unsigned flags);
-void start_init(const char*);
+void start_init(const char*, bool debug_ssh, bool text_console);
 
 constexpr int64_t would_block = -4096;
 } // namespace ax

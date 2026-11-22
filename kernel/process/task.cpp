@@ -1027,7 +1027,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     return 0;
 }
 
-void start_init(const char* path) {
+void start_init(const char* path, bool debug_ssh, bool text_console) {
     Task* init = new_task();
     if (!init)
         panic("init allocation");
@@ -1044,6 +1044,8 @@ void start_init(const char* path) {
                          test_mode ? "AXIOM64_TEST=1" : "AXIOM64_TEST=0",
                          test_suite,
                          test_phase,
+                         debug_ssh ? "AXIOM64_DEBUG_SSH=1" : "AXIOM64_DEBUG_SSH=0",
+                         text_console ? "AXIOM64_TEXT_CONSOLE=1" : "AXIOM64_TEXT_CONSOLE=0",
                          nullptr};
     ExecArguments arguments;
     if (arguments.capture_kernel(path, args, env, init->process->limits.soft(Resource::stack)) ||

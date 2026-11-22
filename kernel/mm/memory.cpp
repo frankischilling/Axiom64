@@ -23,6 +23,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#include "arch/x86_64/tlb.hpp"
 #include "boot/boot.hpp"
 #include "mm/dma.hpp"
 #include "mm/file_mapping.hpp"
@@ -139,8 +140,7 @@ void activate_kernel_memory() {
 static const Mmio::PageTables kernel_tables{
     nullptr, [](void*, uint64_t page) { return static_cast<uint64_t*>(physical(page)); },
     [](void*) { return page_alloc(); }, [](void*, uint64_t page) { page_free(page); },
-    [](void*, uint64_t va) { asm volatile("invlpg (%0)" ::"r"(va)
-                                          : "memory"); }};
+    [](void*, uint64_t va) { invalidate_local_page(va); }};
 
 void* map_mmio(uint64_t address, size_t length) {
     Mmio::Range range;

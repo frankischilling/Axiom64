@@ -42,6 +42,7 @@ constexpr uint32_t task_priority = 0x80, end_of_interrupt = 0xb0, spurious_regis
 constexpr unsigned icr_low = 0x300, icr_high = 0x310, icr_msr = 0x830;
 constexpr uint32_t icr_busy = 1 << 12;
 constexpr uint8_t wake_vector = 0xf1, secondary_timer_vector = 0xf2;
+constexpr uint8_t invalidate_vector = 0xf3;
 constexpr unsigned timer_lvt = 0x320, timer_initial_count = 0x380, timer_divide = 0x3e0;
 constexpr uint32_t timer_divide_by_16 = 0x3;
 constexpr unsigned max_controllers = 16;
@@ -379,21 +380,29 @@ bool interrupt_enable_secondary_ipi() {
     return true;
 }
 
-bool interrupt_send_ipi(uint32_t destination) {
+static bool send_secondary_ipi(uint32_t destination, uint8_t vector) {
     if (!secondary_handler)
         return false;
     if (ipi_local.x2) {
         // x2APIC WRMSR does not order earlier memory writes before delivery.
         asm volatile("mfence; lfence" ::: "memory");
-        wrmsr(icr_msr, (uint64_t(destination) << 32) | wake_vector);
+        wrmsr(icr_msr, (uint64_t(destination) << 32) | vector);
         return true;
     }
     if (destination >= 255 ||
         !DevicePoll::wait([] { return !(ipi_local.read(icr_low) & icr_busy); }, 20))
         return false;
     ipi_local.write(icr_high, destination << 24);
-    ipi_local.write(icr_low, wake_vector);
+    ipi_local.write(icr_low, vector);
     return true;
+}
+
+bool interrupt_send_ipi(uint32_t destination) {
+    return send_secondary_ipi(destination, wake_vector);
+}
+
+bool interrupt_send_tlb_ipi(uint32_t destination) {
+    return send_secondary_ipi(destination, invalidate_vector);
 }
 
 void interrupt_arm_secondary_timer(uint32_t count) {
@@ -519,6 +528,13 @@ bool interrupt_dispatch(uint64_t vector) {
     // The LAPIC never puts its spurious vector in the in-service register.
     if (vector == Irq::spurious)
         return false;
+    if (vector == invalidate_vector && secondary_handler) {
+        if (ipi_local.in_service(invalidate_vector)) {
+            secondary_handler(ipi_local.id(), Irq::SecondaryEvent::invalidate);
+            ipi_local.write(end_of_interrupt, 0);
+        }
+        return false;
+    }
     if ((vector == wake_vector || vector == secondary_timer_vector) && secondary_handler) {
         if (ipi_local.in_service(unsigned(vector))) {
             ipi_local.write(end_of_interrupt, 0);

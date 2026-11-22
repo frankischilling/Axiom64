@@ -52,7 +52,7 @@ struct Route {
 
 using Handler = void (*)(void*);
 using LineHandler = bool (*)(void*);
-enum class SecondaryEvent { wake, timer };
+enum class SecondaryEvent { wake, timer, invalidate };
 using SecondaryHandler = void (*)(uint32_t apic_id, SecondaryEvent);
 
 struct Message {
@@ -102,6 +102,7 @@ bool interrupt_apic_ready();
 bool interrupt_prepare_secondary(Irq::SecondaryHandler);
 bool interrupt_enable_secondary_ipi();
 bool interrupt_send_ipi(uint32_t destination);
+bool interrupt_send_tlb_ipi(uint32_t destination);
 // Called only on a secondary CPU after enabling its local APIC.
 void interrupt_arm_secondary_timer(uint32_t count);
 void interrupt_stop_secondary_timer();

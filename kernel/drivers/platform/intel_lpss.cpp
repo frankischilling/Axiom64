@@ -25,6 +25,7 @@
 #include "drivers/platform/intel_lpss.hpp"
 #include "core/base.hpp"
 #include "drivers/platform/pci.hpp"
+#include "firmware/aml.hpp"
 
 namespace ax {
 namespace {
@@ -44,6 +45,16 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command) {
     uint64_t address;
     const auto result = pci.probe_bar(0, PciBarSpace::memory, bar);
     if (result != PciBarStatus::valid || !bar.range(0, register_bytes, address)) {
+        if (result == PciBarStatus::invalid) {
+            uint64_t size;
+            const auto measured = pci.measure_unassigned_memory_bar(0, size);
+            if (measured == PciBarStatus::valid) {
+                log("LPSS I2C: BAR0 unassigned bytes=%x\n", size);
+                return true;
+            }
+            if (measured == PciBarStatus::restore_failed)
+                return false;
+        }
         log("LPSS I2C: BAR0 rejected status=%u size=%x\n", uint64_t(result), bar.size);
         return result != PciBarStatus::restore_failed;
     }
@@ -97,7 +108,17 @@ void probe(const PciFunction& pci) {
 }
 } // namespace
 
-void intel_lpss_i2c_probe() {
+void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks) {
+    Acpi::PciRootWindows windows{};
+    if (Acpi::decode_pci_root_windows(blocks, windows))
+        for (unsigned i = 0; i < windows.count; ++i) {
+            const auto& window = windows.entries[i];
+            log("PCI root window: segment=%u bus=%x base=%x bytes=%x prefetch=%u\n",
+                uint64_t(window.segment), uint64_t(window.bus), window.base, window.size,
+                uint64_t(window.prefetchable));
+        }
+    else
+        log("PCI root window: no usable ACPI memory aperture\n");
     controllers = 0;
     pci_scan(probe);
     log("LPSS I2C: controllers=%u\n", uint64_t(controllers));

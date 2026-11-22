@@ -43,10 +43,12 @@ struct PciBar {
 };
 
 namespace PciBarProbe {
+enum class Assignment { assigned, unassigned };
+
 // The caller owns the function and must quiesce it before probing its BARs.
 template <class Config>
 PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_t physical_limit,
-                   PciBar& out) {
+                   PciBar& out, Assignment assignment = Assignment::assigned) {
     using enum PciBarStatus;
     if (index >= 6 || (pci.read8(0x0e) & 0x7f))
         return invalid;
@@ -64,7 +66,7 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
     const uint32_t address_bits = ports ? ~3u : ~15u;
     const uint64_t base = uint64_t(high) << 32 | (low & address_bits);
     const uint64_t limit = ports ? (1ull << 16) : physical_limit;
-    if (!base || base >= limit)
+    if (base >= limit || (assignment == Assignment::unassigned ? base != 0 : base == 0))
         return invalid;
 
     const uint16_t command = pci.read16(4);
@@ -79,7 +81,8 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
     pci.write32(offset, UINT32_MAX);
     if (wide)
         pci.write32(offset + 4, UINT32_MAX);
-    uint64_t mask = pci.read32(offset) & address_bits;
+    const uint32_t mask_low = pci.read32(offset);
+    uint64_t mask = mask_low & address_bits;
     if (wide)
         mask |= uint64_t(pci.read32(offset + 4)) << 32;
     pci.write32(offset, low);
@@ -96,6 +99,8 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
 
     // The supported I/O space is 16 bits even if the device reports a 32-bit mask.
     const uint64_t size = ports ? uint16_t(-mask) : wide ? -mask : uint32_t(-mask);
+    if (assignment == Assignment::unassigned && ((low ^ mask_low) & ~address_bits))
+        return invalid;
     if (!size || (size & (size - 1)) || (base & (size - 1)) || size > limit - base)
         return invalid;
     out = {base, size, index};

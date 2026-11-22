@@ -100,6 +100,21 @@ struct PciLinkProgram {
 bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&, PciBridges* = nullptr,
                            PciConfigRead = nullptr, PciLinkProgram = {});
 
+struct PciRootWindow {
+    uint64_t base, size;
+    uint16_t segment;
+    uint8_t bus;
+    bool prefetchable;
+};
+
+struct PciRootWindows {
+    PciRootWindow entries[64];
+    unsigned count;
+};
+
+// Decode fixed, identity-mapped memory apertures. An aperture is not a reservation.
+bool decode_pci_root_windows(const DefinitionBlocks&, PciRootWindows&);
+
 struct I2cHidDevice {
     char hardware_id[16];
     char controller[82];

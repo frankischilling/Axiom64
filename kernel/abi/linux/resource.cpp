@@ -45,9 +45,9 @@ static_assert(sizeof(SystemInformation) == 112 && offsetof(SystemInformation, pr
               offsetof(SystemInformation, mem_unit) == 104);
 
 bool permitted(const Task& target) {
-    if (&target == current || capable(current->credentials, Capability::sys_resource))
+    if (&target == current_task() || capable(current_task()->credentials, Capability::sys_resource))
         return true;
-    const auto& from = current->credentials;
+    const auto& from = current_task()->credentials;
     const auto& to = target.credentials;
     return from.user.real == to.user.real && from.user.real == to.user.effective &&
            from.user.real == to.user.saved && from.group.real == to.group.real &&
@@ -66,16 +66,17 @@ int64_t resource_usage_syscall(int who, uint64_t output) {
     switch (who) {
     case 0:
     case 1:
-        time = cpu_usage(*current, who == 1);
+        time = cpu_usage(*current_task(), who == 1);
         break;
     case -1:
-        time = {current->process->children_user_ticks, current->process->children_system_ticks};
+        time = {current_task()->process->children_user_ticks,
+                current_task()->process->children_system_ticks};
         break;
     default:
         return -22;
     }
     auto usage = linux_resource_usage(time);
-    return current->memory->space.copy_out(output, &usage, sizeof(usage)) ? 0 : -14;
+    return current_task()->memory->space.copy_out(output, &usage, sizeof(usage)) ? 0 : -14;
 }
 
 int64_t system_information_syscall(uint64_t output) {
@@ -95,12 +96,12 @@ int64_t system_information_syscall(uint64_t output) {
         if (task.state != State::empty)
             info.procs++;
     info.mem_unit = 1;
-    return current->memory->space.copy_out(output, &info, sizeof(info)) ? 0 : -14;
+    return current_task()->memory->space.copy_out(output, &info, sizeof(info)) ? 0 : -14;
 }
 
 int64_t resource_syscall(Frame* frame) {
-    auto& space = current->memory->space;
-    Task* target = current;
+    auto& space = current_task()->memory->space;
+    Task* target = current_task();
     unsigned resource = uint32_t(frame->rdi);
     uint64_t input = frame->rax == 160 ? frame->rsi : 0;
     uint64_t output = frame->rax == 97 ? frame->rsi : 0;
@@ -124,9 +125,9 @@ int64_t resource_syscall(Frame* frame) {
         if (!permitted(*target))
             return -1;
     }
-    int error =
-        target->process->limits.exchange(resource, input ? &replacement : nullptr, &previous,
-                                         capable(current->credentials, Capability::sys_resource));
+    int error = target->process->limits.exchange(
+        resource, input ? &replacement : nullptr, &previous,
+        capable(current_task()->credentials, Capability::sys_resource));
     if (error)
         return error;
     if (frame->rax == 97 && !output)

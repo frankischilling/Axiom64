@@ -149,9 +149,9 @@ static int change_word(uint32_t* word, uint32_t encoding) {
 
 static int wake_op(const Frame& frame, bool private_key) {
     Key first{}, second{};
-    if (int error = make_key(current, frame.rdi, private_key, first, WordAccess::key_only))
+    if (int error = make_key(current_task(), frame.rdi, private_key, first, WordAccess::key_only))
         return error;
-    if (int error = make_key(current, frame.r8, private_key, second, WordAccess::write))
+    if (int error = make_key(current_task(), frame.r8, private_key, second, WordAccess::write))
         return error;
 
     // The syscall runs with interrupts masked on the current single CPU.
@@ -188,7 +188,7 @@ int64_t futex_syscall(Frame* frame) {
     if ((op & 256) && command != 0 && command != 9)
         return -38;
     if (command == 1 || command == 10)
-        return futex_wake(current, address, int(frame->rdx), private_key,
+        return futex_wake(current_task(), address, int(frame->rdx), private_key,
                           command == 10 ? bitset : UINT32_MAX);
     if (command == 5)
         return wake_op(*frame, private_key);
@@ -197,10 +197,10 @@ int64_t futex_syscall(Frame* frame) {
         if (wake_count < 0 || move_count < 0)
             return -22;
         Key source{}, target{};
-        int error = make_key(current, address, private_key, source,
+        int error = make_key(current_task(), address, private_key, source,
                              command == 4 ? WordAccess::read : WordAccess::key_only);
         if (!error)
-            error = make_key(current, frame->r8, private_key, target, WordAccess::key_only);
+            error = make_key(current_task(), frame->r8, private_key, target, WordAccess::key_only);
         if (error)
             return error;
         if (command == 4 && __atomic_load_n(source.word, __ATOMIC_SEQ_CST) != bitset)
@@ -229,7 +229,7 @@ int64_t futex_syscall(Frame* frame) {
     if (!bitset)
         return -22;
     Key key{};
-    int error = make_key(current, address, private_key, key);
+    int error = make_key(current_task(), address, private_key, key);
     if (error)
         return error;
     uint64_t deadline = 0;
@@ -238,7 +238,7 @@ int64_t futex_syscall(Frame* frame) {
             int64_t sec, nsec;
         } time;
 
-        if (!current->memory->space.copy_in(&time, timeout, sizeof(time)))
+        if (!current_task()->memory->space.copy_in(&time, timeout, sizeof(time)))
             return -14;
         if (time.sec < 0 || time.nsec < 0 || time.nsec >= 1000000000)
             return -22;
@@ -256,11 +256,12 @@ int64_t futex_syscall(Frame* frame) {
         return -11;
     if (timeout && deadline <= ticks)
         return -110;
-    current->futex = {key.domain, key.identity, private_key ? 0 : key.page, deadline, bitset, true};
+    current_task()->futex = {key.domain, key.identity, private_key ? 0 : key.page,
+                             deadline,   bitset,       true};
     if (!private_key)
         page_retain(key.page);
-    current->wait = Wait::futex;
-    current->state = State::blocked;
+    current_task()->wait = Wait::futex;
+    current_task()->state = State::blocked;
     return would_block;
 }
 } // namespace ax

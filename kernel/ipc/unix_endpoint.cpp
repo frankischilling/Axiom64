@@ -146,12 +146,12 @@ class LookupContext {
     Task* previous;
 
   public:
-    explicit LookupContext(Task& task) : previous(current) {
-        current = &task;
+    explicit LookupContext(Task& task) : previous(current_task()) {
+        set_current_task(&task);
     }
 
     ~LookupContext() {
-        current = previous;
+        set_current_task(previous);
     }
 };
 

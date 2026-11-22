@@ -84,8 +84,20 @@ Add `--smp` to test the `smp.probe` boot option with one and twelve logical
 processors under BIOS and UEFI. Each application processor switches to its own
 kernel stack, loads its processor tables, and checks its APIC ID. The boot
 processor then sends two directed wake interrupts to each application
-processor and checks both acknowledgements. The probe parks the secondary
-processors after the check. Userspace still runs on the bootstrap processor.
+processor and checks both acknowledgements. Each secondary CPU then arms its
+local APIC timer twice and verifies that both interrupts arrived. It stops
+the timer and checks that its CPU-local task slot is empty. Before parking,
+the secondary CPUs load a shared scratch mapping and warm its translation.
+The boot CPU verifies that the invalidation code selects only CPUs that have
+the target page tables loaded. It replaces the backing page and checks that
+each secondary CPU sees the replacement after a directed interrupt. The
+scheduler still runs on the bootstrap processor.
+
+The same invalidation path serves ordinary userspace memory changes. Replaced
+and unmapped pages stay allocated until the CPUs using those page tables have
+responded. The address-space lock covers CR3 switches and target selection.
+Page-table writers still run serially. The implementation flushes non-global
+translations with PCID disabled.
 
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a
@@ -100,6 +112,10 @@ Use `lpss.i2c.probe` to check PCI power and the BAR0 aperture on Intel
 Comet Lake LPSS I²C controllers. It reports the BAR before and after a D0
 transition and reads the controller identity from a validated aperture.
 The probe restores the original power state and PCI command after the check.
+It also reports fixed PCI host bridge memory windows from ACPI. These windows
+describe forwarding ranges. BAR allocation also needs the occupied ranges
+within each window. For an unassigned BAR0, the probe measures the requested
+size without assigning an address.
 
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.

@@ -79,7 +79,8 @@ Queue* queue_of(const Node* node) {
 }
 
 Queue* queue_for(int fd, Handle*& handle) {
-    handle = fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+    handle =
+        fd >= 0 && unsigned(fd) < max_fds ? current_task()->files->entries[fd].handle : nullptr;
     return handle && !(handle->flags & 010000000) ? queue_of(handle->node) : nullptr;
 }
 
@@ -88,7 +89,7 @@ int queue_path(uint64_t address, Path& path) {
         return -19;
     path.base = queue_root;
     path.error = 0;
-    auto& memory = current->memory->space;
+    auto& memory = current_task()->memory->space;
     for (size_t i = 0; i < 256; ++i) {
         char ch;
         if (!memory.copy_in(&ch, address + i, 1))
@@ -107,7 +108,7 @@ int queue_path(uint64_t address, Path& path) {
 
 int create_queue(Node* parent, const char* name, unsigned mode, const Attributes& attr,
                  Node*& node) {
-    const auto& creds = current->credentials;
+    const auto& creds = current_task()->credentials;
     bool privileged = capable(creds, Capability::sys_resource);
     if (attr.maximum <= 0 || attr.message_size <= 0 ||
         attr.maximum > (privileged ? 65536 : default_messages) ||
@@ -124,7 +125,7 @@ int create_queue(Node* parent, const char* name, unsigned mode, const Attributes
     for (auto* queue = queues; queue; queue = queue->next)
         if (queue->uid == uid)
             used += queue->charge;
-    auto limit = current->process->limits.soft(Resource::message_queue);
+    auto limit = current_task()->process->limits.soft(Resource::message_queue);
     if (used > limit || charge > limit - used)
         return -24;
     auto* queue = static_cast<Queue*>(alloc(sizeof(Queue)));
@@ -150,7 +151,7 @@ int create_queue(Node* parent, const char* name, unsigned mode, const Attributes
 
 int open_queue(uint64_t name, unsigned flags, unsigned mode, uint64_t pointer) {
     Attributes attr{0, default_messages, default_message_size, 0, {}};
-    if (pointer && !current->memory->space.copy_in(&attr, pointer, sizeof(attr)))
+    if (pointer && !current_task()->memory->space.copy_in(&attr, pointer, sizeof(attr)))
         return -14;
     Path path;
     int error = queue_path(name, path);
@@ -171,22 +172,22 @@ int open_queue(uint64_t name, unsigned flags, unsigned mode, uint64_t pointer) {
     if (error && !creating)
         return error;
 
-    int fd = reserve_fd(*current, 0, true);
+    int fd = reserve_fd(*current_task(), 0, true);
     if (fd < 0)
         return fd;
     if (creating)
-        error = create_queue(queue_root, path.text, mode & ~current->fs->umask, attr, node);
+        error = create_queue(queue_root, path.text, mode & ~current_task()->fs->umask, attr, node);
     auto* handle = error ? nullptr : open_handle(node, flags & (nonblocking | 3), &error);
     if (!handle) {
         if (creating && node && queue_of(node)) {
             ramfs_ops.remove(node);
             posix_queue_reap(node);
         }
-        discard_reserved_fd(*current->files, fd);
+        discard_reserved_fd(*current_task()->files, fd);
         return error;
     }
     handle->opened_dentry = node;
-    install_reserved_fd(*current->files, fd, handle);
+    install_reserved_fd(*current_task()->files, fd, handle);
     return fd;
 }
 
@@ -311,15 +312,15 @@ int64_t block(Handle& handle, uint64_t deadline, Message* message) {
         return -12;
     }
     retain(&handle);
-    *request = {&handle, current, nullptr, message, deadline, message != nullptr, true};
+    *request = {&handle, current_task(), nullptr, message, deadline, message != nullptr, true};
     auto& queue = *queue_of(handle.node);
     auto** link = request->sending ? &queue.senders : &queue.receivers;
     while (*link)
         link = &(*link)->next;
     *link = request;
-    current->posix_queue_request = request;
-    current->wait = Wait::posix_queue;
-    current->state = State::blocked;
+    current_task()->posix_queue_request = request;
+    current_task()->wait = Wait::posix_queue;
+    current_task()->state = State::blocked;
     return would_block;
 }
 
@@ -339,7 +340,7 @@ int parse_deadline(uint64_t address, uint64_t& deadline) {
     if (!address)
         return 0;
     int64_t input[2];
-    if (!current->memory->space.copy_in(input, address, sizeof(input)))
+    if (!current_task()->memory->space.copy_in(input, address, sizeof(input)))
         return -14;
     if (input[0] < 0 || input[1] < 0 || input[1] >= 1000000000)
         return -22;
@@ -364,12 +365,12 @@ int64_t send(Frame& call, uint64_t deadline) {
     if (!message)
         return -12;
     *message = {nullptr, size, uint32_t(call.r10)};
-    if (size && !current->memory->space.copy_in(message + 1, call.rsi, size)) {
+    if (size && !current_task()->memory->space.copy_in(message + 1, call.rsi, size)) {
         release(message);
         return -14;
     }
     if (queue->attributes.count < queue->attributes.maximum) {
-        send_message(*queue, message, *current);
+        send_message(*queue, message, *current_task());
         handle->node->mtime = handle->node->ctime = node_now();
         return 0;
     }
@@ -409,7 +410,7 @@ int64_t receive(Frame& call, uint64_t deadline) {
         finish(*sender->task, 0);
     } else
         epoll_notify();
-    auto result = output(*current, *message, call);
+    auto result = output(*current_task(), *message, call);
     release(message);
     return result;
 }
@@ -421,7 +422,7 @@ int control_notify(int fd, uint64_t pointer) {
         uint8_t padding[48];
     } event{};
 
-    if (pointer && !current->memory->space.copy_in(&event, pointer, sizeof(event)))
+    if (pointer && !current_task()->memory->space.copy_in(&event, pointer, sizeof(event)))
         return -14;
     if (pointer && ((event.kind < 0 || event.kind > 2) ||
                     (!event.kind && (event.signal < 0 || event.signal > 64))))
@@ -430,7 +431,7 @@ int control_notify(int fd, uint64_t pointer) {
     auto* queue = queue_for(fd, handle);
     if (!queue)
         return -9;
-    int owner = current->process->pid;
+    int owner = current_task()->process->pid;
     if (!pointer) {
         if (queue->notification.owner == owner)
             notify(*queue, nullptr);
@@ -439,15 +440,15 @@ int control_notify(int fd, uint64_t pointer) {
     if (queue->notification.owner)
         return -16;
     Notification entry{
-        owner,   event.kind, event.signal, event.value, current->process->exec_generation,
+        owner,   event.kind, event.signal, event.value, current_task()->process->exec_generation,
         nullptr, nullptr};
     if (event.kind == 2) {
         uint8_t cookie[32];
-        if (!current->memory->space.copy_in(cookie, event.value, sizeof(cookie)))
+        if (!current_task()->memory->space.copy_in(cookie, event.value, sizeof(cookie)))
             return -14;
         if (event.signal < 0 || unsigned(event.signal) >= max_fds)
             return -9;
-        auto* target = current->files->entries[event.signal].handle;
+        auto* target = current_task()->files->entries[event.signal].handle;
         if (!target)
             return -9;
         if (!target->netlink)
@@ -464,7 +465,7 @@ int control_notify(int fd, uint64_t pointer) {
 }
 
 int control_attributes(int fd, uint64_t replacement, uint64_t previous) {
-    auto& space = current->memory->space;
+    auto& space = current_task()->memory->space;
     Attributes attr;
     if (replacement && !space.copy_in(&attr, replacement, sizeof(attr)))
         return -14;
@@ -548,8 +549,8 @@ void posix_queue_reap(Node* node) {
 
 void posix_queue_descriptor_closed(Handle* handle) {
     auto* queue = queue_of(handle->node);
-    if (queue && !(handle->flags & 010000000) && current &&
-        queue->notification.owner == current->process->pid)
+    if (queue && !(handle->flags & 010000000) && current_task() &&
+        queue->notification.owner == current_task()->process->pid)
         notify(*queue, nullptr);
 }
 
@@ -580,10 +581,10 @@ void posix_queue_resume(Task& task) {
     auto* request = task.posix_queue_request;
     if (!request || request->listed)
         return;
-    auto* previous = current;
-    current = &task;
+    auto* previous = current_task();
+    set_current_task(&task);
     auto result = output(task, *request->message, task.frame);
-    current = previous;
+    set_current_task(previous);
     finish(task, result);
 }
 

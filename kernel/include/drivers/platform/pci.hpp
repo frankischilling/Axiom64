@@ -59,6 +59,7 @@ struct PciFunction {
 
     // Probe only while the function is quiescent and no driver is using its BARs.
     PciBarStatus probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const;
+    PciBarStatus measure_unassigned_memory_bar(unsigned index, uint64_t& size) const;
 };
 
 class PciMsi {

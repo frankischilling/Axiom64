@@ -79,8 +79,9 @@ static Socket* allocate_socket(unsigned type) {
         if (!socket.used) {
             socket = {};
             socket.used = true;
-            socket.credentials = {current->process->pid, current->credentials.user.effective,
-                                  current->credentials.group.effective};
+            socket.credentials = {current_task()->process->pid,
+                                  current_task()->credentials.user.effective,
+                                  current_task()->credentials.group.effective};
             socket.type = type;
             if (socket.uses_record_queue() && !(socket.datagram_send = UnixSendBudget::create())) {
                 socket.used = false;
@@ -266,7 +267,8 @@ int64_t socket_write(Task& task, Socket* s, const void* data, size_t len,
 }
 
 static Handle* handle(int fd) {
-    auto h = fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+    auto h =
+        fd >= 0 && unsigned(fd) < max_fds ? current_task()->files->entries[fd].handle : nullptr;
     return h && (h->flags & 010000000) ? nullptr : h;
 }
 
@@ -839,34 +841,34 @@ int64_t ipc_syscall(Frame* f) {
         return -9;
     Socket* s = h ? h->socket : nullptr;
     int64_t timeout_result;
-    if (socket_timeout_syscall(*current, *f, h, timeout_result))
+    if (socket_timeout_syscall(*current_task(), *f, h, timeout_result))
         return timeout_result;
     if ((f->rax == 41 && a == 16) ||
         (h && h->netlink &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
-        return netlink_syscall(*current, *f);
+        return netlink_syscall(*current_task(), *f);
     if (s && f->rax == 49)
-        return socket_unix_bind(*current, *s, b, c);
+        return socket_unix_bind(*current_task(), *s, b, c);
     if (s && s->type == 2 && f->rax == 42)
-        return socket_datagram_connect(*current, *s, b, uint32_t(c));
+        return socket_datagram_connect(*current_task(), *s, b, uint32_t(c));
     if (s && s->type == 2 && f->rax == 50)
         return -95;
     if ((f->rax == 41 && a == 2) ||
         (h && h->inet &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
-        return inet_syscall(*current, *f);
+        return inet_syscall(*current_task(), *f);
     if ((f->rax == 41 && a == 10) ||
         (h && h->inet6 &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
-        return inet6_syscall(*current, *f);
+        return inet6_syscall(*current_task(), *f);
     if ((f->rax == 41 && a == 17) ||
         (h && h->packet &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
-        return packet_syscall(*current, *f);
+        return packet_syscall(*current_task(), *f);
     switch (f->rax) {
     case 41: {
         if (a != 1)
@@ -876,7 +878,7 @@ int64_t ipc_syscall(Frame* f) {
         // libc also uses unbound Unix datagram descriptors for interface ioctls.
         // Named datagram endpoints remain separate from socketpair data queues.
         s = allocate_socket(b & 0xf);
-        return s ? install_socket(*current, s,
+        return s ? install_socket(*current_task(), s,
                                   ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
                  : -12;
     }
@@ -888,8 +890,8 @@ int64_t ipc_syscall(Frame* f) {
         if (!s->local_name->address().length || s->connected)
             return -22;
         s->listener = true;
-        s->credentials = {current->process->pid, current->credentials.user.effective,
-                          current->credentials.group.effective};
+        s->credentials = {current_task()->process->pid, current_task()->credentials.user.effective,
+                          current_task()->credentials.group.effective};
         s->backlog = min(max(size_t(b), size_t(1)), size_t(32));
         return 0;
     case 42: {
@@ -898,7 +900,7 @@ int64_t ipc_syscall(Frame* f) {
         if (s->connected)
             return -106;
         UnixAddressValue addr;
-        int error = socket_unix_address(*current, b, uint32_t(c), addr);
+        int error = socket_unix_address(*current_task(), b, uint32_t(c), addr);
         if (error)
             return error;
         if (s->pass_credentials)
@@ -908,7 +910,7 @@ int64_t ipc_syscall(Frame* f) {
         Node* target = nullptr;
         if (!addr.abstract()) {
             Path path;
-            path.base = current->fs->cwd_node;
+            path.base = current_task()->fs->cwd_node;
             memcpy(path.text, addr.path, addr.length);
             error = resolve_path(path, target);
             if (error)
@@ -930,8 +932,9 @@ int64_t ipc_syscall(Frame* f) {
         if (!server)
             return -12;
         server->connected = true;
-        server->peer_credentials = {current->process->pid, current->credentials.user.effective,
-                                    current->credentials.group.effective};
+        server->peer_credentials = {current_task()->process->pid,
+                                    current_task()->credentials.user.effective,
+                                    current_task()->credentials.group.effective};
         s->peer_credentials = listener->credentials;
         server->pending = true;
         server->accepting = listener;
@@ -964,25 +967,25 @@ int64_t ipc_syscall(Frame* f) {
             s->read_closed = true;
         if (b == 1 || b == 2)
             s->write_closed = true;
-        epoll_notify_source(s, readiness(h, current));
+        epoll_notify_source(s, readiness(h, current_task()));
         if (s->type != 2)
             if (auto peer = s->peer; peer && peer->description)
-                epoll_notify_source(peer, readiness(peer->description, current));
+                epoll_notify_source(peer, readiness(peer->description, current_task()));
         return 0;
     case 51:
         if (!s)
             return -88;
-        return socket_output_address(*current, s, b, c);
+        return socket_output_address(*current_task(), s, b, c);
     case 52:
         if (!s)
             return -88;
         if (!s->connected)
             return -107;
-        return socket_unix_output_name(*current, s->peer_name, b, c);
+        return socket_unix_output_name(*current_task(), s->peer_name, b, c);
     case 53: {
         if (a != 1 || !unix_socket_type(b & 0xf) || c || (b & ~uint64_t(0x8080f)))
             return -95;
-        if (!current->memory->space.valid(d, 8, true))
+        if (!current_task()->memory->space.valid(d, 8, true))
             return -14;
         auto left = allocate_socket(b & 0xf), right = allocate_socket(b & 0xf);
         if (!left || !right) {
@@ -1002,18 +1005,18 @@ int64_t ipc_syscall(Frame* f) {
         left->peer_credentials = right->credentials;
         right->peer_credentials = left->credentials;
         int flags = ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0);
-        int result[2] = {install_socket(*current, left, flags), -1};
+        int result[2] = {install_socket(*current_task(), left, flags), -1};
         if (result[0] >= 0)
-            result[1] = install_socket(*current, right, flags);
+            result[1] = install_socket(*current_task(), right, flags);
         if (result[0] < 0 || result[1] < 0) {
             if (result[0] >= 0) {
-                close_handle(current->files->entries[result[0]].handle);
-                current->files->entries[result[0]] = {};
+                close_handle(current_task()->files->entries[result[0]].handle);
+                current_task()->files->entries[result[0]] = {};
             } else
                 socket_close(right);
             return -24;
         }
-        current->memory->space.copy_out(d, result, 8);
+        current_task()->memory->space.copy_out(d, result, 8);
         return 0;
     }
     case 54:
@@ -1025,7 +1028,7 @@ int64_t ipc_syscall(Frame* f) {
             if (int32_t(f->r8) < int32_t(sizeof(int)))
                 return -22;
             int value;
-            if (!current->memory->space.copy_in(&value, d, sizeof(value)))
+            if (!current_task()->memory->space.copy_in(&value, d, sizeof(value)))
                 return -14;
             s->pass_credentials = value != 0;
             return 0;
@@ -1034,7 +1037,7 @@ int64_t ipc_syscall(Frame* f) {
             if (f->r8 < sizeof(uint32_t))
                 return -22;
             uint32_t value;
-            if (!current->memory->space.copy_in(&value, d, sizeof(value)))
+            if (!current_task()->memory->space.copy_in(&value, d, sizeof(value)))
                 return -14;
             if (c == 7)
                 s->datagram_send->resize(value);
@@ -1043,7 +1046,7 @@ int64_t ipc_syscall(Frame* f) {
             return 0;
         }
         if (c == 2 || c == 9 || c == 7 || c == 8)
-            return current->memory->space.valid(d, f->r8) ? 0 : -14;
+            return current_task()->memory->space.valid(d, f->r8) ? 0 : -14;
         return -92;
     case 55: {
         if (!s)
@@ -1052,24 +1055,24 @@ int64_t ipc_syscall(Frame* f) {
             return -92;
         if (c == 16) {
             uint32_t length;
-            if (!current->memory->space.copy_in(&length, f->r8, 4))
+            if (!current_task()->memory->space.copy_in(&length, f->r8, 4))
                 return -14;
             if (int32_t(length) < 0)
                 return -22;
             length = min(length, uint32_t(sizeof(int)));
             int value = s->pass_credentials;
-            if (!current->memory->space.copy_out(d, &value, length) ||
-                !current->memory->space.copy_out(f->r8, &length, 4))
+            if (!current_task()->memory->space.copy_out(d, &value, length) ||
+                !current_task()->memory->space.copy_out(f->r8, &length, 4))
                 return -14;
             return 0;
         }
         if (c == 17) {
             uint32_t length;
-            if (!current->memory->space.copy_in(&length, f->r8, 4))
+            if (!current_task()->memory->space.copy_in(&length, f->r8, 4))
                 return -14;
             length = min(length, uint32_t(sizeof(PeerCredentials)));
-            if (!current->memory->space.copy_out(d, &s->peer_credentials, length) ||
-                !current->memory->space.copy_out(f->r8, &length, 4))
+            if (!current_task()->memory->space.copy_out(d, &s->peer_credentials, length) ||
+                !current_task()->memory->space.copy_out(f->r8, &length, 4))
                 return -14;
             return 0;
         }
@@ -1082,15 +1085,15 @@ int64_t ipc_syscall(Frame* f) {
         if (value < 0)
             return -92;
         uint32_t len;
-        if (!current->memory->space.copy_in(&len, f->r8, 4))
+        if (!current_task()->memory->space.copy_in(&len, f->r8, 4))
             return -14;
         if (s->type == 2 && c == 4) {
             value = s->datagram_error;
             s->datagram_error = 0;
         }
         uint32_t actual = 4;
-        if (!current->memory->space.copy_out(d, &value, min(len, actual)) ||
-            !current->memory->space.copy_out(f->r8, &actual, 4))
+        if (!current_task()->memory->space.copy_out(d, &value, min(len, actual)) ||
+            !current_task()->memory->space.copy_out(f->r8, &actual, 4))
             return -14;
         return 0;
     }
@@ -1099,12 +1102,12 @@ int64_t ipc_syscall(Frame* f) {
         uint32_t flags = f->rax == 291 ? uint32_t(a) : 0;
         if ((f->rax == 213 && int32_t(a) <= 0) || (flags & ~02000000u))
             return -22;
-        int number = reserve_fd(*current, 0, flags & 02000000);
+        int number = reserve_fd(*current_task(), 0, flags & 02000000);
         if (number < 0)
             return number;
         auto poll = static_cast<Epoll*>(alloc(sizeof(Epoll)));
         if (!poll) {
-            discard_reserved_fd(*current->files, number);
+            discard_reserved_fd(*current_task()->files, number);
             return -12;
         }
         *poll = {};
@@ -1118,24 +1121,24 @@ int64_t ipc_syscall(Frame* f) {
             }
         if (!registered) {
             release(poll);
-            discard_reserved_fd(*current->files, number);
+            discard_reserved_fd(*current_task()->files, number);
             return -23;
         }
         auto fd = open_handle(nullptr, 2);
         if (!fd) {
             epoll_close(poll);
-            discard_reserved_fd(*current->files, number);
+            discard_reserved_fd(*current_task()->files, number);
             return -23;
         }
         fd->epoll = poll;
-        install_reserved_fd(*current->files, number, fd);
+        install_reserved_fd(*current_task()->files, number, fd);
         return number;
     }
     case 233: {
         uint32_t operation = uint32_t(b);
         EpollEvent event{};
         if ((operation == 1 || operation == 3) &&
-            !current->memory->space.copy_in(&event, d, sizeof(event)))
+            !current_task()->memory->space.copy_in(&event, d, sizeof(event)))
             return -14;
         auto target = handle(c);
         if (!h || !target)
@@ -1184,12 +1187,12 @@ int64_t ipc_syscall(Frame* f) {
             return -28;
         uint64_t wait_queue = 0;
         if (target->signal_descriptor) {
-            auto& handler_queue = current->handlers->descriptor_wait_queue;
+            auto& handler_queue = current_task()->handlers->descriptor_wait_queue;
             if (operation == 1 && !handler_queue)
                 handler_queue = next_signal_wait_queue++;
             wait_queue = operation == 1 ? handler_queue : item->signal_wait_queue;
         }
-        uint32_t ready = readiness(target, current) & (event.events | 8 | 16);
+        uint32_t ready = readiness(target, current_task()) & (event.events | 8 | 16);
         uint64_t notification = target->epoll   ? target->epoll->notification
                                 : target->timer ? timerfd_notification(*target->timer)
                                                 : 0;
@@ -1206,7 +1209,7 @@ int64_t ipc_syscall(Frame* f) {
     case 232:
     case 281:
     case 441:
-        return epoll_wait(*current, h, *f);
+        return epoll_wait(*current_task(), h, *f);
     default:
         return -38;
     }

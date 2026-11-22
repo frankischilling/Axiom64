@@ -58,6 +58,7 @@ enum class Kind {
     fd_directory,
     fd_link,
     exe_link,
+    root_link,
     fdinfo_directory,
     fdinfo,
     status,
@@ -234,11 +235,11 @@ static Handle* descriptor(const Entry& item) {
 }
 
 static bool descriptor_access(const Task& owner) {
-    if (!current)
+    if (!current_task())
         return false;
-    const auto& caller = current->credentials;
+    const auto& caller = current_task()->credentials;
     const auto& target = owner.credentials;
-    return current->process == owner.process || capable(caller, Capability::sys_ptrace) ||
+    return current_task()->process == owner.process || capable(caller, Capability::sys_ptrace) ||
            (owner.memory && owner.memory->dumpable && caller.user.filesystem == target.user.real &&
             caller.user.filesystem == target.user.effective &&
             caller.user.filesystem == target.user.saved &&
@@ -255,17 +256,23 @@ static int link_descriptor(const Entry& item, Handle*& handle) {
     return descriptor_access(*owner) ? 0 : -13;
 }
 
-static int link_executable(const Entry& item, Node*& target) {
+static int link_process_path(const Entry& item, Node*& target) {
     auto owner = task(item.pid);
-    if (!owner || !owner->memory || !(target = owner->memory->exec_dentry))
+    if (!owner)
+        return -2;
+    if (item.kind == Kind::root_link)
+        target = owner->fs ? owner->fs->root_node : nullptr;
+    else
+        target = owner->memory ? owner->memory->exec_dentry : nullptr;
+    if (!target)
         return -2;
     return descriptor_access(*owner) ? 0 : -13;
 }
 
 static int follow_link(Node* node, Node*& target) {
     auto item = entry(node);
-    if (item->kind == Kind::exe_link) {
-        int error = link_executable(*item, target);
+    if (item->kind == Kind::exe_link || item->kind == Kind::root_link) {
+        int error = link_process_path(*item, target);
         return error ? error : 1;
     }
     if (item->kind != Kind::fd_link)
@@ -292,21 +299,22 @@ static int access_override(Node* node, unsigned mask) {
         auto owner = task(item->pid);
         if (!owner)
             return -3;
-        if (current && owner->process == current->process && !(mask & 1))
+        if (current_task() && owner->process == current_task()->process && !(mask & 1))
             return 1;
     }
     auto owner = item->kind == Kind::fd_directory ? task(item->pid) : nullptr;
-    return owner && current && owner->process == current->process && !(mask & 2) ? 1 : 0;
+    return owner && current_task() && owner->process == current_task()->process && !(mask & 2) ? 1
+                                                                                               : 0;
 }
 
 static size_t link_target(Kind kind, char output[40]) {
-    if (!current)
+    if (!current_task())
         return 0;
     Text text{output, 0, 40};
-    text.number(unsigned(current->process->pid));
+    text.number(unsigned(current_task()->process->pid));
     if (kind == Kind::thread_self) {
         text.string("/task/");
-        text.number(unsigned(current->pid));
+        text.number(unsigned(current_task()->pid));
     }
     return text.length;
 }
@@ -428,7 +436,8 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
                  : snapshot_file(kind) || kind == Kind::cmdline || kind == Kind::boot_id
                      ? regular_file | 0444
                  : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ||
-                         kind == Kind::exe_link || kind == Kind::mounts_link
+                         kind == Kind::exe_link || kind == Kind::root_link ||
+                         kind == Kind::mounts_link
                      ? symlink | 0777
                  : kind == Kind::fd_directory ? directory | 0500
                                               : directory | 0555;
@@ -540,6 +549,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "exe"))
         kind = Kind::exe_link;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "root"))
+        kind = Kind::root_link;
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "mounts"))
         kind = Kind::mounts;
@@ -1249,11 +1261,12 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
     }
     if (kind == Kind::mounts_link)
         return copy("self/mounts", sizeof("self/mounts") - 1, offset, output, length);
-    if (kind == Kind::exe_link) {
+    if (kind == Kind::exe_link || kind == Kind::root_link) {
         Node* target = nullptr;
-        int error = link_executable(*entry(node), target);
-        return error ? error
-                     : file_link(target, is_memfd(file_node(target)), offset, output, length);
+        if (int error = link_process_path(*entry(node), target))
+            return error;
+        return file_link(target, kind == Kind::exe_link && is_memfd(file_node(target)), offset,
+                         output, length);
     }
     if (kind == Kind::fd_link) {
         Handle* handle = nullptr;
@@ -1319,7 +1332,7 @@ static int control_access(Node* node, unsigned mask, bool real) {
     if (mask & 1)
         return -13;
     const Credentials boot{};
-    const auto& credentials = current ? current->credentials : boot;
+    const auto& credentials = current_task() ? current_task()->credentials : boot;
     uint64_t capabilities = credentials.effective;
     // access(2) substitutes the real user's capability set unless securebits
     // disable the normal setuid fixups. sysctl ownership still uses euid/egid.
@@ -1385,8 +1398,8 @@ static int64_t control_write(Handle* handle, const void* input, size_t length) {
         // A transferred description does not retain its opener's sysctl rights.
         if (control_access(handle->node, 2, false))
             return -1;
-        if (item->property == proc4::forwarding_property && current &&
-            !(current->credentials.effective & (1ull << unsigned(Capability::net_admin))))
+        if (item->property == proc4::forwarding_property && current_task() &&
+            !(current_task()->credentials.effective & (1ull << unsigned(Capability::net_admin))))
             return -1;
         return proc4::write(item->network_index, item->property, handle->offset, input, length);
     }
@@ -1474,9 +1487,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 9) {
             memcpy(name, "cmdline", 8);
             result.next = 10;
-        } else if (cookie == 10 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 10) {
+            memcpy(name, "root", 5);
             result.next = 11;
+        } else if (cookie == 11 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 12;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {
@@ -1566,7 +1582,7 @@ static int64_t write(Node* node, uint64_t, const void* input, size_t length) {
     auto owner = task(item->pid);
     if (!owner)
         return -3;
-    if (!current || owner->process != current->process)
+    if (!current_task() || owner->process != current_task()->process)
         return -22;
     owner->set_name(static_cast<const char*>(input), length);
     return int64_t(length);

@@ -52,7 +52,8 @@ struct Route {
 
 using Handler = void (*)(void*);
 using LineHandler = bool (*)(void*);
-using IpiHandler = void (*)(uint32_t apic_id);
+enum class SecondaryEvent { wake, timer };
+using SecondaryHandler = void (*)(uint32_t apic_id, SecondaryEvent);
 
 struct Message {
     uint32_t address;
@@ -98,9 +99,13 @@ void interrupt_init_apic(const Acpi::InterruptTopology&);
 bool interrupt_apic_ready();
 // Prepare on the boot processor before releasing secondary processors. Send
 // with interrupts masked so the two xAPIC ICR writes stay together.
-bool interrupt_prepare_ipi(Irq::IpiHandler);
+bool interrupt_prepare_secondary(Irq::SecondaryHandler);
 bool interrupt_enable_secondary_ipi();
 bool interrupt_send_ipi(uint32_t destination);
+bool interrupt_send_tlb_ipi(uint32_t destination);
+// Called only on a secondary CPU after enabling its local APIC.
+void interrupt_arm_secondary_timer(uint32_t count);
+void interrupt_stop_secondary_timer();
 // Called with interrupts masked on the boot CPU. Retired vectors stay reserved
 // until reboot so a message already posted by a stopped device cannot be reused.
 bool interrupt_register_message(Irq::Handler, void* context, Irq::Message&);

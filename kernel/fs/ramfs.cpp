@@ -87,9 +87,9 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
         release(data);
         return -28;
     }
-    node->uid = current ? current->credentials.user.filesystem : 0;
+    node->uid = current_task() ? current_task()->credentials.user.filesystem : 0;
     node->gid = (parent->mode & 02000) ? parent->gid
-                : current              ? current->credentials.group.filesystem
+                : current_task()       ? current_task()->credentials.group.filesystem
                                        : 0;
     attach(node, parent, name);
     if (target) {

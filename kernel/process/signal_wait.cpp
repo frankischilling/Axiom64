@@ -93,7 +93,7 @@ int64_t signal_wait_enter(Frame* frame) {
     if (frame->r10 != 8)
         return -22;
     uint64_t mask;
-    if (!current->memory->space.copy_in(&mask, frame->rdi, sizeof(mask)))
+    if (!current_task()->memory->space.copy_in(&mask, frame->rdi, sizeof(mask)))
         return -14;
     mask &= ~unmaskable_signals;
     bool finite = frame->rdx != 0;
@@ -103,7 +103,7 @@ int64_t signal_wait_enter(Frame* frame) {
             int64_t seconds, nanoseconds;
         } timeout;
 
-        if (!current->memory->space.copy_in(&timeout, frame->rdx, sizeof(timeout)))
+        if (!current_task()->memory->space.copy_in(&timeout, frame->rdx, sizeof(timeout)))
             return -14;
         if (timeout.seconds < 0 || timeout.nanoseconds < 0 || timeout.nanoseconds >= 1000000000)
             return -22;
@@ -115,14 +115,14 @@ int64_t signal_wait_enter(Frame* frame) {
             duration = maximum;
         deadline = duration > UINT64_MAX - ticks ? UINT64_MAX : ticks + duration;
     }
-    int64_t result = consume(*current, mask, frame->rsi);
+    int64_t result = consume(*current_task(), mask, frame->rsi);
     if (result)
         return result;
     if (finite && deadline <= ticks)
         return -11;
-    current->signal_wait = {mask, frame->rsi, deadline, finite};
-    current->wait = Wait::signal_queue;
-    current->state = State::blocked;
+    current_task()->signal_wait = {mask, frame->rsi, deadline, finite};
+    current_task()->wait = Wait::signal_queue;
+    current_task()->state = State::blocked;
     return would_block;
 }
 

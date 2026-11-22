@@ -288,6 +288,29 @@ void test_apertures() {
     pci.refuse_enable = true;
     assert(probe(0, memory) == restore_failed && !(pci.flags & 7) && !pci.sizing[0]);
     std::puts("PCI_BAR_PASS mem32 mem64 ports aperture_end malformed_masks restore_readback");
+
+    auto measure = [&] {
+        return PciBarProbe::probe(pci, 0, memory, limit, resource,
+                                  PciBarProbe::Assignment::unassigned);
+    };
+    pci = {};
+    pci.bars[0] = 4;
+    pci.masks[0] = 0xfffff004;
+    pci.masks[1] = UINT32_MAX;
+    assert(probe(0, memory) == invalid && !pci.bar_writes);
+    assert(measure() == valid && resource.base == 0 && resource.size == 4096);
+    assert(pci.bars[0] == 4 && !pci.bars[1] && !pci.sizing[0] && !pci.sizing[1] &&
+           pci.flags == command && pci.bar_writes == 4);
+    pci.bars[1] = 1;
+    assert(measure() == invalid && pci.bar_writes == 4);
+    pci = {};
+    assert(measure() == invalid && pci.flags == command);
+    pci.masks[0] = UINT32_MAX;
+    assert(measure() == invalid && pci.flags == command);
+    pci.masks[0] = 0xfffff000;
+    pci.refuse_restore = true;
+    assert(measure() == restore_failed && !(pci.flags & 7));
+    std::puts("PCI_UNASSIGNED_BAR_PASS size absence readback restore");
 }
 
 uint32_t bridge_config[2][16];

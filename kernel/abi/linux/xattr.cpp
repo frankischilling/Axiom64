@@ -30,7 +30,7 @@
 namespace ax {
 namespace {
 int text(uint64_t address, char* output, size_t capacity, int too_long) {
-    auto& space = current->memory->space;
+    auto& space = current_task()->memory->space;
     for (size_t i = 0; i < capacity; i++) {
         if (address > UINT64_MAX - i || !space.copy_in(output + i, address + i, 1))
             return -14;
@@ -74,7 +74,7 @@ int64_t linux_xattr(unsigned number, uint64_t target, uint64_t key, uint64_t dat
         int fd = int(target);
         if (fd < 0 || unsigned(fd) >= max_fds)
             return -9;
-        auto handle = current->files->entries[fd].handle;
+        auto handle = current_task()->files->entries[fd].handle;
         if (!handle || (handle->flags & 010000000)) // O_PATH is not an xattr descriptor.
             return -9;
         if (!handle->node)
@@ -89,7 +89,8 @@ int64_t linux_xattr(unsigned number, uint64_t target, uint64_t key, uint64_t dat
             return error;
         if (!path.text[0])
             return -2;
-        path.base = path.text[0] == '/' ? current->fs->root_node : current->fs->cwd_node;
+        path.base =
+            path.text[0] == '/' ? current_task()->fs->root_node : current_task()->fs->cwd_node;
         path.error = 0;
         error = resolve_path(path, node, variant != 1);
         if (error)
@@ -108,13 +109,13 @@ int64_t linux_xattr(unsigned number, uint64_t target, uint64_t key, uint64_t dat
             return -12;
     }
     if (!operation) {
-        if (capacity && !current->memory->space.copy_in(call.bytes, data, capacity))
+        if (capacity && !current_task()->memory->space.copy_in(call.bytes, data, capacity))
             return -14;
         return node_setxattr(node, name, call.bytes, capacity, flags);
     }
     int64_t result = operation == 1 ? node_getxattr(node, name, call.bytes, capacity)
                                     : node_listxattr(node, call.bytes, capacity);
-    if (result > 0 && capacity && !current->memory->space.copy_out(data, call.bytes, result))
+    if (result > 0 && capacity && !current_task()->memory->space.copy_out(data, call.bytes, result))
         return -14;
     return result == -34 && capacity == xattr_value_max ? -7 : result;
 }

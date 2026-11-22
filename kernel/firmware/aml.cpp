@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/firmware/aml.cpp
- * @brief   Decodes ACPI PCI interrupt routing from firmware AML.
+ * @brief   Decodes ACPI PCI and I²C resources from firmware AML.
  * @author  frankischilling
  * @date    2026-11-19
  *
@@ -219,6 +219,30 @@ bool data(Cursor& stream) {
     return read_name(stream, name) && name.path.count;
 }
 
+bool region_operand(Cursor& stream, unsigned depth = 0) {
+    if (depth == max_depth)
+        return false;
+    switch (stream.peek()) {
+    case 0x72:   // Add
+    case 0x74:   // Subtract
+    case 0x77:   // Multiply
+    case 0x79:   // ShiftLeft
+    case 0x7a:   // ShiftRight
+    case 0x7b:   // And
+    case 0x7d: { // Or
+        stream.skip(1);
+        if (!region_operand(stream, depth + 1) || !region_operand(stream, depth + 1))
+            return false;
+        if (stream.peek() == 0)
+            return stream.skip(1); // NullName discards the result.
+        Name target;
+        return read_name(stream, target) && target.path.count;
+    }
+    default:
+        return data(stream);
+    }
+}
+
 enum class Kind : uint8_t { Scope, Device, Data, Method, Opaque, Region, PciField };
 
 struct Object {
@@ -405,6 +429,19 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
         Path path;
         uint64_t info;
         switch (opcode) {
+        case 0xa0: { // Module-level If with a constant predicate.
+            uint64_t condition;
+            if (!stream.block(block) || !integer(block, condition) ||
+                ((condition & integer_mask) && !load(block, scope, depth + 1)))
+                return false;
+            if (stream.peek() == 0xa1) {
+                Cursor alternative;
+                if (!stream.skip(1) || !stream.block(alternative) ||
+                    (!(condition & integer_mask) && !load(alternative, scope, depth + 1)))
+                    return false;
+            }
+            break;
+        }
         case 0x08: { // Name
             if (!read_name(stream, name) || !append(scope, name, path))
                 return false;
@@ -456,7 +493,7 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
             if (!read_name(stream, name) || !append(scope, name, path))
                 return false;
             Cursor operands = stream;
-            if (!stream.skip(1) || !data(stream) || !data(stream) ||
+            if (!stream.skip(1) || !region_operand(stream) || !region_operand(stream) ||
                 !add(path, Kind::Region, {operands.next, operands.left - stream.left}))
                 return false;
             break;
@@ -1355,6 +1392,105 @@ bool routing(Namespace& space, PciPinRoutes& output, PciBridges* bridges) {
     return output.count != 0;
 }
 
+bool accept_root_window(unsigned tag, Cursor item, uint16_t segment, uint8_t bus,
+                        PciRootWindows& windows) {
+    unsigned width;
+    switch (tag) {
+    case 0x87:
+        width = 4;
+        break; // DWord Address Space
+    case 0x88:
+        width = 2;
+        break; // Word Address Space
+    case 0x8a:
+    case 0x8b:
+        width = 8;
+        break; // QWord and Extended Address Space
+    default:
+        return true;
+    }
+    const bool extended = tag == 0x8b;
+    uint64_t type, general, flags;
+    if (!item.read(1, type) || !item.read(1, general) || !item.read(1, flags))
+        return false;
+    if (extended) {
+        uint64_t revision;
+        if (!item.read(2, revision) || revision != 1)
+            return false;
+    }
+    uint64_t granularity, minimum, maximum, translation, length, attributes = 0;
+    if (!item.read(width, granularity) || !item.read(width, minimum) ||
+        !item.read(width, maximum) || !item.read(width, translation) || !item.read(width, length) ||
+        (extended && (!item.read(8, attributes) || item.left)))
+        return false;
+    // Only Extended Address Space defines the consumer bit on a PCI root bridge.
+    if (type || (general & ~1u) != 0x0c || (extended && (general & 1)) || (flags & 0xf9) != 1 ||
+        !length || granularity || translation)
+        return true;
+    if (maximum < minimum || maximum - minimum != length - 1 ||
+        windows.count == sizeof(windows.entries) / sizeof(*windows.entries))
+        return false;
+    const bool prefetchable = extended ? attributes & 2 : flags & 6;
+    windows.entries[windows.count++] = {minimum, length, segment, bus, prefetchable};
+    return true;
+}
+
+bool root_windows(Cursor resources, uint16_t segment, uint8_t bus, PciRootWindows& output) {
+    const auto original = resources;
+    while (resources.left) {
+        unsigned tag = resources.peek();
+        resources.skip(1);
+        uint64_t length = tag & 7;
+        Cursor item;
+        if (((tag & 0x80) && !resources.read(2, length)) || !resources.take(length, item))
+            return false;
+        if (tag == 0x79) {
+            uint8_t sum = 0;
+            if (item.peek())
+                for (size_t i = 0; i < original.left; ++i)
+                    sum += original.next[i];
+            return !resources.left && !sum;
+        }
+        if (!accept_root_window(tag, item, segment, bus, output))
+            return false;
+    }
+    return false;
+}
+
+bool pci_root_windows(Namespace& space, PciRootWindows& output) {
+    for (unsigned i = 0; i < space.count; ++i) {
+        const auto& device = space.objects[i];
+        Value hid{}, resources{}, status{}, segment{Type::Integer, 0, {}, nullptr}, bus = segment;
+        if (device.kind != Kind::Device || !space.config(device.path, name_segment("_HID"), hid) ||
+            !pci_root_id(hid) || !space.child(device.path, name_segment("_CRS")))
+            continue;
+        const unsigned values = space.used_values, bytes = space.used_bytes;
+        if (space.child(device.path, name_segment("_STA"))) {
+            if (!space.config(device.path, name_segment("_STA"), status) ||
+                status.type != Type::Integer)
+                return false;
+            if (!(status.number & 1)) {
+                space.used_values = values;
+                space.used_bytes = bytes;
+                continue;
+            }
+        }
+        if ((space.child(device.path, name_segment("_SEG")) &&
+             !space.config(device.path, name_segment("_SEG"), segment)) ||
+            (space.child(device.path, name_segment("_BBN")) &&
+             !space.config(device.path, name_segment("_BBN"), bus)) ||
+            segment.type != Type::Integer || segment.number > UINT16_MAX ||
+            bus.type != Type::Integer || bus.number > UINT8_MAX ||
+            !space.config(device.path, name_segment("_CRS"), resources) ||
+            resources.type != Type::Buffer ||
+            !root_windows(resources.content, segment.number, bus.number, output))
+            return false;
+        space.used_values = values;
+        space.used_bytes = bytes;
+    }
+    return output.count != 0;
+}
+
 const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
                              uint8_t slot, uint8_t function, uint8_t pin, bool& ambiguous) {
     const PciPinRoute* exact = nullptr;
@@ -1415,6 +1551,18 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, PciBridges* bridges,
     return space;
 }
 } // namespace
+
+bool decode_pci_root_windows(const DefinitionBlocks& blocks, PciRootWindows& result) {
+    result.count = 0;
+    auto* space = load_namespace(blocks, nullptr, nullptr, {});
+    if (!space)
+        return false;
+    const bool ok = pci_root_windows(*space, result);
+    release(space);
+    if (!ok)
+        result.count = 0;
+    return ok;
+}
 
 bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result) {
     result.count = 0;

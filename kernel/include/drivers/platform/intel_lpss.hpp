@@ -25,5 +25,9 @@
 #pragma once
 
 namespace ax {
-void intel_lpss_i2c_probe();
+namespace Acpi {
+struct DefinitionBlocks;
+}
+
+void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks&);
 } // namespace ax

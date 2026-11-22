@@ -514,6 +514,15 @@ PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& r
     return PciBarStatus::valid;
 }
 
+PciBarStatus PciFunction::measure_unassigned_memory_bar(unsigned index, uint64_t& size) const {
+    PciBar measured;
+    auto result = PciBarProbe::probe(*this, index, PciBarSpace::memory, physical_address_limit(),
+                                     measured, PciBarProbe::Assignment::unassigned);
+    if (result == PciBarStatus::valid)
+        size = measured.size;
+    return result;
+}
+
 static bool has_piix_pirq(const PciFunction& bridge) {
     const uint32_t id = bridge.read32(0);
     return (id == 0x70008086 || id == 0x71108086) && bridge.read16(0x0a) == 0x0601;

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/task.hpp"
+#include "arch/x86_64/tlb.hpp"
 #include "arch/x86_64/interrupts.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/cpu.hpp"
@@ -56,7 +57,6 @@
 
 namespace ax {
 Task tasks[max_tasks];
-Task* current;
 bool trace_syscalls, test_mode;
 const char* test_suite = "AXIOM64_SUITE=full";
 const char* test_phase = "AXIOM64_PHASE=none";
@@ -267,120 +267,120 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         ((flags & clone_vfork) && !vm) || ((flags & 0xff) != 0 && (flags & 0xff) != 17) ||
         (vm && !(flags & clone_vfork) && !stack))
         return -22;
-    if (stack && (stack < 8 || !current->memory->space.valid(stack - 8, 8, true)))
+    if (stack && (stack < 8 || !current_task()->memory->space.valid(stack - 8, 8, true)))
         return -14;
     if ((flags & clone_settls) && tls >= user_limit)
         return -22;
-    if ((flags & clone_parent_settid) && !current->memory->space.valid(parent_tid, 4, true))
+    if ((flags & clone_parent_settid) && !current_task()->memory->space.valid(parent_tid, 4, true))
         return -14;
     if ((flags & (clone_child_settid | clone_child_cleartid)) && child_tid &&
-        !current->memory->space.valid(child_tid, 4, true))
+        !current_task()->memory->space.valid(child_tid, 4, true))
         return -14;
     if ((flags & clone_child_settid) && !child_tid)
         return -14;
-    if (!process_quota_available(*current))
+    if (!process_quota_available(*current_task()))
         return -11;
-    current->process_limit_exceeded = false;
+    current_task()->process_limit_exceeded = false;
     Task* child = new_task();
     if (!child)
         return -11;
-    if ((flags & clone_sysvsem) && !semaphore_share_undo(*child, *current)) {
+    if ((flags & clone_sysvsem) && !semaphore_share_undo(*child, *current_task())) {
         release_resources(child);
         release(child->process);
         child->process = nullptr;
         child->state = State::empty;
         return -12;
     }
-    credential_inherit(child->credentials, current->credentials);
+    credential_inherit(child->credentials, current_task()->credentials);
     if (vm) {
         release_memory(child);
-        child->memory = current->memory;
+        child->memory = current_task()->memory;
         child->memory->references++;
     } else {
-        if (!child->memory->space.clone_from(current->memory->space) ||
-            !shared_memory_fork(*child, *current)) {
+        if (!child->memory->space.clone_from(current_task()->memory->space) ||
+            !shared_memory_fork(*child, *current_task())) {
             release_resources(child);
             release(child->process);
             child->process = nullptr;
             child->state = State::empty;
             return -12;
         }
-        child->memory->brk_base = current->memory->brk_base;
-        child->memory->brk_end = current->memory->brk_end;
-        child->memory->initial_data_size = current->memory->initial_data_size;
-        child->memory->arguments = current->memory->arguments;
-        child->memory->dumpable = current->memory->dumpable;
-        child->memory->barrier_registrations = current->memory->barrier_registrations;
-        if (auto file = current->memory->exec_file) {
+        child->memory->brk_base = current_task()->memory->brk_base;
+        child->memory->brk_end = current_task()->memory->brk_end;
+        child->memory->initial_data_size = current_task()->memory->initial_data_size;
+        child->memory->arguments = current_task()->memory->arguments;
+        child->memory->dumpable = current_task()->memory->dumpable;
+        child->memory->barrier_registrations = current_task()->memory->barrier_registrations;
+        if (auto file = current_task()->memory->exec_file) {
             ++file->exec_images;
             child->memory->exec_file = file;
-            child->memory->exec_dentry = current->memory->exec_dentry;
+            child->memory->exec_dentry = current_task()->memory->exec_dentry;
         }
     }
     if (flags & clone_files) {
         release_files(child->files);
-        child->files = current->files;
+        child->files = current_task()->files;
         child->files->references++;
     } else {
-        copy_descriptors(*child->files, *current->files);
+        copy_descriptors(*child->files, *current_task()->files);
     }
     if (flags & clone_fs) {
         release(child->fs);
-        child->fs = current->fs;
+        child->fs = current_task()->fs;
         child->fs->references++;
     } else {
-        *child->fs = *current->fs;
+        *child->fs = *current_task()->fs;
         child->fs->references = 1;
     }
     if (flags & clone_sighand) {
         release(child->handlers);
-        child->handlers = current->handlers;
+        child->handlers = current_task()->handlers;
         child->handlers->references++;
     } else
-        memcpy(child->handlers->signal_actions, current->handlers->signal_actions,
+        memcpy(child->handlers->signal_actions, current_task()->handlers->signal_actions,
                sizeof(child->handlers->signal_actions));
     if (thread) {
         release(child->process);
-        child->process = current->process;
+        child->process = current_task()->process;
         child->process->live_threads++;
     } else {
-        child->process->limits = current->process->limits;
-        child->process->parent = current->process->pid;
-        child->process->pgid = current->process->pgid;
-        child->process->sid = current->process->sid;
-        child->process->controlling_pty = current->process->controlling_pty;
-        child->process->controlling_console = current->process->controlling_console;
-        memcpy(child->process->executable, current->process->executable,
+        child->process->limits = current_task()->process->limits;
+        child->process->parent = current_task()->process->pid;
+        child->process->pgid = current_task()->process->pgid;
+        child->process->sid = current_task()->process->sid;
+        child->process->controlling_pty = current_task()->process->controlling_pty;
+        child->process->controlling_console = current_task()->process->controlling_console;
+        memcpy(child->process->executable, current_task()->process->executable,
                sizeof(child->process->executable));
     }
-    memcpy(child->name, current->name, sizeof(child->name));
+    memcpy(child->name, current_task()->name, sizeof(child->name));
     child->frame = *f;
     // A new thread has the group's real parent. A new process belongs to the
     // thread that created it, even while that thread's group remains alive.
-    child->real_parent_tid = thread ? current->real_parent_tid : current->pid;
+    child->real_parent_tid = thread ? current_task()->real_parent_tid : current_task()->pid;
     child->frame.rax = 0;
     if (stack)
         child->frame.rsp = stack;
-    child->fs_base = (flags & clone_settls) ? tls : current->fs_base;
-    child->gs_base = current->gs_base;
-    child->signal_mask = current->signal_mask;
+    child->fs_base = (flags & clone_settls) ? tls : current_task()->fs_base;
+    child->gs_base = current_task()->gs_base;
+    child->signal_mask = current_task()->signal_mask;
     if (!vm || (flags & clone_vfork)) {
-        child->altstack_base = current->altstack_base;
-        child->altstack_size = current->altstack_size;
+        child->altstack_base = current_task()->altstack_base;
+        child->altstack_size = current_task()->altstack_size;
     }
-    memcpy(child->fpu, current->fpu, sizeof(child->fpu));
+    memcpy(child->fpu, current_task()->fpu, sizeof(child->fpu));
     uint32_t tid = child->pid;
     if (flags & clone_parent_settid)
-        current->memory->space.copy_out(parent_tid, &tid, 4);
+        current_task()->memory->space.copy_out(parent_tid, &tid, 4);
     if (flags & clone_child_settid)
         child->memory->space.copy_out(child_tid, &tid, 4);
     if (flags & clone_child_cleartid)
         child->tid_address = child_tid;
     if (flags & clone_vfork) {
-        child->vfork_parent = current->pid;
-        current->state = State::blocked;
-        current->wait = Wait::vfork;
-        current->wait_pid = child->pid;
+        child->vfork_parent = current_task()->pid;
+        current_task()->state = State::blocked;
+        current_task()->wait = Wait::vfork;
+        current_task()->wait_pid = child->pid;
     }
     return child->pid;
 }
@@ -571,16 +571,17 @@ static bool awaken(Task& t) {
 
 Frame* schedule(Frame* f, bool yield) {
     cpu_account();
-    if (current && f) {
-        current->frame = *f;
-        asm volatile("fxsave64 %0" : "=m"(current->fpu));
+    if (current_task() && f) {
+        current_task()->frame = *f;
+        asm volatile("fxsave64 %0" : "=m"(current_task()->fpu));
     }
-    if (current && current->state == State::runnable && !yield && signal_deliver(*current)) {
+    if (current_task() && current_task()->state == State::runnable && !yield &&
+        signal_deliver(*current_task())) {
         reclaim_released_nodes();
-        cpu_account(current, true);
-        return &current->frame;
+        cpu_account(current_task(), true);
+        return &current_task()->frame;
     }
-    unsigned start = current ? unsigned(current - tasks) + 1 : 0;
+    unsigned start = current_task() ? unsigned(current_task() - tasks) + 1 : 0;
     for (;;) {
         random_refresh(ticks);
         net_poll();
@@ -592,8 +593,8 @@ Frame* schedule(Frame* f, bool yield) {
             if (!signal_deliver(*t))
                 continue;
             reclaim_released_nodes();
-            current = t;
-            write_cr3(t->memory->space.root);
+            set_current_task(t);
+            switch_address_space(t->memory->space.root);
             arch_task(t->fs_base, t->gs_base);
             asm volatile("fxrstor64 %0" ::"m"(t->fpu));
             cpu_account(t, true);
@@ -967,8 +968,8 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     replacement->exec_dentry = dentry;
     clear_tid(t);
     io_discard(*t);
-    if (t == current)
-        write_cr3(memory.root);
+    if (t == current_task())
+        switch_address_space(memory.root);
     release_memory(t);
     t->memory = replacement;
     t->memory->dumpable = dumpable;
@@ -1020,7 +1021,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     for (unsigned fd = 0; fd < t->files->capacity; fd++)
         if (t->files->entries[fd].cloexec)
             close_descriptor(*t->files, int(fd));
-    if (t == current)
+    if (t == current_task())
         arch_task(0, 0);
     log("exec pid=%u %s (%s)\n", uint64_t(t->pid), path,
         image.interpreter[0] ? "dynamic musl" : "static ELF");
@@ -1065,18 +1066,18 @@ extern "C" Frame* handle_trap(Frame* f) {
         devices_poll();
         epoll_notify();
         signal_tick();
-        if ((f->cs & 3) == 3 && current)
+        if ((f->cs & 3) == 3 && current_task())
             return schedule(f, true);
         return f;
     }
     uint64_t cr2 = 0;
     asm volatile("mov %%cr2,%0" : "=r"(cr2));
-    if ((f->cs & 3) == 3 && current) {
+    if ((f->cs & 3) == 3 && current_task()) {
         cpu_account();
         auto fault = FileFault::outside;
         if (f->vector == 14 && !(f->error & 8)) {
-            cpu_account(current);
-            auto& space = current->memory->space;
+            cpu_account(current_task());
+            auto& space = current_task()->memory->space;
             fault = file_mapping_fault(space, cr2, f->error & 2, f->error & 16);
             if (fault == FileFault::resolved ||
                 (fault == FileFault::outside && !(f->error & 1) &&
@@ -1091,13 +1092,13 @@ extern "C" Frame* handle_trap(Frame* f) {
                      : f->vector == 1 || f->vector == 3                     ? 5
                                                                             : 11;
         log("User exception: vector=%u rip=%x address=%x pid=%u signal=%u\n", f->vector, f->rip,
-            cr2, uint64_t(current->pid), uint64_t(signal));
-        if (current->signal_mask & (1ull << (signal - 1)) ||
-            current->handlers->signal_actions[signal - 1][0] == 1)
-            exit_task(current, signal);
+            cr2, uint64_t(current_task()->pid), uint64_t(signal));
+        if (current_task()->signal_mask & (1ull << (signal - 1)) ||
+            current_task()->handlers->signal_actions[signal - 1][0] == 1)
+            exit_task(current_task(), signal);
         else
             queue_signal(
-                current, signal, 0,
+                current_task(), signal, 0,
                 fault == FileFault::bus ||
                         (f->vector == 14 && ((f->error & 1) || fault == FileFault::protection))
                     ? 2
@@ -1105,8 +1106,8 @@ extern "C" Frame* handle_trap(Frame* f) {
                 0, f->vector == 14 ? cr2 : f->rip);
         return schedule(f, true);
     }
-    log("FAULT vector=%u error=%x rip=%x address=%x pid=%u\n", f->vector, f->error, f->rip, cr2,
-        uint64_t(current ? current->pid : 0));
+    // A fatal kernel trap can interrupt the entry or return instruction sequence.
+    log("FAULT vector=%u error=%x rip=%x address=%x\n", f->vector, f->error, f->rip, cr2);
     panic("kernel exception");
 }
 } // namespace ax

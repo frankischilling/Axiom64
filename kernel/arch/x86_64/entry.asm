@@ -24,6 +24,8 @@
 bits 64
 default rel
 section .text
+; Byte offset of CS in ax::Frame, measured from the saved R15.
+%define FRAME_CS (18 * 8)
 extern handle_syscall, handle_trap
 extern multiboot_main
 extern ap_entry_on_stack
@@ -62,15 +64,13 @@ ap_enter_stack:
 
 global syscall_entry
 syscall_entry:
-    ; Use this CPU's entry data to switch stacks, then restore the task's GS base.
-    ; Interrupt entry and the syscall dispatcher do not use the kernel GS base.
+    ; Keep the CPU-local GS base active until returning to userspace.
     swapgs
     lfence
     mov [gs:8], rsp
     mov rsp, [gs:0]
     push qword 0x1b
     push qword [gs:8]
-    swapgs
     push r11
     push qword 0x23
     push rcx
@@ -88,6 +88,10 @@ global enter_user
 enter_user:
     mov rsp,rdi
 restore_frame:
+    test byte [rsp+FRAME_CS], 3
+    jz .restore_registers
+    swapgs
+.restore_registers:
     pop r15
     pop r14
     pop r13
@@ -118,6 +122,12 @@ interrupt_%+i:
 %endrep
 interrupt_common:
     SAVE
+    test byte [rsp+FRAME_CS], 3
+    jz .kernel_gs
+    swapgs
+.kernel_gs:
+    ; Order the privilege check and GS switch before CPU-local memory access.
+    lfence
     cld
     mov rdi,rsp
     and rsp,-16

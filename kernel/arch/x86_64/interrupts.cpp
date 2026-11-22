@@ -25,6 +25,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "arch/x86_64/interrupts.hpp"
+#include "arch/x86_64/tlb.hpp"
 #include "core/base.hpp"
 #include "drivers/platform/poll.hpp"
 #include "firmware/acpi.hpp"
@@ -41,12 +42,15 @@ constexpr uint32_t ioapic_delivery_mask = 7 << 8;
 constexpr uint32_t task_priority = 0x80, end_of_interrupt = 0xb0, spurious_register = 0xf0;
 constexpr unsigned icr_low = 0x300, icr_high = 0x310, icr_msr = 0x830;
 constexpr uint32_t icr_busy = 1 << 12;
-constexpr uint8_t wake_vector = 0xf1;
+constexpr uint8_t wake_vector = 0xf1, secondary_timer_vector = 0xf2;
+constexpr uint8_t invalidate_vector = 0xf3;
+constexpr unsigned timer_lvt = 0x320, timer_initial_count = 0x380, timer_divide = 0x3e0;
+constexpr uint32_t timer_divide_by_16 = 0x3;
 constexpr unsigned max_controllers = 16;
 constexpr unsigned first_message_vector = 0x40, past_message_vector = 0x80;
 
 // These registers appear in LVT index order, including optional entries.
-constexpr unsigned lvt_registers[] = {0x320, 0x350, 0x360, 0x370, 0x340, 0x330, 0x2f0};
+constexpr unsigned lvt_registers[] = {timer_lvt, 0x350, 0x360, 0x370, 0x340, 0x330, 0x2f0};
 
 struct LocalApic {
     volatile uint32_t* mmio;
@@ -91,7 +95,7 @@ struct IoApic {
 
 LocalApic local;
 LocalApic ipi_local;
-Irq::IpiHandler ipi_handler;
+Irq::SecondaryHandler secondary_handler;
 IoApic controllers[max_controllers];
 Irq::GsiRange controller_ranges[max_controllers];
 unsigned controller_count;
@@ -344,17 +348,17 @@ bool interrupt_apic_ready() {
     return timer_route == TimerRoute::Apic;
 }
 
-bool interrupt_prepare_ipi(Irq::IpiHandler handler) {
-    if (!handler || ipi_handler || !locate_local_apic(ipi_local, 0) ||
+bool interrupt_prepare_secondary(Irq::SecondaryHandler handler) {
+    if (!handler || secondary_handler || !locate_local_apic(ipi_local, 0) ||
         !local_apic_lvt_count(ipi_local))
         return false;
-    ipi_handler = handler;
+    secondary_handler = handler;
     log("SMP: IPI transport=%s\n", ipi_local.x2 ? "x2APIC" : "xAPIC");
     return true;
 }
 
 bool interrupt_enable_secondary_ipi() {
-    if (!ipi_handler)
+    if (!secondary_handler)
         return false;
     const uint64_t base = rdmsr(apic_base_msr);
     if (!(base & apic_global_enable) || (base & apic_address_mask) != ipi_local.address ||
@@ -369,6 +373,7 @@ bool interrupt_enable_secondary_ipi() {
         if ((previous & ioapic_delivery_mask) != ioapic_smi)
             ipi_local.write(reg, previous | lvt_mask);
     }
+    interrupt_stop_secondary_timer();
     // Only accept reserved high-priority vectors while the AP is parked.
     ipi_local.write(task_priority, 0xe0);
     ipi_local.write(spurious_register,
@@ -376,21 +381,41 @@ bool interrupt_enable_secondary_ipi() {
     return true;
 }
 
-bool interrupt_send_ipi(uint32_t destination) {
-    if (!ipi_handler)
+static bool send_secondary_ipi(uint32_t destination, uint8_t vector) {
+    if (!secondary_handler)
         return false;
     if (ipi_local.x2) {
         // x2APIC WRMSR does not order earlier memory writes before delivery.
         asm volatile("mfence; lfence" ::: "memory");
-        wrmsr(icr_msr, (uint64_t(destination) << 32) | wake_vector);
+        wrmsr(icr_msr, (uint64_t(destination) << 32) | vector);
         return true;
     }
     if (destination >= 255 ||
         !DevicePoll::wait([] { return !(ipi_local.read(icr_low) & icr_busy); }, 20))
         return false;
     ipi_local.write(icr_high, destination << 24);
-    ipi_local.write(icr_low, wake_vector);
+    ipi_local.write(icr_low, vector);
     return true;
+}
+
+bool interrupt_send_ipi(uint32_t destination) {
+    return send_secondary_ipi(destination, wake_vector);
+}
+
+bool interrupt_send_tlb_ipi(uint32_t destination) {
+    return send_secondary_ipi(destination, invalidate_vector);
+}
+
+void interrupt_arm_secondary_timer(uint32_t count) {
+    // Programming the initial count starts a one-shot on this CPU.
+    ipi_local.write(timer_lvt, secondary_timer_vector);
+    ipi_local.write(timer_divide, timer_divide_by_16);
+    ipi_local.write(timer_initial_count, count);
+}
+
+void interrupt_stop_secondary_timer() {
+    ipi_local.write(timer_lvt, lvt_mask | secondary_timer_vector);
+    ipi_local.write(timer_initial_count, 0);
 }
 
 bool interrupt_register_message(Irq::Handler handler, void* context, Irq::Message& result) {
@@ -504,10 +529,18 @@ bool interrupt_dispatch(uint64_t vector) {
     // The LAPIC never puts its spurious vector in the in-service register.
     if (vector == Irq::spurious)
         return false;
-    if (vector == wake_vector && ipi_handler) {
-        if (ipi_local.in_service(wake_vector)) {
+    if (vector == invalidate_vector && secondary_handler) {
+        if (ipi_local.in_service(invalidate_vector)) {
+            service_tlb_ipi();
             ipi_local.write(end_of_interrupt, 0);
-            ipi_handler(ipi_local.id());
+        }
+        return false;
+    }
+    if ((vector == wake_vector || vector == secondary_timer_vector) && secondary_handler) {
+        if (ipi_local.in_service(unsigned(vector))) {
+            ipi_local.write(end_of_interrupt, 0);
+            secondary_handler(ipi_local.id(), vector == wake_vector ? Irq::SecondaryEvent::wake
+                                                                    : Irq::SecondaryEvent::timer);
         }
         return false;
     }

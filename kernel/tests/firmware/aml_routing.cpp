@@ -465,6 +465,70 @@ void i2c_hid_cases() {
     assert(inspect(bad, true, devices) && !devices.count);
     std::puts("ACPI_I2C_HID_PASS descriptor_register bounded_resource_template");
 }
+
+Bytes address_window(uint8_t tag, uint8_t general, uint8_t flags, uint64_t base, uint64_t end,
+                     uint64_t size, uint64_t translation = 0, uint64_t attributes = 0) {
+    const unsigned width = tag == 0x87 ? 4 : 8;
+    const bool extended = tag == 0x8b;
+    Bytes bytes{tag, uint8_t(3 + width * 5 + (extended ? 10 : 0)), 0, 0, general, flags};
+    if (extended)
+        bytes.insert(bytes.end(), {1, 0});
+    auto put = [&](uint64_t value, unsigned n) {
+        for (unsigned i = 0; i < n; ++i)
+            bytes.push_back(uint8_t(value >> (8 * i)));
+    };
+    for (uint64_t value : {uint64_t(0), base, end, translation, size})
+        put(value, width);
+    if (extended)
+        put(attributes, 8);
+    return bytes;
+}
+
+void root_window_cases() {
+    using namespace ax::Acpi;
+    auto inspect = [](const Bytes& resources, bool present, PciRootWindows& windows) {
+        const auto hid = data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 0x08});
+        const auto status = data("_STA", {0x0a, uint8_t(present ? 15 : 0)});
+        const auto dword = data("BASE", {0x0c, 0x00, 0x00, 0x00, 0xfe});
+        // A device unrelated to PCI routing can use a computed SystemMemory base.
+        const auto region = sequence(
+            {{0x5b, 0x80}, name("REG0"), {0, 0x72}, name("BASE"), {0x0a, 0x20, 0, 0x0a, 8}});
+        auto root =
+            block({0x5b, 0x82}, sequence({name("PCI0"), hid, status, data("_SEG", {0x0a, 2}),
+                                          data("_BBN", {0x0a, 64}), buffer("_CRS", resources)}));
+        // Constant branches can contain unreachable firmware declarations.
+        auto other = block({0xa0}, {0, 0xfe});
+        auto alternative = block({0xa1}, root);
+        const auto table = definition(sequence({dword, region, other, alternative}));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_pci_root_windows(blocks, windows);
+    };
+
+    const auto low = address_window(0x87, 0x0d, 1, 0xfe000000, 0xfe00ffff, 0x10000);
+    const auto high = address_window(0x8a, 0x0c, 7, 0x4000000000, 0x401fffffff, 0x20000000);
+    const auto consumer = address_window(0x8b, 0x0d, 1, 0x5000000000, 0x5000000fff, 0x1000);
+    const auto extended = address_window(0x8b, 0x0c, 1, 0x6000000000, 0x6000000fff, 0x1000, 0, 2);
+    const auto translated =
+        address_window(0x8a, 0x0c, 1, 0x8000000000, 0x8000000fff, 0x1000, 0x10000);
+    auto all = sequence({low, high, consumer, extended, translated, {0x79, 0}});
+    PciRootWindows windows{};
+    assert(inspect(all, true, windows) && windows.count == 3);
+    assert(windows.entries[0].base == 0xfe000000 && windows.entries[0].size == 0x10000 &&
+           windows.entries[0].segment == 2 && windows.entries[0].bus == 64 &&
+           !windows.entries[0].prefetchable);
+    assert(windows.entries[1].base == 0x4000000000 && windows.entries[1].prefetchable);
+    assert(windows.entries[2].base == 0x6000000000 && windows.entries[2].prefetchable);
+    assert(!inspect(all, false, windows) && !windows.count);
+    all.back() = 1;
+    assert(!inspect(all, true, windows) && !windows.count);
+    auto short_item = high;
+    short_item.pop_back();
+    assert(!inspect(sequence({low, short_item}), true, windows) && !windows.count);
+    const auto bad_range = address_window(0x8a, 0x0c, 1, 0x6000000000, 0x6000000fff, 0x2000);
+    assert(!inspect(sequence({low, bad_range, {0x79, 0}}), true, windows) && !windows.count);
+    std::puts("ACPI_PCI_ROOT_WINDOWS_PASS fixed_ranges checksum bounds disabled_root");
+}
 } // namespace
 
 int main() {
@@ -492,4 +556,5 @@ int main() {
     dynamic_cases();
     programmable_cases();
     i2c_hid_cases();
+    root_window_cases();
 }

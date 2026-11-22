@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -152,6 +153,12 @@ static uint64_t read_gs_word(void) {
     return value;
 }
 
+static volatile sig_atomic_t gs_trap_ok;
+
+static void gs_trap_handler(int signal) {
+    gs_trap_ok = signal == SIGTRAP && read_gs_word() == UINT64_C(0x123456789abcdef0);
+}
+
 static void user_gs_base(const char* executable) {
     uintptr_t saved = read_gs_base();
     uintptr_t fs_before, fs_after;
@@ -162,6 +169,12 @@ static void user_gs_base(const char* executable) {
     CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, UINTPTR_MAX) == -1 && errno == EPERM);
     CHECK(syscall(SYS_arch_prctl, ARCH_GET_GS, 1ul) == -1 && errno == EFAULT);
     CHECK(read_gs_word() == parent_value);
+    struct sigaction trap = {.sa_handler = gs_trap_handler}, previous;
+    CHECK(sigemptyset(&trap.sa_mask) == 0);
+    CHECK(sigaction(SIGTRAP, &trap, &previous) == 0);
+    __asm__ volatile("int3" ::: "memory");
+    CHECK(gs_trap_ok && read_gs_word() == parent_value);
+    CHECK(sigaction(SIGTRAP, &previous, NULL) == 0);
     pid_t child = fork();
     CHECK(child >= 0);
     if (!child) {
@@ -245,6 +258,55 @@ static void executable_link(void) {
     }
     child_status(child, 0);
     puts("ABI_PROC_EXE_PASS linkage=" ABI_LINKAGE);
+}
+
+static void check_root_link(const char* link, const char* expected) {
+    char path[256];
+    const ssize_t count = readlink(link, path, sizeof(path));
+    CHECK(count == (ssize_t)strlen(expected) && !memcmp(path, expected, (size_t)count));
+    const int fd = open(link, O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY);
+    struct stat actual, directory;
+    CHECK(fd >= 0 && fstat(fd, &actual) == 0 && stat(expected, &directory) == 0 &&
+          actual.st_dev == directory.st_dev && actual.st_ino == directory.st_ino && close(fd) == 0);
+}
+
+static void process_root_link(void) {
+    check_root_link("/proc/self/root", "/");
+    check_root_link("/proc/thread-self/root", "/");
+
+    char jail[] = "/tmp/abi-proc-root-XXXXXX";
+    CHECK(mkdtemp(jail) != NULL);
+    int pair[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+    const pid_t child = fork();
+    CHECK(child >= 0);
+    char signal;
+    if (!child) {
+        close(pair[0]);
+        CHECK(chroot(jail) == 0 && chdir("/") == 0);
+        CHECK(write(pair[1], "+", 1) == 1 && read(pair[1], &signal, 1) == 0);
+        _exit(0);
+    }
+    close(pair[1]);
+    CHECK(read(pair[0], &signal, 1) == 1 && signal == '+');
+    char link[64];
+    CHECK(snprintf(link, sizeof(link), "/proc/%d/root", child) > 0);
+    check_root_link(link, jail);
+    const pid_t reader = fork();
+    CHECK(reader >= 0);
+    if (!reader) {
+        CHECK(setgid(1000) == 0 && setuid(1000) == 0);
+        check_root_link("/proc/self/root", "/");
+        char target[256];
+        CHECK(readlink(link, target, sizeof(target)) == -1 && errno == EACCES);
+        CHECK(open(link, O_RDONLY | O_DIRECTORY) == -1 && errno == EACCES);
+        _exit(0);
+    }
+    child_status(reader, 0);
+    CHECK(close(pair[0]) == 0);
+    child_status(child, 0);
+    CHECK(rmdir(jail) == 0);
+    puts("ABI_PROC_ROOT_PASS linkage=" ABI_LINKAGE);
 }
 
 static void proc_cmdline_child(char** argv) {
@@ -675,6 +737,7 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0x7ffffffffffe, 8) == -1 && errno == EFAULT);
     relative_modes();
     executable_link();
+    process_root_link();
     proc_cmdline(argv[0]);
     proc_usage();
     seqpacket_pair();

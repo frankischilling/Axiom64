@@ -35,6 +35,7 @@ from ca_bundle import runtime_files as trust_files
 from build_libxcrypt import runtime_files as password_files
 from build_accounts import runtime_files as account_files
 from build_doom import runtime_files as doom_files
+from build_cupidfetch import runtime_files as cupidfetch_files
 import tarfile
 import argparse
 import tempfile
@@ -150,7 +151,8 @@ for package, archive in packages():
 
 # Override both the installed interpreter and native development libc after APK imports.
 for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **download_files(),
-                    **trust_files(), **password_files(), **account_files(), **doom_files()}.items():
+                    **trust_files(), **password_files(), **account_files(), **doom_files(),
+                    **cupidfetch_files()}.items():
     for parent in reversed(Path(path).parents):
         if str(parent) != '.':
             files.setdefault(str(parent), (0o40755, b''))

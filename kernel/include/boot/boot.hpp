@@ -57,6 +57,7 @@ struct BootInfo {
 
 extern BootInfo boot_info;
 [[noreturn]] void boot_kernel();
+void boot_probe_application_processors();
 
 const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
 

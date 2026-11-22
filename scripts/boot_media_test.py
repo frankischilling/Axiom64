@@ -82,7 +82,8 @@ def run_keyboard_guest(command, log, output):
                     guest.kill()
 
 
-def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False, xhci=None):
+def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False, xhci=None,
+              smp=None):
     command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
                "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot",
                "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
@@ -103,6 +104,9 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         command += ["-nic", "none", "-boot", "order=d,strict=on", "-cdrom", medium]
     if xhci == "keyboard":
         command += ["-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0"]
+    if smp is not None:
+        threads = 2 if smp > 1 else 1
+        command += ["-smp", f"cpus={smp},sockets=1,cores={smp // threads},threads={threads}"]
     log = directory / "serial.log"
     with log.open("wb") as output:
         if xhci == "keyboard":
@@ -140,14 +144,22 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             raise RuntimeError(f"xHCI did not read the key press and release in {log}: {keys}")
     if xhci == "none" and (probes or devices or keyboards or keys):
         raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
+    if smp is not None:
+        summaries = re.findall(r"^SMP: present=(\d+) bsp=(\d+) application_processors=(\d+)$",
+                               text, re.MULTILINE)
+        entered = re.findall(r"^SMP: application processor apic=(\d+) entered$", text, re.MULTILINE)
+        if (len(summaries) != 1 or summaries[0][0] != str(smp) or summaries[0][2] != str(smp - 1) or
+                len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered):
+            raise RuntimeError(f"SMP processor entry failed in {log}: {summaries} {entered}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
-            "serial_sha256": digest(log)}
+            "smp": smp, "serial_sha256": digest(log)}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/boot-media-test")
     parser.add_argument("--xhci", action="store_true", help="include xHCI and USB keyboard checks")
+    parser.add_argument("--smp", action="store_true", help="check entry on every logical processor")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -205,6 +217,17 @@ def main():
                 results.append(run_guest(case, "disk", firmware, target,
                                          f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
                                          xhci=device))
+                print(f"{case.name}: passed", flush=True)
+    if args.smp:
+        target = output / "smp-probe.raw"
+        build_medium("disk", target, kernel, initramfs, " test smp.probe", init=alternate)
+        for firmware in ("bios", "uefi"):
+            for count in (1, 12):
+                case = output / f"{firmware}-smp-{count}"
+                case.mkdir()
+                results.append(run_guest(case, "disk", firmware, target,
+                                         f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
+                                         smp=count))
                 print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps({"kernel_sha256": digest(kernel),
         "initramfs_sha256": digest(initramfs), "boots": results}, indent=2) + "\n")

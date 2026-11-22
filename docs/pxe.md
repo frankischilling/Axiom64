@@ -62,6 +62,28 @@ The stock PXE tree above runs entirely from RAM. Changes to the RAM root
 disappear on reboot. See
 [persistent root boot](disk-root.md) for building a separate system disk.
 
+### Boot the NVMe installer
+
+Build the installed profile first. Use its pinned Python and SSH runtime to
+make a maintenance PXE tree for the direct Ethernet link.
+
+```sh
+make -j2 build/axiom64.elf build/rootfs-installed-desktop.cpio
+python3 scripts/nvme_install_pxe.py build/axiom64-install-pxe \
+    --authorized-key "$HOME/.ssh/axiom64-bench.pub" \
+    --address 192.168.100.200/24 --client 192.168.100.3
+```
+
+Point TFTP to the maintenance tree and choose **IPv4 PXE**. The guest generates
+its host key on this boot and displays the fingerprint on the firmware
+framebuffer and serial console. Check
+the fingerprint before connecting from the build host with the matching key.
+Upload the [NVMe bundle](disk-root.md#transfer-a-built-image-to-nvme) into the
+`bench` home directory with SFTP. At the local maintenance console run
+`python3 /installer.py inspect /dev/nvme0n1`. Preview the install using the
+bundle in `/home/bench`, then follow the write instructions after verifying
+the drive identity and backup.
+
 ### Try a new kernel with the installed system
 
 After the installed disk boots on its own, record the GPT ID of its ext2 root

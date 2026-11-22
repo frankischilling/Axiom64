@@ -26,6 +26,7 @@
 from pathlib import Path
 import subprocess
 from fetch import ROOT, LOCK
+from newc import write_cpio
 from ports import overlay_tar, packages
 from build_musl import loader, runtime_files
 from build_libcap import runtime_files as capability_files
@@ -248,19 +249,6 @@ for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "library.cpp
     regular(f"root/toolchain-test/{filename}", ROOT / "userspace/tests/toolchain" / filename, 0o100644)
 
 
-def entry(stream, path, mode, data, inode):
-    name = path.encode() + b"\0"
-    values = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(name), 0]
-    header = b"070701" + b"".join(f"{value:08x}".encode() for value in values)
-    stream.write(header + name)
-    stream.write(b"\0" * (-stream.tell() % 4))
-    stream.write(data)
-    stream.write(b"\0" * (-stream.tell() % 4))
-
-
 destination = ROOT / "build" / root_archives[args.profile]
-with destination.open("wb") as stream:
-    for inode, (path, (mode, data)) in enumerate(sorted(files.items()), start=1):
-        entry(stream, path, mode, data, inode)
-    entry(stream, "TRAILER!!!", 0, b"", len(files) + 1)
+write_cpio(destination, files)
 print(f"Initramfs: {len(files)} entries, {destination.stat().st_size} bytes")

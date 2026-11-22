@@ -33,6 +33,18 @@ static int failed(int error) {
     return -1;
 }
 
+int account_recorded_deny(const char* records, const char* name, const char* terminal) {
+    struct account_logbook* book = NULL;
+    if (account_logbook_open(records, 1, &book) < 0)
+        return -1;
+    int result = account_logbook_audit(book, ACCOUNT_LOGIN_DENIED,
+                                       account_name_valid(name) ? name : "invalid", (uid_t)-1, NULL,
+                                       terminal, EACCES);
+    int error = errno;
+    account_logbook_close(book);
+    return result < 0 ? failed(error) : 0;
+}
+
 int account_recorded_begin(void* opaque, pid_t child, const char* terminal) {
     struct account_recorded_session* context = opaque;
     if (!context || !context->target || context->lease)

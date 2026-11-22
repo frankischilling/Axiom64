@@ -225,6 +225,10 @@ files['var/lib/dbus/machine-id'] = (0o120777, b'/etc/machine-id')
 for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 if installed_desktop:
+    regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    for service in ('sddm', 'sddm-autologin'):
+        regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
+                0o100644)
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
     autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'

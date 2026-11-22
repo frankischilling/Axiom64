@@ -137,18 +137,6 @@ static int new_password(int terminal, char secret[ACCOUNT_PASSWORD_MAX + 1]) {
     return error ? failed(error) : 0;
 }
 
-static int denied(const char* records, const char* name, const char* terminal) {
-    struct account_logbook* book = NULL;
-    if (account_logbook_open(records, 1, &book) < 0)
-        return -1;
-    int result = account_logbook_audit(book, ACCOUNT_LOGIN_DENIED,
-                                       account_name_valid(name) ? name : "invalid", (uid_t)-1, NULL,
-                                       terminal, EACCES);
-    int error = errno;
-    account_logbook_close(book);
-    return result < 0 ? failed(error) : 0;
-}
-
 static int authenticate(const char* database, const char* records, const char* name, int terminal,
                         const char* tty, int sudo, int finish_change,
                         struct account_profile** profile) {
@@ -159,7 +147,7 @@ static int authenticate(const char* database, const char* records, const char* n
         error = errno;
     account_password_clear(secret, sizeof(secret));
     if (!error && result == ACCOUNT_AUTH_DENIED) {
-        if (denied(records, name, tty) < 0)
+        if (account_recorded_deny(records, name, tty) < 0)
             return -1;
         dprintf(terminal, "Authentication failed.\n");
         return failed(EACCES);

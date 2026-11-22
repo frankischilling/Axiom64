@@ -232,7 +232,8 @@ def main():
         cases.append(run(output / f"{prefix}-data", machine, firmware, data_image,
                          [(0, 1, f"blkdebug:{faults}:{primary}", 512), (0, 7, sparse, 512),
                           (0, 3, unsupported, 4096), (0, 9, zoned, 512), (1, 5, other, 512)],
-                         [DATA_PASS], dual=True, zoned=((0, 9),)))
+                         [DATA_PASS, "NVME_EXCLUSIVE_CLAIM_PASS whole partition mount write dup release"],
+                         dual=True, zoned=((0, 9),)))
         verify_data(primary, original, ((sparse, 128), (other, 256)), (unsupported, zoned))
         root = output / f"{prefix}-root.ext2"
         shutil.copyfile(root_image, root)

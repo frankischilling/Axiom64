@@ -29,13 +29,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
+#ifndef BLKSSZGET
 #define BLKSSZGET _IO(0x12, 104)
+#endif
+#ifndef BLKGETSIZE64
 #define BLKGETSIZE64 _IOR(0x12, 114, uint64_t)
+#endif
 
 enum { sector = 512, disk_sectors = 8192 };
 
@@ -140,6 +145,29 @@ static int controller_inventory(void) {
            identity_field("/sys/class/nvme/nvme1/firmware_rev", NULL);
 }
 
+static int exclusive_claim(int partition) {
+    const char* disk = "/dev/nvme0n1";
+    const char* part = "/dev/nvme0n1p1";
+    const int fd = open(disk, O_RDWR | O_EXCL);
+    if (fd < 0 || open(part, O_RDONLY | O_EXCL) != -1 || errno != EBUSY ||
+        open(part, O_RDWR) != -1 || errno != EBUSY ||
+        mount(part, "/tmp", "ext2", MS_RDONLY, NULL) != -1 || errno != EBUSY)
+        return -1;
+    int copy = dup(fd);
+    if (copy < 0 || close(fd) || open(disk, O_RDONLY | O_EXCL) != -1 || errno != EBUSY ||
+        pwrite(partition, payload, 1, 3) != -1 || errno != EBUSY ||
+        pwrite(copy, payload, sizeof(payload), 2048 * sector + 3) != sizeof(payload) || fsync(copy))
+        return -1;
+    int other = open("/dev/nvme0n7", O_RDONLY | O_EXCL);
+    if (other < 0 || close(other) || close(copy))
+        return -1;
+    int released = open(part, O_RDONLY | O_EXCL);
+    if (released < 0 || close(released))
+        return -1;
+    puts("NVME_EXCLUSIVE_CLAIM_PASS whole partition mount write dup release");
+    return 0;
+}
+
 static int data(void) {
     struct stat missing;
     if (stat("/dev/nvme0n3", &missing) != -1 || errno != ENOENT ||
@@ -171,14 +199,17 @@ static int data(void) {
         pwrite(part, payload, 1, end) != -1 || errno != ENOSPC ||
         pread(part, sample, 1, end) != 0 || fsync(part))
         return -1;
-    if (transfer_sizes(sparse_id, 128) || transfer_sizes(other, 256) || close(whole) ||
-        close(part) || close(sparse_id) || close(other))
+    if (exclusive_claim(part) || transfer_sizes(sparse_id, 128) || transfer_sizes(other, 256) ||
+        close(whole) || close(part) || close(sparse_id) || close(other))
         return -1;
     puts("NVME_DATA_PASS sparse_ids two_controllers io_errors queue_wrap transfer_boundaries");
     return 0;
 }
 
 static int root(void) {
+    const char* disk = access("/dev/nvme0n1", F_OK) == 0 ? "/dev/nvme0n1" : "/dev/nvme0n7";
+    if (open(disk, O_RDONLY | O_EXCL) != -1 || errno != EBUSY)
+        return -1;
     int fd = open("/nvme-written", O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd >= 0) {
         if (write(fd, payload, sizeof(payload)) != sizeof(payload) || fsync(fd) || close(fd))

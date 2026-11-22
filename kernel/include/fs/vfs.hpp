@@ -27,7 +27,7 @@
 #include "core/base.hpp"
 
 namespace ax {
-constexpr unsigned max_handles = 1024;
+constexpr unsigned max_handles = 8192;
 enum class Device;
 struct Pty;
 struct Socket;
@@ -200,6 +200,7 @@ struct Handle {
     uint64_t pipe_hangup_generation = 0;
     Node* anonymous_path = nullptr;
     uint32_t opener_uid = 0, opener_gid = 0;
+    Handle* next_free = nullptr;
 };
 
 inline uint32_t file_status_flags(const Handle& handle) {

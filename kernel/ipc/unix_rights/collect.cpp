@@ -41,10 +41,10 @@ void unix_collect_rights() {
     };
 
     static Vertex vertices[max_handles * 2];
+    // Visit and clear only the slots populated by this collection.
+    static Vertex* occupied[max_handles];
     static Vertex* work[max_handles];
     static Handle* pins[max_handles];
-    for (auto& vertex : vertices)
-        vertex = {};
     unsigned vertices_used = 0;
     auto vertex = [&](Handle* handle) -> Vertex& {
         if (!handle || !handle->references)
@@ -53,8 +53,9 @@ void unix_collect_rights() {
         while (vertices[index].handle && vertices[index].handle != handle)
             index = (index + 1) % (max_handles * 2);
         if (!vertices[index].handle) {
-            if (++vertices_used > max_handles)
+            if (vertices_used == max_handles)
                 panic("Unix description graph exceeds handle pool");
+            occupied[vertices_used++] = &vertices[index];
             vertices[index].handle = handle;
         }
         return vertices[index];
@@ -69,9 +70,8 @@ void unix_collect_rights() {
             vertex(entry->files[index]).incoming++;
     }
     unsigned queued = 0;
-    for (auto& entry : vertices) {
-        if (!entry.handle)
-            continue;
+    for (unsigned index = 0; index < vertices_used; ++index) {
+        auto& entry = *occupied[index];
         if (entry.handle->references < entry.incoming)
             panic("Unix inflight references exceed total references");
         if (entry.handle->references > entry.incoming) {
@@ -89,11 +89,13 @@ void unix_collect_rights() {
                 }
             }
     unsigned pinned = 0;
-    for (auto& entry : vertices)
-        if (entry.handle && !entry.reachable && entry.handle->socket) {
+    for (unsigned index = 0; index < vertices_used; ++index) {
+        auto& entry = *occupied[index];
+        if (!entry.reachable && entry.handle->socket) {
             retain(entry.handle);
             pins[pinned++] = entry.handle;
         }
+    }
     // Pin every doomed endpoint before releasing any edge. Close callbacks can
     // clear other queues; the original socket slots must remain valid throughout.
     for (unsigned index = 0; index < pinned; index++) {
@@ -105,6 +107,8 @@ void unix_collect_rights() {
     }
     for (unsigned index = 0; index < pinned; index++)
         close_handle(pins[index]);
+    for (unsigned index = 0; index < vertices_used; ++index)
+        *occupied[index] = {};
     collecting = false;
 }
 } // namespace ax

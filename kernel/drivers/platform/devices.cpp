@@ -27,6 +27,7 @@
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/block/floppy.hpp"
+#include "drivers/block/nvme.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
@@ -253,6 +254,59 @@ static void number_path(char* out, const char* prefix, unsigned number) {
     out[length] = 0;
 }
 
+static bool inventory_directory(const char* path) {
+    if (auto node = lookup(path, false))
+        return (node->mode & 0170000) == directory;
+    return make_node(path, directory | 0755);
+}
+
+static bool inventory_attribute(const char* parent, const char* name, const char* value) {
+    char path[64];
+    const size_t prefix = strlen(parent), suffix = strlen(name);
+    if (prefix + suffix + 2 > sizeof(path))
+        return false;
+    memcpy(path, parent, prefix);
+    path[prefix] = '/';
+    memcpy(path + prefix + 1, name, suffix + 1);
+    const size_t length = strlen(value);
+    auto bytes = static_cast<uint8_t*>(alloc(length + 1));
+    if (!bytes)
+        return false;
+    auto node = make_node(path, regular_file | 0444);
+    if (!node) {
+        release(bytes);
+        return false;
+    }
+    memcpy(bytes, value, length);
+    bytes[length] = '\n';
+    node->data = bytes;
+    node->size = node->capacity = length + 1;
+    node->owned = true;
+    return true;
+}
+
+static void publish_nvme_inventory() {
+    constexpr const char* parents[] = {"/sys", "/sys/class", "/sys/class/nvme"};
+    bool parent_ready = false;
+    for (unsigned controller = 0; controller < nvme_controller_slots; ++controller) {
+        NvmeIdentity identity;
+        if (!nvme_identity(controller, identity))
+            continue;
+        if (!parent_ready) {
+            for (const auto path : parents)
+                if (!inventory_directory(path))
+                    return;
+            parent_ready = true;
+        }
+        char path[64];
+        number_path(path, "/sys/class/nvme/nvme", controller);
+        if (!inventory_directory(path) || !inventory_attribute(path, "model", identity.model) ||
+            !inventory_attribute(path, "serial", identity.serial) ||
+            !inventory_attribute(path, "firmware_rev", identity.firmware))
+            log("nvme: could not publish identity for controller=%u\n", uint64_t(controller));
+    }
+}
+
 static bool controller_wait(bool output) {
     for (unsigned i = 0; i < 100000; i++) {
         uint8_t status = in8(0x64);
@@ -323,6 +377,7 @@ void devices_init() {
         node->device_id = i;
         node->size = info->sectors * sector_size;
     }
+    publish_nvme_inventory();
     if (!lookup("/dev/pts"))
         make_node("/dev/pts", directory | 0755);
     if (!lookup("/dev/input"))

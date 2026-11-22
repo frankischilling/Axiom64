@@ -29,10 +29,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from boot_assets import copy_limine_notices, init_path, limine_files, stage_payload
-from disk_root import build as build_root_volume
+from disk_root import bootstrap as build_bootstrap, build as build_root_volume
 from fetch import ROOT
 
 
@@ -91,10 +91,14 @@ def make_disk(work, payload, limine, root_volume=None, root_id=None, *, disk_byt
 
 
 def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/init", installed=False,
-                 disk_bytes=None, root_mib=None):
-    if installed and (kind != "disk" or any(token.startswith(("root=", "rootfstype="))
-                                            for token in options.split())):
+                 disk_bytes=None, root_mib=None, root_partuuid=None):
+    has_root = any(token.startswith(("root=", "rootfstype=")) for token in options.split())
+    if installed and (kind != "disk" or has_root):
         raise ValueError("the installed disk requires its own root device and filesystem")
+    if root_partuuid is not None:
+        if kind != "pxe" or initramfs is not None or has_root:
+            raise ValueError("PXE disk root requires its own bootstrap archive and root options")
+        root_partuuid = UUID(str(root_partuuid))
     if disk_bytes is not None and (kind != "disk" or not 0 < disk_bytes < (1 << 63) or
                                    disk_bytes % SECTOR):
         raise ValueError("disk bytes require a disk image and a positive multiple of 512")
@@ -112,12 +116,15 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
         payload = work / "payload"
         root_volume = None
         root_id = None
-        if installed:
-            root_id = uuid4()
-            root_volume = work / "root.ext2"
+        if installed or root_partuuid is not None:
+            root_id = uuid4() if installed else root_partuuid
             bootstrap = work / "bootstrap.cpio"
-            build_root_volume(source=initramfs, destination=root_volume, bootstrap_destination=bootstrap,
-                              capacity_bytes=root_bytes)
+            if installed:
+                root_volume = work / "root.ext2"
+                build_root_volume(source=initramfs, destination=root_volume, bootstrap_destination=bootstrap,
+                                  capacity_bytes=root_bytes)
+            else:
+                build_bootstrap(bootstrap)
             initramfs = bootstrap
             options += f" root=PARTUUID={root_id} rootfstype=ext2"
         config = stage_payload(payload, kernel, initramfs, options, init=init, compress=True)
@@ -150,25 +157,28 @@ def main():
     parser.add_argument("kind", choices=("disk", "pxe"))
     parser.add_argument("output", type=Path, help="new raw image path or TFTP directory")
     parser.add_argument("--kernel", type=Path, default=ROOT / "build/axiom64.elf")
-    parser.add_argument("--initramfs", type=Path, default=ROOT / "build/rootfs.cpio",
+    parser.add_argument("--initramfs", type=Path,
                         help="guest archive to boot, or to install when using --installed")
     parser.add_argument("--installed", action="store_true",
                         help="populate a writable ext2 system partition on a new raw disk image")
     parser.add_argument("--disk-bytes", type=int, help="exact capacity of the raw disk image in bytes")
     parser.add_argument("--root-mib", type=int, help="capacity of the installed ext2 root in MiB")
+    parser.add_argument("--root-partuuid", type=UUID, help="PXE boot to an existing ext2 root with this GPT ID")
     parser.add_argument("--init-path", type=init_path, default="/sbin/init", help="absolute guest PID 1 path")
     parser.add_argument("--kernel-option", action="append", default=[], help="one additional boot argument")
     args = parser.parse_args()
     if any(not token or any(char.isspace() for char in token) for token in args.kernel_option):
         parser.error("--kernel-option must be a nonempty token without whitespace")
+    if args.initramfs is None and args.root_partuuid is None:
+        args.initramfs = ROOT / "build/rootfs.cpio"
     for source in (args.kernel, args.initramfs):
-        if not source.is_file():
+        if source is not None and not source.is_file():
             parser.error(f"missing boot input {source}; run make image first")
     try:
         options = "".join(f" {token}" for token in args.kernel_option)
         build_medium(args.kind, args.output, args.kernel, args.initramfs, options,
                      init=args.init_path, installed=args.installed,
-                     disk_bytes=args.disk_bytes, root_mib=args.root_mib)
+                     disk_bytes=args.disk_bytes, root_mib=args.root_mib, root_partuuid=args.root_partuuid)
     except FileExistsError:
         parser.error(f"output already exists: {args.output}")
     except ValueError as error:

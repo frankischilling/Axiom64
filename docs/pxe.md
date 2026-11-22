@@ -62,6 +62,23 @@ The stock PXE tree above runs entirely from RAM. Changes to the RAM root
 disappear on reboot. See
 [persistent root boot](disk-root.md) for building a separate system disk.
 
+### Try a new kernel with the installed system
+
+After the installed disk boots on its own, record the GPT ID of its ext2 root
+partition. The `VFS_ROOT_PASS` line on the serial console shows it after
+`PARTUUID=`. Build a PXE tree for that root using the ID from the installed disk.
+
+```sh
+make -j2 build/axiom64.elf
+python3 scripts/boot_media.py pxe build/axiom64-pxe-installed \
+    --root-partuuid "$root_partuuid"
+```
+
+Set the TFTP base to the new tree and choose **IPv4 PXE**. Limine downloads the
+kernel and a small bootstrap archive. Axiom64 mounts the selected NVMe root and
+uses its installed accounts and programs. A local-disk boot still uses the kernel
+stored on the EFI partition.
+
 ## SSH and SFTP
 
 SSH requires a lab initramfs with OpenSSH. Stage the lab archive with

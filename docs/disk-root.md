@@ -55,8 +55,10 @@ return when the virtual terminal returns to text mode.
 
 Add `--kernel-option usb.xhci=keyboard` to use a USB boot-protocol keyboard
 attached to an xHCI root port. The kernel selects one keyboard at boot and
-shares its input with the text console and evdev. This path covers the boot
-keyboard protocol on a root port. USB hubs and hotplug are separate work.
+shares its input with the text console and evdev. Plug in the keyboard before
+powering on. The controller has time to detect attached devices before the
+scan. This path covers the boot keyboard protocol on a root port. USB hubs
+and hotplug are separate work.
 
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
 It reports device numbers and capacities in KiB. For an NVMe drive such as

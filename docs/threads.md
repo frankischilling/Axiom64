@@ -1,6 +1,6 @@
 # Threads and futexes
 
-Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS base, FPU state, signal mask, alternate stack, and wait state.
+Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS and GS bases, FPU state, signal mask, alternate stack, and wait state.
 
 ## Resource ownership
 
@@ -217,6 +217,6 @@ that cannot be cancelled must still finish on its original file description.
 
 ## Remaining work
 
-The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
+The system has 256 task slots and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state. Extended XSAVE state remains open. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
 
 Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, full fork/exec/signal semantics, and complete resource limits remain unfinished. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

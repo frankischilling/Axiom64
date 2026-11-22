@@ -61,6 +61,32 @@ static int shared_fd;
 static atomic_uint detached;
 static sem_t semaphore;
 
+static void* held_worker(void* argument) {
+    CHECK(sem_wait(argument) == 0);
+    return argument;
+}
+
+static void test_task_capacity(void) {
+    enum { workers = 96, rounds = 3 };
+
+    pthread_t threads[workers];
+    sem_t gate;
+    CHECK(sem_init(&gate, 0, 0) == 0);
+    for (unsigned round = 0; round < rounds; ++round) {
+        for (unsigned i = 0; i < workers; ++i)
+            CHECK(pthread_create(&threads[i], NULL, held_worker, &gate) == 0);
+        for (unsigned i = 0; i < workers; ++i)
+            CHECK(sem_post(&gate) == 0);
+        for (unsigned i = 0; i < workers; ++i) {
+            void* value = NULL;
+            CHECK(pthread_join(threads[i], &value) == 0 && value == &gate);
+        }
+    }
+    CHECK(sem_destroy(&gate) == 0);
+    printf("THREAD_TASK_CAPACITY_PASS linkage=%s workers=%u rounds=%u\n", THREAD_LINKAGE,
+           (unsigned)workers, (unsigned)rounds);
+}
+
 static void test_mutex_protocol(void) {
     pthread_mutexattr_t attributes;
     CHECK(pthread_mutexattr_init(&attributes) == 0);
@@ -271,6 +297,7 @@ cond_tests:
     }
     CHECK(pthread_attr_destroy(&attr) == 0);
     CHECK(pthread_mutex_destroy(&mutex) == 0 && pthread_cond_destroy(&changed) == 0);
+    test_task_capacity();
     printf("THREAD_TESTS_PASS linkage=%s\n", THREAD_LINKAGE);
     return 0;
 }

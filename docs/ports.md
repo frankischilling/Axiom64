@@ -65,6 +65,11 @@ scancodes. The builder verifies the signed Freedoom checksum before
 installing the original IWADs and preserves the engine license and
 Freedoom credits.
 
+Run `python3 scripts/doom_test.py --nvme --output build/doom-nvme-test` after
+building the kernel and desktop archive. Each campaign boots from its own
+UEFI NVMe disk. The test checks both launchers, plays a level with keyboard
+input, compares rendered frames, and records the emulated HD Audio output.
+
 Launch either campaign from the X11 Games menu or with
 `freedoom 1` and `freedoom 2`. Both have desktop entries under
 `/usr/share/applications`. The authenticated desktop seeds matching

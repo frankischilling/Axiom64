@@ -273,6 +273,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         if (auto file = current->memory->exec_file) {
             ++file->exec_images;
             child->memory->exec_file = file;
+            child->memory->exec_dentry = current->memory->exec_dentry;
         }
     }
     if (flags & clone_files) {
@@ -719,7 +720,7 @@ static int script_header(Node* file, char (&header)[256], const char*& interpret
     return 1;
 }
 
-static int select_executable(Task& task, ExecArguments& arguments, Node*& file,
+static int select_executable(Task& task, ExecArguments& arguments, Node*& file, Node*& dentry,
                              bool path_inaccessible) {
     Path name;
     name.base = task.fs->cwd_node;
@@ -732,6 +733,7 @@ static int select_executable(Task& task, ExecArguments& arguments, Node*& file,
             return error;
     }
     for (unsigned rewrites = 0; rewrites <= 5; rewrites++) {
+        dentry = file;
         file = file_node(file);
         if (int error = executable_access(task, file))
             return error;
@@ -757,7 +759,8 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     if (int error = process_exec_limit(*t))
         return error;
     const char* path = arguments.path();
-    if (int error = select_executable(*t, arguments, file, path_inaccessible))
+    Node* dentry = nullptr;
+    if (int error = select_executable(*t, arguments, file, dentry, path_inaccessible))
         return error;
     FileCapabilities capabilities;
     if (!file->mount->nosuid && file->mount->ops->getxattr) {
@@ -918,6 +921,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     replacement->space = memory;
     ++file->exec_images;
     replacement->exec_file = file;
+    replacement->exec_dentry = dentry;
     clear_tid(t);
     io_discard(*t);
     if (t == current)

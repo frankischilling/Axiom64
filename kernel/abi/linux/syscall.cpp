@@ -77,6 +77,26 @@ struct LinuxStat {
 
 static_assert(sizeof(LinuxStat) == 144);
 
+struct StatxTimestamp {
+    int64_t seconds;
+    uint32_t nanoseconds;
+    int32_t reserved;
+};
+
+struct LinuxStatx {
+    uint32_t mask, block_size;
+    uint64_t attributes;
+    uint32_t links, uid, gid;
+    uint16_t mode, reserved;
+    uint64_t inode, size, blocks, attributes_mask;
+    StatxTimestamp access, birth, change, modification;
+    uint32_t rdev_major, rdev_minor, dev_major, dev_minor;
+    uint64_t mount_id;
+    uint64_t optional_fields[13];
+};
+
+static_assert(sizeof(LinuxStatx) == 256);
+
 struct Timespec {
     int64_t sec, nsec;
 };
@@ -274,13 +294,12 @@ static int access_file(int fd, uint64_t user, uint32_t mask, uint64_t flags) {
     return node_access(node, mask, real);
 }
 
-static int64_t stat_node(Node* n, uint64_t dst) {
+static int stat_information(Node*& n, LinuxStat& s) {
     if (!n)
         return -2;
     n = file_node(n);
     if (int error = node_validate(n))
         return error;
-    LinuxStat s{};
     if (n->mount->ops->refresh)
         n->mount->ops->refresh(n);
     s.dev = n->mount->id;
@@ -302,7 +321,13 @@ static int64_t stat_node(Node* n, uint64_t dst) {
         s.rdev = device_number(n);
     if ((n->mode & 0170000) == block_device)
         s.size = s.blocks = 0;
-    return copy_result(dst, &s, sizeof(s));
+    return 0;
+}
+
+static int64_t stat_node(Node* node, uint64_t dst) {
+    LinuxStat information{};
+    int error = stat_information(node, information);
+    return error ? error : copy_result(dst, &information, sizeof(information));
 }
 
 static int64_t stat_descriptor(Handle* handle, uint64_t dst) {
@@ -313,13 +338,84 @@ static int64_t stat_descriptor(Handle* handle, uint64_t dst) {
     return error ? error : stat_node(node, dst);
 }
 
-static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
+static int stat_path_node(int dirfd, uint64_t path, bool follow, Node*& node) {
     Path name;
     if (!path_at(dirfd, path, name))
         return name.error;
+    return resolve_path(name, node, follow);
+}
+
+static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
     Node* node = nullptr;
-    int error = resolve_path(name, node, follow);
+    int error = stat_path_node(dirfd, path, follow, node);
     return error ? error : stat_node(node, dst);
+}
+
+static int stat_at_node(int dirfd, uint64_t path, uint32_t flags, Node*& node) {
+    if (flags & 0x1000) { // AT_EMPTY_PATH
+        char first = 0;
+        if (path && !current->memory->space.copy_in(&first, path, sizeof(first)))
+            return -14;
+        if (!first) {
+            if (dirfd == -100) { // AT_FDCWD
+                node = current->fs->cwd_node;
+                return 0;
+            }
+            auto handle = fd_handle(dirfd, true);
+            return handle ? descriptor_inode(*handle, node) : -9;
+        }
+    }
+    return stat_path_node(dirfd, path, !(flags & 0x100), node);
+}
+
+static uint32_t device_major(uint64_t device) {
+    return ((device >> 8) & 0xfff) | ((device >> 32) & 0xfffff000);
+}
+
+static uint32_t device_minor(uint64_t device) {
+    return (device & 0xff) | ((device >> 12) & 0xffffff00);
+}
+
+static int64_t statx_at(int dirfd, uint64_t path, uint32_t flags, uint32_t mask, uint64_t dst) {
+    constexpr uint32_t nofollow = 0x100, no_automount = 0x800, empty_path = 0x1000;
+    constexpr uint32_t sync_type = 0x6000, reserved_mask = 0x80000000;
+    constexpr uint32_t basic_stats = 0x7ff, mount_id = 0x1000, mount_root = 0x2000;
+    if ((flags & ~(nofollow | no_automount | empty_path | sync_type)) ||
+        (flags & sync_type) == sync_type || (mask & reserved_mask))
+        return -22;
+    Node* node = nullptr;
+    LinuxStat stat{};
+    int error = stat_at_node(dirfd, path, flags, node);
+    if (!error)
+        error = stat_information(node, stat);
+    if (error)
+        return error;
+
+    LinuxStatx result{};
+    result.mask = basic_stats;
+    result.block_size = stat.blksize;
+    result.attributes_mask = mount_root;
+    if (node == node->mount->root)
+        result.attributes = mount_root;
+    result.links = stat.nlink;
+    result.uid = stat.uid;
+    result.gid = stat.gid;
+    result.mode = stat.mode;
+    result.inode = stat.ino;
+    result.size = stat.size;
+    result.blocks = stat.blocks;
+    result.access = {int64_t(stat.atime), uint32_t(stat.atime_ns), 0};
+    result.change = {int64_t(stat.ctime), uint32_t(stat.ctime_ns), 0};
+    result.modification = {int64_t(stat.mtime), uint32_t(stat.mtime_ns), 0};
+    result.rdev_major = device_major(stat.rdev);
+    result.rdev_minor = device_minor(stat.rdev);
+    result.dev_major = device_major(stat.dev);
+    result.dev_minor = device_minor(stat.dev);
+    if (mask & mount_id) {
+        result.mask |= mount_id;
+        result.mount_id = node->mount->id;
+    }
+    return copy_result(dst, &result, sizeof(result));
 }
 
 static int64_t block(Wait why, int fd = -1, int pid = -1) {
@@ -701,6 +797,8 @@ static int64_t execveat_user(Frame& frame) {
             return -9;
         path_inaccessible = task.files->entries[fd].cloexec;
         file = path.base = handle->node;
+        if (!length && handle->opened_dentry)
+            file = handle->opened_dentry;
         if (length && (!file || (file->mode & 0170000) != directory))
             return -20;
     }
@@ -708,8 +806,7 @@ static int64_t execveat_user(Frame& frame) {
         if (int error = resolve_path(path, file, !(flags & nofollow)))
             return error;
     }
-    file = file_node(file);
-    if (int error = executable_access(task, file))
+    if (int error = executable_access(task, file_node(file)))
         return error;
 
     char display[exec_filename_limit];
@@ -1619,16 +1716,9 @@ static int64_t dispatch(Frame* f) {
     case 259:
         return make_special_node(a, b, c);
     case 262: {
-        constexpr uint32_t empty_path = 0x1000;
-        if (d & empty_path) {
-            char first = 0;
-            if (b && !current->memory->space.copy_in(&first, b, sizeof(first)))
-                return -14;
-            if (!first)
-                return int32_t(a) == -100 ? stat_node(current->fs->cwd_node, c)
-                                          : stat_descriptor(fd_handle(a, true), c);
-        }
-        return stat_path(a, b, c, !(d & 0x100));
+        Node* node = nullptr;
+        int error = stat_at_node(a, b, d, node);
+        return error ? error : stat_node(node, c);
     }
     case 269:
     case 439: {
@@ -1766,6 +1856,8 @@ static int64_t dispatch(Frame* f) {
         return memory_barrier(*current->memory, uint32_t(a), uint32_t(b));
     case 326:
         return io_syscall(*current, *f);
+    case 332:
+        return statx_at(a, b, c, d, e);
     default:
         log("unimplemented syscall %u pid=%u\n", f->rax, uint64_t(current->pid));
         return -38;

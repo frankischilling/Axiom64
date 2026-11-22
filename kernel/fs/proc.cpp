@@ -51,6 +51,7 @@ enum class Kind {
     thread,
     fd_directory,
     fd_link,
+    exe_link,
     fdinfo_directory,
     fdinfo,
     status,
@@ -234,8 +235,19 @@ static int link_descriptor(const Entry& item, Handle*& handle) {
     return descriptor_access(*owner) ? 0 : -13;
 }
 
+static int link_executable(const Entry& item, Node*& target) {
+    auto owner = task(item.pid);
+    if (!owner || !owner->memory || !(target = owner->memory->exec_dentry))
+        return -2;
+    return descriptor_access(*owner) ? 0 : -13;
+}
+
 static int follow_link(Node* node, Node*& target) {
     auto item = entry(node);
+    if (item->kind == Kind::exe_link) {
+        int error = link_executable(*item, target);
+        return error ? error : 1;
+    }
     if (item->kind != Kind::fd_link)
         return 0;
     Handle* handle = nullptr;
@@ -382,7 +394,8 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->mount = mount;
     node->filesystem_data = item;
     node->mode = snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
-                 : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link
+                 : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ||
+                         kind == Kind::exe_link
                      ? symlink | 0777
                  : kind == Kind::fd_directory ? directory | 0500
                                               : directory | 0555;
@@ -484,6 +497,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "fdinfo"))
         kind = Kind::fdinfo_directory;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "exe"))
+        kind = Kind::exe_link;
     else if (descriptor_directory(context->kind)) {
         if (!descriptor_access(*owner))
             return -13;
@@ -833,12 +849,39 @@ static int64_t copy(const char* bytes, size_t size, uint64_t offset, void* outpu
     return int64_t(count);
 }
 
+static int64_t file_link(Node* dentry, bool anonymous, uint64_t offset, void* output,
+                         size_t length) {
+    char target[2048]{};
+    if (anonymous) {
+        target[0] = '/';
+        memcpy(target + 1, dentry->name, strlen(dentry->name) + 1);
+    } else {
+        node_path(dentry, target, sizeof(target), true);
+        if (!target[0])
+            return -2;
+    }
+    if (dentry->removed || anonymous) {
+        constexpr char deleted[] = " (deleted)";
+        size_t end = strlen(target);
+        if (sizeof(deleted) > sizeof(target) - end)
+            return -36;
+        memcpy(target + end, deleted, sizeof(deleted));
+    }
+    return copy(target, strlen(target), offset, output, length);
+}
+
 static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
     auto kind = entry(node)->kind;
     if (kind == Kind::self || kind == Kind::thread_self) {
         char target[40];
         size_t size = link_target(kind, target);
         return copy(target, size, offset, output, length);
+    }
+    if (kind == Kind::exe_link) {
+        Node* target = nullptr;
+        int error = link_executable(*entry(node), target);
+        return error ? error
+                     : file_link(target, is_memfd(file_node(target)), offset, output, length);
     }
     if (kind == Kind::fd_link) {
         Handle* handle = nullptr;
@@ -850,23 +893,7 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         if (auto name = descriptor_inode_name(inode))
             return copy(name, strlen(name), offset, output, length);
         auto dentry = handle->opened_dentry ? handle->opened_dentry : inode;
-        char target[2048]{};
-        if (is_memfd(handle->node)) {
-            target[0] = '/';
-            memcpy(target + 1, dentry->name, strlen(dentry->name) + 1);
-        } else {
-            node_path(dentry, target, sizeof(target), true);
-            if (!target[0])
-                return -2;
-        }
-        if (dentry->removed || is_memfd(handle->node)) {
-            constexpr char deleted[] = " (deleted)";
-            size_t end = strlen(target);
-            if (sizeof(deleted) > sizeof(target) - end)
-                return -36;
-            memcpy(target + end, deleted, sizeof(deleted));
-        }
-        return copy(target, strlen(target), offset, output, length);
+        return file_link(dentry, is_memfd(handle->node), offset, output, length);
     }
     if (kind == Kind::boot_id) {
         int error = boot_id();
@@ -1063,9 +1090,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 5) {
             memcpy(name, "fdinfo", 7);
             result.next = 6;
-        } else if (cookie == 6 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 6) {
+            memcpy(name, "exe", 4);
             result.next = 7;
+        } else if (cookie == 7 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 8;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {

@@ -34,11 +34,13 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysmacros.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/stat.h>
 
 #ifndef ABI_LINKAGE
 #define ABI_LINKAGE "static"
@@ -59,6 +61,79 @@ static void child_status(pid_t child, int expected) {
     CHECK(WEXITSTATUS(status) == expected);
 }
 
+static void executable_path(const char* expected) {
+    char path[256];
+    ssize_t length = readlink("/proc/self/exe", path, sizeof(path));
+    CHECK(length == (ssize_t)strlen(expected) && !memcmp(path, expected, (size_t)length));
+    int fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
+    unsigned char magic[4];
+    CHECK(fd >= 0 && read(fd, magic, sizeof(magic)) == sizeof(magic) &&
+          !memcmp(magic, "\177ELF", sizeof(magic)) && close(fd) == 0);
+}
+
+static void executable_link(void) {
+    static const char executable[] = "/bin/abi-" ABI_LINKAGE;
+    static const char alias[] = "/bin/abi-exe-" ABI_LINKAGE;
+    executable_path(executable);
+    CHECK(link(executable, alias) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        executable_path(executable);
+        int fd = open(alias, O_PATH | O_CLOEXEC);
+        CHECK(fd >= 0);
+        char* const arguments[] = {(char*)alias, "exe-alias", NULL};
+        syscall(SYS_execveat, fd, "", arguments, environ, AT_EMPTY_PATH);
+        CHECK(0);
+    }
+    child_status(child, 0);
+    puts("ABI_PROC_EXE_PASS linkage=" ABI_LINKAGE);
+}
+
+static void extended_metadata(int directory, int fd) {
+    struct stat old;
+    struct statx info;
+    CHECK(fstat(fd, &old) == 0);
+    CHECK(syscall(SYS_statx, directory, "alias", AT_NO_AUTOMOUNT, STATX_BASIC_STATS | STATX_MNT_ID,
+                  &info) == 0);
+    CHECK((info.stx_mask & (STATX_BASIC_STATS | STATX_MNT_ID)) ==
+          (STATX_BASIC_STATS | STATX_MNT_ID));
+    CHECK(info.stx_ino == old.st_ino && info.stx_mode == old.st_mode &&
+          info.stx_uid == old.st_uid && info.stx_gid == old.st_gid &&
+          info.stx_nlink == old.st_nlink && info.stx_size == (uint64_t)old.st_size &&
+          info.stx_blocks == (uint64_t)old.st_blocks && info.stx_blksize == old.st_blksize);
+    CHECK(info.stx_atime.tv_sec == old.st_atim.tv_sec &&
+          info.stx_atime.tv_nsec == old.st_atim.tv_nsec &&
+          info.stx_mtime.tv_sec == old.st_mtim.tv_sec &&
+          info.stx_mtime.tv_nsec == old.st_mtim.tv_nsec &&
+          info.stx_ctime.tv_sec == old.st_ctim.tv_sec &&
+          info.stx_ctime.tv_nsec == old.st_ctim.tv_nsec);
+    CHECK(info.stx_dev_major == major(old.st_dev) && info.stx_dev_minor == minor(old.st_dev) &&
+          info.stx_mnt_id != 0);
+    CHECK(syscall(SYS_statx, directory, "alias", AT_SYMLINK_NOFOLLOW, STATX_TYPE, &info) == 0 &&
+          (info.stx_mask & STATX_TYPE) && S_ISLNK(info.stx_mode));
+    int path = openat(directory, "file", O_PATH | O_CLOEXEC);
+    CHECK(path >= 0);
+    CHECK(syscall(SYS_statx, path, "", AT_EMPTY_PATH, STATX_INO, &info) == 0 &&
+          (info.stx_mask & STATX_INO) && info.stx_ino == old.st_ino);
+    CHECK(close(path) == 0);
+    CHECK(syscall(SYS_statx, AT_FDCWD, "/dev/null", 0, STATX_TYPE, &info) == 0 &&
+          S_ISCHR(info.stx_mode) && info.stx_rdev_major == 1 && info.stx_rdev_minor == 3);
+    CHECK(syscall(SYS_statx, AT_FDCWD, "/", 0, STATX_BASIC_STATS, &info) == 0 &&
+          (info.stx_attributes_mask & STATX_ATTR_MOUNT_ROOT) &&
+          (info.stx_attributes & STATX_ATTR_MOUNT_ROOT));
+    CHECK(syscall(SYS_statx, directory, "absent", 0, STATX_TYPE, &info) == -1 && errno == ENOENT);
+    CHECK(syscall(SYS_statx, fd, "", 0, STATX_TYPE, &info) == -1 && errno == ENOENT);
+    CHECK(syscall(SYS_statx, fd, "child", 0, STATX_TYPE, &info) == -1 && errno == ENOTDIR);
+    CHECK(syscall(SYS_statx, -1, "", AT_EMPTY_PATH, STATX_TYPE, &info) == -1 && errno == EBADF);
+    CHECK(syscall(SYS_statx, fd, "", AT_EMPTY_PATH, STATX__RESERVED, &info) == -1 &&
+          errno == EINVAL);
+    CHECK(syscall(SYS_statx, fd, "", AT_EMPTY_PATH | AT_STATX_SYNC_TYPE, STATX_TYPE, &info) == -1 &&
+          errno == EINVAL);
+    CHECK(syscall(SYS_statx, fd, "", AT_EMPTY_PATH, STATX_TYPE, NULL) == -1 && errno == EFAULT);
+    puts("ABI_STATX_PASS linkage=" ABI_LINKAGE);
+}
+
 static void relative_modes(void) {
     CHECK(mkdir("/tmp/abi-chmod", 0700) == 0);
     int parent = open("/tmp/abi-chmod", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -70,6 +145,7 @@ static void relative_modes(void) {
     CHECK(fstat(file, &information) == 0 && S_ISREG(information.st_mode) &&
           (information.st_mode & 07777) == 0640);
     CHECK(symlinkat("file", parent, "alias") == 0);
+    extended_metadata(parent, file);
     CHECK(fchmodat(parent, "alias", 0610, 0) == 0);
     CHECK(fstat(file, &information) == 0 && (information.st_mode & 07777) == 0610);
     CHECK(fstatat(parent, "alias", &information, AT_SYMLINK_NOFOLLOW) == 0 &&
@@ -96,6 +172,15 @@ static void relative_modes(void) {
 int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "child"))
         return 17;
+    if (argc == 2 && !strcmp(argv[1], "exe-alias")) {
+        static const char moved[] = "/bin/abi-exe-renamed-" ABI_LINKAGE;
+        executable_path(argv[0]);
+        CHECK(rename(argv[0], moved) == 0);
+        executable_path(moved);
+        CHECK(unlink(moved) == 0);
+        executable_path("/bin/abi-exe-renamed-" ABI_LINKAGE " (deleted)");
+        return 0;
+    }
     struct utsname name;
     CHECK(uname(&name) == 0);
     CHECK(!strcmp(name.sysname, "Axiom64"));
@@ -108,6 +193,7 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_read, 999, (void*)0, 1) == -1 && errno == EBADF);
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0x7ffffffffffe, 8) == -1 && errno == EFAULT);
     relative_modes();
+    executable_link();
 
     char* memory = mmap(0, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(memory != MAP_FAILED);

@@ -1,0 +1,11 @@
+--- a/src/thread/pthread_mutexattr_setprotocol.c
++++ b/src/thread/pthread_mutexattr_setprotocol.c
+@@ -17,7 +17,7 @@
+ 			r = -__syscall(SYS_futex, &lk, FUTEX_LOCK_PI, 0, 0);
+ 			a_store(&check_pi_result, r);
+ 		}
+-		if (r) return r;
++		if (r) return r == ENOSYS ? ENOTSUP : r;
+ 		a->__attr |= 8;
+ 		return 0;
+ 	case PTHREAD_PRIO_PROTECT:

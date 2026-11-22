@@ -61,6 +61,19 @@ static int shared_fd;
 static atomic_uint detached;
 static sem_t semaphore;
 
+static void test_mutex_protocol(void) {
+    pthread_mutexattr_t attributes;
+    CHECK(pthread_mutexattr_init(&attributes) == 0);
+    int result = pthread_mutexattr_setprotocol(&attributes, PTHREAD_PRIO_INHERIT);
+    CHECK(result == 0 || result == ENOTSUP);
+    pthread_mutex_t mutex;
+    CHECK(pthread_mutex_init(&mutex, &attributes) == 0);
+    CHECK(pthread_mutex_lock(&mutex) == 0 && pthread_mutex_unlock(&mutex) == 0);
+    CHECK(pthread_mutex_destroy(&mutex) == 0 && pthread_mutexattr_destroy(&attributes) == 0);
+    printf("THREAD_MUTEX_PROTOCOL_PASS priority_inheritance=%s\n",
+           result ? "unavailable" : "available");
+}
+
 struct name_test {
     sem_t ready, renamed;
     long tid;
@@ -188,8 +201,13 @@ int main(int argc, char** argv) {
         test_names();
         return 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "protocol")) {
+        test_mutex_protocol();
+        return 0;
+    }
     if (condition_only)
         goto cond_tests;
+    test_mutex_protocol();
     test_names();
     for (unsigned i = 0; i < 12; i++)
         CHECK(pthread_create(&threads[i], 0, identity, (void*)(uintptr_t)i) == 0);

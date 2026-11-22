@@ -94,11 +94,16 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             any(token in text for token in ("PANIC:", "FAULT pid=", "FILESYSTEM_SHUTDOWN_FAIL"))):
         raise RuntimeError(f"unexpected guest result in {log}: " + "\n".join(text.splitlines()[-15:]))
     probes = [line for line in text.splitlines() if line.startswith("xhci:")]
+    devices = [line for line in text.splitlines() if line.startswith("xhci-device:")]
     if xhci == "keyboard" and (len(probes) != 1 or not re.fullmatch(
             r"xhci: pci=[0-9a-f]+:[0-9a-f]+\.[0-7] commands=130 ports=8 connected=1 stopped=1",
             probes[0])):
         raise RuntimeError(f"xHCI did not complete both rings in {log}: {probes}")
-    if xhci == "none" and probes:
+    if xhci == "keyboard" and (len(devices) != 1 or not re.fullmatch(
+            r"xhci-device: port=[1-8] speed=[1-5] vendor=627 product=1 configurations=1",
+            devices[0])):
+        raise RuntimeError(f"xHCI did not read the keyboard descriptor in {log}: {devices}")
+    if xhci == "none" and (probes or devices):
         raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
             "serial_sha256": digest(log)}

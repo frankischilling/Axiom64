@@ -43,7 +43,9 @@ enum class Device {
     block,
     full,
     parallel,
-    dsp
+    dsp,
+    alsa_control,
+    alsa_playback
 };
 
 struct Terminal {

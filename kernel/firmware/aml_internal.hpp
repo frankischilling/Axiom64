@@ -303,8 +303,9 @@ struct Namespace {
     bool declare_buffer_field(Cursor&, const Path&, unsigned opcode, unsigned depth);
     bool retain_buffer(Object&, Value&);
     uint8_t* scratch_buffer(size_t);
-    bool field_address(const Object&, ConfigField&, unsigned depth);
-    bool pci_address(Path, ConfigField&, unsigned depth = 0, bool allow_host = false);
+    bool field_address(const Object&, ConfigField&, unsigned depth, bool* absent = nullptr);
+    bool pci_address(Path, ConfigField&, unsigned depth = 0, bool* absent = nullptr);
+    bool pci_branch_absent(ConfigField);
     bool read_field(const Object&, Value&, unsigned depth);
     bool memory_field_bytes(const Object&, uint8_t*, uint64_t& address, size_t& length,
                             unsigned depth);

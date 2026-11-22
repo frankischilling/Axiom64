@@ -727,6 +727,68 @@ void diagnostic_pci_cases() {
     std::puts("ACPI_DIAGNOSTIC_PCI_PASS word_access parent_scope absent_function");
 }
 
+void absent_pci_branch_cases() {
+    using namespace ax::Acpi;
+    const auto region = sequence({{0x5b, 0x80}, name("CFGR"), {2, 0, 0x0a, 4}});
+    const auto fields = block({0x5b, 0x81}, sequence({name("CFGR"), {0}, name("VDID"), {32}}));
+    const auto child = bridge_device("END0", 0, sequence({region, fields}));
+    const auto bridge = bridge_device("RP01", 28, child);
+    const auto root = block(
+        {0x5b, 0x82}, sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}), bridge}));
+    const auto path =
+        sequence({{0x5c, 0x2f, 4}, name("PCI0"), name("RP01"), name("END0"), name("VDID")});
+    const auto aperture =
+        sequence({address_window(0x87, 0x0c, 1, 0xfe000000, 0xfe000fff, 0x1000), {0x79, 0}});
+    const auto attach = block({0x10}, sequence({name("PCI0"), buffer("_CRS", aperture)}));
+    const auto branch =
+        block({0xa0}, sequence({{0x93}, path, {0x0c, 0xff, 0xff, 0xff, 0xff}, attach}));
+    const auto table = definition(sequence({root, branch}));
+    DefinitionBlocks blocks{};
+    blocks.dsdt = {table.data(), 0x1000, table.size()};
+
+    enum Mode { absent, inactive, active, malformed, inaccessible };
+
+    static Mode mode;
+    static unsigned attempts;
+    const auto read = +[](uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
+                          uint16_t offset, uint8_t width, uint32_t& value) {
+        assert(!segment && !bus && slot == 28 && !function);
+        ++attempts;
+        if (mode == inaccessible)
+            return false;
+        if (!offset && width == 2)
+            value = mode == absent ? UINT16_MAX : 0x8086;
+        else if (offset == 0x0a && width == 2)
+            value = 0x0604;
+        else if (offset == 0x0e && width == 1)
+            value = mode == malformed ? 0 : 1;
+        else if (offset == 0x18 && width == 4)
+            value = mode == active ? 0x00010100 : 0;
+        else
+            return false;
+        return true;
+    };
+    PciBridges topology{};
+    PciRootWindows windows{};
+    const ReadRegions providers{read_test_nvs, read, &topology};
+    mode = absent;
+    assert(decode_pci_root_windows(blocks, windows, providers) && attempts == 1 &&
+           windows.count == 1);
+    mode = inactive;
+    attempts = 0;
+    assert(decode_pci_root_windows(blocks, windows, providers) && attempts == 4 &&
+           windows.count == 1);
+    for (auto rejected : {active, malformed, inaccessible}) {
+        mode = rejected;
+        assert(!decode_pci_root_windows(blocks, windows, providers) && !windows.count);
+    }
+    topology.overflow = true;
+    mode = absent;
+    attempts = 0;
+    assert(!decode_pci_root_windows(blocks, windows, providers) && !attempts);
+    std::puts("ACPI_ABSENT_PCI_BRANCH_PASS missing_port disabled_bridge malformed_inaccessible");
+}
+
 unsigned host_bridge_reads;
 
 bool read_host_bridge(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
@@ -1233,6 +1295,7 @@ int main() {
     motherboard_resource_cases();
     nvs_field_cases();
     diagnostic_pci_cases();
+    absent_pci_branch_cases();
     host_bridge_bitfields();
     firmware_control_cases();
     namespace_buffer_fields();

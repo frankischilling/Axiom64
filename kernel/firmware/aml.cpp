@@ -1036,7 +1036,8 @@ ConfigSpan config_span(const Object& field) {
     return {field.integer / unit * field.access_bytes, units * field.access_bytes, shift};
 }
 
-bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth) {
+bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth,
+                              bool* absent) {
     if (depth >= max_evaluation_depth)
         return false;
     const auto* region = field.region;
@@ -1049,13 +1050,29 @@ bool Namespace::field_address(const Object& field, ConfigField& address, unsigne
         ((base + span.offset) & (field.access_bytes - 1)))
         return false;
 
-    if (!pci_address(parent(region->path), address, depth, field.kind == Kind::DiagnosticPciField))
+    if (!pci_address(parent(region->path), address, depth, absent))
         return false;
     address.offset = base + span.offset;
     return true;
 }
 
-bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, bool allow_host) {
+bool Namespace::pci_branch_absent(ConfigField port) {
+    if (!read_pci)
+        return false;
+    uint32_t vendor, class_code, header, buses;
+    const auto read = [&](uint16_t offset, uint8_t width, uint32_t& value) {
+        return read_pci(port.segment, port.bus, port.slot, port.function, offset, width, value);
+    };
+    if (!read(0, 2, vendor))
+        return false;
+    if (vendor == UINT16_MAX)
+        return true;
+    return read(0x0a, 2, class_code) && class_code == 0x0604 && read(0x0e, 1, header) &&
+           (header & 0x7f) == 1 && read(0x18, 4, buses) && !(buses & 0x00ffff00) &&
+           uint8_t(buses) == port.bus;
+}
+
+bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, bool* absent) {
     if (depth >= max_evaluation_depth)
         return false;
     uint32_t addresses[max_depth];
@@ -1073,7 +1090,7 @@ bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, boo
         addresses[used++] = adr.number;
         root = parent(root);
     }
-    if (!used && !allow_host)
+    if (!used && !absent)
         return false;
     Value segment{Type::Integer, 0, {}, nullptr}, bus = segment;
     if ((child(root, name_segment("_SEG")) &&
@@ -1099,8 +1116,16 @@ bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, boo
                 return false;
             next = &bridge;
         }
-        if (!next)
-            return false;
+        if (!next) {
+            // Diagnostic AML may describe a child of an unused root port. Confirm that no
+            // secondary bus is reachable before returning the config-space absent value.
+            const ConfigField port{uint16_t(segment.number), 0, uint8_t(bus.number),
+                                   uint8_t(address >> 16), uint8_t(address & 7)};
+            if (!absent || !pci_branch_absent(port))
+                return false;
+            *absent = true;
+            return true;
+        }
         bus.number = next->secondary;
         subordinate = next->subordinate;
     }
@@ -1111,9 +1136,15 @@ bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, boo
 }
 
 bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
-    ConfigField address;
-    if (!read_pci || !field_address(field, address, depth))
+    ConfigField address{};
+    bool absent = false;
+    if (!read_pci || !field_address(field, address, depth,
+                                    field.kind == Kind::DiagnosticPciField ? &absent : nullptr))
         return false;
+    if (absent) {
+        result = {Type::Integer, (1ull << field.arguments) - 1, {}, nullptr};
+        return true;
+    }
     if (field.kind == Kind::PciField && field.arguments == 1)
         for (unsigned i = 0; i < change_count; ++i)
             if (changes[i].field == address) {

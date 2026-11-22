@@ -36,6 +36,7 @@ import time
 import wave
 
 from account_normal_test import write_cpio
+from boot_media import build_medium
 from boot_media_test import digest
 from build_doom import WADS, verify_engine
 from disk_root import archive_entries
@@ -180,7 +181,7 @@ def verify_play(output):
     return dict(scene_colors=colors, changed_components=changed, audible_samples=audible)
 
 
-def boot(output, iso, firmware, phase):
+def boot(output, medium, firmware, phase, *, nvme=False):
     with tempfile.TemporaryDirectory(prefix="axiom64-doom-qmp-") as directory:
         socket = Path(directory) / "monitor.sock"
         machine = "pc" if firmware == "bios" else "q35"
@@ -188,11 +189,16 @@ def boot(output, iso, firmware, phase):
         command = [
             "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "1024M",
             "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-nic", "none",
-            "-qmp", f"unix:{socket},server=on,wait=off", "-cdrom", str(iso),
+            "-qmp", f"unix:{socket},server=on,wait=off",
             "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
             "-audiodev", f"wav,id=doom,path={output / 'audio.wav'},out.frequency=44100",
             "-device", f"{controller},id=hda", "-device", "hda-output,bus=hda.0,audiodev=doom",
         ]
+        if nvme:
+            command += ["-drive", f"if=none,id=installed,format=raw,file={medium}",
+                        "-device", "nvme,drive=installed,serial=AXIOM64,bootindex=1"]
+        else:
+            command += ["-cdrom", str(medium)]
         if firmware == "uefi":
             variables = output / "OVMF_VARS.fd"
             shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
@@ -231,11 +237,14 @@ def boot(output, iso, firmware, phase):
                     vm.kill()
                     vm.wait()
     data = log.read_text()
-    for marker in (f"Firmware: {firmware.upper()}", f"Freedoom: Phase {phase}",
-                   "OPL_Init: Using driver 'SDL'.", "AXIOM64_EXIT status=0"):
+    markers = [f"Firmware: {firmware.upper()}", f"Freedoom: Phase {phase}",
+               "OPL_Init: Using driver 'SDL'.", "AXIOM64_EXIT status=0"]
+    if nvme:
+        markers += ["VFS_ROOT_PASS filesystem=ext2 device=PARTUUID=", "nvme: controller=0 shutdown complete"]
+    for marker in markers:
         if marker not in data:
             raise RuntimeError(f"Missing {marker!r}. See {log}")
-    return dict(firmware=firmware, phase=phase, serial_sha256=digest(log),
+    return dict(firmware=firmware, phase=phase, medium="nvme" if nvme else "iso", serial_sha256=digest(log),
                 wav_sha256=digest(output / "audio.wav"), **verify_play(output))
 
 
@@ -244,6 +253,7 @@ def main():
     parser.add_argument("--initramfs", type=Path, default=ROOT / "build/rootfs-desktop.cpio")
     parser.add_argument("--output", type=Path, default=ROOT / "build/doom-test")
     parser.add_argument("--verify-image", action="store_true")
+    parser.add_argument("--nvme", action="store_true", help="cold-boot both campaigns from standalone NVMe disks")
     options = parser.parse_args()
     output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -253,13 +263,18 @@ def main():
     if options.verify_image:
         return
     cases = []
-    for firmware, phase in (("bios", 1), ("uefi", 2)):
+    configurations = (("uefi", 1), ("uefi", 2)) if options.nvme else (("bios", 1), ("uefi", 2))
+    for firmware, phase in configurations:
         cell = output / f"{firmware}-phase-{phase}"
         cell.mkdir()
         cpio = cell / "root.cpio"
         fixture(files, cpio, applications[phase - 1], phase)
-        iso = image(cell, cpio, name="freedoom.iso")
-        cases.append(boot(cell, iso, firmware, phase))
+        if options.nvme:
+            medium = cell / "freedoom.raw"
+            build_medium("disk", medium, ROOT / "build/axiom64.elf", cpio, " test", installed=True)
+        else:
+            medium = image(cell, cpio, name="freedoom.iso")
+        cases.append(boot(cell, medium, firmware, phase, nvme=options.nvme))
         print(f"{cell.name}: passed", flush=True)
     report = dict(root_sha256=digest(options.initramfs),
                   kernel_sha256=digest(ROOT / "build/axiom64.elf"), cases=cases)

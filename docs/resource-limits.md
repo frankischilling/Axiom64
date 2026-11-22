@@ -37,7 +37,9 @@ The resource table recognizes all sixteen Linux selectors. Other stored values d
 
 ## Anonymous mapping resize
 
-`mremap` can shrink or grow an ordinary private anonymous mapping. Sizes round up to page boundaries and follow the 256 MiB mapping limit. Growth requires uniform protections across the source. With `MREMAP_MAYMOVE`, an occupied tail permits relocation to a free range. The new mapping keeps the old pages and their protections, and the added pages start zeroed. The address-space and private writable data limits charge only the added pages. Failed growth preserves the old range and its neighbors.
+Private anonymous mappings created with `PROT_NONE` or `MAP_NORESERVE` can reserve up to 16 GiB. The reservation counts toward the address-space limit. An allowed access allocates a zero-filled page. `mprotect` can enable access to part of the reservation. `MAP_FIXED_NOREPLACE` treats reserved pages as occupied, and a successful `munmap` releases their address space and empty page tables. Other mapping types retain the 256 MiB mapping limit.
+
+`mremap` can shrink or grow a private anonymous mapping within its mapping limit. Sizes round up to page boundaries. Growth requires uniform protections across the source. With `MREMAP_MAYMOVE`, an occupied tail permits relocation to a free range. The new mapping keeps the old pages and their protections, and the added pages start zeroed. The address-space and private writable data limits charge only the added pages. Failed growth preserves the old range and its neighbors.
 
 Complete `memfd` and ext2 mappings can also shrink or grow, including relocation when `MREMAP_MAYMOVE` permits it. The mapping keeps its file offset and access permissions. Added pages fault from the same file, so touching a page past its end raises `SIGBUS`. This supports the shared-memory pool resizing used by Wayland.
 

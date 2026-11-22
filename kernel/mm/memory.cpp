@@ -266,7 +266,7 @@ static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uin
     for (unsigned i = 0; i < (level == 4 ? 256u : 512u); i++) {
         uint64_t address = base + i * span;
         uint64_t mapping = entries[i];
-        if (!(mapping & (page_mask | page_file)) || address >= end || address + span <= start)
+        if (!(mapping & page_mapping) || address >= end || address + span <= start)
             continue;
         if (level == 1 || (mapping & 128)) {
             if (measure == MappingMeasure::resident &&
@@ -303,7 +303,7 @@ static uint64_t first_mapping(uint64_t table, unsigned level, uint64_t base, uin
     uint64_t span = 1ull << (12 + (level - 1) * 9);
     unsigned last = (end - 1 - base) / span;
     for (unsigned slot = (start - base) / span; slot <= last; ++slot) {
-        if (!(entries[slot] & (page_mask | page_file)))
+        if (!(entries[slot] & page_mapping))
             continue;
         uint64_t address = base + slot * span;
         uint64_t first = max(start, address);
@@ -342,6 +342,11 @@ static uint64_t permissions(int prot) {
     return 4 | ((prot & 3) ? 1 : 0) | ((prot & 2) ? 2 : 0) | ((prot & 4) ? 1 : (1ull << 63));
 }
 
+static uint64_t reservation_permissions(int prot) {
+    return page_private | page_anonymous | page_anonymous_deferred | (permissions(prot) & ~1ull) |
+           (prot & 7 ? page_anonymous_access : 0);
+}
+
 static void release_empty_tables(uint64_t table, unsigned level, uint64_t base, uint64_t start,
                                  uint64_t end) {
     auto entries = static_cast<uint64_t*>(physical(table));
@@ -357,7 +362,7 @@ static void release_empty_tables(uint64_t table, unsigned level, uint64_t base, 
                                  min(end, address + span));
         auto children = static_cast<const uint64_t*>(physical(child));
         size_t used = 0;
-        while (used < 512 && !(children[used] & (page_mask | page_file)))
+        while (used < 512 && !(children[used] & page_mapping))
             used++;
         if (used == 512) {
             entry = 0;
@@ -407,16 +412,42 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot, uint64_t mapping_flags
 }
 
 bool AddressSpace::move_anonymous_mapping(uint64_t source, size_t old_size, uint64_t destination,
-                                          size_t new_size, int protection) {
+                                          size_t new_size, int protection, bool reserve) {
     // The caller has checked the source and found a free, disjoint destination.
     if (!prepare_mapping(destination, new_size))
         return false;
-    if (!map(destination + old_size, new_size - old_size, protection,
-             page_private | page_anonymous)) {
+    uint64_t tail = destination + old_size;
+    size_t growth = new_size - old_size;
+    bool grown = reserve ? map_anonymous_reservation(tail, growth, protection)
+                         : map(tail, growth, protection, page_private | page_anonymous);
+    if (!grown) {
         discard_empty_tables(*this, destination, destination + new_size);
         return false;
     }
     move_prepared_pages(source, destination, old_size);
+    return true;
+}
+
+bool AddressSpace::map_anonymous_reservation(uint64_t va, size_t len, int prot) {
+    if (!prepare_mapping(va, len))
+        return false;
+    uint64_t flags = reservation_permissions(prot);
+    for (uint64_t page = va; page < va + len; page += page_size)
+        *entry(page) = flags;
+    return true;
+}
+
+bool AddressSpace::fault_anonymous_reservation(uint64_t va, bool write, bool execute) {
+    auto pte = entry(va);
+    if (!pte || (*pte & (page_mask | page_file)) || !(*pte & page_anonymous_access) ||
+        (write && !(*pte & 2)) || (execute && (*pte & (1ull << 63))))
+        return false;
+    uint64_t page = page_alloc();
+    if (!page)
+        return false;
+    *pte = (*pte & ~page_anonymous_access) | 1 | page;
+    if (read_cr3() == root)
+        write_cr3(root);
     return true;
 }
 
@@ -466,7 +497,7 @@ void AddressSpace::unmap(uint64_t va, size_t len) {
         return;
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
         auto e = entry(p);
-        if (e && (*e & (page_mask | page_file))) {
+        if (e && (*e & page_mapping)) {
             if ((*e & page_mask) && !(*e & 0x200))
                 page_free(*e & page_mask);
             *e = 0;
@@ -476,19 +507,28 @@ void AddressSpace::unmap(uint64_t va, size_t len) {
         write_cr3(root);
 }
 
+void AddressSpace::trim_page_tables(uint64_t va, size_t len) {
+    if (root && len)
+        discard_empty_tables(*this, va, va + len);
+}
+
 bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
     if (va % page_size || va >= user_limit || len > user_limit - va)
         return false;
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        if (!e || !(*e & (page_mask | page_file)) || ((prot & 2) && (*e & 0x800)) ||
+        if (!e || !(*e & page_mapping) || ((prot & 2) && (*e & 0x800)) ||
             ((prot & 4) && (*e & page_no_execute)))
             return false;
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = *e & page_file ? file_page_protection(*e, prot)
-                            : (*e & (page_mask | page_software)) | permissions(prot);
+        if (*e & page_file)
+            *e = file_page_protection(*e, prot);
+        else if (!(*e & page_mask))
+            *e = reservation_permissions(prot);
+        else
+            *e = (*e & (page_mask | page_software)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -506,7 +546,8 @@ bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
         if (e && (*e & page_file)) {
             if (file_mapping_fault(space, p, write, false) != FileFault::resolved)
                 return false;
-        } else if (!grow_user_stack(*this, max(p, va), 1, write)) {
+        } else if (!space.fault_anonymous_reservation(p, write) &&
+                   !grow_user_stack(*this, max(p, va), 1, write)) {
             return false;
         }
     }
@@ -590,7 +631,7 @@ static bool clone_table(uint64_t dest, uint64_t src, int level) {
     size_t end = level == 4 ? 256 : 512;
     for (size_t i = 0; i < end; i++) {
         if (!(s[i] & page_mask)) {
-            if (level == 1 && (s[i] & page_file))
+            if (level == 1 && (s[i] & page_mapping))
                 d[i] = s[i];
             continue;
         }

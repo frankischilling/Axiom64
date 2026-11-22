@@ -1045,7 +1045,8 @@ extern "C" Frame* handle_trap(Frame* f) {
             fault = file_mapping_fault(space, cr2, f->error & 2, f->error & 16);
             if (fault == FileFault::resolved ||
                 (fault == FileFault::outside && !(f->error & 1) &&
-                 grow_user_stack(space, cr2, 1, f->error & 2, f->error & 16)))
+                 (space.fault_anonymous_reservation(cr2, f->error & 2, f->error & 16) ||
+                  grow_user_stack(space, cr2, 1, f->error & 2, f->error & 16))))
                 return schedule(f, false);
             cpu_account();
         }

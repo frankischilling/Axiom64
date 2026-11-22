@@ -39,7 +39,7 @@ uint64_t neighbour(uint64_t table, unsigned level, uint64_t base, uint64_t start
     for (unsigned n = 0; n < count; n++) {
         unsigned i = reverse ? count - n - 1 : n;
         uint64_t address = base + i * span;
-        if (!(entries[i] & page_mask) || address >= end || address + span <= start)
+        if (!(entries[i] & page_mapping) || address >= end || address + span <= start)
             continue;
         if (level == 1 || (entries[i] & 128))
             return reverse ? min(end, address + span) - page_size : max(start, address);
@@ -75,7 +75,10 @@ bool grow_page(AddressSpace& space, uint64_t address, bool write, bool execute) 
     uint64_t previous = neighbour(space.root, 4, 0, 0, address, true);
     if (previous != user_limit) {
         uint64_t preceding = *space.entry(previous);
-        if (!(preceding & page_stack) && (preceding & 1) &&
+        bool accessible_mapping = preceding & (preceding & page_file ? page_file_access : 1);
+        if (!(preceding & page_file) && (preceding & page_anonymous_access))
+            accessible_mapping = true;
+        if (!(preceding & page_stack) && accessible_mapping &&
             address - previous - page_size < guard_gap)
             return false;
     }
@@ -145,7 +148,7 @@ bool grow_user_stack(const AddressSpace& memory, uint64_t address, size_t length
     auto& space = const_cast<AddressSpace&>(memory);
     for (uint64_t page = align_down(address); page < address + length; page += page_size) {
         auto entry = space.entry(page);
-        if (entry && (*entry & page_mask)) {
+        if (entry && (*entry & page_mapping)) {
             if (!accessible(*entry, write, execute))
                 return false;
         } else if (!grow_page(space, page, write, execute))

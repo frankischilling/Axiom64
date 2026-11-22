@@ -429,19 +429,31 @@ static int64_t block(Wait why, int fd = -1, int pid = -1) {
 static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, int fd,
                          uint64_t off) {
     constexpr int map_fixed = 0x10, map_fixed_noreplace = 0x100000;
+    constexpr int map_noreserve = 0x4000;
     bool no_replace = flags & map_fixed_noreplace;
     bool fixed = no_replace || (flags & map_fixed);
     bool replace_existing = fixed && !no_replace;
-    if (!len || len > mmap_length_limit || off % page_size || !(flags & 3) || (flags & 3) == 3)
-        return -22;
     // Linux mmap ignores protection bits outside the access permissions.
     prot &= 7;
+    bool private_mapping = flags & 2, stack_mapping = flags & 0x100;
+    bool reservation =
+        (flags & 0x23) == 0x22 && !stack_mapping && (!prot || (flags & map_noreserve));
+    size_t limit = reservation ? anonymous_reservation_limit : mmap_length_limit;
+    if (!len || len > limit || off % page_size || !(flags & 3) || (flags & 3) == 3)
+        return -22;
     len = align_up(len);
+    bool advance_map = false;
+    auto& space = current->memory->space;
     if (fixed) {
         if (addr % page_size || addr < page_size || addr >= user_limit || len > user_limit - addr)
             return -22;
     } else {
-        addr = current->memory->space.find_unmapped(len);
+        addr = align_down(addr);
+        if (!reservation || addr < 0x10000 || addr >= user_limit || len > user_limit - addr ||
+            space.mapped_size(addr, len)) {
+            addr = space.find_unmapped(len);
+            advance_map = true;
+        }
         if (!addr)
             return -12;
     }
@@ -473,20 +485,28 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
     }
     if (!memory_growth_allowed(*current, addr, len, replace_existing))
         return -12;
-    bool private_mapping = flags & 2, stack_mapping = flags & 0x100;
     if (stack_mapping && (!private_mapping || !(flags & 0x20)))
         return -22;
     if (private_mapping && (prot & 2) && !stack_mapping &&
         !data_growth_allowed(*current, addr, len, replace_existing))
         return -12;
     auto complete = [&]() -> int64_t {
-        if (!fixed)
-            current->memory->space.next_map = addr + len + page_size;
+        if (advance_map)
+            space.next_map = addr + len + page_size;
         return addr;
     };
     auto replace = [&]() -> int {
         return replace_existing ? shared_memory_unmap(*current, addr, len) : 0;
     };
+    if (reservation) {
+        if (replace_existing && !space.prepare_mapping(addr, len))
+            return -12;
+        if (int error = replace()) {
+            space.trim_page_tables(addr, len);
+            return error;
+        }
+        return space.map_anonymous_reservation(addr, len, prot) ? complete() : -12;
+    }
     if (framebuffer) {
         int error = replace();
         if (error)
@@ -505,7 +525,6 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         int error = map_disk_file(*current, *h, addr, len, off, prot, flags & 1, replace_existing);
         return error ? error : complete();
     }
-    auto& space = current->memory->space;
     auto file = h ? static_cast<FileMapping*>(alloc(sizeof(FileMapping))) : nullptr;
     if (h && !file)
         return -12;
@@ -1074,6 +1093,7 @@ static int64_t dispatch(Frame* f) {
         int error = shared_memory_unmap(*current, a, align_up(b));
         if (error)
             return error;
+        current->memory->space.trim_page_tables(a, align_up(b));
         inotify_reap_inodes();
         return 0;
     }

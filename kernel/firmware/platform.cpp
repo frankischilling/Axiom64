@@ -41,10 +41,83 @@ const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
         if (entry.kind == BootMemoryKind::retained)
             return static_cast<const uint8_t*>(physical(address));
         if (entry.kind == BootMemoryKind::reserved || entry.kind == BootMemoryKind::firmware ||
-            entry.kind == BootMemoryKind::mapped_reserved)
+            entry.kind == BootMemoryKind::mapped_reserved || entry.kind == BootMemoryKind::acpi_nvs)
             return static_cast<const uint8_t*>(map_mmio(address, length));
     }
     return nullptr;
+}
+
+namespace {
+volatile uint8_t* map_nvs(uint64_t address, size_t length) {
+    if (!length || !boot_info.memory_at || length > UINT64_MAX - address)
+        return nullptr;
+    const auto end = address + length;
+    bool contained = false;
+    for (size_t i = 0; i < boot_info.memory_count; ++i) {
+        const auto entry = boot_info.memory_at(boot_info.memory_context, i);
+        if (!entry.length || entry.base >= end ||
+            (entry.base < address && entry.length <= address - entry.base))
+            continue;
+        if (entry.kind != BootMemoryKind::acpi_nvs)
+            return nullptr;
+        if (entry.base <= address && end - entry.base <= entry.length)
+            contained = true;
+    }
+    return contained ? static_cast<volatile uint8_t*>(map_mmio(address, length)) : nullptr;
+}
+
+struct FirmwareLock {
+    volatile uint32_t* word;
+    uint16_t pm1a, pm1b;
+};
+
+FirmwareLock find_firmware_lock() {
+    Acpi::GlobalLockControl control{};
+    if (!Acpi::find_global_lock_control(boot_info.rsdp, firmware_read, nullptr, control))
+        return {};
+    const auto* header = map_nvs(control.facs, 64);
+    if (!header || header[0] != 'F' || header[1] != 'A' || header[2] != 'C' || header[3] != 'S')
+        return {};
+    uint32_t length = 0;
+    for (unsigned i = 0; i < 4; ++i)
+        length |= uint32_t(header[4 + i]) << (8 * i);
+    if (length < 64 || length > 4096)
+        return {};
+    auto* facs = map_nvs(control.facs, length);
+    if (!facs)
+        return {};
+    return {reinterpret_cast<volatile uint32_t*>(facs + 16), control.pm1a, control.pm1b};
+}
+
+void notify_firmware(uint16_t port) {
+    if (port) {
+        constexpr uint16_t sleep_enable = 1 << 13, global_lock_release = 1 << 2;
+        out16(port, (in16(port) & ~sleep_enable) | global_lock_release);
+    }
+}
+} // namespace
+
+bool firmware_read_nvs(uint64_t address, uint8_t* bytes, size_t length, bool firmware_lock) {
+    if (!bytes || length > 9)
+        return false;
+    const auto* source = map_nvs(address, length);
+    if (!source)
+        return false;
+    FirmwareLock lock{};
+    if (firmware_lock) {
+        // This provider is only used by the boot-time diagnostics.
+        static FirmwareLock platform_lock = find_firmware_lock();
+        lock = platform_lock;
+        if (!lock.word || !Acpi::try_acquire_global_lock(*lock.word))
+            return false;
+    }
+    for (size_t i = 0; i < length; ++i)
+        bytes[i] = source[i];
+    if (lock.word && Acpi::release_global_lock(*lock.word)) {
+        notify_firmware(lock.pm1a);
+        notify_firmware(lock.pm1b);
+    }
+    return true;
 }
 
 bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,
@@ -94,7 +167,7 @@ bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,
 
 void firmware_probe_i2c_hid(const Acpi::DefinitionBlocks& blocks) {
     Acpi::I2cHidDevices devices{};
-    if (!Acpi::decode_i2c_hid_devices(blocks, devices)) {
+    if (!Acpi::decode_i2c_hid_devices(blocks, devices, pci_firmware_read_regions())) {
         log("ACPI I2C HID: firmware discovery failed\n");
         return;
     }

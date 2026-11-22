@@ -117,6 +117,10 @@ describe forwarding ranges. BAR allocation also needs the occupied ranges
 within each window. For an unassigned BAR0, the probe measures the requested
 size without assigning an address.
 
+Both probes can evaluate selected firmware conditions that read ACPI NVS
+memory. They honor the firmware global lock for fields that require it and
+skip discovery if they cannot acquire the lock safely.
+
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.
 The boot-media test maps the framebuffer and writes and reads a pixel.

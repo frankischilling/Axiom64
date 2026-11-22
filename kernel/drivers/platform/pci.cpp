@@ -464,6 +464,7 @@ static void discover_bridges() {
     }
 }
 
+template <bool allow_absent = false>
 static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
                            uint16_t offset, uint8_t width, uint32_t& result) {
     if (slot >= 32 || function >= 8 || (width != 1 && width != 2 && width != 4) ||
@@ -481,8 +482,12 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
         return false;
     PciFunction pci{bus, slot, function, segment,
                     ecam ? ecam + (unsigned(slot) << 15) + (unsigned(function) << 12) : nullptr};
-    if (pci.read16(0) == UINT16_MAX)
-        return false;
+    if (pci.read16(0) == UINT16_MAX) {
+        if constexpr (!allow_absent)
+            return false;
+        result = UINT32_MAX >> (32 - width * 8);
+        return true;
+    }
     switch (width) {
     case 1:
         result = pci.read8(offset);
@@ -497,6 +502,11 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
     return true;
 }
 
+Acpi::ReadRegions pci_firmware_read_regions() {
+    discover_bridges();
+    return {firmware_read_nvs, read_pci_field<true>, &bridges};
+}
+
 PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const {
     PciBar candidate;
     const auto status =
@@ -505,7 +515,7 @@ PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& r
         return status;
     const bool prefetchable = space == PciBarSpace::memory && (read32(0x10 + index * 4) & 8);
     if (!PciBridgeWindows::forwards(bridges, segment, bus, space, prefetchable, candidate,
-                                    read_pci_field)) {
+                                    read_pci_field<>)) {
         log("PCI BAR: bridge window rejects segment=%u bus=%u slot=%u function=%u BAR=%u\n",
             uint64_t(segment), uint64_t(bus), uint64_t(slot), uint64_t(function), uint64_t(index));
         return PciBarStatus::invalid;
@@ -555,7 +565,7 @@ void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint
     sci_gsi = sci;
     discover_bridges();
     const auto allowed = has_piix_pirq({0, 1, 0, 0, nullptr}) ? link_gsis : 0;
-    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges, read_pci_field,
+    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges, read_pci_field<>,
                                     {program_link, allowed}))
         log("PCI INTx: %u firmware pin routes, %u configured bridges, %u programmed links\n",
             uint64_t(pin_routes.count), uint64_t(bridges.count),

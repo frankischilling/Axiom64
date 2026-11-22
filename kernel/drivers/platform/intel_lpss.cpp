@@ -110,7 +110,7 @@ void probe(const PciFunction& pci) {
 
 void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks) {
     Acpi::PciRootWindows windows{};
-    if (Acpi::decode_pci_root_windows(blocks, windows))
+    if (Acpi::decode_pci_root_windows(blocks, windows, pci_firmware_read_regions()))
         for (unsigned i = 0; i < windows.count; ++i) {
             const auto& window = windows.entries[i];
             log("PCI root window: segment=%u bus=%x base=%x bytes=%x prefetch=%u\n",

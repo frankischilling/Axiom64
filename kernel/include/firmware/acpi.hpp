@@ -73,6 +73,26 @@ struct FixedDescription {
     uint8_t revision;
 };
 
+struct GlobalLockControl {
+    uint64_t facs;
+    uint16_t pm1a, pm1b;
+};
+
+// A boot-time inspection can defer if firmware owns the lock.
+inline bool try_acquire_global_lock(volatile uint32_t& lock) {
+    uint32_t value = __atomic_load_n(&lock, __ATOMIC_RELAXED);
+    const uint32_t pending = 1, owned = 2;
+    if (value & (pending | owned))
+        return false;
+    return __atomic_compare_exchange_n(&lock, &value, value | owned, false, __ATOMIC_ACQUIRE,
+                                       __ATOMIC_RELAXED);
+}
+
+// Returns true when firmware is waiting for a release notification.
+inline bool release_global_lock(volatile uint32_t& lock) {
+    return (__atomic_fetch_and(&lock, ~3u, __ATOMIC_RELEASE) & 1) != 0;
+}
+
 struct EcamRegion {
     static constexpr uint64_t bus_bytes = 1ull << 20;
 
@@ -112,6 +132,7 @@ struct DefinitionBlocks {
 bool find_hpet(uint64_t rsdp, Read reader, void* context, Hpet& result);
 bool find_interrupt_topology(uint64_t rsdp, Read reader, void* context, InterruptTopology& result);
 bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result);
+bool find_global_lock_control(uint64_t rsdp, Read reader, void* context, GlobalLockControl& result);
 bool find_mcfg(uint64_t rsdp, Read reader, void* context, Mcfg& result);
 // Borrows immutable table storage. SSDTs retain root-table order after the DSDT.
 bool find_definition_blocks(uint64_t rsdp, Read reader, void* context, DefinitionBlocks& result);

@@ -277,6 +277,45 @@ bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDesc
     return find(rsdp, reader, context, {"FACP", 116, accept_fadt, &result});
 }
 
+static bool pm1_control_port(const uint8_t* fadt, size_t length, unsigned legacy, unsigned extended,
+                             uint16_t& port) {
+    uint64_t address = little(fadt + legacy, 4);
+    if (length >= extended + 12 && little(fadt + extended + 4, 8)) {
+        const auto* gas = fadt + extended;
+        if (gas[0] != 1 || gas[1] != 16 || gas[2] || (gas[3] && gas[3] != 2))
+            return false;
+        address = little(gas + 4, 8);
+    }
+    if ((address & 1) || address >= UINT16_MAX)
+        return false;
+    port = uint16_t(address);
+    return true;
+}
+
+static bool accept_global_lock_control(const uint8_t* fadt, void* output) {
+    constexpr uint32_t hardware_reduced = 1 << 20;
+    if (!fadt[8] || (little(fadt + 112, 4) & hardware_reduced) || fadt[89] != 2)
+        return false;
+    const size_t length = little(fadt + 4, 4);
+    uint64_t facs = length >= 140 ? little(fadt + 132, 8) : 0;
+    if (!facs)
+        facs = little(fadt + 36, 4);
+    GlobalLockControl control{};
+    if (!facs || (facs & 63) || facs > physical_limit - 64 ||
+        !pm1_control_port(fadt, length, 64, 172, control.pm1a) || !control.pm1a ||
+        !pm1_control_port(fadt, length, 68, 184, control.pm1b) || control.pm1a == control.pm1b)
+        return false;
+    control.facs = facs;
+    *static_cast<GlobalLockControl*>(output) = control;
+    return true;
+}
+
+bool find_global_lock_control(uint64_t rsdp, Read reader, void* context,
+                              GlobalLockControl& result) {
+    result = {};
+    return find(rsdp, reader, context, {"FACP", 116, accept_global_lock_control, &result});
+}
+
 static bool read_definition(uint64_t address, const char* signature, Read reader, void* context,
                             size_t& budget, DefinitionBlock& result) {
     // The boot firmware reader can map at most one MiB per table.

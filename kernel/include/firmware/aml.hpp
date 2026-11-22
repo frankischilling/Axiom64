@@ -112,8 +112,17 @@ struct PciRootWindows {
     unsigned count;
 };
 
+// The provider validates the physical span and enforces the requested lock.
+using NvsRead = bool (*)(uint64_t address, uint8_t* bytes, size_t length, bool firmware_lock);
+
+struct ReadRegions {
+    NvsRead nvs = nullptr;
+    PciConfigRead pci = nullptr;
+    const PciBridges* bridges = nullptr;
+};
+
 // Decode fixed, identity-mapped memory apertures. An aperture is not a reservation.
-bool decode_pci_root_windows(const DefinitionBlocks&, PciRootWindows&);
+bool decode_pci_root_windows(const DefinitionBlocks&, PciRootWindows&, ReadRegions = {});
 
 struct I2cHidDevice {
     char hardware_id[16];
@@ -130,7 +139,7 @@ struct I2cHidDevices {
 };
 
 // Inspect firmware HID-over-I2C resources without programming the controller.
-bool decode_i2c_hid_devices(const DefinitionBlocks&, I2cHidDevices&);
+bool decode_i2c_hid_devices(const DefinitionBlocks&, I2cHidDevices&, ReadRegions = {});
 
 const PciPinRoute* find_pci_pin(const PciPinRoutes&, uint16_t segment, uint8_t bus, uint8_t slot,
                                 uint8_t function, uint8_t pin, const PciBridges* = nullptr);

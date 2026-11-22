@@ -616,6 +616,53 @@ static void definition_blocks() {
     std::puts("ACPI_DEFINITION_BLOCKS_PASS legacy extended ordered_ssdt invalid_namespace budget");
 }
 
+static void global_lock_control() {
+    using namespace ax::Acpi;
+    Firmware firmware;
+    constexpr uint64_t fadt = Firmware::hpet + 512;
+    firmware.put(Firmware::xsdt + 36, fadt, 8);
+    firmware.sum(Firmware::xsdt, 44, 9);
+    std::memcpy(firmware.at(fadt), "FACP", 4);
+    firmware.at(fadt)[8] = 6;
+    firmware.at(fadt)[89] = 2;
+    firmware.put(fadt + 36, 0x123400, 4);
+    firmware.put(fadt + 64, 0x1804, 4);
+    GlobalLockControl output{};
+    const auto read = [&](size_t length) {
+        firmware.put(fadt + 4, length, 4);
+        firmware.sum(fadt, length, 9);
+        return find_global_lock_control(Firmware::base, Firmware::read, &firmware, output);
+    };
+    assert(read(116) && output.facs == 0x123400 && output.pm1a == 0x1804 && !output.pm1b);
+
+    firmware.put(fadt + 132, 0x100123400, 8);
+    firmware.put(fadt + 176, 0x1808, 8);
+    firmware.put(fadt + 172, 0x02001001, 4); // 16-bit SystemIO with word access.
+    assert(read(196) && output.facs == 0x100123400 && output.pm1a == 0x1808);
+    firmware.put(fadt + 188, 0x180a, 8);
+    firmware.put(fadt + 184, 0x02001001, 4);
+    assert(read(196) && output.pm1b == 0x180a);
+    firmware.put(fadt + 188, 0x1808, 8);
+    assert(!read(196) && !output.facs);
+    firmware.put(fadt + 188, 0, 8);
+    firmware.at(fadt)[172] = 0; // Unsupported SystemMemory control register.
+    assert(!read(196));
+    firmware.at(fadt)[172] = 1;
+    firmware.put(fadt + 132, 0x100123404, 8);
+    assert(!read(196));
+    firmware.put(fadt + 132, 0x100123400, 8);
+    firmware.put(fadt + 112, 1u << 20, 4);
+    assert(!read(196));
+
+    volatile uint32_t word = 0x12345600;
+    assert(try_acquire_global_lock(word) && word == 0x12345602);
+    assert(!try_acquire_global_lock(word) && word == 0x12345602);
+    word = 0x12345603;
+    assert(release_global_lock(word) && word == 0x12345600);
+    assert(try_acquire_global_lock(word) && !release_global_lock(word) && word == 0x12345600);
+    std::puts("ACPI_GLOBAL_LOCK_PASS legacy extended rejected_control pending busy");
+}
+
 int main() {
     counter_tests();
     firmware_tests();
@@ -623,5 +670,6 @@ int main() {
     ecam_tables();
     isa_routes();
     definition_blocks();
+    global_lock_control();
     std::puts("CLOCK_CODEC_TESTS_PASS");
 }

@@ -101,7 +101,7 @@ Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool uns
     auto routes =
         data("RTBL", package(duplicate ? 3 : 2, sequence({linked_route, direct_route,
                                                           duplicate ? linked_route : Bytes{}})));
-    auto branch = block({0xa0}, sequence({{0x93}, name("PICF"), {1, 0xa4}, name("^RTBL")}));
+    auto branch = block({0xa0}, sequence({{0x93}, name("PICF"), {1, 0xa4}, name("^^RTBL")}));
     auto other = block({0xa1}, {0xa4, 0});
     auto prt = block({0x14}, sequence({name("_PRT"), {0}, branch, other}));
     auto hid = data("_HID", sequence({{0x0d}, name("PNP0A08"), {0}}));
@@ -216,7 +216,7 @@ bool read_config(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, 
 
 Fixture dynamic_firmware(DynamicCase scenario) {
     // The route method builds two independent rows and sets the slot and pin through Index.
-    auto entry = package(4, sequence({{0, 0, 0x2e}, name("PCIBLNKA"), {0}}));
+    auto entry = package(4, sequence({{0, 0, 0x5e, 0x2e}, name("PCIBLNKA"), {0}}));
     Bytes address{0x7d, 0x79, 0x72, 0x61, 0x0a, 4, 0, 0x0a, 16, 0, 0x0b, 0xff, 0xff, 0};
     auto iteration =
         sequence({{0x95, 0x61, 0x0a, 2, 0x70},
@@ -529,6 +529,106 @@ void root_window_cases() {
     assert(!inspect(sequence({low, bad_range, {0x79, 0}}), true, windows) && !windows.count);
     std::puts("ACPI_PCI_ROOT_WINDOWS_PASS fixed_ranges checksum bounds disabled_root");
 }
+
+unsigned nvs_reads;
+bool nvs_lock_seen, nvs_lock_available;
+
+bool read_test_nvs(uint64_t address, uint8_t* bytes, size_t length, bool lock) {
+    ++nvs_reads;
+    nvs_lock_seen = lock;
+    if (address != 0x10000200 || length != 3 || (lock && !nvs_lock_available))
+        return false;
+    const uint8_t data[]{0xa0, 0x79, 0x01};
+    std::memcpy(bytes, data, sizeof(data));
+    return true;
+}
+
+void nvs_field_cases() {
+    using namespace ax::Acpi;
+    auto run = [](uint8_t flags, uint8_t length, NvsRead provider, PciRootWindows& windows,
+                  bool large = false) {
+        const auto region =
+            sequence({{0x5b, 0x80}, name("GNVS"), {0, 0x0c, 0, 2, 0, 0x10, 0x0a, length}});
+        const auto fields =
+            block({0x5b, 0x81}, sequence({name("GNVS"), {flags, 0, 5}, name("FLAG"), {12}}));
+        const auto crs =
+            sequence({address_window(0x87, 0x0c, 1, 0xfe000000, 0xfe000fff, 0x1000), {0x79, 0}});
+        const auto root =
+            block({0x5b, 0x82}, sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}),
+                                          buffer("_CRS", crs)}));
+        const auto predicate =
+            sequence({{0x90, 0x93}, name("FLAG"), {0x74, 0x0b, 0xce, 0x0b, 1, 0, 0x91, 0, 1}});
+        const auto branch = block({0xa0}, sequence({predicate, root}));
+        Bytes extra;
+        constexpr char hex[] = "0123456789ABCDEF";
+        if (large)
+            for (unsigned i = 0; i < 1024; ++i) {
+                const char label[]{'Z', hex[i >> 8], hex[(i >> 4) & 15], hex[i & 15], 0};
+                auto entry = data(label, {0});
+                extra.insert(extra.end(), entry.begin(), entry.end());
+            }
+        const auto table = definition(sequence({extra, region, fields, branch}));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_pci_root_windows(blocks, windows, {provider});
+    };
+    PciRootWindows windows{};
+    assert(run(0, 3, read_test_nvs, windows) && windows.count == 1 && !nvs_lock_seen);
+    assert(nvs_reads == 1 && windows.entries[0].base == 0xfe000000);
+    assert(!run(0x10, 3, read_test_nvs, windows) && !windows.count && nvs_lock_seen);
+    nvs_lock_available = true;
+    assert(run(0x10, 3, read_test_nvs, windows) && windows.count == 1 && nvs_lock_seen);
+    assert(nvs_reads == 3);
+    assert(!run(0, 2, read_test_nvs, windows) && !windows.count && nvs_reads == 3);
+    assert(!run(0, 3, nullptr, windows) && !windows.count && nvs_reads == 3);
+    assert(!run(2, 3, read_test_nvs, windows) && !windows.count && nvs_reads == 3);
+    assert(run(0, 3, read_test_nvs, windows, true) && windows.count == 1 && nvs_reads == 4);
+    std::puts("ACPI_NVS_FIELD_PASS selection cross_byte field_bounds firmware_lock");
+}
+
+bool pci_present;
+unsigned pci_word_reads;
+
+bool read_pci_words(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, uint16_t offset,
+                    uint8_t width, uint32_t& out) {
+    if (segment || bus || slot != 20 || function != 3 || width != 2 || offset != pci_word_reads * 2)
+        return false;
+    ++pci_word_reads;
+    out = pci_present ? (offset ? 0x1234 : 0x8086) : UINT16_MAX;
+    return true;
+}
+
+void diagnostic_pci_cases() {
+    using namespace ax::Acpi;
+    const auto region = sequence({{0x5b, 0x80}, name("CFRG"), {2, 0, 0x0b, 0, 1}});
+    const auto field = block({0x5b, 0x81}, sequence({name("CFRG"), {2}, name("VDID"), {32}}));
+    const auto endpoint = block(
+        {0x5b, 0x82}, sequence({name("DEV0"), data("_ADR", {0x0c, 3, 0, 20, 0}), region, field}));
+    const auto check =
+        block({0x14}, sequence({name("CNIP"), {0, 0xa4, 0x5e, 0x2e}, name("DEV0"), name("VDID")}));
+    const auto root =
+        block({0x5b, 0x82},
+              sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}), endpoint, check}));
+    const auto identifier = sequence({{0x5c, 0x2e}, name("PCI0"), name("CNIP")});
+    const auto crs =
+        sequence({address_window(0x87, 0x0c, 1, 0xfe000000, 0xfe000fff, 0x1000), {0x79, 0}});
+    const auto attach = block({0x10}, sequence({name("PCI0"), buffer("_CRS", crs)}));
+    const auto branch =
+        block({0xa0}, sequence({{0x93}, identifier, {0x0c, 0x86, 0x80, 0x34, 0x12}, attach}));
+    const auto table = definition(sequence({root, branch}));
+    DefinitionBlocks blocks{};
+    blocks.dsdt = {table.data(), 0x1000, table.size()};
+    PciRootWindows windows{};
+    pci_present = true;
+    const ReadRegions providers{read_test_nvs, read_pci_words};
+    assert(decode_pci_root_windows(blocks, windows, providers) && windows.count == 1 &&
+           pci_word_reads == 2);
+    pci_present = false;
+    pci_word_reads = 0;
+    assert(!decode_pci_root_windows(blocks, windows, providers) && !windows.count &&
+           pci_word_reads == 2);
+    std::puts("ACPI_DIAGNOSTIC_PCI_PASS word_access parent_scope absent_function");
+}
 } // namespace
 
 int main() {
@@ -557,4 +657,6 @@ int main() {
     programmable_cases();
     i2c_hid_cases();
     root_window_cases();
+    nvs_field_cases();
+    diagnostic_pci_cases();
 }

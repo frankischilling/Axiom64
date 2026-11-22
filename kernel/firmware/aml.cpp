@@ -30,7 +30,7 @@
 namespace ax::Acpi {
 namespace {
 
-constexpr unsigned max_depth = 16, max_objects = 768;
+constexpr unsigned max_depth = 16;
 constexpr uint8_t root_prefix = 0x5c, parent_prefix = 0x5e;
 
 constexpr uint32_t name_segment(const char (&s)[5]) {
@@ -243,7 +243,7 @@ bool region_operand(Cursor& stream, unsigned depth = 0) {
     }
 }
 
-enum class Kind : uint8_t { Scope, Device, Data, Method, Opaque, Region, PciField };
+enum class Kind : uint8_t { Scope, Device, Data, Method, Opaque, Region, PciField, MemoryField };
 
 struct Object {
     Path path;
@@ -253,6 +253,8 @@ struct Object {
     unsigned arguments;
     bool assigned;
     const Object* region = nullptr;
+    bool firmware_lock = false;
+    uint8_t access_bytes = 0;
 };
 
 enum class Type : uint8_t {
@@ -317,7 +319,9 @@ struct LinkChange {
 };
 
 struct Namespace {
-    Object objects[max_objects];
+    Object* objects;
+    uint16_t* index;
+    unsigned capacity, index_mask;
     Value values[4096];
     uint8_t buffers[8192];
     unsigned count;
@@ -327,6 +331,7 @@ struct Namespace {
     uint64_t integer_mask;
     const PciBridges* bridges;
     PciConfigRead read_pci;
+    NvsRead read_nvs;
     PciLinkProgram link_program;
     LinkChange changes[4];
     unsigned change_count;
@@ -334,11 +339,20 @@ struct Namespace {
     bool change_emitted;
     bool link_evaluation;
 
+    uint16_t& index_slot(const Path& path) {
+        uint64_t hash = 14695981039346656037ull;
+        for (unsigned i = 0; i < path.count; ++i)
+            hash = (hash ^ path.segments[i]) * 1099511628211ull;
+        unsigned slot = unsigned(hash ^ (hash >> 32)) & index_mask;
+        // The index has at least two slots per object.
+        while (index[slot] && !match(objects[index[slot] - 1].path, path))
+            slot = (slot + 1) & index_mask;
+        return index[slot];
+    }
+
     Object* find(const Path& path) {
-        for (unsigned i = 0; i < count; ++i)
-            if (match(objects[i].path, path))
-                return &objects[i];
-        return nullptr;
+        const unsigned entry = index_slot(path);
+        return entry ? &objects[entry - 1] : nullptr;
     }
 
     Object* lookup(Path scope, const Name& name) {
@@ -366,9 +380,13 @@ struct Namespace {
     }
 
     bool add(const Path& path, Kind kind, Cursor content = {}, unsigned arguments = 0) {
-        if (!path.count || count == max_objects || find(path))
+        if (!path.count || count == capacity)
+            return false;
+        auto& entry = index_slot(path);
+        if (entry)
             return false;
         objects[count++] = {path, content, 0, kind, arguments, false};
+        entry = uint16_t(count);
         return true;
     }
 
@@ -376,6 +394,7 @@ struct Namespace {
     bool load_fields(Cursor, const Path&);
     bool field_address(const Object&, ConfigField&, unsigned depth);
     bool read_field(const Object&, Value&, unsigned depth);
+    bool read_memory_field(const Object&, Value&, unsigned depth);
     bool stage_field(const Object&, Value, unsigned depth);
 
     bool evaluate(Cursor&, const Path&, Frame*, Value&, unsigned depth);
@@ -389,6 +408,8 @@ struct Namespace {
         }
         if (object.kind == Kind::PciField)
             return read_field(object, result, depth);
+        if (object.kind == Kind::MemoryField)
+            return read_memory_field(object, result, depth);
         if (object.kind != Kind::Data)
             return false;
         if (object.assigned) {
@@ -403,7 +424,7 @@ struct Namespace {
                 unsigned depth = 0) {
         Frame frame{args, count};
         return object.kind == Kind::Method && count == object.arguments &&
-               execute(object.content, parent(object.path), frame, result, depth);
+               execute(object.content, object.path, frame, result, depth);
     }
 
     bool config(const Path& scope, uint32_t segment, Value& result, unsigned depth = 0) {
@@ -429,15 +450,30 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
         Path path;
         uint64_t info;
         switch (opcode) {
-        case 0xa0: { // Module-level If with a constant predicate.
+        case 0xa0: { // Evaluate supported predicates before loading the selected declarations.
+            if (!stream.block(block))
+                return false;
+            auto literal = block;
             uint64_t condition;
-            if (!stream.block(block) || !integer(block, condition) ||
-                ((condition & integer_mask) && !load(block, scope, depth + 1)))
+            if (integer(literal, condition)) {
+                block = literal;
+                condition &= integer_mask;
+            } else {
+                const unsigned values_before = used_values, bytes_before = used_bytes;
+                Value result{};
+                if (!read_nvs || !evaluate(block, scope, nullptr, result, depth + 1) ||
+                    result.type != Type::Integer)
+                    return false;
+                condition = result.number;
+                used_values = values_before;
+                used_bytes = bytes_before;
+            }
+            if (condition && !load(block, scope, depth + 1))
                 return false;
             if (stream.peek() == 0xa1) {
                 Cursor alternative;
                 if (!stream.skip(1) || !stream.block(alternative) ||
-                    (!(condition & integer_mask) && !load(alternative, scope, depth + 1)))
+                    (!condition && !load(alternative, scope, depth + 1)))
                     return false;
             }
             break;
@@ -525,18 +561,25 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
     if (!read_name(field, name) || !field.left)
         return false;
     auto* region = lookup(scope, name);
-    if (!region || region->kind != Kind::Region || region->content.peek() != 2)
+    if (!region || region->kind != Kind::Region)
         return true;
-    unsigned access = field.peek() & 15;
+    const unsigned space = region->content.peek();
+    const bool system_memory = space == 0 && read_nvs;
+    if (!system_memory && space != 2)
+        return true;
+    const unsigned flags = field.peek();
+    unsigned access = flags & 15;
     field.skip(1);
     uint64_t offset = 0;
+    const uint64_t limit = (system_memory ? 65536 : 4096) * 8;
+    const unsigned integer_bits = integer_mask == UINT32_MAX ? 32 : 64;
     while (field.left) {
         auto term = field.peek();
         if (term == 1) { // AccessField
             uint64_t operands;
             if (!field.skip(1) || !field.read(2, operands))
                 return false;
-            access = operands & 15;
+            access = system_memory && operands >> 8 ? 15 : operands & 15;
             continue;
         }
         if (term == 2 || term == 3)
@@ -544,10 +587,16 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
         unsigned bits, bytes;
         uint64_t segment = 0;
         if (!(term ? field.read(4, segment) : field.skip(1)) || !field.length(bits, bytes) ||
-            offset + bits > 4096 * 8)
+            bits > limit - offset)
             return false;
-        if (term && !(offset & 7) && (bits == 8 || bits == 16 || bits == 32) &&
-            (!access || (access <= 3 && (8u << (access - 1)) == bits))) {
+        const unsigned access_bits = access && access <= 3 ? 8u << (access - 1) : bits;
+        const bool pci_access =
+            !access || (access <= 3 && (access_bits == bits || (read_nvs && access_bits < bits)));
+        const bool supported =
+            system_memory ? (bits && bits <= integer_bits && access <= 1 && !(flags & 0x80))
+                          : (!(offset & 7) && (bits == 8 || bits == 16 || bits == 32) &&
+                             pci_access && !(read_nvs && (flags & 0x10)));
+        if (term && supported) {
             Path path = scope;
             if (path.count == max_depth)
                 return false;
@@ -555,10 +604,14 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
                 if (!name_character(uint8_t(segment >> (8 * i)), !i))
                     return false;
             path.segments[path.count++] = segment;
-            if (!add(path, Kind::PciField, {}, bits / 8))
+            if (!add(path, system_memory ? Kind::MemoryField : Kind::PciField, {},
+                     system_memory ? bits : bits / 8))
                 return false;
-            objects[count - 1].integer = offset / 8;
-            objects[count - 1].region = region;
+            auto& entry = objects[count - 1];
+            entry.integer = system_memory ? offset : offset / 8;
+            entry.region = region;
+            entry.firmware_lock = system_memory && (flags & 0x10);
+            entry.access_bytes = system_memory ? 1 : access_bits / 8;
         }
         offset += bits;
     }
@@ -613,6 +666,12 @@ bool integer_result(unsigned opcode, uint64_t left, uint64_t right, uint64_t& re
     case 0x72:
         result = left + right;
         break;
+    case 0x74:
+        result = left - right;
+        break;
+    case 0x77:
+        result = left * right;
+        break;
     case 0x79:
         result = right < 64 ? left << right : 0;
         break;
@@ -624,6 +683,12 @@ bool integer_result(unsigned opcode, uint64_t left, uint64_t right, uint64_t& re
         break;
     case 0x7d:
         result = left | right;
+        break;
+    case 0x90:
+        result = left && right;
+        break;
+    case 0x91:
+        result = left || right;
         break;
     case 0x92:
         result = !left;
@@ -728,10 +793,14 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         return store(stream, scope, frame, result, depth + 1);
     }
     case 0x72:   // Add
+    case 0x74:   // Subtract
+    case 0x77:   // Multiply
     case 0x79:   // ShiftLeft
     case 0x7a:   // ShiftRight
     case 0x7b:   // And
     case 0x7d:   // Or
+    case 0x90:   // LAnd
+    case 0x91:   // LOr
     case 0x92:   // LNot
     case 0x93:   // LEqual
     case 0x94:   // LGreater
@@ -750,7 +819,7 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         if (left.type != Type::Integer || (opcode != 0x92 && right.type != Type::Integer) ||
             !integer_result(opcode, left.number, right.number, number))
             return false;
-        if (opcode >= 0x92) {
+        if (opcode >= 0x90) {
             result = {Type::Integer, number ? integer_mask : 0, {}, nullptr};
             return true;
         }
@@ -1280,11 +1349,43 @@ bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
                 result = {Type::Integer, changes[i].next, {}, nullptr};
                 return true;
             }
-    uint32_t value;
-    if (!read_pci(address.segment, address.bus, address.slot, address.function, address.offset,
-                  field.arguments, value))
-        return false;
+    uint64_t value = 0;
+    for (unsigned i = 0; i < field.arguments; i += field.access_bytes) {
+        uint32_t part;
+        if (!read_pci(address.segment, address.bus, address.slot, address.function,
+                      address.offset + i, field.access_bytes, part))
+            return false;
+        const uint64_t mask = (1ull << (field.access_bytes * 8)) - 1;
+        value |= (part & mask) << (i * 8);
+    }
     result = {Type::Integer, value, {}, nullptr};
+    return true;
+}
+
+bool Namespace::read_memory_field(const Object& field, Value& result, unsigned depth) {
+    Cursor operands = field.region->content;
+    operands.skip(1);
+    const Path scope = parent(field.region->path);
+    Value base{}, length{};
+    if (!read_nvs || !evaluate(operands, scope, nullptr, base, depth + 1) ||
+        !evaluate(operands, scope, nullptr, length, depth + 1) || operands.left ||
+        base.type != Type::Integer || length.type != Type::Integer ||
+        length.number > UINT64_MAX - base.number)
+        return false;
+    const size_t offset = field.integer / 8;
+    const unsigned shift = field.integer % 8;
+    const unsigned bits = field.arguments;
+    const size_t bytes = (shift + bits + 7) / 8;
+    uint8_t data[9]{};
+    if (offset >= length.number || bytes > length.number - offset ||
+        !read_nvs(base.number + offset, data, bytes, field.firmware_lock))
+        return false;
+    uint64_t number = 0;
+    for (unsigned i = 0; i < bits; ++i) {
+        const unsigned bit = shift + i;
+        number |= uint64_t((data[bit / 8] >> (bit % 8)) & 1) << i;
+    }
+    result = {Type::Integer, number & integer_mask, {}, nullptr};
     return true;
 }
 
@@ -1516,13 +1617,22 @@ const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8
     return exact ? exact : wildcard;
 }
 
-Namespace* load_namespace(const DefinitionBlocks& blocks, PciBridges* bridges,
-                          PciConfigRead read_pci, PciLinkProgram program) {
+Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* bridges,
+                          PciConfigRead read_pci, PciLinkProgram program,
+                          NvsRead read_nvs = nullptr) {
     if (blocks.ssdt_count > max_root_entries)
         return nullptr;
-    auto* space = static_cast<Namespace*>(alloc(sizeof(Namespace)));
+    const unsigned capacity = read_nvs ? 8192 : 768;
+    const unsigned slots = read_nvs ? 16384 : 2048;
+    auto* space = static_cast<Namespace*>(
+        alloc(sizeof(Namespace) + capacity * sizeof(Object) + slots * sizeof(uint16_t)));
     if (!space)
         return nullptr;
+    space->objects = reinterpret_cast<Object*>(space + 1);
+    space->index = reinterpret_cast<uint16_t*>(space->objects + capacity);
+    space->capacity = capacity;
+    space->index_mask = slots - 1;
+    memset(space->index, 0, slots * sizeof(*space->index));
     space->count = 0;
     space->steps = 32768;
     space->used_values = 0;
@@ -1532,6 +1642,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, PciBridges* bridges,
                               : UINT32_MAX;
     space->bridges = bridges;
     space->read_pci = read_pci;
+    space->read_nvs = read_nvs;
     space->link_program = program;
     space->change_count = 0;
     space->programming_gsi = 0;
@@ -1552,9 +1663,10 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, PciBridges* bridges,
 }
 } // namespace
 
-bool decode_pci_root_windows(const DefinitionBlocks& blocks, PciRootWindows& result) {
+bool decode_pci_root_windows(const DefinitionBlocks& blocks, PciRootWindows& result,
+                             ReadRegions regions) {
     result.count = 0;
-    auto* space = load_namespace(blocks, nullptr, nullptr, {});
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
     if (!space)
         return false;
     const bool ok = pci_root_windows(*space, result);
@@ -1564,9 +1676,10 @@ bool decode_pci_root_windows(const DefinitionBlocks& blocks, PciRootWindows& res
     return ok;
 }
 
-bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result) {
+bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result,
+                            ReadRegions regions) {
     result.count = 0;
-    auto* space = load_namespace(blocks, nullptr, nullptr, {});
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
     if (!space)
         return false;
     bool ok = true;

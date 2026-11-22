@@ -27,7 +27,15 @@
 #include "core/base.hpp"
 
 namespace ax {
-enum class BootMemoryKind { usable, reserved, firmware, retained, mapped_reserved, other };
+enum class BootMemoryKind {
+    usable,
+    reserved,
+    firmware,
+    acpi_nvs,
+    retained,
+    mapped_reserved,
+    other
+};
 
 struct BootMemory {
     uint64_t base, length;
@@ -61,6 +69,7 @@ constexpr unsigned max_boot_processors = 256;
 void boot_probe_application_processors();
 
 const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
+bool firmware_read_nvs(uint64_t address, uint8_t* bytes, size_t length, bool firmware_lock);
 
 namespace Acpi {
 struct InterruptTopology;

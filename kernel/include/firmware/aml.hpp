@@ -170,10 +170,14 @@ struct I2cHidDevice {
 struct I2cHidDevices {
     I2cHidDevice devices[8];
     unsigned count;
+    unsigned initialization_failures;
 };
 
+enum class HidDiscovery { resources, replay_initialization };
+
 // Inspect firmware HID-over-I2C resources without programming the controller.
-bool decode_i2c_hid_devices(const DefinitionBlocks&, I2cHidDevices&, ReadRegions = {});
+bool decode_i2c_hid_devices(const DefinitionBlocks&, I2cHidDevices&, ReadRegions = {},
+                            HidDiscovery = HidDiscovery::resources);
 
 const PciPinRoute* find_pci_pin(const PciPinRoutes&, uint16_t segment, uint8_t bus, uint8_t slot,
                                 uint8_t function, uint8_t pin, const PciBridges* = nullptr);

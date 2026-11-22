@@ -143,6 +143,13 @@ IDs and report sizes if the descriptor is valid. The probe requires an
 idle controller and a firmware-provided descriptor register. Touch input
 still needs report handling and interrupt delivery.
 
+If the resource scan finds no devices, the HID descriptor probe can replay
+supported ACPI initialization methods in a private namespace. The firmware
+memory provider still validates and locks each read. Writes to supported
+NVS fields and resource buffers affect only that replay. A candidate whose
+initialization needs an unsupported operation is skipped, and the probe
+reports how many candidates it rejected.
+
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and
 skip discovery if they cannot acquire the lock safely.

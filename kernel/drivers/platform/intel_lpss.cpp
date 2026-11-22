@@ -262,6 +262,12 @@ void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
     const auto providers = pci_firmware_read_regions();
     if (mode == LpssProbe::hid) {
         Acpi::decode_i2c_hid_devices(blocks, resources.hid, providers);
+        if (!resources.hid.count) {
+            const bool complete = Acpi::decode_i2c_hid_devices(
+                blocks, resources.hid, providers, Acpi::HidDiscovery::replay_initialization);
+            log("LPSS I2C: HID initialization rejected=%u complete=%u\n",
+                uint64_t(resources.hid.initialization_failures), uint64_t(complete));
+        }
         log("LPSS I2C: HID candidates=%u\n", uint64_t(resources.hid.count));
     }
     if (Acpi::decode_pci_root_windows(blocks, resources.windows, providers))

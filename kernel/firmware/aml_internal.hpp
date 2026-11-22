@@ -144,6 +144,7 @@ struct Object {
     const Object* region = nullptr;
     bool firmware_lock = false;
     uint8_t access_bytes = 0;
+    bool preserves_field_neighbors = false;
 };
 
 struct Value {
@@ -207,6 +208,11 @@ struct LinkChange {
     uint8_t previous, next;
 };
 
+struct NvsOverlayByte {
+    uint64_t address;
+    uint8_t value, mask;
+};
+
 struct Namespace {
     Object* objects;
     uint16_t* index;
@@ -231,6 +237,9 @@ struct Namespace {
     uint8_t programming_gsi;
     bool change_emitted;
     bool link_evaluation;
+    bool replay_initialization;
+    unsigned nvs_overlay_count;
+    NvsOverlayByte nvs_overlay[128];
 
     uint16_t& index_slot(const Path& path) {
         uint64_t hash = 14695981039346656037ull;
@@ -291,7 +300,10 @@ struct Namespace {
     bool field_address(const Object&, ConfigField&, unsigned depth);
     bool pci_address(Path, ConfigField&, unsigned depth = 0, bool allow_host = false);
     bool read_field(const Object&, Value&, unsigned depth);
+    bool memory_field_bytes(const Object&, uint8_t*, uint64_t& address, size_t& length,
+                            unsigned depth);
     bool read_memory_field(const Object&, Value&, unsigned depth);
+    bool stage_memory_field(const Object&, Value, unsigned depth);
     bool stage_field(const Object&, Value, unsigned depth);
 
     bool evaluate(Cursor&, const Path&, Frame*, Value&, unsigned depth);
@@ -317,6 +329,10 @@ struct Namespace {
             return false;
         if (object.assigned == Type::Integer) {
             result = {Type::Integer, object.integer, {}, nullptr};
+            return true;
+        }
+        if (object.assigned == Type::String) {
+            result = {Type::String, 0, object.content, nullptr};
             return true;
         }
         if (object.assigned == Type::Buffer) {

@@ -398,6 +398,7 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
             entry.integer = bit_field ? offset : offset / 8;
             entry.region = region;
             entry.firmware_lock = system_memory && (flags & 0x10);
+            entry.preserves_field_neighbors = system_memory && !(flags & 0x60);
             entry.access_bytes = system_memory || (diagnostic_pci && !access) ? 1 : access_bits / 8;
         }
         offset += bits;
@@ -490,6 +491,8 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
     auto* object = lookup(scope, name);
     if (object && object->kind == Kind::PciField)
         return stage_field(*object, input, depth + 1);
+    if (object && object->kind == Kind::MemoryField && replay_initialization)
+        return stage_memory_field(*object, input, depth + 1);
     if (object && object->kind == Kind::BufferField && !link_evaluation &&
         input.type == Type::Integer) {
         auto* bytes = const_cast<uint8_t*>(object->region->content.next);
@@ -497,11 +500,21 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
         return true;
     }
     Value old{};
-    if (link_evaluation || input.type != Type::Integer || !object || object->kind != Kind::Data ||
-        !value(*object, old, depth + 1) || old.type != Type::Integer)
+    if (link_evaluation || !object || object->kind != Kind::Data ||
+        (input.type != Type::Integer && !(replay_initialization && input.type == Type::String)) ||
+        !value(*object, old, depth + 1) || old.type != input.type)
         return false;
-    object->assigned = Type::Integer;
-    object->integer = input.number;
+    if (input.type == Type::String) {
+        if (input.content.left > sizeof(buffers) - used_bytes - persistent_bytes)
+            return false;
+        persistent_bytes += unsigned(input.content.left);
+        auto* bytes = buffers + sizeof(buffers) - persistent_bytes;
+        memmove(bytes, input.content.next, input.content.left);
+        object->content = {bytes, input.content.left};
+    } else {
+        object->integer = input.number;
+    }
+    object->assigned = input.type;
     return true;
 }
 
@@ -911,8 +924,20 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
             stream = term;
             break;
         }
-        default:
-            return false;
+        default: {
+            Name name;
+            Cursor encoded = term;
+            if (!replay_initialization || !read_name(encoded, name) || !name.path.count ||
+                frame.find(name))
+                return false;
+            const auto* object = lookup(scope, name);
+            Value ignored{};
+            if (!object || object->kind != Kind::Method ||
+                !evaluate(term, scope, &frame, ignored, depth + 1))
+                return false;
+            stream = term;
+            break;
+        }
         }
     }
     return true;
@@ -1040,7 +1065,8 @@ bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
     return true;
 }
 
-bool Namespace::read_memory_field(const Object& field, Value& result, unsigned depth) {
+bool Namespace::memory_field_bytes(const Object& field, uint8_t* data, uint64_t& address,
+                                   size_t& bytes, unsigned depth) {
     Cursor operands = field.region->content;
     operands.skip(1);
     const Path scope = parent(field.region->path);
@@ -1050,16 +1076,59 @@ bool Namespace::read_memory_field(const Object& field, Value& result, unsigned d
         base.type != Type::Integer || length.type != Type::Integer ||
         length.number > UINT64_MAX - base.number)
         return false;
-    const size_t offset = field.integer / 8;
-    const unsigned shift = field.integer % 8;
-    const unsigned bits = field.arguments;
-    const size_t bytes = (shift + bits + 7) / 8;
-    uint8_t data[9]{};
-    if (offset >= length.number || bytes > length.number - offset ||
-        !read_nvs(base.number + offset, data, bytes, field.firmware_lock))
+    const uint64_t offset = field.integer / 8;
+    bytes = (field.integer % 8 + field.arguments + 7) / 8;
+    if (offset >= length.number || bytes > length.number - offset)
         return false;
-    const uint64_t number = read_buffer_bits(data, shift, bits);
+    address = base.number + offset;
+    if (!read_nvs(address, data, bytes, field.firmware_lock))
+        return false;
+    for (unsigned i = 0; i < nvs_overlay_count; ++i) {
+        const auto& entry = nvs_overlay[i];
+        if (entry.address < address || entry.address - address >= bytes)
+            continue;
+        auto& byte = data[entry.address - address];
+        byte = (byte & ~entry.mask) | entry.value;
+    }
+    return true;
+}
+
+bool Namespace::read_memory_field(const Object& field, Value& result, unsigned depth) {
+    uint64_t address;
+    size_t bytes;
+    uint8_t data[9]{};
+    if (!memory_field_bytes(field, data, address, bytes, depth))
+        return false;
+    const uint64_t number = read_buffer_bits(data, field.integer % 8, field.arguments);
     result = {Type::Integer, number & integer_mask, {}, nullptr};
+    return true;
+}
+
+bool Namespace::stage_memory_field(const Object& field, Value input, unsigned depth) {
+    uint64_t address;
+    size_t bytes;
+    uint8_t data[9]{}, mask[9]{};
+    if (link_evaluation || input.type != Type::Integer || !field.preserves_field_neighbors ||
+        !memory_field_bytes(field, data, address, bytes, depth))
+        return false;
+    const auto shift = field.integer % 8;
+    write_buffer_bits(data, shift, field.arguments, input.number);
+    write_buffer_bits(mask, shift, field.arguments, integer_mask);
+
+    // Store only the written bits so overlapping fields see the latest value.
+    for (size_t byte = 0; byte < bytes; ++byte) {
+        unsigned i = 0;
+        while (i < nvs_overlay_count && nvs_overlay[i].address != address + byte)
+            ++i;
+        if (i == nvs_overlay_count) {
+            if (i == sizeof(nvs_overlay) / sizeof(*nvs_overlay))
+                return false;
+            nvs_overlay[nvs_overlay_count++] = {address + byte, 0, 0};
+        }
+        auto& entry = nvs_overlay[i];
+        entry.value = (entry.value & ~mask[byte]) | (data[byte] & mask[byte]);
+        entry.mask |= mask[byte];
+    }
     return true;
 }
 
@@ -1117,6 +1186,8 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->programming_gsi = 0;
     space->change_emitted = false;
     space->link_evaluation = false;
+    space->replay_initialization = false;
+    space->nvs_overlay_count = 0;
     auto load = [&](const DefinitionBlock& block) {
         return block.table && block.length >= 36 &&
                space->load({block.table + 36, block.length - 36}, {}, 0);

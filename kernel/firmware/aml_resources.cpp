@@ -379,15 +379,57 @@ bool i2c_hid_compatible(const Value& compatible) {
     return false;
 }
 
+bool i2c_hid_identity(Namespace& space, const Path& path, Value& id) {
+    Value compatible{};
+    return space.config(path, name_segment("_HID"), id) &&
+           (i2c_hid_id(id) || (space.config(path, name_segment("_CID"), compatible) &&
+                               i2c_hid_compatible(compatible)));
+}
+
+bool device_status(Namespace& space, const Path& path, uint64_t& flags) {
+    flags = 0x0f;
+    if (!space.child(path, name_segment("_STA")))
+        return true;
+    Value status{};
+    if (!space.config(path, name_segment("_STA"), status) || status.type != Type::Integer)
+        return false;
+    flags = status.number;
+    return true;
+}
+
+enum class InitResult { ready, absent, rejected };
+
+InitResult replay_hid_initialization(Namespace& space, const Path& path) {
+    space.replay_initialization = true;
+    Path scope = path;
+    for (unsigned depth = 0; depth <= path.count; ++depth) {
+        scope.count = depth;
+        const auto* node = space.find(scope);
+        uint64_t flags = 0x0f;
+        if (node && node->kind == Kind::Device && !device_status(space, scope, flags))
+            return InitResult::rejected;
+        if (!(flags & 1)) {
+            // A functional parent may expose children even when it has no resources.
+            if ((flags & 8) && depth != path.count)
+                continue;
+            return InitResult::absent;
+        }
+        if (const auto* method = space.child(scope, name_segment("_INI"))) {
+            Value ignored{};
+            if (!space.method(*method, nullptr, 0, ignored))
+                return InitResult::rejected;
+        }
+        space.used_values = 0;
+        space.used_bytes = 0;
+    }
+    return InitResult::ready;
+}
+
 bool i2c_hid_device(Namespace& space, const Object& object, I2cHidDevice& device) {
-    Value id{}, compatible{}, status{}, resources{};
-    if (!space.config(object.path, name_segment("_HID"), id) ||
-        (!i2c_hid_id(id) && (!space.config(object.path, name_segment("_CID"), compatible) ||
-                             !i2c_hid_compatible(compatible))) ||
-        (space.child(object.path, name_segment("_STA")) &&
-         (!space.config(object.path, name_segment("_STA"), status) ||
-          status.type != Type::Integer || !(status.number & 1))) ||
-        !space.config(object.path, name_segment("_CRS"), resources) ||
+    Value id{}, resources{};
+    uint64_t status;
+    if (!i2c_hid_identity(space, object.path, id) || !device_status(space, object.path, status) ||
+        !(status & 1) || !space.config(object.path, name_segment("_CRS"), resources) ||
         resources.type != Type::Buffer || !i2c_connection(resources.content, device))
         return false;
     if (id.type == Type::String && id.content.left < sizeof(device.hardware_id))
@@ -841,12 +883,63 @@ bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardRes
     return true;
 }
 
+bool decode_initialized_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result,
+                                    ReadRegions regions, Namespace& inventory) {
+    Path candidates[16]{};
+    unsigned count = 0;
+    for (unsigned i = 0; i < inventory.count; ++i) {
+        const auto& object = inventory.objects[i];
+        if (object.kind != Kind::Device || !inventory.child(object.path, name_segment("_CRS")))
+            continue;
+        Value id{};
+        const bool candidate = i2c_hid_identity(inventory, object.path, id);
+        inventory.used_values = 0;
+        inventory.used_bytes = 0;
+        if (candidate) {
+            if (count == sizeof(candidates) / sizeof(*candidates))
+                return false;
+            candidates[count++] = object.path;
+        }
+    }
+
+    for (unsigned i = 0; i < count; ++i) {
+        const auto& path = candidates[i];
+        // Reload AML so a candidate's writes cannot change the next device's resources.
+        auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+        if (!space)
+            return false;
+        const auto* object = space->find(path);
+        const auto initialization =
+            object ? replay_hid_initialization(*space, path) : InitResult::rejected;
+        I2cHidDevice device{};
+        const bool found =
+            initialization == InitResult::ready && i2c_hid_device(*space, *object, device);
+        release(space);
+        if (initialization == InitResult::rejected)
+            ++result.initialization_failures;
+        if (!found)
+            continue;
+        if (result.count == sizeof(result.devices) / sizeof(*result.devices))
+            return false;
+        result.devices[result.count++] = device;
+    }
+    return true;
+}
+
 bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result,
-                            ReadRegions regions) {
+                            ReadRegions regions, HidDiscovery mode) {
     result.count = 0;
+    result.initialization_failures = 0;
     auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
     if (!space)
         return false;
+    if (mode == HidDiscovery::replay_initialization) {
+        const bool ok = decode_initialized_hid_devices(blocks, result, regions, *space);
+        release(space);
+        if (!ok)
+            result.count = 0;
+        return ok;
+    }
     bool ok = true;
     for (unsigned i = 0; i < space->count; ++i) {
         const auto& object = space->objects[i];

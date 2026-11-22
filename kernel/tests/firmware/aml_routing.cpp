@@ -860,6 +860,87 @@ void namespace_buffer_fields() {
     std::puts("ACPI_BUFFER_FIELDS_PASS persistent_bytes bounds overlapping_bit");
 }
 
+void hid_initialization_cases() {
+    using namespace ax::Acpi;
+    const char* controller = "\\_SB_.PCI0.I2C0";
+    const auto source = sequence({name(controller), {0}});
+    const auto serial = sequence({{0x8e, uint8_t(15 + source.size()), 0, 2, 0, 1, 2, 0, 0, 1, 6, 0,
+                                   0x80, 0x1a, 0x06, 0, 0, 0},
+                                  source,
+                                  {0x79, 0}});
+    auto method = [](const char* label, const Bytes& body) {
+        return block({0x14}, sequence({name(label), {0}, body}));
+    };
+    const auto region = sequence({{0x5b, 0x80}, name("GNVS"), {0, 0x0b, 0, 2, 0x0a, 2}});
+    const auto alias = block({0x5b, 0x81}, sequence({name("GNVS"), {1}, name("WORD"), {16}}));
+    const auto seed = method("SEED", sequence({{0x70, 0x0b, 0xaa, 0x02}, name("BITS")}));
+    const auto enable = method(
+        "_INI",
+        block({0xa0}, sequence({{0x93}, name("WORD"), {0x0b, 0x51, 0xd5, 0x70, 1}, name("LIVE")})));
+    const auto status = method(
+        "_STA", sequence({block({0xa0}, sequence({name("LIVE"), {0xa4, 0x0a, 15}})), {0xa4, 0}}));
+    const auto field = sequence({{0x8b}, name("RBUF"), {0x0a, 16}, name("ADDR")});
+    const auto rename = sequence({{0x70, 0x0d}, name("ELAN0406"), {0}, name("_HID")});
+    const auto leak = sequence({{0x70, 1}, name("LEAK"), {0x5b, 0x22, 0}});
+    const auto init = method(
+        "_INI",
+        block({0xa0}, sequence({{0x92}, name("LEAK"), rename, {0x70, 0x0a, 0x15}, name("ADDR")})));
+    auto child = [&](const char* label, const Bytes& sta, const Bytes& ini) {
+        return block(
+            {0x5b, 0x82},
+            sequence({name(label), data("_HID", sequence({{0x0d}, name("XXXX0000"), {0}})),
+                      data("_CID", {0x0c, 0x41, 0xd0, 0x0c, 0x50}), sta, buffer("RBUF", serial),
+                      field, ini, method("_CRS", sequence({{0xa4}, name("RBUF")}))}));
+    };
+    static unsigned read_count = 0;
+    static bool lock_available = false;
+    const auto provider = +[](uint64_t address, uint8_t* bytes, size_t length, bool lock) {
+        ++read_count;
+        if (address != 0x200 || length != 2 || (lock && !lock_available))
+            return false;
+        bytes[0] = 0x11;
+        bytes[1] = 0x80;
+        return true;
+    };
+    auto read = [&](uint8_t access_flags, uint8_t parent_status, HidDiscovery mode,
+                    I2cHidDevices& result) {
+        const auto fields =
+            block({0x5b, 0x81}, sequence({name("GNVS"), {access_flags, 0, 5}, name("BITS"), {10}}));
+        const auto bus =
+            bridge_device("I2C0", 21,
+                          sequence({data("_STA", {0x0a, parent_status}), data("LIVE", {0}), enable,
+                                    child("BAD0", status, method("_INI", leak)),
+                                    child("OFF0", data("_STA", {0}), method("_INI", leak)),
+                                    child("TPD0", status, init)}));
+        const auto root = block(
+            {0x5b, 0x82}, sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}), bus}));
+        const auto system_bus = block({0x10}, sequence({name("_SB_"), root}));
+        const auto table = definition(sequence({region, alias, fields, data("LEAK", {0}), seed,
+                                                method("_INI", name("SEED")), system_bus}));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_i2c_hid_devices(blocks, result, {provider}, mode);
+    };
+
+    I2cHidDevices devices{};
+    assert(read(0x11, 0x0f, HidDiscovery::resources, devices) && !devices.count && !read_count);
+    assert(read(0x11, 0x0f, HidDiscovery::replay_initialization, devices) && !devices.count &&
+           devices.initialization_failures == 3);
+    lock_available = true;
+    assert(read(0x11, 0x0f, HidDiscovery::replay_initialization, devices) && devices.count == 1 &&
+           devices.initialization_failures == 1);
+    const auto& device = devices.devices[0];
+    assert(!std::strcmp(device.hardware_id, "ELAN0406") && device.address == 0x15 &&
+           device.max_hz == 400000 && device.pci_controller.resolved &&
+           device.pci_controller.slot == 21);
+    assert(read(0x11, 0, HidDiscovery::replay_initialization, devices) && !devices.count &&
+           !devices.initialization_failures);
+    assert(read(0x31, 0x0f, HidDiscovery::replay_initialization, devices) && !devices.count &&
+           devices.initialization_failures == 3);
+    std::puts("ACPI_HID_INIT_PASS parent_status helper_call nvs_overlay firmware_lock "
+              "candidate_isolation");
+}
+
 void composed_i2c_resources() {
     using namespace ax::Acpi;
     using Polarity = I2cHidInterrupt::Polarity;
@@ -1009,4 +1090,5 @@ int main() {
     firmware_control_cases();
     namespace_buffer_fields();
     composed_i2c_resources();
+    hid_initialization_cases();
 }

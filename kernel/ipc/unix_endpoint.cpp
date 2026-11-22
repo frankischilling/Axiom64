@@ -134,7 +134,7 @@ bool receiver_full(const Socket& receiver, const Socket& sender) {
 
 void notify_datagram_space(const Socket& receiver) {
     for (auto& sender : sockets)
-        if (sender.used && sender.type == 2 && sender.peer == &receiver &&
+        if (sender.used && sender.uses_record_queue() && sender.peer == &receiver &&
             sender.peer_generation == receiver.generation && sender.datagram_send->writable())
             descriptor_wait_notify(&sender, 4 | 0x100 | 0x200);
 }
@@ -266,7 +266,10 @@ void socket_datagram_receive_wakeup(const Socket& receiver) {
 
 int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* record,
                               const UnixAddressValue* named, UnixDatagramTarget& target) {
-    if (sender->write_closed)
+    bool sequenced = sender->type == Socket::seqpacket_type;
+    if (sequenced && !sender->connected)
+        return -107;
+    if (sender->write_closed || (sequenced && !sender->peer))
         return -32;
     for (;;) {
         bool resolved = false;

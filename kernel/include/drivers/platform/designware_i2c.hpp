@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/drivers/platform/designware_i2c.hpp
- * @brief   Reads HID descriptors through a quiescent DesignWare I²C controller.
+ * @brief   Reads registers through a quiescent DesignWare I²C controller.
  * @author  frankischilling
  * @date    2026-11-22
  *
@@ -33,7 +33,7 @@ constexpr unsigned read_byte = 1 << 8, stop = 1 << 9, restart = 1 << 10;
 constexpr unsigned active = 1, tx_room = 1 << 1, rx_data = 1 << 3;
 constexpr unsigned tx_abort = 1 << 6, stop_seen = 1 << 9;
 constexpr unsigned fifo_error = (1 << 0) | (1 << 1) | (1 << 3);
-constexpr unsigned hid_descriptor_bytes = 30;
+constexpr unsigned hid_descriptor_bytes = 30, max_report_descriptor_bytes = 4096;
 
 enum class Result : uint8_t { ok, invalid, busy, timeout, bus_error, restore_failed };
 
@@ -57,11 +57,11 @@ inline unsigned clock_count(uint32_t input_hz, unsigned period_ns) {
 // The caller owns the bus, powers the controller and supplies its input clock.
 // Byte mode leaves at most one read request in flight and needs no FIFO-depth assumptions.
 template <class Registers>
-Result read_hid(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t address,
-                uint16_t descriptor_register, HidDescriptor& out, uint32_t& abort) {
+Result read_register(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t address,
+                     uint16_t device_register, uint8_t* bytes, unsigned length, uint32_t& abort) {
     abort = 0;
-    if (address < 0x08 || address > 0x77 || input_hz < 10000000 || input_hz > 1000000000 ||
-        max_speed < 100000)
+    if (!bytes || !length || length > max_report_descriptor_bytes || address < 0x08 ||
+        address > 0x77 || input_hz < 10000000 || input_hz > 1000000000 || max_speed < 100000)
         return Result::invalid;
     if (io.read(enable) || (io.read(enable_status) & 1) || (io.read(status) & active) ||
         io.read(tx_level) || io.read(rx_level))
@@ -85,7 +85,9 @@ Result read_hid(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t a
         io.write(sda_hold, (old_hold & ~0xffffu) | clock_count(input_hz, 230));
     io.write(enable, 1);
 
-    uint8_t raw[hid_descriptor_bytes]{};
+    const unsigned bus_hz = fast ? 400000 : 100000;
+    // Each byte takes nine SCL clocks. Allow two wire times and margin for clock stretching.
+    const unsigned timeout = 20 + ((length + 4) * 18000 + bus_hz - 1) / bus_hz;
     unsigned sent = 0, requested = 0, received = 0;
     Result result = Result::timeout;
     if (DevicePoll::wait([&] { return io.read(enable_status) & 1; }, 5)) {
@@ -104,27 +106,27 @@ Result read_hid(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t a
                         result = Result::bus_error;
                         return true;
                     }
-                    raw[received++] = io.read(data);
+                    bytes[received++] = io.read(data);
                 }
-                if (received == sizeof(raw) && (interrupts & stop_seen) && !(port & active)) {
+                if (received == length && (interrupts & stop_seen) && !(port & active)) {
                     result = Result::ok;
                     return true;
                 }
                 if (port & tx_room) {
                     if (sent < 2)
-                        io.write(data, (descriptor_register >> (8 * sent++)) & 0xff);
-                    else if (requested == received && requested < sizeof(raw)) {
+                        io.write(data, (device_register >> (8 * sent++)) & 0xff);
+                    else if (requested == received && requested < length) {
                         unsigned command = read_byte;
                         if (requested == 0)
                             command |= restart;
-                        if (++requested == sizeof(raw))
+                        if (++requested == length)
                             command |= stop;
                         io.write(data, command);
                     }
                 }
                 return false;
             },
-            20);
+            timeout);
         if (!finished)
             result = Result::timeout;
     }
@@ -151,6 +153,15 @@ Result read_hid(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t a
         (has_hold && io.read(sda_hold) != old_hold) || io.read(interrupt_mask) != old_mask ||
         io.read(dma) != old_dma)
         return Result::restore_failed;
+    return result;
+}
+
+template <class Registers>
+Result read_hid(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t address,
+                uint16_t descriptor_register, HidDescriptor& out, uint32_t& abort) {
+    uint8_t raw[hid_descriptor_bytes]{};
+    const auto result = read_register(io, input_hz, max_speed, address, descriptor_register, raw,
+                                      sizeof(raw), abort);
     return result == Result::ok && !decode_hid(raw, out) ? Result::invalid : result;
 }
 } // namespace ax::DesignWareI2c

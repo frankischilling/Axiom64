@@ -25,6 +25,7 @@
 #include "drivers/platform/intel_lpss.hpp"
 #include "boot/boot.hpp"
 #include "core/base.hpp"
+#include "drivers/input/hid_touchpad.hpp"
 #include "drivers/platform/designware_i2c.hpp"
 #include "drivers/platform/intel_gpio.hpp"
 #include "drivers/platform/pci.hpp"
@@ -101,9 +102,61 @@ uint32_t report_identity(const volatile uint32_t* registers, uint64_t base, uint
     return component;
 }
 
+bool probe_hid_report(Registers& io, const Acpi::I2cHidDevice& device,
+                      const DesignWareI2c::HidDescriptor& descriptor) {
+    using namespace DesignWareI2c;
+
+    struct Storage {
+        HidTouchpad::Layouts layouts;
+        uint8_t bytes[max_report_descriptor_bytes];
+    };
+
+    if (!descriptor.report_bytes || descriptor.report_bytes > max_report_descriptor_bytes) {
+        log("LPSS I2C: unsupported HID report descriptor length=%u\n",
+            uint64_t(descriptor.report_bytes));
+        return true;
+    }
+    auto* storage = static_cast<Storage*>(alloc(sizeof(Storage)));
+    if (!storage)
+        return true;
+    uint32_t abort = 0;
+    const auto result =
+        read_register(io, comet_lake_i2c_clock, device.max_hz, device.address,
+                      descriptor.report_register, storage->bytes, descriptor.report_bytes, abort);
+    log("LPSS I2C: HID report register=%x bytes=%u result=%u abort=%x\n",
+        uint64_t(descriptor.report_register), uint64_t(descriptor.report_bytes), uint64_t(result),
+        uint64_t(abort));
+    if (result == Result::ok) {
+        constexpr char digits[] = "0123456789abcdef";
+        constexpr unsigned bytes_per_line = 32;
+        for (unsigned offset = 0; offset < descriptor.report_bytes; offset += bytes_per_line) {
+            char hex[2 * bytes_per_line + 1]{};
+            const unsigned count = min(bytes_per_line, unsigned(descriptor.report_bytes) - offset);
+            for (unsigned i = 0; i < count; ++i) {
+                const unsigned byte = storage->bytes[offset + i];
+                hex[2 * i] = digits[byte >> 4];
+                hex[2 * i + 1] = digits[byte & 15];
+            }
+            log("LPSS I2C: HID report data offset=%x %s\n", uint64_t(offset), hex);
+        }
+        if (HidTouchpad::parse(storage->bytes, descriptor.report_bytes, descriptor.input_bytes,
+                               storage->layouts)) {
+            for (unsigned i = 0; i < storage->layouts.count; ++i) {
+                const auto& report = storage->layouts.reports[i];
+                log("LPSS I2C: touchpad report id=%u payload-bits=%u finger-slots=%u\n",
+                    uint64_t(report.id), uint64_t(report.bits), uint64_t(report.finger_count));
+            }
+        } else {
+            log("LPSS I2C: no supported touchpad input layout\n");
+        }
+    }
+    release(storage);
+    return result != Result::restore_failed;
+}
+
 bool read_hid_descriptors(const PciFunction& pci, const ProbeResources& resources,
                           volatile uint32_t* mmio, uint64_t base, uint64_t size, bool& identified) {
-    const Registers io{mmio};
+    Registers io{mmio};
     bool found = false, clean = true;
     for (unsigned i = 0; i < resources.hid.count; ++i) {
         const auto& device = resources.hid.devices[i];
@@ -131,12 +184,14 @@ bool read_hid_descriptors(const PciFunction& pci, const ProbeResources& resource
             log("LPSS I2C: HID address=%x descriptor=%x result=%u abort=%x\n",
                 uint64_t(device.address), uint64_t(device.descriptor_register), uint64_t(result),
                 uint64_t(abort));
-            if (result == DesignWareI2c::Result::ok)
+            if (result == DesignWareI2c::Result::ok) {
                 log("LPSS I2C: HID vendor=%x product=%x revision=%x report-bytes=%u "
                     "input-bytes=%u\n",
                     uint64_t(descriptor.vendor), uint64_t(descriptor.product),
                     uint64_t(descriptor.revision), uint64_t(descriptor.report_bytes),
                     uint64_t(descriptor.input_bytes));
+                clean = probe_hid_report(io, device, descriptor);
+            }
         }
         if (io.read(lpss_reset) != reset)
             io.write(lpss_reset, reset);

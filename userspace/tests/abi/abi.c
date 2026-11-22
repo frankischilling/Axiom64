@@ -131,6 +131,38 @@ static void executable_link(void) {
     puts("ABI_PROC_EXE_PASS linkage=" ABI_LINKAGE);
 }
 
+static void proc_cmdline_child(char** argv) {
+    static const char expected[] = "axiom app\0proc-cmdline\0\0two words";
+    static const char title[] = "A rewritten process title that extends beyond the argument list";
+    char actual[128];
+    int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    CHECK(fd >= 0);
+    CHECK(read(fd, actual, 5) == 5);
+    CHECK(read(fd, actual + 5, sizeof(actual) - 5) == sizeof(expected) - 5);
+    CHECK(!memcmp(actual, expected, sizeof(expected)) && read(fd, actual, 1) == 0);
+    CHECK(environ[0] == argv[0] + sizeof(expected));
+    argv[0][0] = 'A';
+    CHECK(pread(fd, actual, 2, 0) == 2 && !memcmp(actual, "Ax", 2));
+    CHECK(sizeof(title) <= sizeof(expected) + strlen(environ[0]) + 1);
+    memcpy(argv[0], title, sizeof(title));
+    CHECK(pread(fd, actual, sizeof(actual), 0) == sizeof(title));
+    CHECK(!memcmp(actual, title, sizeof(title)) && close(fd) == 0);
+}
+
+static void proc_cmdline(const char* binary) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        char* const args[] = {"axiom app", "proc-cmdline", "", "two words", NULL};
+        char* const env[] = {"PROBE_ENV=abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz",
+                             NULL};
+        execve(binary, args, env);
+        CHECK(0);
+    }
+    child_status(child, 0);
+    puts("ABI_PROC_CMDLINE_PASS linkage=" ABI_LINKAGE);
+}
+
 static void extended_metadata(int directory, int fd) {
     struct stat old;
     struct statx info;
@@ -276,6 +308,10 @@ static void relative_modes(void) {
 int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "child"))
         return 17;
+    if (argc == 4 && !strcmp(argv[1], "proc-cmdline")) {
+        proc_cmdline_child(argv);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "exe-alias")) {
         static const char moved[] = "/bin/abi-exe-renamed-" ABI_LINKAGE;
         executable_path(argv[0]);
@@ -298,6 +334,7 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0x7ffffffffffe, 8) == -1 && errno == EFAULT);
     relative_modes();
     executable_link();
+    proc_cmdline(argv[0]);
     proc_system_stats();
     proc_mount_inventory();
 

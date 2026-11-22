@@ -34,6 +34,7 @@ constexpr size_t exec_filename_limit = exec_path_limit + 24;
 
 struct ExecStack {
     uint64_t bottom, top, strings, platform, filename, random, pointer;
+    uint64_t argument_end;
     size_t mapping_size, auxiliary_size;
 };
 

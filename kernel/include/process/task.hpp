@@ -68,6 +68,11 @@ struct MemoryContext {
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
     uint64_t initial_data_size = 0;
+
+    struct {
+        uint64_t begin, end, environment_end;
+    } arguments{};
+
     SharedMemoryMapping* shared = nullptr;
     Node* exec_file = nullptr;
     Node* exec_dentry = nullptr;

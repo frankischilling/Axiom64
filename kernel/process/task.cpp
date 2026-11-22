@@ -277,6 +277,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_base = current->memory->brk_base;
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
+        child->memory->arguments = current->memory->arguments;
         child->memory->dumpable = current->memory->dumpable;
         child->memory->barrier_registrations = current->memory->barrier_registrations;
         if (auto file = current->memory->exec_file) {
@@ -969,6 +970,7 @@ int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessi
     t->fs_base = 0;
     t->memory->brk_base = t->memory->brk_end = align_up(image.end);
     t->memory->initial_data_size = image.data_end - image.data_start;
+    t->memory->arguments = {stack.strings, stack.argument_end, stack.top};
     t->tid_address = 0;
     t->altstack_base = t->altstack_size = 0;
     for (auto& action : t->handlers->signal_actions)

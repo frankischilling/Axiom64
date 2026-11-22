@@ -62,6 +62,7 @@ enum class Kind {
     status,
     stat,
     comm,
+    cmdline,
     cpuinfo,
     meminfo,
     system_stat,
@@ -427,8 +428,9 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->parent = parent;
     node->mount = mount;
     node->filesystem_data = item;
-    node->mode = kind == Kind::comm                             ? regular_file | 0644
-                 : snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
+    node->mode = kind == Kind::comm ? regular_file | 0644
+                 : snapshot_file(kind) || kind == Kind::cmdline || kind == Kind::boot_id
+                     ? regular_file | 0444
                  : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ||
                          kind == Kind::exe_link || kind == Kind::mounts_link
                      ? symlink | 0777
@@ -528,6 +530,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "comm"))
         kind = Kind::comm;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "cmdline"))
+        kind = Kind::cmdline;
     else if (context->kind == Kind::process && !strcmp(name, "task"))
         kind = Kind::task_list;
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
@@ -1118,8 +1123,61 @@ static int64_t file_link(Node* dentry, bool anonymous, uint64_t offset, void* ou
     return copy(target, strlen(target), offset, output, length);
 }
 
+static size_t read_arguments(AddressSpace& space, uint64_t address, void* output, size_t length) {
+    auto bytes = static_cast<char*>(output);
+    size_t copied = 0;
+    while (copied < length) {
+        size_t count = min(length - copied, page_size - (address % page_size));
+        auto entry = space.entry(address);
+        if (!entry || (*entry & page_file) || !(*entry & (page_stack | page_anonymous)) ||
+            !space.copy_in(bytes + copied, address, count))
+            break;
+        copied += count;
+        address += count;
+    }
+    return copied;
+}
+
+static int64_t read_cmdline(const Entry& item, uint64_t offset, void* output, size_t length) {
+    auto owner = task(item.pid);
+    if (!owner)
+        return -3;
+    auto memory = owner->memory;
+    if (!memory || owner->state == State::zombie)
+        return 0;
+    auto bounds = memory->arguments;
+    if (bounds.begin >= bounds.end || offset >= bounds.environment_end - bounds.begin || !length)
+        return 0;
+    auto& space = memory->space;
+    char last;
+    if (read_arguments(space, bounds.end - 1, &last, 1) && last) {
+        // A rewritten process title can extend into contiguous environment storage.
+        size_t size = min(size_t(bounds.environment_end - bounds.begin), page_size);
+        if (offset >= size)
+            return 0;
+        auto title = static_cast<char*>(alloc(size));
+        if (!title)
+            return -12;
+        size_t available = read_arguments(space, bounds.begin, title, size);
+        size_t used = 0;
+        while (used < available && title[used])
+            ++used;
+        if (used < available)
+            ++used;
+        int64_t result = copy(title, used, offset, output, length);
+        release(title);
+        return result;
+    }
+    size_t size = bounds.end - bounds.begin;
+    if (offset >= size)
+        return 0;
+    return read_arguments(space, bounds.begin + offset, output, min(length, size - offset));
+}
+
 static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
     auto kind = entry(node)->kind;
+    if (kind == Kind::cmdline)
+        return read_cmdline(*entry(node), offset, output, length);
     if (kind == Kind::self || kind == Kind::thread_self) {
         char target[40];
         size_t size = link_target(kind, target);
@@ -1349,9 +1407,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 8) {
             memcpy(name, "comm", 5);
             result.next = 9;
-        } else if (cookie == 9 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 9) {
+            memcpy(name, "cmdline", 8);
             result.next = 10;
+        } else if (cookie == 10 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 11;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {

@@ -84,6 +84,9 @@ if test -x /usr/bin/btop; then
         fi
     fi
 fi
+if test -x /usr/libexec/axiom64-plasma-session; then
+    exec /usr/libexec/axiom64-plasma-session
+fi
 /usr/bin/twm -f /etc/X11/system.twmrc &
 twm=$!
 sleep .2

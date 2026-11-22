@@ -164,11 +164,11 @@ package_payloads = {
     "weston-clients": ("usr/bin/weston-simple-shm",),
     "openssh-server-common": (),  # The installed server requires a local configuration.
 }
+installed_libraries = {'gmp', 'libgomp'} if installed_desktop else set()
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
-    thunar_runtime = installed_desktop and package["name"] == "gmp"
-    if args.profile != "full" and not thunar_runtime and package["name"] in {
+    if args.profile != "full" and package["name"] not in installed_libraries and package["name"] in {
         "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
         "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
         "libisoburn", "libisofs", "xorriso"
@@ -224,6 +224,8 @@ regular('usr/libexec/axiom64-system-bus', ROOT / 'userspace/services/system-bus.
 files['var/lib/dbus/machine-id'] = (0o120777, b'/etc/machine-id')
 for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
+if installed_desktop:
+    regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)

@@ -42,8 +42,10 @@ refuses an existing destination. Guided partitioning and installation to existin
 drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).
 
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
-It reports device numbers and capacities in KiB. For a disk with a known
-capacity, add `--disk-bytes` with its exact byte count.
+It reports device numbers and capacities in KiB. For an NVMe drive such as
+`/dev/nvme0n1`, check `model`, `serial`, and `firmware_rev` under
+`/sys/class/nvme/nvme0`. For a disk with a known capacity, add `--disk-bytes`
+with its exact byte count.
 The backup GPT goes in the last sector of the new image. Use `--root-mib` to size
 the ext2 partition separately. Any remaining space is unallocated. For example,
 `--disk-bytes 4294967296 --root-mib 2048` gives a 4 GiB disk with a 2 GiB root.

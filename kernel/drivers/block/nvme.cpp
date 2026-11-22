@@ -59,6 +59,7 @@ struct Controller {
     unsigned number = 0;
     uint32_t version = 0, namespaces = 0;
     uint8_t identity[60]{};
+    uint8_t firmware[8]{};
     Queue queues[2]{};
     bool live = false;
 
@@ -205,6 +206,7 @@ bool read_controller(Controller& controller, bool recovery) {
             return false;
     }
     memcpy(controller.identity, data + 4, sizeof(controller.identity));
+    memcpy(controller.firmware, data + 64, sizeof(controller.firmware));
     memcpy(&controller.namespaces, data + 516, sizeof(controller.namespaces));
     controller.limit = transfer_sectors(data[77]);
     return true;
@@ -368,6 +370,16 @@ int run_io(Controller& controller, Command command) {
         recover(controller);
     return result;
 }
+
+template <size_t N> void identity_field(char (&output)[N], const uint8_t* source) {
+    size_t length = N - 1;
+    while (length &&
+           (!source[length - 1] || source[length - 1] == ' ' || source[length - 1] == 0xff))
+        --length;
+    for (size_t i = 0; i < length; ++i)
+        output[i] = source[i] >= ' ' && source[i] <= '~' ? char(source[i]) : '?';
+    output[length] = 0;
+}
 } // namespace
 
 void nvme_init() {
@@ -381,6 +393,16 @@ const BlockInfo* nvme_info(unsigned slot) {
 NvmeAddress nvme_address(unsigned slot) {
     const auto& disk = disks[slot];
     return {disk.controller->number, disk.id};
+}
+
+bool nvme_identity(unsigned number, NvmeIdentity& identity) {
+    if (number >= controller_count || !controllers[number].live)
+        return false;
+    const auto& controller = controllers[number];
+    identity_field(identity.serial, controller.identity);
+    identity_field(identity.model, controller.identity + sizeof(identity.serial) - 1);
+    identity_field(identity.firmware, controller.firmware);
+    return true;
 }
 
 int nvme_transfer(unsigned slot, uint64_t sector, void* data, size_t count, bool write) {

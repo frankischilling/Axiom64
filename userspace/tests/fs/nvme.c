@@ -116,6 +116,30 @@ static int partition_inventory(const dev_t* numbers) {
     return fclose(file) || !valid;
 }
 
+static int identity_field(const char* path, const char* expected) {
+    struct stat status;
+    char value[64];
+    const int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    ssize_t size = read(fd, value, sizeof(value) - 1);
+    const int valid = !fstat(fd, &status) && S_ISREG(status.st_mode) &&
+                      (status.st_mode & 0777) == 0444 && size > 1 && value[size - 1] == '\n';
+    if (close(fd) || !valid)
+        return -1;
+    value[size - 1] = 0;
+    return expected && strcmp(value, expected) ? -1 : 0;
+}
+
+static int controller_inventory(void) {
+    return identity_field("/sys/class/nvme/nvme0/serial", "AXNVME0") ||
+           identity_field("/sys/class/nvme/nvme1/serial", "AXNVME1") ||
+           identity_field("/sys/class/nvme/nvme0/model", "QEMU NVMe Ctrl") ||
+           identity_field("/sys/class/nvme/nvme1/model", "QEMU NVMe Ctrl") ||
+           identity_field("/sys/class/nvme/nvme0/firmware_rev", NULL) ||
+           identity_field("/sys/class/nvme/nvme1/firmware_rev", NULL);
+}
+
 static int data(void) {
     struct stat missing;
     if (stat("/dev/nvme0n3", &missing) != -1 || errno != ENOENT ||
@@ -129,7 +153,7 @@ static int data(void) {
     const int other = block("/dev/nvme1n5", disk_sectors, &numbers[3]);
     if (whole < 0 || part < 0 || sparse_id < 0 || other < 0)
         return -1;
-    if (partition_inventory(numbers))
+    if (partition_inventory(numbers) || controller_inventory())
         return -1;
     for (unsigned i = 0; i < 4; ++i)
         for (unsigned j = i + 1; j < 4; ++j)

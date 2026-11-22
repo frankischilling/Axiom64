@@ -34,9 +34,14 @@ struct NvmeAddress {
     uint32_t nsid;
 };
 
+struct NvmeIdentity {
+    char serial[21], model[41], firmware[9];
+};
+
 void nvme_init();
 const BlockInfo* nvme_info(unsigned slot);
 NvmeAddress nvme_address(unsigned slot);
+bool nvme_identity(unsigned controller, NvmeIdentity& identity);
 int nvme_transfer(unsigned slot, uint64_t sector, void* data, size_t count, bool write);
 int nvme_flush(unsigned slot);
 int nvme_shutdown();

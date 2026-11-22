@@ -439,9 +439,16 @@ void i2c_hid_cases() {
         const auto cid = data("_CID", package(1, {0x0c, 0x41, 0xd0, 0x0c, 0x50}));
         const auto crs =
             data("_CRS", block({0x11}, sequence({{0x0a, uint8_t(current.size())}, current})));
-        const auto table = definition(
+        const auto pad =
             block({0x5b, 0x82}, sequence({name("TPAD"), hid, cid, crs, method,
-                                          data("_STA", {0x0a, uint8_t(present ? 15 : 0)})})));
+                                          data("_STA", {0x0a, uint8_t(present ? 15 : 0)})}));
+        const auto bus =
+            block({0x5b, 0x82}, sequence({name("I2C0"), data("_ADR", {0x0c, 1, 0, 0x15, 0})}));
+        const auto root =
+            block({0x5b, 0x82}, sequence({name("PCI0"), data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 8}),
+                                          data("_SEG", {1}), data("_BBN", {0x0a, 4}), bus}));
+        const auto table =
+            definition(sequence({block({0x10}, sequence({name("_SB_"), root})), pad}));
         DefinitionBlocks blocks{};
         blocks.dsdt = {table.data(), 0x1000, table.size()};
         return decode_i2c_hid_devices(blocks, devices);
@@ -453,6 +460,9 @@ void i2c_hid_cases() {
            !std::strcmp(device.controller, controller) && device.address == 0x15 &&
            device.max_hz == 400000 && !device.ten_bit && device.has_descriptor_register &&
            device.descriptor_register == 0x122);
+    const auto& pci = device.pci_controller;
+    assert(pci.resolved && pci.segment == 1 && pci.bus == 4 && pci.slot == 0x15 &&
+           pci.function == 1);
     assert(inspect(resources, false, devices) && !devices.count);
     auto bad = resources;
     bad[10] = 5; // The I2C type data must include speed and address.
@@ -463,7 +473,7 @@ void i2c_hid_cases() {
     bad = resources;
     bad.back() = 1; // Invalid resource-template checksum.
     assert(inspect(bad, true, devices) && !devices.count);
-    std::puts("ACPI_I2C_HID_PASS descriptor_register bounded_resource_template");
+    std::puts("ACPI_I2C_HID_PASS descriptor_register pci_controller bounded_resource_template");
 }
 
 Bytes address_window(uint8_t tag, uint8_t general, uint8_t flags, uint64_t base, uint64_t end,

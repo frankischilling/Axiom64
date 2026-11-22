@@ -941,6 +941,13 @@ build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kern
 test-pci-interrupts: build/pci-interrupt-tests
 	./build/pci-interrupt-tests
 
+.PHONY: test-designware-i2c
+build/designware-i2c-tests: kernel/tests/drivers/platform/designware_i2c.cpp kernel/include/drivers/platform/designware_i2c.hpp kernel/include/drivers/platform/poll.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $< -o $@
+test-designware-i2c: build/designware-i2c-tests
+	./build/designware-i2c-tests
+
 .PHONY: test-acpi-routing
 build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_resources.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build

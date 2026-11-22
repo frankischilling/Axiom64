@@ -157,6 +157,13 @@ struct I2cHidDevice {
     uint16_t address, descriptor_register;
     uint8_t source_index;
     bool ten_bit, has_descriptor_register;
+
+    struct {
+        uint16_t segment;
+        uint8_t bus, slot, function;
+        bool resolved;
+    } pci_controller;
+
     I2cHidInterrupt interrupt;
 };
 

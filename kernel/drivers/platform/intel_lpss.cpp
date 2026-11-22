@@ -25,6 +25,7 @@
 #include "drivers/platform/intel_lpss.hpp"
 #include "boot/boot.hpp"
 #include "core/base.hpp"
+#include "drivers/platform/designware_i2c.hpp"
 #include "drivers/platform/pci.hpp"
 #include "firmware/acpi.hpp"
 #include "firmware/aml.hpp"
@@ -35,13 +36,28 @@ constexpr uint16_t memory_decode = 2, intx_disabled = 1 << 10;
 constexpr unsigned component_type = 0xfc, lpss_capabilities = 0x2fc;
 constexpr unsigned register_bytes = lpss_capabilities + sizeof(uint32_t);
 constexpr uint32_t designware_i2c = 0x44570140;
+constexpr unsigned lpss_reset = 0x204, function_reset_release = 3;
+constexpr uint32_t comet_lake_i2c_clock = 216000000;
 
 struct ProbeResources {
     Acpi::PciRootWindows windows;
     Acpi::MotherboardResources board;
+    Acpi::I2cHidDevices hid;
     PciMemoryInventory* inventory;
     unsigned controllers;
-    bool test_bar;
+    LpssProbe mode;
+};
+
+struct Registers {
+    volatile uint32_t* mmio;
+
+    uint32_t read(unsigned offset) const {
+        return mmio[offset / 4];
+    }
+
+    void write(unsigned offset, uint32_t value) const {
+        mmio[offset / 4] = value;
+    }
 };
 
 void reserve_platform_memory(PciMemoryInventory& inventory,
@@ -84,6 +100,62 @@ uint32_t report_identity(const volatile uint32_t* registers, uint64_t base, uint
     return component;
 }
 
+bool read_hid_descriptors(const PciFunction& pci, const ProbeResources& resources,
+                          volatile uint32_t* mmio, uint64_t base, uint64_t size, bool& identified) {
+    const Registers io{mmio};
+    bool found = false, clean = true;
+    for (unsigned i = 0; i < resources.hid.count; ++i) {
+        const auto& device = resources.hid.devices[i];
+        const auto& location = device.pci_controller;
+        if (!location.resolved || location.segment != pci.segment || location.bus != pci.bus ||
+            location.slot != pci.slot || location.function != pci.function ||
+            !device.has_descriptor_register || device.ten_bit || device.source_index)
+            continue;
+        found = true;
+        const uint32_t reset = io.read(lpss_reset);
+        if (reset == UINT32_MAX)
+            break;
+        if ((reset & function_reset_release) != function_reset_release)
+            io.write(lpss_reset, reset | function_reset_release);
+        const bool released =
+            (io.read(lpss_reset) & function_reset_release) == function_reset_release;
+        identified = released && report_identity(mmio, base, size) == designware_i2c;
+        if (identified) {
+            DesignWareI2c::HidDescriptor descriptor{};
+            uint32_t abort = 0;
+            const auto result =
+                DesignWareI2c::read_hid(io, comet_lake_i2c_clock, device.max_hz, device.address,
+                                        device.descriptor_register, descriptor, abort);
+            clean = result != DesignWareI2c::Result::restore_failed;
+            log("LPSS I2C: HID address=%x descriptor=%x result=%u abort=%x\n",
+                uint64_t(device.address), uint64_t(device.descriptor_register), uint64_t(result),
+                uint64_t(abort));
+            if (result == DesignWareI2c::Result::ok)
+                log("LPSS I2C: HID vendor=%x product=%x revision=%x report-bytes=%u "
+                    "input-bytes=%u\n",
+                    uint64_t(descriptor.vendor), uint64_t(descriptor.product),
+                    uint64_t(descriptor.revision), uint64_t(descriptor.report_bytes),
+                    uint64_t(descriptor.input_bytes));
+        }
+        if (io.read(lpss_reset) != reset)
+            io.write(lpss_reset, reset);
+        if (!clean || io.read(lpss_reset) != reset)
+            return false;
+    }
+    if (!found)
+        log("LPSS I2C: no HID descriptor route for this PCI function\n");
+    return true;
+}
+
+bool inspect_registers(const PciFunction& pci, const ProbeResources& resources,
+                       volatile uint32_t* registers, uint64_t base, uint64_t size,
+                       bool& identified) {
+    if (resources.mode == LpssProbe::hid)
+        return read_hid_descriptors(pci, resources, registers, base, size, identified);
+    identified = report_identity(registers, base, size) == designware_i2c;
+    return true;
+}
+
 bool test_unassigned_bar(const PciFunction& pci, uint64_t size, const ProbeResources& resources) {
     log("LPSS I2C: BAR0 unassigned bytes=%x\n", size);
     uint64_t gap;
@@ -96,16 +168,21 @@ bool test_unassigned_bar(const PciFunction& pci, uint64_t size, const ProbeResou
         return true;
     }
     log("LPSS I2C: BAR0 candidate base=%x bytes=%x\n", gap, size);
-    if (!resources.test_bar || size < register_bytes)
+    if (resources.mode == LpssProbe::inspect || size < register_bytes)
         return true;
+    bool clean = true;
     const auto result = PciBarProbe::test_unassigned_memory(
         pci, gap, size, physical_address_limit(), [&](uint64_t address) {
             auto* registers = static_cast<volatile uint32_t*>(map_mmio(address, register_bytes));
-            return registers && report_identity(registers, address, size) == designware_i2c;
+            if (!registers)
+                return false;
+            bool identified = false;
+            clean = inspect_registers(pci, resources, registers, address, size, identified);
+            return clean && identified;
         });
     log("LPSS I2C: BAR0 temporary test accepted=%u address-restored=%u\n",
         uint64_t(result == PciBarStatus::valid), uint64_t(result != PciBarStatus::restore_failed));
-    if (result == PciBarStatus::restore_failed) {
+    if (!clean || result == PciBarStatus::restore_failed) {
         resources.inventory->incomplete = true;
         return false;
     }
@@ -134,8 +211,8 @@ bool probe_registers(const PciFunction& pci, uint16_t quiet_command,
         log("LPSS I2C: cannot enable memory aperture\n");
         return true;
     }
-    report_identity(registers, bar.base, bar.size);
-    return true;
+    bool identified = false;
+    return inspect_registers(pci, resources, registers, bar.base, bar.size, identified);
 }
 
 void probe(const PciFunction& pci, void* context) {
@@ -179,10 +256,14 @@ void probe(const PciFunction& pci, void* context) {
 } // namespace
 
 void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
-                          const Acpi::InterruptTopology* topology, bool test_bar) {
+                          const Acpi::InterruptTopology* topology, LpssProbe mode) {
     ProbeResources resources{};
-    resources.test_bar = test_bar;
+    resources.mode = mode;
     const auto providers = pci_firmware_read_regions();
+    if (mode == LpssProbe::hid) {
+        Acpi::decode_i2c_hid_devices(blocks, resources.hid, providers);
+        log("LPSS I2C: HID candidates=%u\n", uint64_t(resources.hid.count));
+    }
     if (Acpi::decode_pci_root_windows(blocks, resources.windows, providers))
         for (unsigned i = 0; i < resources.windows.count; ++i) {
             const auto& window = resources.windows.entries[i];

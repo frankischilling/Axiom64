@@ -395,6 +395,17 @@ bool i2c_hid_device(Namespace& space, const Object& object, I2cHidDevice& device
     else
         memcpy(device.hardware_id, "PNP0C50", 7);
 
+    Name bus{};
+    if (string_name(
+            {reinterpret_cast<const uint8_t*>(device.controller), strlen(device.controller)},
+            bus)) {
+        const auto* controller = space.lookup(object.path, bus);
+        ConfigField location{};
+        if (controller && space.pci_address(controller->path, location))
+            device.pci_controller = {location.segment, location.bus, location.slot,
+                                     location.function, true};
+    }
+
     // HID-over-I2C _DSM function 1 returns the descriptor register.
     constexpr uint8_t guid[]{0xf7, 0xf6, 0xdf, 0x3c, 0x67, 0x42, 0x55, 0x45,
                              0xad, 0x05, 0xb3, 0x0a, 0x3d, 0x89, 0x38, 0xde};

@@ -953,10 +953,17 @@ bool Namespace::field_address(const Object& field, ConfigField& address, unsigne
         ((base + span.offset) & (field.access_bytes - 1)))
         return false;
 
-    // Resolve namespace device addresses from the operation region to its PCI root.
+    if (!pci_address(parent(region->path), address, depth, field.kind == Kind::DiagnosticPciField))
+        return false;
+    address.offset = base + span.offset;
+    return true;
+}
+
+bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, bool allow_host) {
+    if (depth >= max_evaluation_depth)
+        return false;
     uint32_t addresses[max_depth];
     unsigned used = 0;
-    Path root = parent(region->path);
     for (;;) {
         const auto* device = find(root);
         if (!device || device->kind != Kind::Device)
@@ -970,7 +977,7 @@ bool Namespace::field_address(const Object& field, ConfigField& address, unsigne
         addresses[used++] = adr.number;
         root = parent(root);
     }
-    if (!used && field.kind != Kind::DiagnosticPciField)
+    if (!used && !allow_host)
         return false;
     Value segment{Type::Integer, 0, {}, nullptr}, bus = segment;
     if ((child(root, name_segment("_SEG")) &&
@@ -1002,8 +1009,8 @@ bool Namespace::field_address(const Object& field, ConfigField& address, unsigne
         subordinate = next->subordinate;
     }
     const uint32_t endpoint = used ? addresses[0] : 0;
-    address = {uint16_t(segment.number), uint16_t(base + span.offset), uint8_t(bus.number),
-               uint8_t(endpoint >> 16), uint8_t(endpoint & 7)};
+    address = {uint16_t(segment.number), 0, uint8_t(bus.number), uint8_t(endpoint >> 16),
+               uint8_t(endpoint & 7)};
     return true;
 }
 

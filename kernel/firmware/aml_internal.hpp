@@ -289,6 +289,7 @@ struct Namespace {
     bool retain_buffer(Object&, Value&);
     uint8_t* scratch_buffer(size_t);
     bool field_address(const Object&, ConfigField&, unsigned depth);
+    bool pci_address(Path, ConfigField&, unsigned depth = 0, bool allow_host = false);
     bool read_field(const Object&, Value&, unsigned depth);
     bool read_memory_field(const Object&, Value&, unsigned depth);
     bool stage_field(const Object&, Value, unsigned depth);

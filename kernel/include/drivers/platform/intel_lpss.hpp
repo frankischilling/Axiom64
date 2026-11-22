@@ -30,6 +30,6 @@ struct DefinitionBlocks;
 struct InterruptTopology;
 } // namespace Acpi
 
-void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks&, const Acpi::InterruptTopology*,
-                          bool test_bar);
+enum class LpssProbe { inspect, bar, hid };
+void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks&, const Acpi::InterruptTopology*, LpssProbe);
 } // namespace ax

@@ -135,6 +135,14 @@ It then restores the BAR, power state and PCI command. A failed readback or
 identity check rejects the trial address. The controller still needs a driver
 to enable it for use.
 
+Use `lpss.i2c.hid-test` to read the HID descriptor from a device whose
+ACPI serial-bus resource resolves to an Intel LPSS PCI function. The
+probe sends the descriptor register followed by a repeated-start read.
+It restores controller settings after the transfer and reports the device
+IDs and report sizes if the descriptor is valid. The probe requires an
+idle controller and a firmware-provided descriptor register. Touch input
+still needs report handling and interrupt delivery.
+
 Both probes can evaluate selected firmware conditions that read ACPI NVS
 memory. They honor the firmware global lock for fields that require it and
 skip discovery if they cannot acquire the lock safely.

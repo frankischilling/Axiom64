@@ -25,6 +25,7 @@
  */
 #include "fs/proc.hpp"
 #include "fs/descriptor_inode.hpp"
+#include "fs/ext2/ext2.hpp"
 #include "fs/inotify.hpp"
 #include "fs/memfd.hpp"
 #include "fs/pipe.hpp"
@@ -35,6 +36,7 @@
 #include "net/ethernet.hpp"
 #include "ipc/eventfd.hpp"
 #include "ipc/ipc.hpp"
+#include "ipc/posix_message_queues.hpp"
 #include "ipc/signal_descriptor.hpp"
 #include "ipc/timerfd.hpp"
 #include "process/task.hpp"
@@ -63,6 +65,9 @@ enum class Kind {
     meminfo,
     system_stat,
     uptime,
+    mounts_link,
+    mounts,
+    filesystem_types,
     sys,
     fs,
     pipe_limit,
@@ -82,10 +87,11 @@ enum class Kind {
 // Kernel execution serializes generation. Every proc mount observes this same boot.
 char boot_identifier[37]{};
 constexpr const char* sys_directories[] = {"kernel", "net", "fs"};
-constexpr const char* root_names[] = {"self",    "thread-self", "sys",   "cpuinfo",
-                                      "meminfo", "stat",        "uptime"};
-constexpr Kind root_kinds[] = {Kind::self,    Kind::thread_self, Kind::sys,   Kind::cpuinfo,
-                               Kind::meminfo, Kind::system_stat, Kind::uptime};
+constexpr const char* root_names[] = {"self", "thread-self", "sys",    "cpuinfo",    "meminfo",
+                                      "stat", "uptime",      "mounts", "filesystems"};
+constexpr Kind root_kinds[] = {Kind::self,    Kind::thread_self, Kind::sys,
+                               Kind::cpuinfo, Kind::meminfo,     Kind::system_stat,
+                               Kind::uptime,  Kind::mounts_link, Kind::filesystem_types};
 constexpr size_t root_children = sizeof(root_names) / sizeof(root_names[0]);
 static_assert(root_children == sizeof(root_kinds) / sizeof(root_kinds[0]));
 constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-hard",
@@ -103,7 +109,7 @@ static bool descriptor_directory(Kind kind) {
 static bool snapshot_file(Kind kind) {
     return kind == Kind::status || kind == Kind::stat || kind == Kind::fdinfo ||
            kind == Kind::cpuinfo || kind == Kind::meminfo || kind == Kind::system_stat ||
-           kind == Kind::uptime;
+           kind == Kind::uptime || kind == Kind::mounts || kind == Kind::filesystem_types;
 }
 
 struct Entry {
@@ -301,6 +307,10 @@ static size_t link_target(Kind kind, char output[40]) {
 
 static void refresh(Node* node) {
     auto item = entry(node);
+    if (item->kind == Kind::mounts_link) {
+        node->size = sizeof("self/mounts") - 1;
+        return;
+    }
     if (item->kind == Kind::self || item->kind == Kind::thread_self) {
         char target[40];
         node->size = link_target(item->kind, target);
@@ -410,7 +420,7 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->filesystem_data = item;
     node->mode = snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
                  : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ||
-                         kind == Kind::exe_link
+                         kind == Kind::exe_link || kind == Kind::mounts_link
                      ? symlink | 0777
                  : kind == Kind::fd_directory ? directory | 0500
                                               : directory | 0555;
@@ -516,6 +526,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "exe"))
         kind = Kind::exe_link;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "mounts"))
+        kind = Kind::mounts;
     else if (descriptor_directory(context->kind)) {
         if (!descriptor_access(*owner))
             return -13;
@@ -968,10 +981,90 @@ static int system_snapshot(Kind kind, Snapshot& output) {
     return 0;
 }
 
+static const char* filesystem_name(const Mount& mount) {
+    if (mount.ops == &ext2_ops)
+        return "ext2";
+    if (mount.ops == &ramfs_ops)
+        return "ramfs";
+    if (mount.ops == &procfs_ops)
+        return "proc";
+    if (mount.ops == &posix_queue_filesystem())
+        return "mqueue";
+    return nullptr;
+}
+
+static void mount_path(Text& text, const char* path) {
+    for (; *path; ++path) {
+        if (*path == ' ' || *path == '\t' || *path == '\n' || *path == '\\') {
+            text.character('\\');
+            text.number(static_cast<unsigned char>(*path), 8, 3, '0');
+        } else
+            text.character(*path);
+    }
+}
+
+static int mounts_snapshot(const Entry& item, Snapshot& output) {
+    auto owner = task(item.pid);
+    if (!owner || !owner->fs)
+        return -2;
+    auto boundary = owner->fs->root_node;
+    constexpr size_t capacity = mount_table_limit * (4 * sizeof(Path::text) + 128);
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    Text text{bytes, 0, capacity};
+    unsigned cursor = 0;
+    while (auto mount = next_mount(cursor)) {
+        const char* type = filesystem_name(*mount);
+        if (!type)
+            continue;
+        char path[sizeof(Path::text)];
+        node_path(mount->root, path, sizeof(path), false, boundary);
+        if (!path[0])
+            continue;
+        char device[block_name_size];
+        if (mount->ops == &ext2_ops) {
+            block_device_name(ext2_mount_device(*mount), device);
+            text.string(device);
+        } else
+            text.string(type);
+        text.character(' ');
+        mount_path(text, path);
+        text.character(' ');
+        text.string(type);
+        text.string(mount->readonly ? " ro" : " rw");
+        if (mount->nosuid)
+            text.string(",nosuid");
+        if (mount->nodev)
+            text.string(",nodev");
+        if (mount->noexec)
+            text.string(",noexec");
+        text.string(" 0 0\n");
+    }
+    if (text.failed) {
+        release(bytes);
+        return -75;
+    }
+    output = {bytes, text.length};
+    return 0;
+}
+
 static int make_snapshot(Node* node, Snapshot& output) {
     auto item = entry(node);
     if (item->kind == Kind::fdinfo)
         return fdinfo(*item, output);
+    if (item->kind == Kind::mounts)
+        return mounts_snapshot(*item, output);
+    if (item->kind == Kind::filesystem_types) {
+        constexpr char types[] =
+            "nodev\tramfs\nnodev\tproc\nnodev\tmqueue\n\text2\n\text3\n\text4\n";
+        auto bytes = static_cast<char*>(alloc(sizeof(types)));
+        if (!bytes)
+            return -12;
+        memcpy(bytes, types, sizeof(types));
+        output = {bytes, sizeof(types) - 1};
+        return 0;
+    }
     if (item->kind == Kind::cpuinfo || item->kind == Kind::meminfo ||
         item->kind == Kind::system_stat || item->kind == Kind::uptime)
         return system_snapshot(item->kind, output);
@@ -1014,6 +1107,8 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         size_t size = link_target(kind, target);
         return copy(target, size, offset, output, length);
     }
+    if (kind == Kind::mounts_link)
+        return copy("self/mounts", sizeof("self/mounts") - 1, offset, output, length);
     if (kind == Kind::exe_link) {
         Node* target = nullptr;
         int error = link_executable(*entry(node), target);
@@ -1230,9 +1325,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 6) {
             memcpy(name, "exe", 4);
             result.next = 7;
-        } else if (cookie == 7 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 7) {
+            memcpy(name, "mounts", 7);
             result.next = 8;
+        } else if (cookie == 8 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 9;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {

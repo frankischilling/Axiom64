@@ -40,6 +40,12 @@ have exited. `/proc/uptime` uses the same boot and idle clocks. `/proc/meminfo`
 reports allocator totals in KiB, the block buffer size, and zero swap. Its
 `MemAvailable` count uses free allocator pages as a conservative estimate.
 
+`/proc/mounts` resolves to `/proc/self/mounts`. Each opened mount list records
+the active mounts visible from that process's root. Entries include the block
+device, mount point, filesystem driver, and access flags. The ext-family
+driver is reported as `ext2`. `/proc/filesystems` lists the filesystem names
+accepted by `mount`.
+
 Opening a file link reopens the existing file with an independent offset. Renamed and unlinked files stay reachable while an open descriptor holds them. Pipe links open independent endpoints on the same pipe. Anonymous pipes can reopen without waiting for a peer. An `O_PATH` handle preserves the inode after the final pipe endpoint closes. Socket and event-descriptor links expose their Linux-style names and support `stat` and `O_PATH`. An ordinary open fails with `ENXIO` when the caller has access. Looking up another process's descriptor checks its credentials and dumpability.
 
 The adjacent `fdinfo` directory reports the position, open flags, mount ID, and inode for each descriptor. Eventfd, signalfd, timerfd, epoll, and inotify add records for counters, masks, timers, and watches. An open report can finish reading a snapshot after the target descriptor closes. Reading again from offset zero resolves the current descriptor slot. Lock records and exportable inotify file handles remain pending.

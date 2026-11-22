@@ -1087,6 +1087,10 @@ const FilesystemOps ext2_ops = {
     .reclaim_queued = reclaim_queued,
 };
 
+unsigned ext2_mount_device(const Mount& mount) {
+    return static_cast<const Volume*>(mount.data)->device;
+}
+
 int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
     auto info = block_info(device->device_id);
     if (!info)

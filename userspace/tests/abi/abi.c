@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
@@ -172,6 +173,32 @@ static void proc_system_stats(void) {
     puts("ABI_PROC_SYSTEM_PASS linkage=" ABI_LINKAGE);
 }
 
+static void proc_mount_inventory(void) {
+    static const char path[] = "/tmp/abi mounts";
+    char data[2048];
+    ssize_t length = readlink("/proc/mounts", data, sizeof(data));
+    CHECK(length == 11 && !memcmp(data, "self/mounts", 11));
+
+    int fd = open("/proc/filesystems", O_RDONLY | O_CLOEXEC);
+    CHECK(fd >= 0 && (length = read(fd, data, sizeof(data) - 1)) > 0 && close(fd) == 0);
+    data[length] = 0;
+    CHECK(strstr(data, "nodev\tproc\n") && strstr(data, "\text2\n"));
+
+    CHECK(mkdir(path, 0700) == 0);
+    CHECK(mount("ramfs", path, "ramfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) == 0);
+    fd = open("/proc/mounts", O_RDONLY | O_CLOEXEC);
+    CHECK(fd >= 0 && (length = read(fd, data, sizeof(data) - 1)) > 0 && close(fd) == 0);
+    data[length] = 0;
+    CHECK(strstr(data, "proc /proc proc rw") &&
+          strstr(data, "ramfs /tmp/abi\\040mounts ramfs rw,nosuid,nodev,noexec 0 0\n"));
+    CHECK(umount(path) == 0 && rmdir(path) == 0);
+    fd = open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
+    CHECK(fd >= 0 && (length = read(fd, data, sizeof(data) - 1)) > 0 && close(fd) == 0);
+    data[length] = 0;
+    CHECK(!strstr(data, "/tmp/abi\\040mounts"));
+    puts("ABI_PROC_MOUNTS_PASS linkage=" ABI_LINKAGE);
+}
+
 static void relative_modes(void) {
     CHECK(mkdir("/tmp/abi-chmod", 0700) == 0);
     int parent = open("/tmp/abi-chmod", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -233,6 +260,7 @@ int main(int argc, char** argv) {
     relative_modes();
     executable_link();
     proc_system_stats();
+    proc_mount_inventory();
 
     char* memory = mmap(0, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(memory != MAP_FAILED);

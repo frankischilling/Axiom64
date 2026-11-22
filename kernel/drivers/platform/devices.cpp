@@ -30,6 +30,7 @@
 #include "drivers/block/nvme.hpp"
 #include "drivers/platform/fb_console.hpp"
 #include "drivers/usb/xhci.hpp"
+#include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
@@ -277,6 +278,14 @@ static void tag(const char* path, Device type, unsigned id = 0) {
     }
 }
 
+static void tag_audio(const char* path, Device type) {
+    tag(path, type);
+    auto* node = lookup(path);
+    node->mode = character | 0660;
+    node->uid = 0;
+    node->gid = 29; // audio
+}
+
 static void number_path(char* out, const char* prefix, unsigned number) {
     size_t length = strlen(prefix);
     memcpy(out, prefix, length);
@@ -394,11 +403,13 @@ void devices_init(bool display_console) {
     tag("/dev/random", Device::random, 8);
     tag("/dev/urandom", Device::random, 9);
     if (Pcm::initialize()) {
-        tag("/dev/dsp", Device::dsp);
-        auto* dsp = lookup("/dev/dsp");
-        dsp->mode = character | 0660;
-        dsp->uid = 0;
-        dsp->gid = 29; // audio
+        tag_audio("/dev/dsp", Device::dsp);
+        if (Pcm::output_available()) {
+            if (!lookup("/dev/snd") && !make_node("/dev/snd", directory | 0755))
+                panic("sound device directory");
+            tag_audio("/dev/snd/controlC0", Device::alsa_control);
+            tag_audio("/dev/snd/pcmC0D0p", Device::alsa_playback);
+        }
     }
     tag("/dev/tty0", Device::vt);
     tag("/dev/tty1", Device::vt, 1);
@@ -466,6 +477,10 @@ uint64_t device_number(Node* node) {
         return 0x600;
     case Device::dsp:
         return 0xe03;
+    case Device::alsa_control:
+        return 0x7400;
+    case Device::alsa_playback:
+        return 0x7410;
     case Device::tty:
         return 0x500;
     case Device::vt:
@@ -501,6 +516,8 @@ int device_open(Handle* h) {
         return block_claim(h->node->device_id, h);
     if (kind == Device::dsp)
         return Pcm::open(*h);
+    if (kind == Device::alsa_playback)
+        return (h->flags & 3) == 0 || (h->flags & 3) == 3 ? -22 : Alsa::open();
     if (kind == Device::tty) {
         if (!current_task() || (!current_task()->process->controlling_pty &&
                                 !current_task()->process->controlling_console))
@@ -591,6 +608,10 @@ void device_close(Handle* h) {
         Pcm::close(*h);
         return;
     }
+    if (h->node && h->node->device == Device::alsa_playback) {
+        Alsa::close();
+        return;
+    }
     if (!h->pty)
         return;
     auto p = h->pty;
@@ -619,6 +640,8 @@ bool device_has_poll(const Handle& handle) {
     case Device::keyboard:
     case Device::mouse:
     case Device::dsp:
+    case Device::alsa_control:
+    case Device::alsa_playback:
         return true;
     case Device::random:
         return handle.node->device_id == 8;
@@ -630,6 +653,10 @@ bool device_has_poll(const Handle& handle) {
 bool device_ready(Handle* h, bool write) {
     if (h->node->device == Device::dsp)
         return Pcm::ready(*h, write);
+    if (h->node->device == Device::alsa_playback)
+        return write && Alsa::ready();
+    if (h->node->device == Device::alsa_control)
+        return false;
     if (h->pty) {
         auto p = h->pty;
         if (!h->writer && p->io_error)
@@ -772,6 +799,8 @@ int64_t device_read(Handle* h, void* data, size_t len) {
 int64_t device_write(Handle* h, const void* data, size_t len) {
     if (h->node->device == Device::dsp)
         return Pcm::write(data, len);
+    if (h->node->device == Device::alsa_playback)
+        return Alsa::write(data, len);
     if (h->node->device == Device::block)
         return block_bytes(h, const_cast<void*>(data), len, true);
     if (h->node->device == Device::parallel)
@@ -847,6 +876,10 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
     if (kind == Device::dsp)
         return Pcm::ioctl(*h, request, arg);
+    if (kind == Device::alsa_control)
+        return Alsa::control_ioctl(request, arg);
+    if (kind == Device::alsa_playback)
+        return Alsa::playback_ioctl(*current_task(), request, arg);
     if (kind == Device::random) {
         if (request == 0x80045200) { // RNDGETENTCNT reports partial initialization credit.
             int count = random_entropy_count();

@@ -184,8 +184,14 @@ Blocking reads, writes, and explicit playback drain allow other tasks to run.
 The last blocking-mode close starts a background drain. A new writer can
 open the device after that drain finishes.
 Capture reports an overrun as an I/O error and restarts after an explicit reset.
-Physical codecs beyond direct pin routes, ALSA PCM, mixing, and a desktop
-audio service remain open.
+
+On systems with a playback route, ALSA applications can discover card 0
+through `/dev/snd/controlC0` and write to `/dev/snd/pcmC0D0p`. This endpoint
+supports interleaved signed 16-bit stereo at 48 kHz, with 1,024-frame periods
+and a 14-period buffer. ALSA and OSS compete for the same playback engine.
+Both endpoints use the audio group. The ALSA interface still needs mapped
+buffers, mixer controls, capture, and automatic desktop audio discovery.
+Physical codecs beyond direct pin routes remain open.
 
 ## Current limits
 

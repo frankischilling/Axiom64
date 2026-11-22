@@ -42,6 +42,7 @@
 #include "mm/file_mapping.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
@@ -534,11 +535,19 @@ static bool awaken(Task& t) {
     case Wait::random:
         ready = random_ready();
         break;
+    case Wait::alsa_write:
     case Wait::pcm_drain: {
         const auto fd = unsigned(t.wait_fd);
         const auto* handle = fd < max_fds ? t.files->entries[fd].handle : nullptr;
-        const int result =
-            handle && handle->generation == t.wait_generation ? Pcm::drain_status() : -9;
+        int result = -9;
+        if (handle && handle->generation == t.wait_generation) {
+            if (t.wait == Wait::alsa_write) {
+                ready = (handle->flags & 04000) || Alsa::transfer_ready();
+                break;
+            }
+            result = handle->node->device == Device::alsa_playback ? Alsa::drain_status()
+                                                                   : Pcm::drain_status();
+        }
         if (result != -11) {
             t.frame.rip += 2;
             t.frame.rax = result;

@@ -52,7 +52,7 @@ def boot(output, machine, firmware, codec, mode):
     if codec:
         command += ["-device", f"{codec},id=hda"]
     environment = os.environ.copy()
-    if mode == "playback":
+    if mode in ("playback", "alsa"):
         command += ["-audiodev", f"wav,id=pcm,path={directory / 'output.wav'},out.frequency=48000",
                     "-device", "hda-output,bus=hda.0,audiodev=pcm"]
     if mode == "capture":
@@ -89,6 +89,8 @@ def boot(output, machine, firmware, codec, mode):
                   iso_sha256=digest(output / f"audio-{mode}.iso"))
     if mode == "playback":
         record.update(verify_audio(directory / "output.wav"))
+    if mode == "alsa":
+        record.update(verify_alsa_audio(directory / "output.wav"))
     if mode == "capture":
         duplex = directory / "duplex.raw"
         frames = sum(abs(l) == 7500 and abs(r) == 3500
@@ -117,23 +119,45 @@ def verify_audio(path):
                 amplitude_counts={str(level): counts[level] for level in levels})
 
 
+def verify_alsa_audio(path):
+    with wave.open(str(path), "rb") as wav:
+        if (wav.getframerate(), wav.getsampwidth(), wav.getnchannels()) != (48000, 2, 2):
+            raise RuntimeError(f"{path}: unexpected WAV format")
+        frames = list(struct.iter_unpack("<hh", wav.readframes(wav.getnframes())))
+    tones = [0 if abs(l) == 6200 and r == 0 else 1 for l, r in frames
+             if (abs(l) == 6200 and r == 0) or (l == 0 and abs(r) == 4100)]
+    left, right = tones.count(0), tones.count(1)
+    if tones != sorted(tones) or not all(18000 <= n <= 24576 for n in (left, right)):
+        raise RuntimeError(f"{path}: expected left then right tone, samples {left}/{right}")
+    return dict(wav_sha256=digest(path), left_frames=left, right_frames=right)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/pcm-test")
-    parser.add_argument("--mode", choices=("absent", "playback", "capture"), action="append")
+    parser.add_argument("--mode", choices=("absent", "playback", "capture", "alsa"), action="append")
     options = parser.parse_args()
-    modes = options.mode or ("absent", "playback", "capture")
+    modes = options.mode or ("absent", "playback", "capture", "alsa")
     output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     subprocess.run(["make", "-j2", "build/axiom64.elf"], cwd=ROOT, check=True)
     init = output / "init"
-    subprocess.run(["musl-gcc", "-static", "-Wall", "-Wextra", "-Werror",
-                    ROOT / "userspace/tests/desktop/pcm.c", "-o", init], check=True)
+    compiler = ["musl-gcc", "-static", "-Wall", "-Wextra", "-Werror"]
+    if any(mode != "alsa" for mode in modes):
+        subprocess.run(compiler + [ROOT / "userspace/tests/desktop/pcm.c", "-o", init], check=True)
+    alsa_init = output / "alsa-init"
+    if "alsa" in modes:
+        # Use Linux's installed UAPI definitions as the independent ABI reference.
+        multiarch = subprocess.check_output(["gcc", "-print-multiarch"], text=True).strip()
+        subprocess.run(compiler + ["-idirafter", f"/usr/include/{multiarch}",
+                                   "-idirafter", "/usr/include",
+                                   ROOT / "userspace/tests/desktop/alsa_playback.c",
+                                   "-o", alsa_init], check=True)
     for mode in modes:
         cpio = output / f"{mode}.cpio"
         files = {"dev": (0o40755, b""), "sbin": (0o40755, b""),
-                 "sbin/init": (0o100755, init.read_bytes())}
-        if mode != "playback":
+                 "sbin/init": (0o100755, (alsa_init if mode == "alsa" else init).read_bytes())}
+        if mode in ("capture", "absent"):
             files["no-audio" if mode == "absent" else mode] = (0o100644, b"")
         write_cpio(cpio, files)
         image(output, cpio, name=f"audio-{mode}.iso")

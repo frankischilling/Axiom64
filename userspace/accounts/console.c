@@ -60,7 +60,7 @@ static int pause_retry(void) {
     return stopped ? failed(ECANCELED) : 0;
 }
 
-static int worker_check(const char* executable) {
+static int worker_check(const char* executable, mode_t mode) {
     char path[PATH_MAX];
     size_t length = strlen(executable);
     if (!length || length >= sizeof(path) || executable[0] != '/')
@@ -73,7 +73,7 @@ static int worker_check(const char* executable) {
     int parent = account_directory_open(*path ? path : "/", 0755, 0);
     if (parent < 0)
         return -1;
-    int descriptor = account_executable_open(parent, name);
+    int descriptor = account_executable_open(parent, name, mode);
     int error = descriptor < 0 ? errno : 0;
     if (descriptor >= 0)
         close(descriptor);
@@ -106,8 +106,8 @@ static int public_name(int terminal, char name[ACCOUNT_NAME_MAX + 1]) {
     return invalid || !account_name_valid(name) ? failed(EINVAL) : 0;
 }
 
-static int run(char* const arguments[], int terminal, const struct termios* original) {
-    if (worker_check(arguments[0]) < 0)
+static int run(char* const arguments[], mode_t mode, int terminal, const struct termios* original) {
+    if (worker_check(arguments[0], mode) < 0)
         return -1;
     pid_t child = fork();
     if (child < 0)
@@ -243,10 +243,10 @@ int main(int argc, char** argv) {
             char* prepare[] = {
                 "/usr/bin/accountctl", "--database", (char*)database, "--records", (char*)records,
                 "ensure-messagebus",   NULL};
-            int result = run(prepare, terminal, &original);
+            int result = run(prepare, 0755, terminal, &original);
             if (prepare_greeter && !stopped) {
                 prepare[5] = "ensure-sddm";
-                if (run(prepare, terminal, &original))
+                if (run(prepare, 0755, terminal, &original))
                     result = 1;
             }
             if (result)
@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
                              fresh ? home : NULL,
                              fresh ? (char*)shell : NULL,
                              NULL};
-        int result = run(arguments, terminal, &original);
+        int result = run(arguments, 04755, terminal, &original);
         if (result < 0) {
             error = errno;
             break;

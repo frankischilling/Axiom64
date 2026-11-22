@@ -45,7 +45,7 @@ PARTUUID = "PARTUUID=68ce920d-01"
 DATA_PASS = "NVME_DATA_PASS sparse_ids two_controllers io_errors queue_wrap transfer_boundaries"
 
 
-def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, zoned=()):
+def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, zoned=(), pxe=None):
     directory.mkdir()
     command = [
         "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "384M",
@@ -57,12 +57,18 @@ def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, z
                     "-device", "nvme,id=nv0,serial=AXNVME0,mdts=2,max_ioqpairs=1,addr=5"]
     else:
         command += ["-device", "nvme,id=nv0,serial=AXNVME0"]
+    if pxe is not None:
+        loader = "BOOTX64.EFI" if firmware == "uefi" else "limine-bios-pxe.bin"
+        capture = directory / "pxe.pcap"
+        command += ["-boot", "strict=on", "-device", "e1000,netdev=pxe,bootindex=1",
+                    "-netdev", f"user,id=pxe,restrict=on,tftp={pxe},bootfile={loader}",
+                    "-object", f"filter-dump,id=capture,netdev=pxe,file={capture}"]
     if dual:
         command += ["-device", "nvme,id=nv1,serial=AXNVME1,mdts=1,max_ioqpairs=1,addr=6"]
     for controller, nsid, path, logical in namespaces:
         label = f"drive{controller}_{nsid}"
         zones = ",zoned=on,zoned.zone_size=1M" if (controller, nsid) in zoned else ""
-        boot = ",bootindex=1" if iso is None else ""
+        boot = ",bootindex=1" if iso is None and pxe is None else ""
         command += ["-drive", f"if=none,id={label},format=raw,cache=writeback,file={path}",
                     "-device", f"nvme-ns,drive={label},bus=nv{controller},nsid={nsid},"
                                f"logical_block_size={logical},physical_block_size={logical}{zones}{boot}"]
@@ -88,6 +94,11 @@ def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, z
         raise RuntimeError(f"{directory.name}: status {result.returncode}, missing {missing}; see {log}")
     if dual and any(f"controller=0 nsid={nsid} " in text for nsid in (3, 9)):
         raise RuntimeError("An unsupported namespace was published")
+    if pxe is not None:
+        traffic = capture.read_bytes()
+        if not all(name.encode() + b"\0" in traffic
+                   for name in (loader, "boot/axiom64.elf", "boot/rootfs.cpio.gz")):
+            raise RuntimeError(f"expected TFTP boot paths missing in {capture}")
     print(f"{directory.name}: passed", flush=True)
     return {"name": directory.name, "serial_sha256": digest(log), "iso_sha256": digest(iso) if iso else None}
 
@@ -154,6 +165,14 @@ def boot_installed_disk(output, seed):
                      [(0, 1, installed, 512)],
                      [marker, f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0"])
         results.append(dict(result, boot_disk_sha256=disk_sha256))
+    pxe = output / "installed-pxe"
+    build_medium("pxe", pxe, ROOT / "build/axiom64.elf", None, " test",
+                 root_partuuid=root['uuid'])
+    for firmware in ("bios", "uefi"):
+        results.append(run(output / f"installed-{firmware}-pxe", "q35", firmware, None,
+                           [(0, 1, installed, 512)],
+                           ["NVME_ROOT_REBOOT_PASS", f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0"],
+                           pxe=pxe))
     extracted = output / "installed-check.ext2"
     with installed.open("rb") as disk, extracted.open("xb") as volume:
         disk.seek(root["start"] * SECTOR)

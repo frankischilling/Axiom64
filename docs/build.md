@@ -95,6 +95,12 @@ and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.
 
+Use `hid.i2c.probe` to list HID-over-I²C resources from ACPI firmware.
+Use `lpss.i2c.probe` to check PCI power and the BAR0 aperture on Intel
+Comet Lake LPSS I²C controllers. It reports the BAR before and after a D0
+transition and reads the controller identity from a validated aperture.
+The probe restores the original power state and PCI command after the check.
+
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.
 The boot-media test maps the framebuffer and writes and reads a pixel.

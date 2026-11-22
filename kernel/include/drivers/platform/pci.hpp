@@ -34,6 +34,8 @@ struct Mcfg;
 struct DefinitionBlocks;
 } // namespace Acpi
 
+enum class PciPowerState : uint8_t { d0, d1, d2, d3hot, unavailable };
+
 struct PciFunction {
     uint8_t bus, slot, function;
     uint16_t segment;
@@ -50,6 +52,10 @@ struct PciFunction {
     void write32(uint16_t offset, uint32_t value) const;
 
     uint8_t find_capability(uint8_t id, unsigned* boundary = nullptr) const;
+    PciPowerState power_state() const;
+    // Use on an owned function with I/O, MMIO, and bus mastering disabled.
+    // After waking from D3hot, revalidate or restore the BAR assignment before use.
+    bool set_power_state(PciPowerState) const;
 
     // Probe only while the function is quiescent and no driver is using its BARs.
     PciBarStatus probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const;

@@ -36,6 +36,8 @@ constexpr uint8_t capability = 0x50;
 unsigned mappings, registrations, retirements;
 bool mapping_error, route_available = true;
 uint32_t table[4];
+unsigned delay_us;
+bool clock_ready = true;
 
 void handler(void*) {
 }
@@ -46,6 +48,37 @@ void reset(const ax::PciFunction& pci, uint8_t id, uint16_t control, uint8_t nex
     pci.write16(6, 16);
     pci.write32(0x34, capability);
     pci.write32(capability, id | uint32_t(next) << 8 | uint32_t(control) << 16);
+}
+
+void test_power_state(const ax::PciFunction& pci) {
+    using enum ax::PciPowerState;
+    constexpr auto pmcsr = capability + 4;
+    constexpr uint16_t pme_enable = 1 << 8, pme_status = 1 << 15;
+    reset(pci, 1, 3 | (1 << 10));
+    pci.write16(pmcsr, pme_status | pme_enable | 3);
+    assert(pci.power_state() == d3hot);
+    assert(!pci.set_power_state(d0) && delay_us == 0); // Function is decoding.
+    assert(pci.read16(pmcsr) == (pme_status | pme_enable | 3));
+    pci.write16(4, 0);
+    assert(!pci.set_power_state(d2) && delay_us == 0);
+    assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 10000);
+    assert(pci.read16(pmcsr) == pme_enable); // A zero write leaves hardware PME status alone.
+    assert(!pci.set_power_state(d1));
+    assert(pci.set_power_state(d2) && pci.power_state() == d2 && delay_us == 200);
+    assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 200);
+    assert(pci.set_power_state(d3hot) && pci.power_state() == d3hot && delay_us == 10000);
+    clock_ready = false;
+    assert(!pci.set_power_state(d0));
+    clock_ready = true;
+
+    reset(pci, 1, 3, pmcsr); // Another capability overlaps the PMCSR.
+    assert(pci.power_state() == unavailable && !pci.set_power_state(d0));
+    reset(pci, 1, 0);
+    assert(pci.power_state() == unavailable && !pci.set_power_state(d0));
+    reset(pci, 1, 3);
+    pci.write16(pmcsr, UINT16_MAX);
+    assert(pci.power_state() == unavailable && !pci.set_power_state(d0));
+    std::puts("PCI_POWER_PASS d3hot d2 decode_guard truncated_capability");
 }
 
 void test_msi(const ax::PciFunction& pci) {
@@ -345,6 +378,11 @@ namespace ax {
 void log(const char*, ...) {
 }
 
+bool clock_delay_us(unsigned microseconds) {
+    delay_us = microseconds;
+    return clock_ready;
+}
+
 void* map_mmio(uint64_t address, size_t bytes) {
     assert(address == base && bytes == sizeof(table));
     ++mappings;
@@ -371,6 +409,7 @@ int main() {
         mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
     assert(page != MAP_FAILED);
     ax::PciFunction pci{0, 1, 0, 0, page};
+    test_power_state(pci);
     test_msi(pci);
     test_msix(pci);
     test_apertures();

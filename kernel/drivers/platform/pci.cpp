@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/pci.hpp"
+#include "core/time.hpp"
 #include "boot/boot.hpp"
 #include "drivers/platform/pci_bridge.hpp"
 #include "firmware/acpi.hpp"
@@ -174,6 +175,52 @@ uint8_t PciFunction::find_capability(uint8_t id, unsigned* boundary) const {
         *boundary = next;
     }
     return found;
+}
+
+namespace {
+constexpr uint16_t power_state_mask = 3, pme_status = 1u << 15;
+
+uint8_t power_capability(const PciFunction& pci) {
+    unsigned boundary;
+    const auto capability = pci.find_capability(1, &boundary);
+    if (!capability || boundary < unsigned(capability) + 6)
+        return 0;
+    const unsigned version = pci.read16(capability + 2) & 7;
+    return version >= 1 && version <= 3 ? capability : 0;
+}
+} // namespace
+
+PciPowerState PciFunction::power_state() const {
+    const auto capability = power_capability(*this);
+    const uint16_t control = capability ? read16(capability + 4) : UINT16_MAX;
+    return control == UINT16_MAX ? PciPowerState::unavailable
+                                 : PciPowerState(control & power_state_mask);
+}
+
+bool PciFunction::set_power_state(PciPowerState requested) const {
+    const auto capability = power_capability(*this);
+    if (!capability || requested > PciPowerState::d3hot || (read16(4) & 7))
+        return false;
+    const auto offset = uint16_t(capability + 4);
+    const auto saved = read16(offset);
+    if (saved == UINT16_MAX)
+        return false;
+    const auto previous = PciPowerState(saved & power_state_mask);
+    if (previous == requested)
+        return true;
+
+    using enum PciPowerState;
+    if (previous != d0 && requested != d0)
+        return false;
+    const uint16_t features = read16(capability + 2);
+    if ((requested == d1 && !(features & (1 << 9))) || (requested == d2 && !(features & (1 << 10))))
+        return false;
+    const unsigned delay = previous == d3hot || requested == d3hot ? 10000
+                           : previous == d2 || requested == d2     ? 200
+                                                                   : 0;
+    // PME status is write-one-to-clear.
+    write16(offset, (saved & ~(power_state_mask | pme_status)) | uint16_t(requested));
+    return (!delay || clock_delay_us(delay)) && power_state() == requested;
 }
 
 bool PciMsi::start(const PciFunction& pci, Irq::Handler handler, void* context) {

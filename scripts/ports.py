@@ -147,9 +147,11 @@ def overlay_tar(files, stream, *, include=None):
             files[path] = files[target]
 
 
-def packages():
+def packages(*, include_installed=True):
     lock = json.loads(LOCKFILE.read_text())
     for package in lock["packages"]:
+        if not include_installed and package.get("installed_only", False):
+            continue
         yield package, locked_package(package)
 
 

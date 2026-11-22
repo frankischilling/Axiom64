@@ -1393,6 +1393,47 @@
       ]
     },
     {
+      "origin": "font-dejavu",
+      "commit": "59420f440b2e664f7be1a6e135a3175aab56cd51",
+      "license": "Bitstream-Vera",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/59420f440b2e664f7be1a6e135a3175aab56cd51/main/font-dejavu/APKBUILD",
+      "recipe_sha256": "4bc9973a8acdb3c596b1069e85391a341e9b7afe6594822f4c35f6634c184634",
+      "files": [
+        {
+          "name": "dejavu-fonts-ttf-2.37.tar.bz2",
+          "sha512": "bafa39321021097432777f0825d700190c23f917d754a4504722cd8946716c22c083836294dab7f3ae7cf20af63c4d0944f3423bf4aa25dbca562d1f30e00654",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/dejavu-fonts-ttf-2.37.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/59420f440b2e664f7be1a6e135a3175aab56cd51/main/font-dejavu/dejavu-fonts-ttf-2.37.tar.bz2"
+          ]
+        },
+        {
+          "name": "dejavu-lgc-fonts-ttf-2.37.tar.bz2",
+          "sha512": "4bf36813b4143a482a50ee20377166cbc22e3aa62ccb453fe6ce27d2286acaf2b6f06759eb5d5000d2f868a7d93ecad851ad29de60fb531ed9ac2fcd7b9bdc1f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/dejavu-lgc-fonts-ttf-2.37.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/59420f440b2e664f7be1a6e135a3175aab56cd51/main/font-dejavu/dejavu-lgc-fonts-ttf-2.37.tar.bz2"
+          ]
+        },
+        {
+          "name": "45-dejavu.conf",
+          "sha512": "df82fea7ad6c58edcc20c960fd2de9d49c70e23f9e63180b063c848a6f0d5592e2ce31dc0dc4a0b5abc8e682393c827c96b4a9da9203974672ebd3a77e5b9fc3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/45-dejavu.conf",
+            "https://raw.githubusercontent.com/alpinelinux/aports/59420f440b2e664f7be1a6e135a3175aab56cd51/main/font-dejavu/45-dejavu.conf"
+          ]
+        },
+        {
+          "name": "90-tt-dejavu.conf",
+          "sha512": "bc12705369050739143eda6a2dadaada954112ea262bd297a4823b31861f3da0f61e17ad6fb61226caea16323c3bc9cd88e8b0e60f61b2af6d245af885a4399c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/90-tt-dejavu.conf",
+            "https://raw.githubusercontent.com/alpinelinux/aports/59420f440b2e664f7be1a6e135a3175aab56cd51/main/font-dejavu/90-tt-dejavu.conf"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "font-misc-misc",
       "commit": "b24a4cdf2a2e4b41de4d78979aa9aae0d1383ebc",
       "license": "Public Domain",
@@ -1838,6 +1879,23 @@
       ]
     },
     {
+      "origin": "gdbm",
+      "commit": "cf76e1b436494c60e0c188400007dbf78bbff5f0",
+      "license": "GPL-3.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/cf76e1b436494c60e0c188400007dbf78bbff5f0/main/gdbm/APKBUILD",
+      "recipe_sha256": "a629b43fc3944be147018e16750b67e6be1845567f61506d64a35e2a3ec74d7b",
+      "files": [
+        {
+          "name": "gdbm-1.24.tar.gz",
+          "sha512": "401ff8c707079f21da1ac1d6f4714a87f224b6f41943078487dc891be49f51fd1ac7a32fd599aae0fad185f2c6ba7432616d328fd6aaab068eb54db9562ff7fa",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/gdbm-1.24.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/cf76e1b436494c60e0c188400007dbf78bbff5f0/main/gdbm/gdbm-1.24.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "gettext",
       "commit": "215a26431d1b09c56cb2a9ffe10175feb9518fd8",
       "license": "LGPL-2.1-or-later",
@@ -2017,6 +2075,65 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/jansson-2.14.1.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/9161ac3604718ebb3c85b5795f0a084d45362571/main/jansson/jansson-2.14.1.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "kitty",
+      "commit": "1bc8dfc63cf800c7eb2516197fd0b13ff862a073",
+      "license": "GPL-3.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/1bc8dfc63cf800c7eb2516197fd0b13ff862a073/community/kitty/APKBUILD",
+      "recipe_sha256": "03dd6ce6576392e110e25e629e011b5395461eadb85925be2f5f9f9391b5912c",
+      "files": [
+        {
+          "name": "kitty-0.42.1.tar.gz",
+          "sha512": "8ff68344182f4baa0ce65371ffc6359bd15f010d4a2ad1a08755376d139694dd43eac564f1f2eaf882c7e5f02ab271e1855fa7323525f8deb4db6772b04a9e96",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/kitty-0.42.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1bc8dfc63cf800c7eb2516197fd0b13ff862a073/community/kitty/kitty-0.42.1.tar.gz"
+          ]
+        },
+        {
+          "name": "disable-docs.patch",
+          "sha512": "a9c456c25b75a2223dcb0009076fe84231e078220592c920f81ca6d04a90e26705019ba004c2f5414f5dc545dafaf2eeefb8e0bcf45d12c4e1bd43c262b5fbbc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/disable-docs.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1bc8dfc63cf800c7eb2516197fd0b13ff862a073/community/kitty/disable-docs.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "lcms2",
+      "commit": "c18abc13b5191e9d886a47526415c5db490df195",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/c18abc13b5191e9d886a47526415c5db490df195/main/lcms2/APKBUILD",
+      "recipe_sha256": "4358dd9c19c5dc38346963bd02efaa1d74d367826f4d326b6f06556a2e99060a",
+      "files": [
+        {
+          "name": "lcms2-2.19.tar.gz",
+          "sha512": "0d282fae9ca16b9cbc75ef8845d6ad1062aca8c8783e39c09ad294050e0574da8ee437b9ac58771f259e3b2dea702d8d094dcc7dba4eeba8453d82f54d06ab9c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/lcms2-2.19.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/c18abc13b5191e9d886a47526415c5db490df195/main/lcms2/lcms2-2.19.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "less",
+      "commit": "7a5f1241d7636ff96ede08e351b28d7258bea389",
+      "license": "GPL-3.0-or-later OR BSD-2-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7a5f1241d7636ff96ede08e351b28d7258bea389/main/less/APKBUILD",
+      "recipe_sha256": "81fa493899ab3bbb178ee46346c0d520e03bb8ab491a5135e108ce18a1514d81",
+      "files": [
+        {
+          "name": "less-679.tar.gz",
+          "sha512": "f04e37dc4b2839b416a195e107d21328800e75080054788002c109b3b113a6a898b953391912e7538fb9843ef530b1991efc76dbf6fb5960e5530f3ff83421f6",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/less-679.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7a5f1241d7636ff96ede08e351b28d7258bea389/main/less/less-679.tar.gz"
           ]
         }
       ]
@@ -2454,6 +2571,23 @@
       ]
     },
     {
+      "origin": "libxcursor",
+      "commit": "1d6d12ed6f5cc1fc2e382d0bdc6fc90712745e8a",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/1d6d12ed6f5cc1fc2e382d0bdc6fc90712745e8a/main/libxcursor/APKBUILD",
+      "recipe_sha256": "6b65d702a48d50f85b6c80973abf89d62595b8884ce123ded922a3af130073c4",
+      "files": [
+        {
+          "name": "libXcursor-1.2.3.tar.xz",
+          "sha512": "069a1eb27a0ee1b29b251bb6c2d0688543a791d6862fad643279e86736e1c12ca6fc02b85b8611c225a9735dc00efab84672d42b547baa97304362f0c5ae0b5a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libXcursor-1.2.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/1d6d12ed6f5cc1fc2e382d0bdc6fc90712745e8a/main/libxcursor/libXcursor-1.2.3.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libxcvt",
       "commit": "68e887cbf59009caf08c641174e4d706c87074d7",
       "license": "custom",
@@ -2500,6 +2634,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libXext-1.3.6.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxext/libXext-1.3.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libxfixes",
+      "commit": "614e9166706cec427fc3d907b8d981390a42e088",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxfixes/APKBUILD",
+      "recipe_sha256": "af318da12c6e6d6af2510934545870ea706b8d494a6b9dbfab06b12a23e1ebf9",
+      "files": [
+        {
+          "name": "libXfixes-6.0.1.tar.xz",
+          "sha512": "b46deffb30cd73ec8a127390d99f2ba2f3ab78f334fdba227f1f461441644a0c169b0d13ffa47576fa458780e7a6db664ff8b93e9195fb217262efd8128f1ffe",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libXfixes-6.0.1.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/614e9166706cec427fc3d907b8d981390a42e088/main/libxfixes/libXfixes-6.0.1.tar.xz"
           ]
         }
       ]
@@ -2774,6 +2925,63 @@
       ]
     },
     {
+      "origin": "llvm20",
+      "commit": "9cf763a63d7ef49e00a4c6becac86468771fe592",
+      "license": "Apache-2.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/APKBUILD",
+      "recipe_sha256": "544d861d37e96db3f8c7daacc8d6c13d1d2a769f2f4a0b1478f7442530fae83a",
+      "files": [
+        {
+          "name": "llvm-project-20.1.8.src.tar.xz",
+          "sha512": "f330e72e6a1da468569049437cc0ba7a41abb816ccece7367189344f7ebfef730f4788ac7af2bef0aa8a49341c15ab1d31e941ffa782f264d11fe0dc05470773",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/llvm-project-20.1.8.src.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/llvm-project-20.1.8.src.tar.xz"
+          ]
+        },
+        {
+          "name": "0001-Disable-dynamic-lib-tests-for-musl-s-dlclose-is-noop.patch",
+          "sha512": "8ea1d7ed115c71fef5e8ad34b164ed82f4d7349e2cb4ef6d0421e57fd425f173bea3e339484ec3b85eb5a817f404f37e41c775cf3a6957a24c8798f2c0144250",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0001-Disable-dynamic-lib-tests-for-musl-s-dlclose-is-noop.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/0001-Disable-dynamic-lib-tests-for-musl-s-dlclose-is-noop.patch"
+          ]
+        },
+        {
+          "name": "fix-memory-mf_exec-on-aarch64.patch",
+          "sha512": "1826a6877d0c9e93c2d6ce0b4f83fe1118b9449f82f1919b37be5fc6d7c11ae22e0c02a7d3e6e23ce41bbb07df2ff08124aa9172e254ef2b12ecbc80d9a674a9",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/fix-memory-mf_exec-on-aarch64.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/fix-memory-mf_exec-on-aarch64.patch"
+          ]
+        },
+        {
+          "name": "install-prefix.patch",
+          "sha512": "510833875b190101a2bc466a7d3e17e820d4806345f350385c2e8e5112713fd864467f245e85f9b192b2c9b00c3fa33c5de773f98a38dfbb4ae80e158af19738",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/install-prefix.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/install-prefix.patch"
+          ]
+        },
+        {
+          "name": "llvm-stack-size.patch",
+          "sha512": "2123f01d8075a15cf8c2d8091fc8c92cb99807b1d654af13b436690ddb55f3e893a494593b3c92aeab26e50db4e0500ac688129ab6bc11e4765c0308b90db101",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/llvm-stack-size.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/llvm-stack-size.patch"
+          ]
+        },
+        {
+          "name": "reopt-arm.patch",
+          "sha512": "304630afeb502316ec563dbbf5a5ec78d9835d1bc8143d82cd0625692d1e40a2389748d0c0aa85244d93b0ef8c04cf533c1cf4cc7ce57058cb8e84ebec22e3c3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/reopt-arm.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9cf763a63d7ef49e00a4c6becac86468771fe592/main/llvm20/reopt-arm.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "m4",
       "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
       "license": "GPL-3.0-or-later",
@@ -2921,6 +3129,47 @@
       ]
     },
     {
+      "origin": "mesa-demos",
+      "commit": "6bd45b53fb316dc01bda59f5feaf1e127eb64f22",
+      "license": "custom",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/6bd45b53fb316dc01bda59f5feaf1e127eb64f22/community/mesa-demos/APKBUILD",
+      "recipe_sha256": "554487f2c182c264953432001afe9b2b32180d46c42c91be75737afe5141d558",
+      "files": [
+        {
+          "name": "mesa-demos-9.0.0.tar.xz",
+          "sha512": "af33ef72a521416e39d93370b2b4ccb768f08084c9e4c0aa62868210d9465c858e5cb8e5d23952295a3073946f609eb8723ee60b39dd9fb6696c4e45aafbb2c1",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/mesa-demos-9.0.0.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6bd45b53fb316dc01bda59f5feaf1e127eb64f22/community/mesa-demos/mesa-demos-9.0.0.tar.xz"
+          ]
+        },
+        {
+          "name": "glx.patch",
+          "sha512": "8622666722d202b6463539098622a2beaac6e6f0bb7c4859b60d1d25b251eb32647051b9d156286a4cf5c575ef80834a9c5bb004a6b990b0baf43040be5e2a92",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/glx.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6bd45b53fb316dc01bda59f5feaf1e127eb64f22/community/mesa-demos/glx.patch"
+          ]
+        },
+        {
+          "name": "uint.patch",
+          "sha512": "facaaed1a44090030c1fedda25d408f99e5b940b5a3a54988e0afcde1c3ccd7176121e2ffe25860b97dd86e20cdbff8249f42abda8c8f9d7f8ed2b23bbf7a5b3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/uint.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6bd45b53fb316dc01bda59f5feaf1e127eb64f22/community/mesa-demos/uint.patch"
+          ]
+        },
+        {
+          "name": "mesa-demos-system-data.patch",
+          "sha512": "ef76456547725db1eb5f73508be227551f718d02ec09823ad1ff1abe445f791e34e09bd96a2ae8b3c0b9470ed375d133d2ec634cfe97ec04579d130957404126",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/mesa-demos-system-data.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6bd45b53fb316dc01bda59f5feaf1e127eb64f22/community/mesa-demos/mesa-demos-system-data.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "mkfontscale",
       "commit": "d3b558e1b8572decb53ac74fe4f3a5393fdb2eb9",
       "license": "MIT",
@@ -2950,6 +3199,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/mpc-1.3.1.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/84a227baf001b6e0208e3352b294e4d7a40e93de/main/mpc1/mpc-1.3.1.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "mpdecimal",
+      "commit": "c0519b85456e9b838e3142e1d233aab0b433b476",
+      "license": "BSD-2-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/c0519b85456e9b838e3142e1d233aab0b433b476/main/mpdecimal/APKBUILD",
+      "recipe_sha256": "3838e02aad7a5984e8c1296c3741ac4f82e643d24bbc1aade02288b600d62bb7",
+      "files": [
+        {
+          "name": "mpdecimal-4.0.1.tar.gz",
+          "sha512": "431fa8ab90d6b8cdecc38b1618fd89d040185dec3c1150203e20f40f10a16160058f6b8abddd000f6ecb74f4dc42d9fef8111444f1496ab34c34f6b814ed32b7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/mpdecimal-4.0.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/c0519b85456e9b838e3142e1d233aab0b433b476/main/mpdecimal/mpdecimal-4.0.1.tar.gz"
           ]
         }
       ]
@@ -3389,6 +3655,88 @@
       ]
     },
     {
+      "origin": "py3-pygments",
+      "commit": "f15642665ff290eb83a8c70c124c15f230fda7bb",
+      "license": "BSD-2-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/f15642665ff290eb83a8c70c124c15f230fda7bb/main/py3-pygments/APKBUILD",
+      "recipe_sha256": "c550c0ff7c53a44e1fa2e47968ba0bac3d1c6b13ce16d710d7c90a4b753ee284",
+      "files": [
+        {
+          "name": "pygments-2.19.1.tar.gz",
+          "sha512": "f8547b1eb032fb4c0ad15f1bb61bc6d8c25b309e61850a7ebe4e879fefe1ebb0acba53192d1294e8ef243613ba546e1e7ac7474ab1b49b1a1c1551c6733d9ec7",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pygments-2.19.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f15642665ff290eb83a8c70c124c15f230fda7bb/main/py3-pygments/pygments-2.19.1.tar.gz"
+          ]
+        },
+        {
+          "name": "build-with-setuptools.patch",
+          "sha512": "5843e84f597cb249c2ca4c88b224a7e737b204ce8cbb136005576739126b1f72d2cb89b12bcb23cd863d5f6447951ad767d37a38cbcb5d8db70f1f4fb5c11a76",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/build-with-setuptools.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/f15642665ff290eb83a8c70c124c15f230fda7bb/main/py3-pygments/build-with-setuptools.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "python3",
+      "commit": "712199df117586aee4a5a8138360636deafcae27",
+      "license": "PSF-2.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/APKBUILD",
+      "recipe_sha256": "30ded31c7debdc302fe5ae969bec43f6f4c687f096203fb028b93d699779c0a4",
+      "files": [
+        {
+          "name": "Python-3.12.16.tar.xz",
+          "sha512": "adc13563d138248e5049e3d71f6497ff645e5fb3713fc14146fef8809608f447c7d205a6fa468434239504e56b9f826554e1a02c31c9e123e65b17030a7c2afc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/Python-3.12.16.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/Python-3.12.16.tar.xz"
+          ]
+        },
+        {
+          "name": "externally-managed",
+          "sha512": "46dd8230ee2ab66e9c4157c10b2bd9c414fd7f30be0bee73e21a9eea88f63fff362d47828e0fc77ddc59df097b414b21505f8b5f98bc866381115c58ae3f4862",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/externally-managed",
+            "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/externally-managed"
+          ]
+        },
+        {
+          "name": "musl-find_library.patch",
+          "sha512": "ab8eaa2858d5109049b1f9f553198d40e0ef8d78211ad6455f7b491af525bffb16738fed60fc84e960c4889568d25753b9e4a1494834fea48291b33f07000ec2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/musl-find_library.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/musl-find_library.patch"
+          ]
+        },
+        {
+          "name": "test_posix-nodev-disable.patch",
+          "sha512": "606cf7b3df0c81c90571c6bc65e4f07e065867739fa0d36e9c8e1ad2d6bcd64d265f90c4a7881880fc7e0c85eed94d1f72655a5c70d92ca63e5cc4bd3be8f145",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/test_posix-nodev-disable.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/test_posix-nodev-disable.patch"
+          ]
+        },
+        {
+          "name": "fix-run_fileexflags-test.patch",
+          "sha512": "0e1155b1976be46d68fe50161b9644ac272d95c51f44ada51a0fd67a0154df89833752e97cfc85e977b384fca82b58907c30405a103f3a33a1483b9f76ce632f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/fix-run_fileexflags-test.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/fix-run_fileexflags-test.patch"
+          ]
+        },
+        {
+          "name": "fix-test-suite-hang.patch",
+          "sha512": "f9116607b9629e1ba2783c7f1608a93c706d70e819eb5e829eebdecc9a5bc8d3b665d83b24f7b6b83e071f6ce59c29ff4d1829732befa73af9f392a08595efd5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/fix-test-suite-hang.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/712199df117586aee4a5a8138360636deafcae27/main/python3/fix-test-suite-hang.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "readline",
       "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
       "license": "GPL-3.0-or-later",
@@ -3580,6 +3928,56 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/SDL2_net-2.2.0.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/fa7e44444e9acb8d7541a5e25de3ccf200a7baf4/community/sdl2_net/SDL2_net-2.2.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "spirv-tools",
+      "commit": "5e92a103a8ac7baea97f089965f902c4b738c191",
+      "license": "Apache-2.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/5e92a103a8ac7baea97f089965f902c4b738c191/main/spirv-tools/APKBUILD",
+      "recipe_sha256": "8433a530b97123f7eb691bd6b7fa541f0924c4df42e5dc6d2d2706a2a2b7bda8",
+      "files": [
+        {
+          "name": "spirv-tools-1.4.313.0.tar.gz",
+          "sha512": "2e0cffc9550fa95da8622424012e1fa2decbc6b981e30114ac0b7a332d7a9abed9a2138dc83ff6eb0b6d3946c1f1b43679de0754ccb98380d4981e8130a5e248",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/spirv-tools-1.4.313.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/5e92a103a8ac7baea97f089965f902c4b738c191/main/spirv-tools/spirv-tools-1.4.313.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "sqlite",
+      "commit": "dac9cea7503a4e9b84d647aab2492d733ac4ac8c",
+      "license": "blessing",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/dac9cea7503a4e9b84d647aab2492d733ac4ac8c/main/sqlite/APKBUILD",
+      "recipe_sha256": "57cfdb51c2701a757028e1e521d2c09fa2ffdbf6063c0137f5b1975de8f294e1",
+      "files": [
+        {
+          "name": "sqlite-autoconf-3490200.tar.gz",
+          "sha512": "59bbed0f49bcc17abcc3ba180858c7a7128038e43fd0b24a786505f0223340f85eb956e64a2b66e245d0b8d0769daa5e4688ae4686c64fc8ff91c546acce0070",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/sqlite-autoconf-3490200.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/dac9cea7503a4e9b84d647aab2492d733ac4ac8c/main/sqlite/sqlite-autoconf-3490200.tar.gz"
+          ]
+        },
+        {
+          "name": "sqlite-3490200-LICENSE.md",
+          "sha512": "38844727b09d11ded660c069d19a5289100405b0b243e75338060d237e3190fd99f0270611d214862beeb54a67993c2a337f917fdc452084f812d1371ce9869b",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/sqlite-3490200-LICENSE.md",
+            "https://raw.githubusercontent.com/alpinelinux/aports/dac9cea7503a4e9b84d647aab2492d733ac4ac8c/main/sqlite/sqlite-3490200-LICENSE.md"
+          ]
+        },
+        {
+          "name": "CVE-2025-6965.patch",
+          "sha512": "f576fb56cae0376efbf9e86fdd1869ae3a4f4320ca2f1d51a9ba45d64c0a5c0dd93b26fd6589ede172051f39d021e59a0c9aed26d8c002bded590817a56b4d90",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2025-6965.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/dac9cea7503a4e9b84d647aab2492d733ac4ac8c/main/sqlite/CVE-2025-6965.patch"
           ]
         }
       ]
@@ -3878,6 +4276,23 @@
       ]
     },
     {
+      "origin": "xxhash",
+      "commit": "6e7967375f3dc136a45daa394d61ff677d9485f3",
+      "license": "BSD-2-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/6e7967375f3dc136a45daa394d61ff677d9485f3/main/xxhash/APKBUILD",
+      "recipe_sha256": "ba9fe747f27e9f7c914db9c8a44686cb20a0cada802189fb7c54a06e5873ed60",
+      "files": [
+        {
+          "name": "xxhash-0.8.3.tar.gz",
+          "sha512": "8b5c8b9aad4e869f28310b12cc314037feda81d92f26c23eaecdb35dc65042ca2e65f2e9606033e62a31bcc737a9a950500ffcbdb8677d6ab20e820ea14f2b79",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/xxhash-0.8.3.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6e7967375f3dc136a45daa394d61ff677d9485f3/main/xxhash/xxhash-0.8.3.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "xz",
       "commit": "4ad8da6dc8e2b7ed46653b9844835babc3a166ae",
       "license": "GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later",
@@ -4123,5 +4538,231 @@
     "signing_primary_fingerprint": "B146647E45A7B33947AB226B2A2C87D161692D40",
     "signature_url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz.asc",
     "signature_sha256": "bdccf2057a7c4ae377b40e832cb8c632ae8b532d4fb64cc7b843066eee748f89"
-  }
+  },
+  "kitty_dependencies": [
+    {
+      "name": "NerdFontsSymbolsOnly-3.2.1.tar.xz",
+      "sha512": "ac61c1d4153049f1a3009fb6ec4f89073770a09d70b7236b9e0eca07da593e57c14afe2a0c9d7bfb315389c878afcdfdb23c1c19a23c3950e7de52a8ce3099de",
+      "urls": [
+        "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/NerdFontsSymbolsOnly.tar.xz"
+      ]
+    },
+    {
+      "name": "go1.24.12.src.tar.gz",
+      "sha512": "2de51c56f7ca04003b16d0fecc4cb35a3c5a42bd54f4da1f1e49d45b702d7a872057756d389f2283b4f7283fb33f0618465e231a6333b7cb6cfff98f67b2454e",
+      "urls": [
+        "https://go.dev/dl/go1.24.12.src.tar.gz"
+      ]
+    },
+    {
+      "name": "github.com_ALTree_bigfloat-v0.2.0.zip",
+      "sha512": "c0f87e9f291dc775b95a41216664480416a8025c95811f313dd8b17529310dd85f7756ce720393f7a5e54f461af9a66a3ae1223842432921d50498ac1e623be7",
+      "urls": [
+        "https://proxy.golang.org/github.com/!a!l!tree/bigfloat/@v/v0.2.0.zip"
+      ],
+      "module": "github.com/ALTree/bigfloat",
+      "version": "v0.2.0",
+      "module_sum": "h1:AwNzawrpFuw55/YDVlcPw0F0cmmXrmngBHhVrvdXPvM="
+    },
+    {
+      "name": "github.com_alecthomas_chroma_v2-v2.17.2.zip",
+      "sha512": "621843617b2738b6d3cd5f90565b4257579352755646ce0762bcd9d0d271ddd95a0f02c09c7705bc5148c8436a45eb4cc38fb5df92017405d8500b941168e6ff",
+      "urls": [
+        "https://proxy.golang.org/github.com/alecthomas/chroma/v2/@v/v2.17.2.zip"
+      ],
+      "module": "github.com/alecthomas/chroma/v2",
+      "version": "v2.17.2",
+      "module_sum": "h1:Rm81SCZ2mPoH+Q8ZCc/9YvzPUN/E7HgPiPJD8SLV6GI="
+    },
+    {
+      "name": "github.com_bmatcuk_doublestar_v4-v4.8.1.zip",
+      "sha512": "0d0b4ab0b5e51ab3aa9a2c89dbec0021b9f640b749ed8ffb8072de358688ba9f46d1fa016d6fa934be355e9ba130736694fa3f60d42132cf389c71353f8ea864",
+      "urls": [
+        "https://proxy.golang.org/github.com/bmatcuk/doublestar/v4/@v/v4.8.1.zip"
+      ],
+      "module": "github.com/bmatcuk/doublestar/v4",
+      "version": "v4.8.1",
+      "module_sum": "h1:54Bopc5c2cAvhLRAzqOGCYHYyhcDHsFF4wWIR5wKP38="
+    },
+    {
+      "name": "github.com_disintegration_imaging-v1.6.2.zip",
+      "sha512": "3ca8feef7d1658b38471ee84ab444e77dac5cd347fbf44566799a0a45256b889f31f95a448f320ad08a719369b5c618926116b981f73dd29783a43f99e81c64b",
+      "urls": [
+        "https://proxy.golang.org/github.com/disintegration/imaging/@v/v1.6.2.zip"
+      ],
+      "module": "github.com/disintegration/imaging",
+      "version": "v1.6.2",
+      "module_sum": "h1:w1LecBlG2Lnp8B3jk5zSuNqd7b4DXhcjwek1ei82L+c="
+    },
+    {
+      "name": "github.com_dlclark_regexp2-v1.11.5.zip",
+      "sha512": "c7daa6436a49944d729e116ac823f949cd6dc4d7ab1a66d843b9a894a8fc6676674084fafea407982ad4a7a56ec7edeef057506acde2afe1ae3e1234c37a8621",
+      "urls": [
+        "https://proxy.golang.org/github.com/dlclark/regexp2/@v/v1.11.5.zip"
+      ],
+      "module": "github.com/dlclark/regexp2",
+      "version": "v1.11.5",
+      "module_sum": "h1:Q/sSnsKerHeCkc/jSTNq1oCm7KiVgUMZRDUoRu0JQZQ="
+    },
+    {
+      "name": "github.com_edwvee_exiffix-v0.0.0-20240229113213-0dbb146775be.zip",
+      "sha512": "6d33544dd3336a71098c4e2aa331e45e67447fabea36981b7b3efd340ef85d6915a52599b602f2de9d0a37f3e3e4da64490c9ca5db7eafd16e6ecb2116480f38",
+      "urls": [
+        "https://proxy.golang.org/github.com/edwvee/exiffix/@v/v0.0.0-20240229113213-0dbb146775be.zip"
+      ],
+      "module": "github.com/edwvee/exiffix",
+      "version": "v0.0.0-20240229113213-0dbb146775be",
+      "module_sum": "h1:FNPYI8/ifKGW7kdBdlogyGGaPXZmOXBbV1uz4Amr3s0="
+    },
+    {
+      "name": "github.com_google_go-cmp-v0.7.0.zip",
+      "sha512": "171151f06d2e5dfc76cfd7ede810e74bdd668a515a8d6f7785f06ec8bcf1f34efb95cafdfc7a4c3943c98de83f905967e10e61721537c24cee33d7e1e4c15195",
+      "urls": [
+        "https://proxy.golang.org/github.com/google/go-cmp/@v/v0.7.0.zip"
+      ],
+      "module": "github.com/google/go-cmp",
+      "version": "v0.7.0",
+      "module_sum": "h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8="
+    },
+    {
+      "name": "github.com_google_uuid-v1.6.0.zip",
+      "sha512": "9ce996a3e7257ea896c1a0469cbd2010be969098443fe096e2679cb343aa8b74e5a9e39ac95e866c8ffa681d7e9d7a3c864acb2958735200826fe326f886064e",
+      "urls": [
+        "https://proxy.golang.org/github.com/google/uuid/@v/v1.6.0.zip"
+      ],
+      "module": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "module_sum": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0="
+    },
+    {
+      "name": "github.com_klauspost_cpuid_v2-v2.2.5.zip",
+      "sha512": "b046d34661fb1712ff3b96945653cb3832f5e4c4c5266464a2e2baed8d7d97fae4b53598299157bae978dd5a5f12e55986cc4afc18129199bd956c2d668c33cf",
+      "urls": [
+        "https://proxy.golang.org/github.com/klauspost/cpuid/v2/@v/v2.2.5.zip"
+      ],
+      "module": "github.com/klauspost/cpuid/v2",
+      "version": "v2.2.5",
+      "module_sum": "h1:0E5MSMDEoAulmXNFquVs//DdoomxaoTY1kUhbc/qbZg="
+    },
+    {
+      "name": "github.com_kovidgoyal_imaging-v1.6.4.zip",
+      "sha512": "ce4d7844642ea1b63985ab88c55128bee533c8461c500f1dc4e7edb65ab2b87c26bfad62157b03da458f6dda1d7f31834a8f760e71f4a135a94206720f37cbd4",
+      "urls": [
+        "https://proxy.golang.org/github.com/kovidgoyal/imaging/@v/v1.6.4.zip"
+      ],
+      "module": "github.com/kovidgoyal/imaging",
+      "version": "v1.6.4",
+      "module_sum": "h1:K0idhRPXnRrJBKnBYcTfI1HTWSNDeAn7hYDvf9I0dCk="
+    },
+    {
+      "name": "github.com_rwcarlsen_goexif-v0.0.0-20190401172101-9e8deecbddbd.zip",
+      "sha512": "baaf37e35d0e6d1e7f186fae593d4e596528291c6aae14b2ac341dc0848a15866a33a5142e65c9aa3ca9f5fcd05a44694f912da64369a4c292bdba35bc030c95",
+      "urls": [
+        "https://proxy.golang.org/github.com/rwcarlsen/goexif/@v/v0.0.0-20190401172101-9e8deecbddbd.zip"
+      ],
+      "module": "github.com/rwcarlsen/goexif",
+      "version": "v0.0.0-20190401172101-9e8deecbddbd",
+      "module_sum": "h1:CmH9+J6ZSsIjUK3dcGsnCnO41eRBOnY12zwkn5qVwgc="
+    },
+    {
+      "name": "github.com_seancfoley_bintree-v1.3.1.zip",
+      "sha512": "ae9262a61945e9916575d151903b3088e25582cc934c7b66d6ba77eaf34bb677b5a3543a1aedcddc05cb389ef74e43e6a2a0c8f224d7d838e4b05443898ffabc",
+      "urls": [
+        "https://proxy.golang.org/github.com/seancfoley/bintree/@v/v1.3.1.zip"
+      ],
+      "module": "github.com/seancfoley/bintree",
+      "version": "v1.3.1",
+      "module_sum": "h1:cqmmQK7Jm4aw8gna0bP+huu5leVOgHGSJBEpUx3EXGI="
+    },
+    {
+      "name": "github.com_seancfoley_ipaddress-go-v1.7.1.zip",
+      "sha512": "68b8df50eb02b6e2ae58cfb31f8c5f8455a6502926651f74e2ac6e2ea80478b803c064aa8c78e75f7896ba13ef99efbcbbe09ac1dc701acb1c0a82ef7507a789",
+      "urls": [
+        "https://proxy.golang.org/github.com/seancfoley/ipaddress-go/@v/v1.7.1.zip"
+      ],
+      "module": "github.com/seancfoley/ipaddress-go",
+      "version": "v1.7.1",
+      "module_sum": "h1:fDWryS+L8iaaH5RxIKbY0xB5Z+Zxk8xoXLN4S4eAPdQ="
+    },
+    {
+      "name": "github.com_shirou_gopsutil_v3-v3.24.5.zip",
+      "sha512": "b03cd736a11cba86e779b126bd9adcb6a2dc7fc7d062389a023674c9513109989722b1a21f0faba8cb2017374d3b6cbc05f36f1cadee6bc7bec7632140c4bd5e",
+      "urls": [
+        "https://proxy.golang.org/github.com/shirou/gopsutil/v3/@v/v3.24.5.zip"
+      ],
+      "module": "github.com/shirou/gopsutil/v3",
+      "version": "v3.24.5",
+      "module_sum": "h1:i0t8kL+kQTvpAYToeuiVk3TgDeKOFioZO3Ztz/iZ9pI="
+    },
+    {
+      "name": "github.com_tklauser_go-sysconf-v0.3.12.zip",
+      "sha512": "bc4a024f2d8d356cd3c289395ed282ba681dcaabc62dac2b82b054348c01c9da80479fa88c389bf52fec87ab3d04e9cad53880cfcc589d50589bc76c97466498",
+      "urls": [
+        "https://proxy.golang.org/github.com/tklauser/go-sysconf/@v/v0.3.12.zip"
+      ],
+      "module": "github.com/tklauser/go-sysconf",
+      "version": "v0.3.12",
+      "module_sum": "h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFAEVmqU="
+    },
+    {
+      "name": "github.com_tklauser_numcpus-v0.6.1.zip",
+      "sha512": "5aefe09e8b1279ad93e33339a8f116316640de44282ae958bde0d6760ce3c99df6f289567b6cfe2d1a3a3ac8b5ca1fc1c7ca10d55a85f52c0052f28a503d4539",
+      "urls": [
+        "https://proxy.golang.org/github.com/tklauser/numcpus/@v/v0.6.1.zip"
+      ],
+      "module": "github.com/tklauser/numcpus",
+      "version": "v0.6.1",
+      "module_sum": "h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+Fk="
+    },
+    {
+      "name": "github.com_zeebo_xxh3-v1.0.2.zip",
+      "sha512": "866fc346b6db9af6550dc689e9c7632a23649ad4b20688867d2b462c4ec3bc9857edb3acfae037a9e07d5f4ba9d03d18a0a5af48c1a7e43f93b024ac448b41cd",
+      "urls": [
+        "https://proxy.golang.org/github.com/zeebo/xxh3/@v/v1.0.2.zip"
+      ],
+      "module": "github.com/zeebo/xxh3",
+      "version": "v1.0.2",
+      "module_sum": "h1:xZmwmqxHZA8AI603jOQ0tMqmBr9lPeFwGg6d+xy9DC0="
+    },
+    {
+      "name": "golang.org_x_exp-v0.0.0-20230801115018-d63ba01acd4b.zip",
+      "sha512": "2be05136e2357b198668a2dea8b240d9ae8fc4b49d33b92660642ac592f4841c28d99b8ea2745d00ba38776033407fd3bc7cef1a33ded7869508b5c2db29f0ca",
+      "urls": [
+        "https://proxy.golang.org/golang.org/x/exp/@v/v0.0.0-20230801115018-d63ba01acd4b.zip"
+      ],
+      "module": "golang.org/x/exp",
+      "version": "v0.0.0-20230801115018-d63ba01acd4b",
+      "module_sum": "h1:r+vk0EmXNmekl0S0BascoeeoHk/L7wmaW2QF90K+kYI="
+    },
+    {
+      "name": "golang.org_x_image-v0.27.0.zip",
+      "sha512": "85f68e754fe9ae7bd5bb16b43a02141c0df89d5f9dc67a6590d5a71a89dcd7ff6de744047db455abcc07feae07a209ffa82d764824b3ffd27fcaf188fd656ca8",
+      "urls": [
+        "https://proxy.golang.org/golang.org/x/image/@v/v0.27.0.zip"
+      ],
+      "module": "golang.org/x/image",
+      "version": "v0.27.0",
+      "module_sum": "h1:C8gA4oWU/tKkdCfYT6T2u4faJu3MeNS5O8UPWlPF61w="
+    },
+    {
+      "name": "golang.org_x_sys-v0.33.0.zip",
+      "sha512": "1c7de7866bc12cab5e42a385cebad90fb85f348a6779d625bd6f4e65208c315c07de0f8b6bddf820f5df7fa64a88657457cca4cd5b136db362cc57c40553ce63",
+      "urls": [
+        "https://proxy.golang.org/golang.org/x/sys/@v/v0.33.0.zip"
+      ],
+      "module": "golang.org/x/sys",
+      "version": "v0.33.0",
+      "module_sum": "h1:q3i8TbbEz+JRD9ywIRlyRAQbM0qF7hu24q3teo2hbuw="
+    },
+    {
+      "name": "howett.net_plist-v1.0.1.zip",
+      "sha512": "4f8b07bebf808ff4bbc1b2fdcf501d60731e26e048c1e7e2f21cfb9816fab8937e9f1915b44ff693a6a5b0f91cff470f40c4d7a71d7728afe2d0a3bca99432cd",
+      "urls": [
+        "https://proxy.golang.org/howett.net/plist/@v/v1.0.1.zip"
+      ],
+      "module": "howett.net/plist",
+      "version": "v1.0.1",
+      "module_sum": "h1:37GdZ8tP09Q35o9ych3ehygcsL+HqKSwzctveSlarvM="
+    }
+  ]
 }

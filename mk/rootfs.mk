@@ -4,7 +4,7 @@
 # @author  frankischilling
 # @date    2026-11-21
 #
-# Collects guest files and the inputs needed to keep both profiles current.
+# Collects guest files and the inputs needed to keep the image profiles current.
 #
 # Copyright (C) 2026 frankischilling
 #
@@ -48,9 +48,15 @@ build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) | busybox
+	$(PYTHON) scripts/rootfs.py --profile installed-desktop
+
 image: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py
 
-.PHONY: test-weston
+.PHONY: test-weston test-kitty
 test-weston: build/axiom64.elf build/rootfs-desktop.cpio
 	$(PYTHON) scripts/weston_test.py $(WESTON_TEST_FLAGS)
+
+test-kitty: build/axiom64.elf build/rootfs-installed-desktop.cpio
+	$(PYTHON) scripts/kitty_test.py $(KITTY_TEST_FLAGS)

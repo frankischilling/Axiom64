@@ -685,9 +685,26 @@ static void child(const struct account_profile* profile, int output, int server,
         // Xorg resets its umask before opening a named log. Keep all diagnostics
         // on the already private stderr descriptor at its normal file verbosity.
         umask(077);
-        execl("/usr/libexec/Xorg", "Xorg", ":0", "-config", "/etc/X11/xorg.conf", "-nolisten",
-              "tcp", "-noreset", "-auth", DESKTOP_DIRECTORY "/server.auth", "-retro", "-dumbSched",
-              "-extension", "GLX", "-logfile", "", "-verbose", "3", (char*)NULL);
+        char* const arguments[] = {"Xorg",
+                                   ":0",
+                                   "-config",
+                                   "/etc/X11/xorg.conf",
+                                   "-nolisten",
+                                   "tcp",
+                                   "-noreset",
+                                   "-auth",
+                                   DESKTOP_DIRECTORY "/server.auth",
+                                   "-retro",
+                                   "-dumbSched",
+                                   "-logfile",
+                                   "",
+                                   "-verbose",
+                                   "3",
+                                   access("/usr/lib/dri/swrast_dri.so", R_OK) == 0 ? NULL
+                                                                                   : "-extension",
+                                   "GLX",
+                                   NULL};
+        execv("/usr/libexec/Xorg", arguments);
     } else {
         umask(077);
         execl("/usr/bin/dbus-run-session", "dbus-run-session",

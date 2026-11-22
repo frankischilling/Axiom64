@@ -26,7 +26,7 @@ set -eu
 export DISPLAY=:0
 export XAUTHORITY=/run/axiom64-seat/client.auth
 cleanup() {
-    for process in "${xterm:-}" "${xeyes:-}" "${twm:-}"; do
+    for process in "${terminal:-}" "${xeyes:-}" "${twm:-}"; do
         if test -n "$process"; then kill "$process" 2>/dev/null || true; fi
     done
     wait 2>/dev/null || true
@@ -52,11 +52,20 @@ seed_desktop desktop-shortcuts /etc/skel/Desktop/freedoom-*.desktop ||
     printf '%s\n' 'Could not install the Freedoom shortcuts.' >&2
 seed_desktop weston-shortcut /etc/skel/Desktop/weston-nested.desktop ||
     printf '%s\n' 'Could not install the Weston shortcut.' >&2
+if test -x /usr/bin/kitty; then
+    seed_desktop kitty-shortcut /etc/skel/Desktop/kitty.desktop ||
+        printf '%s\n' 'Could not install the kitty shortcut.' >&2
+fi
 /usr/bin/twm -f /etc/X11/system.twmrc &
 twm=$!
 sleep .2
 /usr/bin/xeyes -geometry 120x80+850+50 &
 xeyes=$!
-/usr/bin/xterm -title 'Axiom64 - Terminal' -geometry 90x32+40+50 -fn fixed -e /usr/libexec/desktop-terminal &
-xterm=$!
-wait "$xterm"
+if test -x /usr/bin/kitty; then
+    /usr/bin/kitty --title 'Axiom64 - Terminal' /usr/libexec/desktop-terminal &
+else
+    /usr/bin/xterm -title 'Axiom64 - Terminal' -geometry 90x32+40+50 -fn fixed \
+        -e /usr/libexec/desktop-terminal &
+fi
+terminal=$!
+wait "$terminal"

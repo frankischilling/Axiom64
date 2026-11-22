@@ -1839,7 +1839,7 @@ MUSL_PROGRAMS += build/ipv4-send-controls-static build/ipv4-send-controls-dynami
 MUSL_PROGRAMS += build/ipv4-source-controls-static build/ipv4-source-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-send-wire-static build/ipv4-send-wire-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
-build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
+build/rootfs.cpio build/rootfs-desktop.cpio build/rootfs-installed-desktop.cpio: $(MUSL_INPUTS)
 .PHONY: musl-toolchain
 musl-toolchain:
 	$(PYTHON) scripts/build_musl.py --provider build --compiler-specs

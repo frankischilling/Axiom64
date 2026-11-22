@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import tarfile
 import urllib.error
+import zipfile
 from fetch import LOCK, ROOT, fetch
 from ports import download
 
@@ -29,7 +30,7 @@ def resolve():
     previous = json.loads(SOURCE_LOCK.read_text()) if SOURCE_LOCK.exists() else {}
     origins = {}
     for package in json.loads((ROOT / "ports.lock.json").read_text())["packages"]:
-        if "origin" not in package or package["name"] in {"mesa", "llvm20-libs", "spirv-tools"}:
+        if "origin" not in package:
             continue
         origins.setdefault(package["origin"], package)
     sources = []
@@ -82,24 +83,32 @@ def port_sources(port):
     return origin, result
 
 
+def is_notice(name, size):
+    path = Path(name)
+    label = path.name.upper()
+    return (size <= 1024 * 1024 and
+            (label.startswith(("COPYING", "COPYRIGHT", "LICENSE", "NOTICE")) or
+             label in {"FTL.TXT", "GPLV2.TXT"}) and
+            path.suffix.lower() not in {".c", ".h", ".py", ".sh", ".in"})
+
+
 def notices(origin, paths):
     destination = NOTICES / origin
     destination.mkdir(parents=True, exist_ok=True)
     for path in paths:
-        if not tarfile.is_tarfile(path):
-            continue
-        with tarfile.open(path) as archive:
-            for member in archive:
-                name = Path(member.name).name.upper()
-                if (not member.isfile() or member.size > 1024 * 1024 or
-                    not (name.startswith(("COPYING", "COPYRIGHT", "LICENSE", "NOTICE")) or
-                         name in {"FTL.TXT", "GPLV2.TXT"})):
-                    continue
-                if Path(member.name).suffix.lower() in {".c", ".h", ".py", ".sh", ".in"}:
-                    continue
-                # Flatten paths so source archives cannot escape the notice directory.
-                target = destination / member.name.replace("/", "__")
-                target.write_bytes(archive.extractfile(member).read())
+        # Flatten archive names before writing any notices.
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                for member in archive.infolist():
+                    if not member.is_dir() and is_notice(member.filename, member.file_size):
+                        target = destination / member.filename.replace("/", "__").replace("\\", "__")
+                        target.write_bytes(archive.read(member))
+        elif tarfile.is_tarfile(path):
+            with tarfile.open(path) as archive:
+                for member in archive:
+                    if member.isfile() and is_notice(member.name, member.size):
+                        target = destination / member.name.replace("/", "__").replace("\\", "__")
+                        target.write_bytes(archive.extractfile(member).read())
 
 
 def prepare():
@@ -112,6 +121,10 @@ def prepare():
     ports = lock["ports"]
     with ThreadPoolExecutor(max_workers=8) as pool:
         inputs = list(pool.map(port_sources, ports))
+        kitty = list(pool.map(lambda item: source_file("kitty", item),
+                             lock.get("kitty_dependencies", [])))
+    if kitty:
+        inputs.append(("kitty-dependencies", kitty))
     inputs += [("BusyBox-upstream", [fetch("busybox")]), ("Limine", [fetch("limine")]),
                ("libcap-upstream", [fetch("libcap")])]
     crypto = LOCK['openssl']

@@ -22,7 +22,7 @@ Button3 = : title : f.resize
 Button1 = : root : f.menu "main"
 Menu "main" {
     "Axiom64" f.title
-    "Terminal" f.exec "xterm -e /bin/bash -i &"
+    "Terminal" f.exec "if test -x /usr/bin/kitty; then /usr/bin/kitty /bin/bash -i; else xterm -e /bin/bash -i; fi &"
     "Weston" f.exec "/usr/bin/weston-nested &"
     "Games" f.menu "games"
     "Raise" f.raise

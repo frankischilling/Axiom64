@@ -257,22 +257,31 @@ uint64_t* AddressSpace::entry(uint64_t va, bool create_table) {
     return &table[(va >> 12) & 511];
 }
 
+enum class MappingMeasure { all, resident, private_data, writable_private_data };
+
 static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uint64_t start,
-                              uint64_t end, bool private_data = false, bool make_writable = false) {
+                              uint64_t end, MappingMeasure measure) {
     const auto entries = static_cast<const uint64_t*>(physical(table));
     uint64_t span = 1ull << (12 + (level - 1) * 9), result = 0;
     for (unsigned i = 0; i < (level == 4 ? 256u : 512u); i++) {
         uint64_t address = base + i * span;
-        if (!(entries[i] & (page_mask | page_file)) || address >= end || address + span <= start)
+        uint64_t mapping = entries[i];
+        if (!(mapping & (page_mask | page_file)) || address >= end || address + span <= start)
             continue;
-        if (level == 1 || (entries[i] & 128)) {
-            bool writable = entries[i] & ((entries[i] & page_file) ? page_file_write : 2);
-            if (!private_data || ((entries[i] & page_private) && !(entries[i] & page_stack) &&
-                                  (make_writable || writable)))
-                result += min(end, address + span) - max(start, address);
+        if (level == 1 || (mapping & 128)) {
+            if (measure == MappingMeasure::resident &&
+                (!(mapping & page_mask) || (mapping & 0x200)))
+                continue; // Exclude demand placeholders and device memory.
+            if (measure == MappingMeasure::private_data ||
+                measure == MappingMeasure::writable_private_data) {
+                bool writable = mapping & ((mapping & page_file) ? page_file_write : 2);
+                if (!(mapping & page_private) || (mapping & page_stack) ||
+                    (measure == MappingMeasure::writable_private_data && !writable))
+                    continue;
+            }
+            result += min(end, address + span) - max(start, address);
         } else
-            result += mapped_length(entries[i] & page_mask, level - 1, address, start, end,
-                                    private_data, make_writable);
+            result += mapped_length(mapping & page_mask, level - 1, address, start, end, measure);
     }
     return result;
 }
@@ -280,7 +289,12 @@ static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uin
 uint64_t AddressSpace::mapped_size(uint64_t start, uint64_t length) const {
     if (start > user_limit || length > user_limit - start)
         return UINT64_MAX;
-    return root && length ? mapped_length(root, 4, 0, start, start + length) : 0;
+    return root && length ? mapped_length(root, 4, 0, start, start + length, MappingMeasure::all)
+                          : 0;
+}
+
+uint64_t AddressSpace::resident_size() const {
+    return root ? mapped_length(root, 4, 0, 0, user_limit, MappingMeasure::resident) : 0;
 }
 
 static uint64_t first_mapping(uint64_t table, unsigned level, uint64_t base, uint64_t start,
@@ -319,8 +333,9 @@ uint64_t AddressSpace::private_writable_size(uint64_t start, uint64_t length,
                                              bool make_writable) const {
     if (start > user_limit || length > user_limit - start)
         return UINT64_MAX;
-    return root && length ? mapped_length(root, 4, 0, start, start + length, true, make_writable)
-                          : 0;
+    auto measure =
+        make_writable ? MappingMeasure::private_data : MappingMeasure::writable_private_data;
+    return root && length ? mapped_length(root, 4, 0, start, start + length, measure) : 0;
 }
 
 static uint64_t permissions(int prot) {

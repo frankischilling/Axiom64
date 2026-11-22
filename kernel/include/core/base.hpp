@@ -190,6 +190,7 @@ struct AddressSpace {
     uint64_t* entry(uint64_t va, bool create = false);
 
     uint64_t mapped_size(uint64_t start = 0, uint64_t length = user_limit) const;
+    uint64_t resident_size() const;
 
     uint64_t find_unmapped(size_t length) const;
 

@@ -195,6 +195,7 @@ extern const char* test_suite;
 extern const char* test_phase;
 
 Task* new_task();
+Task* task(int pid);
 
 uint64_t task_user_count(uint32_t);
 

@@ -4483,6 +4483,10 @@
     {
       "path": "vendor/musl/patches/0002-report-unsupported-pthread-priority-inheritance.patch",
       "sha256": "efb9fb8cfdf9e3ff224d1ade1c549779337a92be0f3cffb4e25ad20c61111c82"
+    },
+    {
+      "path": "vendor/musl/patches/0003-forward-linux-scheduling-parameters.patch",
+      "sha256": "8df8da2a5a9e1f40de7712feb5e74d277911eeb6e79e476ee30493461f4f5fc0"
     }
   ],
   "libxcrypt_upstream": {

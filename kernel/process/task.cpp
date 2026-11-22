@@ -154,6 +154,13 @@ void Task::set_name(const char* value, size_t length) {
     memset(name + count, 0, sizeof(name) - count);
 }
 
+Task* task(int pid) {
+    for (auto& candidate : tasks)
+        if (candidate.state != State::empty && candidate.process && candidate.pid == pid)
+            return &candidate;
+    return nullptr;
+}
+
 Task* new_task() {
     if (next_pid == INT32_MAX)
         return nullptr;

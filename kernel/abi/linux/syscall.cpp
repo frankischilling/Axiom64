@@ -977,6 +977,49 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
     return result;
 }
 
+static int priority_limit(int policy, bool maximum) {
+    switch (policy) {
+    case 0: // SCHED_OTHER
+    case 3: // SCHED_BATCH
+    case 5: // SCHED_IDLE
+    case 6: // SCHED_DEADLINE
+    case 7: // SCHED_EXT
+        return 0;
+    case 1: // SCHED_FIFO
+    case 2: // SCHED_RR
+        return maximum ? 99 : 1;
+    default:
+        return -22;
+    }
+}
+
+static int64_t scheduler_parameter(unsigned request, int pid, int policy, uint64_t parameter) {
+    constexpr unsigned set_param = 142, get_param = 143, set_scheduler = 144, get_scheduler = 145;
+    constexpr int reset_on_fork = 0x40000000;
+    if (pid < 0 || (request != get_scheduler && !parameter) || policy < 0)
+        return -22;
+    int priority = 0;
+    const bool change = request == set_param || request == set_scheduler;
+    if (change && !current->memory->space.copy_in(&priority, parameter, sizeof(priority)))
+        return -14;
+    auto target = pid ? task(pid) : current;
+    if (!target)
+        return -3;
+    if (request == get_scheduler)
+        return 0; // Every thread runs under SCHED_OTHER.
+    if (request == get_param)
+        return copy_result(parameter, &priority, sizeof(priority));
+    const int minimum = priority_limit(policy & ~reset_on_fork, false);
+    if (minimum < 0 || priority < minimum ||
+        priority > priority_limit(policy & ~reset_on_fork, true))
+        return -22;
+    const auto uid = current->credentials.user.effective;
+    if (uid != target->credentials.user.real && uid != target->credentials.user.effective &&
+        !capable(current->credentials, Capability::sys_nice))
+        return -1;
+    return policy ? -95 : 0;
+}
+
 static int64_t dispatch(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
@@ -1628,6 +1671,15 @@ static int64_t dispatch(Frame* f) {
                                sizeof(uint64_t));
         return -22;
     }
+    case 142:
+    case 143:
+    case 145:
+        return scheduler_parameter(f->rax, int32_t(a), 0, b);
+    case 144:
+        return scheduler_parameter(f->rax, int32_t(a), int32_t(b), c);
+    case 146:
+    case 147:
+        return priority_limit(int32_t(a), f->rax == 146);
     case 169:
         if (!capable(current->credentials, Capability::sys_boot))
             return -1;

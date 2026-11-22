@@ -68,7 +68,7 @@ struct Pty {
     uint16_t rows, columns;
 };
 
-void devices_init();
+void devices_init(bool display_console);
 
 uint64_t device_number(Node*);
 

@@ -41,6 +41,12 @@ Attach the image as a new VM disk. The command creates a regular image file and
 refuses an existing destination. Guided partitioning and installation to existing
 drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).
 
+On a machine with a 32-bit firmware framebuffer, add `--kernel-option
+fbconsole` to display the text login on the local screen. The text console
+accepts a PS/2 keyboard and keeps serial input and output available. Xorg
+takes over the screen in graphics mode. Console text and keyboard input
+return when the virtual terminal returns to text mode.
+
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
 It reports device numbers and capacities in KiB. For an NVMe drive such as
 `/dev/nvme0n1`, check `model`, `serial`, and `firmware_rev` under

@@ -57,9 +57,10 @@ Add `--kernel-option usb.xhci=keyboard` to enable USB boot keyboards and mice.
 Plug them into xHCI root ports before powering on. Axiom64 reads up to eight
 devices on each of up to four controllers. Keyboards feed the text
 console and evdev. Mice send relative movement and three button events to
-evdev. For a composite device, the driver uses one boot interface and prefers
-the keyboard. Scroll wheels, USB hubs, and discovery after boot require
-additional driver support.
+evdev. For a composite device, the driver prefers the boot keyboard and can
+also read a report-mode keyboard interface with a modifier byte and a key
+array. Scroll wheels, USB hubs, and discovery after boot require additional
+driver support.
 
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
 It reports device numbers and capacities in KiB. For an NVMe drive such as

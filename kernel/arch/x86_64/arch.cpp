@@ -25,6 +25,7 @@
  */
 #include "core/base.hpp"
 #include "arch/x86_64/interrupts.hpp"
+#include "boot/boot.hpp"
 
 namespace ax {
 struct [[gnu::packed]] TablePointer {
@@ -48,9 +49,13 @@ struct [[gnu::packed]] Gate {
     uint32_t high, reserved;
 };
 
-static uint64_t gdt[7];
+struct CpuTables {
+    uint64_t gdt[7];
+    Tss tss;
+};
+
+static CpuTables bootstrap_tables, secondary_tables[max_boot_processors];
 static Gate idt[256];
-static Tss tss;
 alignas(16) static uint8_t kernel_stack[128 * 1024], fault_stack[16 * 1024];
 extern "C" {
 uint64_t kernel_stack_top;
@@ -58,10 +63,11 @@ uint64_t kernel_stack_top;
 void load_gdt(TablePointer*);
 }
 
-void arch_init() {
-    kernel_stack_top = uint64_t(kernel_stack + sizeof(kernel_stack));
-    tss.rsp[0] = kernel_stack_top;
-    tss.ist[0] = uint64_t(fault_stack + sizeof(fault_stack));
+static void load_cpu_tables(CpuTables& tables, uint64_t kernel_top, uint64_t fault_top) {
+    auto& gdt = tables.gdt;
+    auto& tss = tables.tss;
+    tss.rsp[0] = kernel_top;
+    tss.ist[0] = fault_top;
     tss.iomap = sizeof(tss);
     gdt[1] = 0x00af9a000000ffff;
     gdt[2] = 0x00cf92000000ffff;
@@ -72,6 +78,26 @@ void arch_init() {
     gdt[6] = b >> 32;
     TablePointer gdtr{sizeof(gdt) - 1, uint64_t(gdt)};
     load_gdt(&gdtr);
+}
+
+bool arch_init_secondary_tables(unsigned slot, uint64_t kernel_top, uint64_t fault_top) {
+    if (slot >= max_boot_processors || !kernel_top || !fault_top)
+        return false;
+    auto& tables = secondary_tables[slot];
+    load_cpu_tables(tables, kernel_top, fault_top);
+    TablePointer observed{};
+    uint16_t task_register;
+    asm volatile("sgdt %0" : "=m"(observed));
+    asm volatile("str %0" : "=r"(task_register));
+    return observed.base == uint64_t(tables.gdt) && observed.size == sizeof(tables.gdt) - 1 &&
+           task_register == 0x28 && tables.tss.rsp[0] == kernel_top &&
+           tables.tss.ist[0] == fault_top;
+}
+
+void arch_init() {
+    kernel_stack_top = uint64_t(kernel_stack + sizeof(kernel_stack));
+    load_cpu_tables(bootstrap_tables, kernel_stack_top,
+                    uint64_t(fault_stack + sizeof(fault_stack)));
     for (unsigned i = 0; i < 256; i++) {
         uint64_t p = uint64_t(interrupt_table[i]);
         idt[i] = {uint16_t(p),       8, uint8_t(i == 8 ? 1 : 0), 0x8e, uint16_t(p >> 16),

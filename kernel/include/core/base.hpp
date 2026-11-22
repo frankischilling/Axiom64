@@ -235,6 +235,7 @@ void activate_kernel_memory();
 void* map_mmio(uint64_t address, size_t length);
 
 void arch_init();
+bool arch_init_secondary_tables(unsigned slot, uint64_t kernel_top, uint64_t fault_top);
 
 void arch_task(uint64_t fs, uint64_t gs);
 

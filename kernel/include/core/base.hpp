@@ -43,6 +43,7 @@ namespace ax {
 constexpr uint64_t page_size = 4096;
 constexpr uint64_t user_limit = 0x0000800000000000;
 constexpr size_t mmap_length_limit = 256 * 1024 * 1024;
+constexpr size_t anonymous_reservation_limit = 16ull * 1024 * 1024 * 1024;
 constexpr uint64_t page_mask = 0x000ffffffffff000;
 // Software bit outside the x86-64 physical-address field: mapping may not gain execution.
 constexpr uint64_t page_no_execute = 1ull << 52;
@@ -51,8 +52,11 @@ constexpr uint64_t page_file = 1ull << 55, page_file_access = 1ull << 56,
                    page_file_write = 1ull << 57, page_file_cow = 1ull << 58;
 // Non-file entries reuse the file access bit to identify private anonymous mmap pages.
 constexpr uint64_t page_anonymous = page_file_access;
+constexpr uint64_t page_anonymous_access = page_file_write;
+constexpr uint64_t page_anonymous_deferred = page_file_cow;
+constexpr uint64_t page_mapping = page_mask | page_file | page_anonymous;
 constexpr uint64_t page_software =
-    0xe00 | page_no_execute | page_private | page_stack | page_anonymous;
+    0xe00 | page_no_execute | page_private | page_stack | page_anonymous | page_anonymous_deferred;
 
 constexpr uint64_t align_down(uint64_t x) {
     return x & ~(page_size - 1);
@@ -198,8 +202,10 @@ struct AddressSpace {
                                    bool make_writable = false) const;
 
     bool map(uint64_t va, size_t len, int prot, uint64_t mapping_flags = page_private);
+    bool map_anonymous_reservation(uint64_t va, size_t len, int prot);
+    bool fault_anonymous_reservation(uint64_t va, bool write, bool execute = false);
     bool move_anonymous_mapping(uint64_t source, size_t old_size, uint64_t destination,
-                                size_t new_size, int protection);
+                                size_t new_size, int protection, bool reserve);
     void move_prepared_pages(uint64_t source, uint64_t destination, size_t size);
 
     bool prepare_mapping(uint64_t va, size_t len);
@@ -207,6 +213,7 @@ struct AddressSpace {
     bool map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external = false);
 
     void unmap(uint64_t va, size_t len);
+    void trim_page_tables(uint64_t va, size_t len);
 
     bool protect(uint64_t va, size_t len, int prot);
 

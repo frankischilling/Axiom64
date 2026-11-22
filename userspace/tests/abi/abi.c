@@ -35,6 +35,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -222,6 +223,82 @@ static void proc_usage(void) {
     CHECK(released.virtual_bytes <= used.virtual_bytes - size);
     CHECK(released.resident_pages + size / (2 * page) <= used.resident_pages);
     puts("ABI_PROC_USAGE_PASS linkage=" ABI_LINKAGE);
+}
+
+static void anonymous_address_reservations(void) {
+    const size_t length = 2044ull * 1024 * 1024;
+    const size_t page = 4096;
+    const int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+    int status;
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        struct rlimit limit;
+        CHECK(getrlimit(RLIMIT_AS, &limit) == 0);
+        limit.rlim_cur = 128 * 1024 * 1024;
+        CHECK(setrlimit(RLIMIT_AS, &limit) == 0);
+        CHECK(mmap(NULL, length, PROT_NONE, flags, -1, 0) == MAP_FAILED && errno == ENOMEM);
+        _exit(0);
+    }
+    child_status(child, 0);
+
+    struct proc_usage before = read_proc_usage();
+    void* hint = (void*)0x200000000000ull;
+    unsigned char* arena = mmap(hint, length, PROT_NONE, flags, -1, 0);
+    CHECK(arena == hint);
+    struct proc_usage reserved = read_proc_usage();
+    CHECK(reserved.virtual_bytes >= before.virtual_bytes + length);
+    CHECK(reserved.resident_pages <= before.resident_pages + 256);
+    CHECK(mmap(arena + page, page, PROT_READ, flags | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED &&
+          errno == EEXIST);
+
+    CHECK(mprotect(arena, page, PROT_READ | PROT_WRITE) == 0 && arena[0] == 0);
+    arena[0] = 'P';
+    unsigned char* tail = arena + length - page;
+    CHECK(mprotect(tail, page, PROT_READ | PROT_WRITE) == 0);
+    int ends[2];
+    CHECK(pipe(ends) == 0 && write(ends[1], "pass", 4) == 4 && read(ends[0], tail, 4) == 4);
+    CHECK(memcmp(tail, "pass", 4) == 0);
+    CHECK(close(ends[0]) == 0 && close(ends[1]) == 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(arena[0] == 'P' && mprotect(arena + page, page, PROT_READ | PROT_WRITE) == 0);
+        CHECK(arena[page] == 0);
+        arena[0] = 'C';
+        _exit(0);
+    }
+    child_status(child, 0);
+    CHECK(arena[0] == 'P');
+    child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        volatile const unsigned char* inaccessible = arena + page;
+        _exit(inaccessible[0]);
+    }
+    CHECK(waitpid(child, &status, 0) == child && WIFSIGNALED(status) &&
+          WTERMSIG(status) == SIGSEGV);
+
+    // Commit and execute one page, then replace it with a fresh reservation.
+    unsigned char* code = arena + 2 * page;
+    CHECK(mmap(code, page, PROT_READ | PROT_WRITE, flags | MAP_FIXED, -1, 0) == code);
+    const unsigned char machine_code[] = {0xf3, 0x0f, 0x1e, 0xfa, 0xb8, 42, 0, 0, 0, 0xc3};
+    memcpy(code, machine_code, sizeof(machine_code));
+    CHECK(mprotect(code, page, PROT_READ | PROT_EXEC) == 0);
+    int (*call)(void) = (void*)code;
+    CHECK(call() == 42);
+    CHECK(mmap(code, page, PROT_NONE, flags | MAP_FIXED, -1, 0) == code);
+    CHECK(mprotect(code, page, PROT_READ) == 0 && code[0] == 0);
+    CHECK(munmap(arena, length) == 0);
+    CHECK(read_proc_usage().virtual_bytes <= reserved.virtual_bytes - length);
+
+    unsigned char* small = mmap(hint, page, PROT_READ | PROT_WRITE, flags, -1, 0);
+    CHECK(small != MAP_FAILED);
+    small[0] = 'M';
+    small = mremap(small, page, 2 * page, MREMAP_MAYMOVE);
+    CHECK(small != MAP_FAILED && small[0] == 'M' && small[page] == 0);
+    CHECK(munmap(small, 2 * page) == 0);
+    puts("ABI_ANONYMOUS_RESERVATION_PASS linkage=" ABI_LINKAGE);
 }
 
 static void seqpacket_pair(void) {
@@ -613,6 +690,7 @@ int main(int argc, char** argv) {
     CHECK(clock_gettime(CLOCK_MONOTONIC, &after) == 0);
     CHECK(after.tv_sec > before.tv_sec || after.tv_nsec >= before.tv_nsec + 20000000);
     shared_file_table_pressure();
+    anonymous_address_reservations();
     puts("ABI_TESTS_PASS linkage=" ABI_LINKAGE);
     return 0;
 }

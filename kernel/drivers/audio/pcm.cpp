@@ -222,7 +222,7 @@ int begin_drain() {
 }
 
 template <typename T> int copy_result(uint64_t address, const T& result) {
-    return current->memory->space.copy_out(address, &result, sizeof(result)) ? 0 : -14;
+    return current_task()->memory->space.copy_out(address, &result, sizeof(result)) ? 0 : -14;
 }
 
 unsigned parameter(const Handle& handle, int requested, bool rate) {
@@ -376,7 +376,7 @@ int64_t ioctl(const Handle& handle, uint64_t request, uint64_t argument) {
     case 0xc0045005:   // SNDCTL_DSP_SETFMT
     case 0xc0045006: { // SNDCTL_DSP_CHANNELS
         int value;
-        if (!current->memory->space.copy_in(&value, argument, sizeof(value)))
+        if (!current_task()->memory->space.copy_in(&value, argument, sizeof(value)))
             return -14;
         if (request == 0xc0045005)
             return copy_result(argument, int(signed_16_le));

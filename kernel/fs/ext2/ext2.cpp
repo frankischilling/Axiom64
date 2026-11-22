@@ -252,9 +252,9 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     Inode inode{};
     inode.number = number;
     set16(inode, mode);
-    uint32_t uid = current ? current->credentials.user.filesystem : 0;
+    uint32_t uid = current_task() ? current_task()->credentials.user.filesystem : 0;
     uint32_t gid = (parent->mode & 02000) ? parent->gid
-                   : current              ? current->credentials.group.filesystem
+                   : current_task()       ? current_task()->credentials.group.filesystem
                                           : 0;
     set16(inode + 2, uid);
     set16(inode + 24, gid);

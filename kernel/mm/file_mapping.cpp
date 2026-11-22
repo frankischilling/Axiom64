@@ -62,7 +62,7 @@ bool track_disk_write(FileMapping& map, uint64_t offset, uint64_t page) {
         release(dirty);
         return false;
     }
-    if (prepare_regular_write(current, &node)) {
+    if (prepare_regular_write(current_task(), &node)) {
         page_free(page);
         release(dirty);
         return false;

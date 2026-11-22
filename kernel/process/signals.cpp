@@ -87,8 +87,8 @@ static void control_signal(Process* process, int signal) {
 static uint32_t sender_uid(int sender) {
     if (!sender)
         return 0;
-    if (current && current->process->pid == sender)
-        return current->credentials.user.real;
+    if (current_task() && current_task()->process->pid == sender)
+        return current_task()->credentials.user.real;
     for (const auto& task : tasks)
         if (task.state != State::empty && task.process->pid == sender &&
             task.process->leader == &task)
@@ -372,29 +372,29 @@ void signal_tick() {
 
 static int64_t restore_signal(Frame* f) {
     SignalFrame saved;
-    if (f->rsp < 8 || !current->memory->space.copy_in(&saved, f->rsp - 8, sizeof(saved))) {
-        exit_task(current, 11);
+    if (f->rsp < 8 || !current_task()->memory->space.copy_in(&saved, f->rsp - 8, sizeof(saved))) {
+        exit_task(current_task(), 11);
         return 0;
     }
     auto& c = saved.uc.context;
     if (c.cs != 0x23 || c.ss != 0x1b || c.rip >= user_limit || c.rsp >= user_limit ||
-        !current->memory->space.valid(c.rip, 1)) {
-        exit_task(current, 11);
+        !current_task()->memory->space.valid(c.rip, 1)) {
+        exit_task(current_task(), 11);
         return 0;
     }
-    if (c.fpstate && !current->memory->space.copy_in(current->fpu, c.fpstate, 512)) {
-        exit_task(current, 11);
+    if (c.fpstate && !current_task()->memory->space.copy_in(current_task()->fpu, c.fpstate, 512)) {
+        exit_task(current_task(), 11);
         return 0;
     }
     // Invalid MXCSR reserved bits must not fault inside the kernel.
-    *reinterpret_cast<uint32_t*>(current->fpu + 24) &= 0xffff;
-    asm volatile("fxrstor64 %0" ::"m"(current->fpu));
+    *reinterpret_cast<uint32_t*>(current_task()->fpu + 24) &= 0xffff;
+    asm volatile("fxrstor64 %0" ::"m"(current_task()->fpu));
     *f = {c.r15,  c.r14,   c.r13, c.r12, c.r11,
           c.r10,  c.r9,    c.r8,  c.rsi, c.rdi,
           c.rbp,  c.rdx,   c.rcx, c.rbx, c.rax,
           c.trap, c.error, c.rip, 0x23,  (c.rflags & 0x254dd5) | 0x202,
           c.rsp,  0x1b};
-    current->signal_mask = saved.uc.mask & ~((1ull << 8) | (1ull << 18));
+    current_task()->signal_mask = saved.uc.mask & ~((1ull << 8) | (1ull << 18));
     return 0;
 }
 
@@ -405,14 +405,14 @@ static int queue_from_user(const Frame& frame) {
     int signal = thread ? int(frame.rdx) : int(frame.rsi);
     uint64_t pointer = thread ? frame.r10 : frame.rdx;
     uint8_t bytes[48];
-    if (!current->memory->space.copy_in(bytes, pointer, sizeof(bytes)))
+    if (!current_task()->memory->space.copy_in(bytes, pointer, sizeof(bytes)))
         return -14;
     if (thread && (group <= 0 || target <= 0))
         return -22;
     SignalData data;
     memcpy(&data.error, bytes + 4, 4);
     memcpy(&data.code, bytes + 8, 4);
-    if ((data.code >= 0 || data.code == -6) && target != current->pid)
+    if ((data.code >= 0 || data.code == -6) && target != current_task()->pid)
         return -1;
     if (signal < 0 || signal > 64)
         return -22;
@@ -429,9 +429,9 @@ static int queue_from_user(const Frame& frame) {
         if (task.state == State::empty || task.pid != target ||
             (thread && (task.state == State::zombie || task.process->pid != group)))
             continue;
-        if (task.process != current->process &&
-            !credential_signal(current->credentials, task.credentials,
-                               task.process->sid == current->process->sid, signal))
+        if (task.process != current_task()->process &&
+            !credential_signal(current_task()->credentials, task.credentials,
+                               task.process->sid == current_task()->process->sid, signal))
             return -1;
         if (!signal)
             return 0;
@@ -454,14 +454,14 @@ int64_t signal_syscall(Frame* f) {
             if (b != 8)
                 return -22;
             uint64_t mask;
-            if (!current->memory->space.copy_in(&mask, a, 8))
+            if (!current_task()->memory->space.copy_in(&mask, a, 8))
                 return -14;
-            current->suspend_saved_mask = current->signal_mask;
-            current->suspend_mask = true;
-            current->signal_mask = mask & ~((1ull << 8) | (1ull << 18));
+            current_task()->suspend_saved_mask = current_task()->signal_mask;
+            current_task()->suspend_mask = true;
+            current_task()->signal_mask = mask & ~((1ull << 8) | (1ull << 18));
         }
-        current->state = State::blocked;
-        current->wait = Wait::signal;
+        current_task()->state = State::blocked;
+        current_task()->wait = Wait::signal;
         return would_block;
     }
     if (f->rax == 36 || f->rax == 38) {
@@ -476,70 +476,73 @@ int64_t signal_syscall(Frame* f) {
             Timeval interval, value;
         };
 
-        uint64_t left =
-            current->process->alarm_deadline > ticks ? current->process->alarm_deadline - ticks : 0;
-        Timer old{{int64_t(current->process->alarm_interval / 100),
-                   int64_t(current->process->alarm_interval % 100) * 10000},
+        uint64_t left = current_task()->process->alarm_deadline > ticks
+                            ? current_task()->process->alarm_deadline - ticks
+                            : 0;
+        Timer old{{int64_t(current_task()->process->alarm_interval / 100),
+                   int64_t(current_task()->process->alarm_interval % 100) * 10000},
                   {int64_t(left / 100), int64_t(left % 100) * 10000}};
         uint64_t out = f->rax == 36 ? b : c;
-        if (out && !current->memory->space.copy_out(out, &old, sizeof(old)))
+        if (out && !current_task()->memory->space.copy_out(out, &old, sizeof(old)))
             return -14;
         if (f->rax == 38 && b) {
             Timer timer;
-            if (!current->memory->space.copy_in(&timer, b, sizeof(timer)))
+            if (!current_task()->memory->space.copy_in(&timer, b, sizeof(timer)))
                 return -14;
             auto valid = [](Timeval t) {
                 return t.sec >= 0 && t.sec <= 0x7fffffff && t.usec >= 0 && t.usec < 1000000;
             };
             if (!valid(timer.interval) || !valid(timer.value))
                 return -22;
-            current->process->alarm_interval =
+            current_task()->process->alarm_interval =
                 timer.interval.sec * 100 + (timer.interval.usec + 9999) / 10000;
             uint64_t delay = timer.value.sec * 100 + (timer.value.usec + 9999) / 10000;
-            current->process->alarm_deadline = delay ? ticks + delay : 0;
+            current_task()->process->alarm_deadline = delay ? ticks + delay : 0;
         }
         return 0;
     }
     if (f->rax == 37) {
-        uint64_t left =
-            current->process->alarm_deadline > ticks ? current->process->alarm_deadline - ticks : 0;
-        current->process->alarm_interval = 0;
-        current->process->alarm_deadline = uint32_t(a) ? ticks + uint64_t(uint32_t(a)) * 100 : 0;
+        uint64_t left = current_task()->process->alarm_deadline > ticks
+                            ? current_task()->process->alarm_deadline - ticks
+                            : 0;
+        current_task()->process->alarm_interval = 0;
+        current_task()->process->alarm_deadline =
+            uint32_t(a) ? ticks + uint64_t(uint32_t(a)) * 100 : 0;
         return (left + 99) / 100;
     }
     if (f->rax == 131) {
-        bool on_stack = current->altstack_size && f->rsp >= current->altstack_base &&
-                        f->rsp - current->altstack_base < current->altstack_size;
-        UserStack old{current->altstack_base,
-                      on_stack                 ? 1
-                      : current->altstack_size ? 0
-                                               : 2,
-                      0, current->altstack_size};
-        if (b && !current->memory->space.copy_out(b, &old, sizeof(old)))
+        bool on_stack = current_task()->altstack_size && f->rsp >= current_task()->altstack_base &&
+                        f->rsp - current_task()->altstack_base < current_task()->altstack_size;
+        UserStack old{current_task()->altstack_base,
+                      on_stack                        ? 1
+                      : current_task()->altstack_size ? 0
+                                                      : 2,
+                      0, current_task()->altstack_size};
+        if (b && !current_task()->memory->space.copy_out(b, &old, sizeof(old)))
             return -14;
         if (a) {
             if (on_stack)
                 return -1;
             UserStack stack;
-            if (!current->memory->space.copy_in(&stack, a, sizeof(stack)))
+            if (!current_task()->memory->space.copy_in(&stack, a, sizeof(stack)))
                 return -14;
             if (stack.flags & ~2)
                 return -22;
-            if (!(stack.flags & 2) && (stack.size < 2048 || !current->memory->space.valid(
+            if (!(stack.flags & 2) && (stack.size < 2048 || !current_task()->memory->space.valid(
                                                                 stack.pointer, stack.size, true)))
                 return -12;
-            current->altstack_base = (stack.flags & 2) ? 0 : stack.pointer;
-            current->altstack_size = (stack.flags & 2) ? 0 : stack.size;
+            current_task()->altstack_base = (stack.flags & 2) ? 0 : stack.pointer;
+            current_task()->altstack_size = (stack.flags & 2) ? 0 : stack.size;
         }
         return 0;
     }
     if (f->rax == 127) {
         if (b != 8)
             return -22;
-        uint64_t pending =
-            (current->pending_signals.mask() | current->process->pending_signals.mask()) &
-            current->signal_mask;
-        return current->memory->space.copy_out(a, &pending, 8) ? 0 : -14;
+        uint64_t pending = (current_task()->pending_signals.mask() |
+                            current_task()->process->pending_signals.mask()) &
+                           current_task()->signal_mask;
+        return current_task()->memory->space.copy_out(a, &pending, 8) ? 0 : -14;
     }
     int signal = f->rax == 234 ? int(c) : int(b);
     if (signal < 0 || signal > 64)
@@ -549,22 +552,23 @@ int64_t signal_syscall(Frame* f) {
         if (task.state != State::empty &&
             (f->rax == 234
                  ? task.state != State::zombie && int(a) == task.process->pid && int(b) == task.pid
-             : f->rax == 200 ? int(a) == task.pid
-                             : task.process->leader == &task &&
-                                   (int(a) == task.process->pid || int(a) == -1 ||
-                                    (int(a) == 0 && task.process->pgid == current->process->pgid) ||
-                                    (int(a) < -1 && task.process->pgid == -int(a))))) {
+             : f->rax == 200
+                 ? int(a) == task.pid
+                 : task.process->leader == &task &&
+                       (int(a) == task.process->pid || int(a) == -1 ||
+                        (int(a) == 0 && task.process->pgid == current_task()->process->pgid) ||
+                        (int(a) < -1 && task.process->pgid == -int(a))))) {
             found = true;
-            if (task.process != current->process &&
-                !credential_signal(current->credentials, task.credentials,
-                                   task.process->sid == current->process->sid, signal))
+            if (task.process != current_task()->process &&
+                !credential_signal(current_task()->credentials, task.credentials,
+                                   task.process->sid == current_task()->process->sid, signal))
                 continue;
             permitted = true;
             if (signal) {
                 if (f->rax == 234 || f->rax == 200)
-                    return queue_signal(&task, signal, current->process->pid, -6);
+                    return queue_signal(&task, signal, current_task()->process->pid, -6);
                 else
-                    queue_process_signal(task.process, signal, current->process->pid);
+                    queue_process_signal(task.process, signal, current_task()->process->pid);
             }
         }
     return permitted ? 0 : found ? -1 : -3;

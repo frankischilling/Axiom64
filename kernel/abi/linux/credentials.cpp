@@ -29,25 +29,25 @@
 namespace ax {
 namespace {
 void commit(const Credentials& proposed) {
-    auto& cred = current->credentials;
+    auto& cred = current_task()->credentials;
     if (cred.user.real != proposed.user.real)
-        current->process_limit_exceeded =
+        current_task()->process_limit_exceeded =
             proposed.user.real && task_user_count(proposed.user.real) >
-                                      current->process->limits.soft(Resource::processes);
+                                      current_task()->process->limits.soft(Resource::processes);
     if (cred.user.effective != proposed.user.effective ||
         cred.user.filesystem != proposed.user.filesystem ||
         cred.group.effective != proposed.group.effective ||
         cred.group.filesystem != proposed.group.filesystem ||
         (proposed.permitted & ~cred.permitted)) {
-        current->memory->dumpable = false;
-        current->parent_death_signal = 0;
+        current_task()->memory->dumpable = false;
+        current_task()->parent_death_signal = 0;
     }
     cred = proposed;
 }
 
 int change(bool group, IdentityChange method, uint32_t a, uint32_t b = UINT32_MAX,
            uint32_t c = UINT32_MAX) {
-    auto proposed = current->credentials;
+    auto proposed = current_task()->credentials;
     int error = credential_identity(proposed, group, method, a, b, c);
     if (!error)
         commit(proposed);
@@ -64,7 +64,7 @@ struct CapabilityData {
 };
 
 int64_t capabilities(Frame* frame) {
-    auto& space = current->memory->space;
+    auto& space = current_task()->memory->space;
     CapabilityHeader header;
     if (!space.copy_in(&header, frame->rdi, sizeof(header)))
         return -14;
@@ -83,7 +83,7 @@ int64_t capabilities(Frame* frame) {
             return 0;
         const Credentials* cred = nullptr;
         if (!header.pid)
-            cred = &current->credentials;
+            cred = &current_task()->credentials;
         else if (header.pid < 0)
             return -22;
         else
@@ -98,11 +98,11 @@ int64_t capabilities(Frame* frame) {
                         uint32_t(cred->inheritable >> (32 * at))};
         return space.copy_out(frame->rsi, data, words * sizeof(data[0])) ? 0 : -14;
     }
-    if (header.pid && header.pid != current->pid)
+    if (header.pid && header.pid != current_task()->pid)
         return -1;
     if (!space.copy_in(data, frame->rsi, words * sizeof(data[0])))
         return -14;
-    auto proposed = current->credentials;
+    auto proposed = current_task()->credentials;
     int result =
         credential_capabilities(proposed, data[0].effective | (uint64_t(data[1].effective) << 32),
                                 data[0].permitted | (uint64_t(data[1].permitted) << 32),
@@ -114,8 +114,8 @@ int64_t capabilities(Frame* frame) {
 } // namespace
 
 int64_t credential_syscall(Frame* frame) {
-    auto& cred = current->credentials;
-    auto& space = current->memory->space;
+    auto& cred = current_task()->credentials;
+    auto& space = current_task()->memory->space;
     uint32_t a = frame->rdi, b = frame->rsi, c = frame->rdx;
     switch (frame->rax) {
     case 102:
@@ -182,32 +182,36 @@ int64_t credential_syscall(Frame* frame) {
         if (a == 1) {
             if (frame->rsi > 64)
                 return -22;
-            current->parent_death_signal = int(frame->rsi);
+            current_task()->parent_death_signal = int(frame->rsi);
             return 0;
         }
         if (a == 2)
-            return space.copy_out(frame->rsi, &current->parent_death_signal, sizeof(int)) ? 0 : -14;
+            return space.copy_out(frame->rsi, &current_task()->parent_death_signal, sizeof(int))
+                       ? 0
+                       : -14;
         if (a == 3)
-            return current->memory->dumpable;
+            return current_task()->memory->dumpable;
         if (a == 4) {
             if (frame->rsi > 1)
                 return -22;
-            current->memory->dumpable = frame->rsi;
+            current_task()->memory->dumpable = frame->rsi;
             return 0;
         }
         if (a == 15) { // PR_SET_NAME
-            char name[sizeof(current->name)]{};
+            char name[sizeof(current_task()->name)]{};
             for (size_t i = 0; i + 1 < sizeof(name); ++i) {
                 if (!space.copy_in(name + i, frame->rsi + i, 1))
                     return -14;
                 if (!name[i])
                     break;
             }
-            current->set_name(name, sizeof(name));
+            current_task()->set_name(name, sizeof(name));
             return 0;
         }
         if (a == 16) // PR_GET_NAME
-            return space.copy_out(frame->rsi, current->name, sizeof(current->name)) ? 0 : -14;
+            return space.copy_out(frame->rsi, current_task()->name, sizeof(current_task()->name))
+                       ? 0
+                       : -14;
         return credential_control(cred, a, frame->rsi, frame->rdx, frame->r10, frame->r8);
     default:
         return -38;

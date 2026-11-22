@@ -241,7 +241,8 @@ int create(int key, int count, unsigned flags) {
             return -17;
         if (unsigned(count) > set->status.members)
             return -22;
-        if (!set->status.permission.allows(current->credentials, flags | flags >> 3 | flags >> 6))
+        if (!set->status.permission.allows(current_task()->credentials,
+                                           flags | flags >> 3 | flags >> 6))
             return -13;
         return id_for(slot);
     }
@@ -256,7 +257,7 @@ int create(int key, int count, unsigned flags) {
     if (!set)
         return -12;
     memset(set, 0, bytes);
-    const auto& credentials = current->credentials;
+    const auto& credentials = current_task()->credentials;
     auto& p = set->status.permission;
     p.key = key;
     p.uid = p.creator_uid = credentials.user.effective;
@@ -280,8 +281,8 @@ int operate(int id, uint64_t pointer, unsigned count, uint64_t timeout) {
         static_cast<SemaphoreRequest*>(alloc(sizeof(SemaphoreRequest) + sizeof(Operation) * count));
     if (!request)
         return -12;
-    *request = {nullptr, current, nullptr, nullptr, 0, count, 0};
-    auto& memory = current->memory->space;
+    *request = {nullptr, current_task(), nullptr, nullptr, 0, count, 0};
+    auto& memory = current_task()->memory->space;
     int result = [&] {
         const auto* ops = request->operations();
         if (!memory.copy_in(request->operations(), pointer, sizeof(Operation) * count))
@@ -314,9 +315,9 @@ int operate(int id, uint64_t pointer, unsigned count, uint64_t timeout) {
                 permissions = 2;
             undo |= bool(ops[i].flags & undo_flag);
         }
-        if (!set->status.permission.allows(current->credentials, permissions))
+        if (!set->status.permission.allows(current_task()->credentials, permissions))
             return -13;
-        if (undo && !(request->undo = undo_for(*current, *set)))
+        if (undo && !(request->undo = undo_for(*current_task(), *set)))
             return -12;
         int status = evaluate(*request);
         if (status == 0)
@@ -333,14 +334,14 @@ int operate(int id, uint64_t pointer, unsigned count, uint64_t timeout) {
     while (*link)
         link = &(*link)->next;
     *link = request;
-    current->semaphore_request = request;
-    current->wait = Wait::semaphore;
-    current->state = State::blocked;
+    current_task()->semaphore_request = request;
+    current_task()->wait = Wait::semaphore;
+    current_task()->state = State::blocked;
     return would_block;
 }
 
 int control(int id, int number, int command, uint64_t argument) {
-    auto& memory = current->memory->space;
+    auto& memory = current_task()->memory->space;
     if (id < 0)
         return -22;
     if (command == 3 || command == 19) {
@@ -362,7 +363,7 @@ int control(int id, int number, int command, uint64_t argument) {
     if (!set)
         return -22;
     auto& status = set->status;
-    const auto& credentials = current->credentials;
+    const auto& credentials = current_task()->credentials;
     if (command == 0 || command == 1) {
         if (!status.permission.controls(credentials))
             return -1;
@@ -417,7 +418,7 @@ int control(int id, int number, int command, uint64_t argument) {
                     result = -34;
             if (!result) {
                 for (unsigned i = 0; i < status.members; ++i)
-                    set->members()[i] = {values[i], current->process->pid};
+                    set->members()[i] = {values[i], current_task()->process->pid};
                 clear_adjustments(*set, 0, status.members);
                 status.changed = clock_realtime_ticks() / 100;
                 service(*set);
@@ -437,7 +438,7 @@ int control(int id, int number, int command, uint64_t argument) {
         int value = int32_t(argument);
         if (value < 0 || value > max_value)
             return -34;
-        member = {value, current->process->pid};
+        member = {value, current_task()->process->pid};
         clear_adjustments(*set, number, 1);
         status.changed = clock_realtime_ticks() / 100;
         service(*set);

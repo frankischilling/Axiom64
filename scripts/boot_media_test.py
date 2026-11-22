@@ -194,6 +194,8 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         timers = re.findall(
             r"^SMP: application processor apic=(\d+) local timer interrupts=(\d+)$",
             text, re.MULTILINE)
+        task_slots = re.findall(r"^SMP: application processor apic=(\d+) idle task slot ready$",
+                                text, re.MULTILINE)
         if (len(summaries) != 1 or summaries[0][0] != str(smp) or summaries[0][2] != str(smp - 1) or
                 len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered or
                 sorted(entered) != sorted(tables)):
@@ -202,6 +204,8 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             raise RuntimeError(f"SMP targeted wake interrupts failed in {log}: {wakeups}")
         if sorted(timers) != sorted((apic_id, "2") for apic_id in entered):
             raise RuntimeError(f"SMP local timer interrupts failed in {log}: {timers}")
+        if sorted(task_slots) != sorted(entered):
+            raise RuntimeError(f"SMP CPU-local task slots failed in {log}: {task_slots}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
             "smp": smp, "serial_sha256": digest(log)}
 

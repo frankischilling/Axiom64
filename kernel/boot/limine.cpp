@@ -22,6 +22,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#include "arch/x86_64/cpu_local.hpp"
 #include "arch/x86_64/interrupts.hpp"
 #include "boot/boot.hpp"
 #include "drivers/platform/legacy_io.hpp"
@@ -73,6 +74,7 @@ struct ApplicationProcessor {
     bool wakeups_verified = false; // Written and read by the boot CPU only.
     unsigned wakeups = 0;
     unsigned timer_firings = 0;
+    bool task_slot_idle = false;
     bool timer_checked = false;
 };
 
@@ -106,6 +108,7 @@ void probe_local_timer(ApplicationProcessor& state) {
             asm volatile("sti; hlt; cli" ::: "memory");
     }
     interrupt_stop_secondary_timer();
+    state.task_slot_idle = arch_secondary_task_slot_idle(state.slot);
     __atomic_store_n(&state.timer_checked, true, __ATOMIC_RELEASE);
 }
 
@@ -251,10 +254,13 @@ void boot_probe_application_processors() {
     for (const auto& state : application_processors) {
         if (!state.wakeups_verified)
             continue;
-        const unsigned firings =
-            __atomic_load_n(&state.timer_checked, __ATOMIC_ACQUIRE) ? state.timer_firings : 0;
+        const bool checked = __atomic_load_n(&state.timer_checked, __ATOMIC_ACQUIRE);
+        const unsigned firings = checked ? state.timer_firings : 0;
         log("SMP: application processor apic=%u local timer interrupts=%u\n",
             uint64_t(state.expected_apic_id), uint64_t(firings));
+        if (checked && state.task_slot_idle)
+            log("SMP: application processor apic=%u idle task slot ready\n",
+                uint64_t(state.expected_apic_id));
     }
     log("SMP: present=%u bsp=%u application_processors=%u\n", response->cpu_count,
         uint64_t(response->bsp_lapic_id), uint64_t(started));

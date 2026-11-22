@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/base.hpp"
+#include "arch/x86_64/cpu_local.hpp"
 #include "arch/x86_64/interrupts.hpp"
 #include "boot/boot.hpp"
 
@@ -49,14 +50,9 @@ struct [[gnu::packed]] Gate {
     uint32_t high, reserved;
 };
 
-struct CpuEntry {
-    uint64_t kernel_stack_top;
-    uint64_t saved_user_rsp;
-};
-
-// The syscall entry stub reads these offsets through the kernel GS base.
-static_assert(__builtin_offsetof(CpuEntry, kernel_stack_top) == 0);
-static_assert(__builtin_offsetof(CpuEntry, saved_user_rsp) == 8);
+constexpr uint32_t fs_base_msr = 0xc0000100;
+constexpr uint32_t gs_base_msr = 0xc0000101;
+constexpr uint32_t gs_shadow_msr = 0xc0000102;
 
 struct CpuTables {
     uint64_t gdt[7];
@@ -90,7 +86,8 @@ static void load_cpu_tables(CpuTables& tables, uint64_t kernel_top, uint64_t fau
 
 static void init_cpu_entry(CpuEntry& entry, uint64_t kernel_top) {
     entry.kernel_stack_top = kernel_top;
-    wrmsr(0xc0000102, uint64_t(&entry)); // IA32_KERNEL_GS_BASE
+    wrmsr(gs_base_msr, uint64_t(&entry));
+    wrmsr(gs_shadow_msr, 0);
     TablePointer idtr{sizeof(idt) - 1, uint64_t(idt)};
     asm volatile("lidt %0" ::"m"(idtr));
     uint64_t cr0, cr4;
@@ -104,6 +101,12 @@ static void init_cpu_entry(CpuEntry& entry, uint64_t kernel_top) {
     wrmsr(0xc0000081, (uint64_t(0x13) << 48) | (uint64_t(8) << 32));
     wrmsr(0xc0000082, uint64_t(syscall_entry));
     wrmsr(0xc0000084, 0x47700); // Clear IF, DF, TF, AC, NT on entry.
+}
+
+bool arch_secondary_task_slot_idle(unsigned slot) {
+    return slot < max_boot_processors &&
+           rdmsr(gs_base_msr) == uint64_t(&secondary_tables[slot].entry) &&
+           rdmsr(gs_shadow_msr) == 0 && !current_task();
 }
 
 bool arch_init_secondary_tables(unsigned slot, uint64_t kernel_top, uint64_t fault_top) {
@@ -120,7 +123,7 @@ bool arch_init_secondary_tables(unsigned slot, uint64_t kernel_top, uint64_t fau
     return observed.base == uint64_t(tables.gdt) && observed.size == sizeof(tables.gdt) - 1 &&
            task_register == 0x28 && tables.tss.rsp[0] == kernel_top &&
            tables.tss.ist[0] == fault_top && observed_idt.base == uint64_t(idt) &&
-           observed_idt.size == sizeof(idt) - 1 && rdmsr(0xc0000102) == uint64_t(&tables.entry) &&
+           observed_idt.size == sizeof(idt) - 1 && arch_secondary_task_slot_idle(slot) &&
            rdmsr(0xc0000082) == uint64_t(syscall_entry);
 }
 
@@ -130,7 +133,8 @@ void arch_init() {
                     uint64_t(fault_stack + sizeof(fault_stack)));
     for (unsigned i = 0; i < 256; i++) {
         uint64_t p = uint64_t(interrupt_table[i]);
-        idt[i] = {uint16_t(p),       8, uint8_t(i == 8 ? 1 : 0), 0x8e, uint16_t(p >> 16),
+        const uint8_t type = i == 3 ? 0xee : 0x8e; // Userspace can invoke INT3.
+        idt[i] = {uint16_t(p),       8, uint8_t(i == 8 ? 1 : 0), type, uint16_t(p >> 16),
                   uint32_t(p >> 32), 0};
     }
     init_cpu_entry(bootstrap_tables.entry, kernel_stack_top);
@@ -139,8 +143,15 @@ void arch_init() {
 }
 
 void arch_task(uint64_t fs, uint64_t gs) {
-    wrmsr(0xc0000100, fs);
-    asm volatile("movw %0, %%gs" : : "r"(uint16_t(0)));
-    wrmsr(0xc0000101, gs);
+    wrmsr(fs_base_msr, fs);
+    uint16_t selector;
+    asm volatile("movw %%gs, %0" : "=r"(selector));
+    if (selector) {
+        // Reset a userspace selector without losing the active CPU-local base.
+        const uint64_t cpu_base = rdmsr(gs_base_msr);
+        asm volatile("movw %0, %%gs" : : "r"(uint16_t(0)) : "memory");
+        wrmsr(gs_base_msr, cpu_base);
+    }
+    wrmsr(gs_shadow_msr, gs);
 }
 } // namespace ax

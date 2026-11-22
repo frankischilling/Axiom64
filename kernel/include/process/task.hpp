@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #pragma once
+#include "arch/x86_64/cpu_local.hpp"
 #include "fs/vfs.hpp"
 #include "security/credentials.hpp"
 #include "process/limits.hpp"
@@ -188,7 +189,6 @@ struct Task {
 };
 
 extern Task tasks[max_tasks];
-extern Task* current;
 extern uint64_t ticks;
 extern bool trace_syscalls, test_mode;
 extern const char* test_suite;

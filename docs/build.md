@@ -86,7 +86,8 @@ kernel stack, loads its processor tables, and checks its APIC ID. The boot
 processor then sends two directed wake interrupts to each application
 processor and checks both acknowledgements. Each secondary CPU then arms its
 local APIC timer twice and verifies that both interrupts arrived. It stops
-the timer before parking. The scheduler still runs on the bootstrap processor.
+the timer and checks that its CPU-local task slot is empty before parking.
+The scheduler still runs on the bootstrap processor.
 
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a

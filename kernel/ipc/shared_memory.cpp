@@ -150,7 +150,7 @@ int open_segment(int key, uint64_t size, unsigned flags) {
             continue;
         if ((flags & (ipc_create | ipc_exclusive)) == (ipc_create | ipc_exclusive))
             return -17;
-        if (!status.permission.allows(current->credentials, flags | flags >> 3 | flags >> 6))
+        if (!status.permission.allows(current_task()->credentials, flags | flags >> 3 | flags >> 6))
             return -13;
         return size <= status.size ? id_for(slot) : -22;
     }
@@ -170,7 +170,7 @@ int open_segment(int key, uint64_t size, unsigned flags) {
     auto& segment = segments[empty];
     auto& status = segment.status;
     segment.physical = physical_base;
-    const auto& credentials = current->credentials;
+    const auto& credentials = current_task()->credentials;
     auto& permission = status.permission;
     permission.key = key;
     permission.uid = permission.creator_uid = credentials.user.effective;
@@ -178,7 +178,7 @@ int open_segment(int key, uint64_t size, unsigned flags) {
     permission.mode = flags & 0777;
     permission.sequence = generations[empty];
     status.size = size;
-    status.creator_pid = current->process->pid;
+    status.creator_pid = current_task()->process->pid;
     status.changed = now();
     ++live_segments;
     total_pages += pages;
@@ -196,9 +196,9 @@ int64_t attach(int id, uint64_t base, unsigned flags) {
         return -22;
     int protection = (flags & shm_readonly ? 1 : 3) | (flags & shm_exec ? 4 : 0);
     unsigned access = 4 | (protection & 2) | (protection & 4 ? 1 : 0);
-    if (!segment->status.permission.allows(current->credentials, access))
+    if (!segment->status.permission.allows(current_task()->credentials, access))
         return -13;
-    auto& memory = *current->memory;
+    auto& memory = *current_task()->memory;
     size_t length = align_up(segment->status.size);
     bool automatic = !base;
     if (automatic) {
@@ -209,7 +209,7 @@ int64_t attach(int id, uint64_t base, unsigned flags) {
     if (base < page_size || base >= user_limit || length > user_limit - base ||
         (!replace && memory.space.mapped_size(base, length)))
         return -22;
-    if (!memory_growth_allowed(*current, base, length, replace))
+    if (!memory_growth_allowed(*current_task(), base, length, replace))
         return -12;
     auto* identity = static_cast<Attachment*>(alloc(sizeof(Attachment)));
     auto* mapping = static_cast<SharedMemoryMapping*>(alloc(sizeof(SharedMemoryMapping)));
@@ -220,7 +220,7 @@ int64_t attach(int id, uint64_t base, unsigned flags) {
     }
     // A remap of the last fragment of a removed segment still owns its backing.
     ++segment->status.mappings;
-    int error = replace ? shared_memory_unmap(*current, base, length) : 0;
+    int error = replace ? shared_memory_unmap(*current_task(), base, length) : 0;
     if (error || !memory.space.map_physical(base, segment->physical, length, protection)) {
         --segment->status.mappings;
         collect(*segment);
@@ -239,12 +239,12 @@ int64_t attach(int id, uint64_t base, unsigned flags) {
     *identity = {segment, base, 1};
     *mapping = {identity, *link, base, base + length, protection};
     *link = mapping;
-    note_attachment(*segment, current->process->pid);
+    note_attachment(*segment, current_task()->process->pid);
     return base;
 }
 
 int detach(uint64_t base) {
-    auto& memory = *current->memory;
+    auto& memory = *current_task()->memory;
     auto** link = &memory.shared;
     while (*link && (*link)->attachment->origin != base)
         link = &(*link)->next;
@@ -264,14 +264,14 @@ int detach(uint64_t base) {
         }
         *link = mapping->next;
         memory.space.unmap(mapping->start, mapping->end - mapping->start);
-        release_mapping(mapping, current->process->pid);
+        release_mapping(mapping, current_task()->process->pid);
         --remaining;
     }
     return 0;
 }
 
 int segment_info(int command, uint64_t pointer) {
-    auto& memory = current->memory->space;
+    auto& memory = current_task()->memory->space;
     if (command == 3) {
         const uint64_t limits[9] = {max_segment_size, 1, max_segments, max_segments,
                                     max_segment_pages};
@@ -290,9 +290,9 @@ int segment_info(int command, uint64_t pointer) {
 
 int lock_segment(Segment& segment, bool lock) {
     auto& permission = segment.status.permission;
-    const auto& creds = current->credentials;
+    const auto& creds = current_task()->credentials;
     bool privileged = capable(creds, Capability::ipc_lock);
-    uint64_t limit = current->process->limits.soft(Resource::locked_memory);
+    uint64_t limit = current_task()->process->limits.soft(Resource::locked_memory);
     if (!privileged && ((creds.user.effective != permission.uid &&
                          creds.user.effective != permission.creator_uid) ||
                         (lock && !limit)))
@@ -322,7 +322,7 @@ int control(int id, int command, uint64_t pointer) {
         return -22;
     if (command == 3 || command == 14)
         return segment_info(command, pointer);
-    auto& memory = current->memory->space;
+    auto& memory = current_task()->memory->space;
     Status input;
     if (command == 1 && !memory.copy_in(&input, pointer, sizeof(input)))
         return -14;
@@ -331,7 +331,7 @@ int control(int id, int command, uint64_t pointer) {
     if (!segment || !segment->physical)
         return -22;
     auto& status = segment->status;
-    const auto& creds = current->credentials;
+    const auto& creds = current_task()->credentials;
     if (command == 0 || command == 1) {
         if (!status.permission.controls(creds))
             return -1;

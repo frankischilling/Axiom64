@@ -137,7 +137,7 @@ def ensure(provider='build'):
                     subprocess.run(command, cwd=build, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=output, stderr=subprocess.STDOUT, check=True)
                 run(['perl', str(source / 'Configure'), 'linux-x86_64', '--prefix=/usr',
-                     '--libdir=lib', '--openssldir=/etc/ssl', '--with-rand-seed=os',
+                     '--libdir=lib', '--openssldir=/etc/ssl', '--with-rand-seed=os', 'no-tests',
                      'no-shared' if linkage == 'static' else 'shared'])
                 run(['make', '-j4', 'build_sw'])
                 if linkage == 'static':

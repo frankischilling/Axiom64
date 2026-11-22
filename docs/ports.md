@@ -47,6 +47,10 @@ Upstream libcap 2.78 supplies installed `getcap` and `setcap` tools, linked agai
 
 OpenSSL 3.5.9 builds from its pinned upstream archive. Static and shared target builds use the explicit musl providers and verified Linux UAPI headers; the native comparison records its actual libc and startup inputs. Both ordinary rootfs profiles install the runtime provider's shared libraries, executable, headers, configuration and legacy module. The upstream archive, detached release signature, build recipe and complete Apache-2.0 notices are retained. The recipe selects OS seed sources and checks the executable interpreter and dependencies. [Runtime verification](random.md#verification-and-remaining-work) covers real TLS 1.2/1.3 clients, certificate rejection, key generation, package signatures, initialization waits and actual provider loading in native comparisons and both firmware/transport variants.
 
+The image recipe builds the OpenSSL libraries, command and modules with
+`no-tests`. Axiom64's crypto checks exercise the staged binaries and libraries
+that the image ships.
+
 Build all providers with `make openssl`. Case-sensitive Linux storage preserves the complete pinned UAPI archive when the workspace is on a Windows mount. Caches validate their recipe, provider, source, library and product identities before reuse. Shared modules remain enabled; the shared client checks actual default and legacy provider loading.
 
 Curl 8.23.0 and libcurl build from the authenticated upstream release. `make curl` selects the explicit build-musl, runtime-musl and native comparison providers, retaining static/shared products, the detached signature, release key, notices and build inputs. The recipe enables IPv6 and threaded resolution; those build options do not establish guest support for every protocol. Optional compression, internationalized names, public-suffix handling, SSH transports and HTTP/2/3 dependencies remain planned. The [download checks](testing.md) retain actual HTTP/HTTPS runtime, installed-image and published-byte evidence.

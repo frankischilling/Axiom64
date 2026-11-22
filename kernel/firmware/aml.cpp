@@ -701,9 +701,16 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     case 0x95: { // LLess
         stream.skip(1);
         Value left{}, right{};
-        if (!evaluate(stream, scope, frame, left, depth + 1) || left.type != Type::Integer ||
-            (opcode != 0x92 &&
-             (!evaluate(stream, scope, frame, right, depth + 1) || right.type != Type::Integer)) ||
+        if (!evaluate(stream, scope, frame, left, depth + 1) ||
+            (opcode != 0x92 && !evaluate(stream, scope, frame, right, depth + 1)))
+            return false;
+        if (opcode == 0x93 && left.type == Type::Buffer && right.type == Type::Buffer) {
+            const bool equal = left.content.left == right.content.left &&
+                               !memcmp(left.content.next, right.content.next, left.content.left);
+            result = {Type::Integer, equal ? integer_mask : 0, {}, nullptr};
+            return true;
+        }
+        if (left.type != Type::Integer || (opcode != 0x92 && right.type != Type::Integer) ||
             !integer_result(opcode, left.number, right.number, number))
             return false;
         if (opcode >= 0x92) {
@@ -995,6 +1002,101 @@ bool string_name(Cursor text, Name& name) {
     return name.path.count;
 }
 
+bool i2c_connection(Cursor resources, I2cHidDevice& device) {
+    const Cursor original = resources;
+    bool found = false;
+    while (resources.left) {
+        const unsigned tag = resources.peek();
+        resources.skip(1);
+        uint64_t length = tag & 7;
+        Cursor item;
+        if (((tag & 0x80) && !resources.read(2, length)) || !resources.take(length, item))
+            return false;
+        if (tag == 0x79) {
+            uint8_t sum = 0;
+            if (item.peek())
+                for (size_t i = 0; i < original.left; ++i)
+                    sum += original.next[i];
+            return found && !resources.left && !sum;
+        }
+        if (tag != 0x8e) // Generic Serial Bus connection.
+            continue;
+        uint64_t revision, index, type;
+        if (!item.read(1, revision) || !item.read(1, index) || !item.read(1, type))
+            return false;
+        if (type != 1)
+            continue;
+        uint64_t flags, mode, version, data_size, speed, address;
+        Cursor bus;
+        if (found || (revision != 1 && revision != 2) || !item.read(1, flags) || (flags & ~6u) ||
+            !item.read(2, mode) || mode > 1 || !item.read(1, version) || version != 1 ||
+            !item.read(2, data_size) || !item.take(data_size, bus) || !bus.read(4, speed) ||
+            !speed || !bus.read(2, address) || address > (mode ? 0x3ffu : 0x7fu) || item.left < 2 ||
+            item.left > sizeof(device.controller) || item.next[item.left - 1])
+            return false;
+        Name resource_source{};
+        if (!string_name({item.next, item.left - 1}, resource_source))
+            return false;
+        device.source_index = index;
+        device.ten_bit = mode != 0;
+        device.max_hz = speed;
+        device.address = address;
+        memcpy(device.controller, item.next, item.left);
+        found = true;
+    }
+    return false;
+}
+
+bool i2c_hid_id(const Value& id) {
+    if (id.type == Type::Integer)
+        return id.number == 0x500cd041; // PNP0C50 EISA ID.
+    return id.type == Type::String &&
+           ((id.content.left == 7 && !memcmp(id.content.next, "PNP0C50", 7)) ||
+            (id.content.left == 8 && !memcmp(id.content.next, "ACPI0C50", 8)));
+}
+
+bool i2c_hid_compatible(const Value& compatible) {
+    if (compatible.type != Type::Package)
+        return i2c_hid_id(compatible);
+    for (unsigned i = 0; i < compatible.number; ++i)
+        if (i2c_hid_id(compatible.entries[i]))
+            return true;
+    return false;
+}
+
+bool i2c_hid_device(Namespace& space, const Object& object, I2cHidDevice& device) {
+    Value id{}, compatible{}, status{}, resources{};
+    if (!space.config(object.path, name_segment("_HID"), id) ||
+        (!i2c_hid_id(id) && (!space.config(object.path, name_segment("_CID"), compatible) ||
+                             !i2c_hid_compatible(compatible))) ||
+        (space.child(object.path, name_segment("_STA")) &&
+         (!space.config(object.path, name_segment("_STA"), status) ||
+          status.type != Type::Integer || !(status.number & 1))) ||
+        !space.config(object.path, name_segment("_CRS"), resources) ||
+        resources.type != Type::Buffer || !i2c_connection(resources.content, device))
+        return false;
+    if (id.type == Type::String && id.content.left < sizeof(device.hardware_id))
+        memcpy(device.hardware_id, id.content.next, id.content.left);
+    else
+        memcpy(device.hardware_id, "PNP0C50", 7);
+
+    // HID-over-I2C _DSM function 1 returns the descriptor register.
+    constexpr uint8_t guid[]{0xf7, 0xf6, 0xdf, 0x3c, 0x67, 0x42, 0x55, 0x45,
+                             0xad, 0x05, 0xb3, 0x0a, 0x3d, 0x89, 0x38, 0xde};
+    Value arguments[]{{Type::Buffer, 0, {guid, sizeof(guid)}, nullptr},
+                      {Type::Integer, 1, {}, nullptr},
+                      {Type::Integer, 1, {}, nullptr},
+                      {Type::Package, 0, {}, nullptr}};
+    Value descriptor{};
+    if (const auto method = space.child(object.path, name_segment("_DSM"));
+        method && space.method(*method, arguments, 4, descriptor) &&
+        descriptor.type == Type::Integer && descriptor.number <= UINT16_MAX) {
+        device.descriptor_register = descriptor.number;
+        device.has_descriptor_register = true;
+    }
+    return true;
+}
+
 bool route_package(Namespace& space, Value package, unsigned segment, unsigned bus,
                    PciPinRoutes& result) {
     if (package.type != Type::Package || package.number > 256)
@@ -1278,22 +1380,13 @@ const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8
     return exact ? exact : wildcard;
 }
 
-} // namespace
-
-bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
-                           PciBridges* bridges, PciConfigRead read_pci, PciLinkProgram program) {
-    result.count = 0;
-    result.programmed_links = 0;
-    result.rollback_failed = false;
-    if (blocks.ssdt_count > max_root_entries ||
-        (bridges && bridges->count > sizeof(bridges->entries) / sizeof(*bridges->entries)))
-        return false;
-    if (bridges)
-        for (unsigned i = 0; i < bridges->count; ++i)
-            bridges->entries[i].routing_rejected = false;
+Namespace* load_namespace(const DefinitionBlocks& blocks, PciBridges* bridges,
+                          PciConfigRead read_pci, PciLinkProgram program) {
+    if (blocks.ssdt_count > max_root_entries)
+        return nullptr;
     auto* space = static_cast<Namespace*>(alloc(sizeof(Namespace)));
     if (!space)
-        return false;
+        return nullptr;
     space->count = 0;
     space->steps = 32768;
     space->used_values = 0;
@@ -1315,7 +1408,57 @@ bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
     bool ok = load(blocks.dsdt);
     for (size_t i = 0; ok && i < blocks.ssdt_count; ++i)
         ok = load(blocks.ssdt[i]);
-    ok = ok && routing(*space, result, bridges);
+    if (!ok) {
+        release(space);
+        return nullptr;
+    }
+    return space;
+}
+} // namespace
+
+bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& result) {
+    result.count = 0;
+    auto* space = load_namespace(blocks, nullptr, nullptr, {});
+    if (!space)
+        return false;
+    bool ok = true;
+    for (unsigned i = 0; i < space->count; ++i) {
+        const auto& object = space->objects[i];
+        if (object.kind != Kind::Device || !space->child(object.path, name_segment("_CRS")))
+            continue;
+        const unsigned values = space->used_values, bytes = space->used_bytes;
+        I2cHidDevice device{};
+        const bool found = i2c_hid_device(*space, object, device);
+        space->used_values = values;
+        space->used_bytes = bytes;
+        if (!found)
+            continue;
+        if (result.count == sizeof(result.devices) / sizeof(*result.devices)) {
+            result.count = 0;
+            ok = false;
+            break;
+        }
+        result.devices[result.count++] = device;
+    }
+    release(space);
+    return ok;
+}
+
+bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
+                           PciBridges* bridges, PciConfigRead read_pci, PciLinkProgram program) {
+    result.count = 0;
+    result.programmed_links = 0;
+    result.rollback_failed = false;
+    if (blocks.ssdt_count > max_root_entries ||
+        (bridges && bridges->count > sizeof(bridges->entries) / sizeof(*bridges->entries)))
+        return false;
+    if (bridges)
+        for (unsigned i = 0; i < bridges->count; ++i)
+            bridges->entries[i].routing_rejected = false;
+    auto* space = load_namespace(blocks, bridges, read_pci, program);
+    if (!space)
+        return false;
+    bool ok = routing(*space, result, bridges);
     if (ok && space->change_count) {
         auto apply = [&](const LinkChange& change, bool undo) {
             const auto& field = change.field;

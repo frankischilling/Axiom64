@@ -27,6 +27,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <vector>
 
@@ -226,7 +227,7 @@ Fixture dynamic_firmware(DynamicCase scenario) {
                   {0x75, 0x61}});
     // Stall before allocations so the infinite-loop case exercises the instruction limit.
     if (scenario == DynamicCase::Unbounded)
-        iteration = {1};
+        iteration = Bytes{1};
     auto method = block({0x14}, sequence({name("_PRT"),
                                           {0, 0x70},
                                           package(2, {}),
@@ -413,6 +414,57 @@ void programmable_cases() {
     }
     std::puts("ACPI_PCI_LINK_PASS disabled shared enabled allowed_irq aml_rejection rollback");
 }
+
+void i2c_hid_cases() {
+    using namespace ax::Acpi;
+    const char* controller = "\\_SB_.PCI0.I2C0";
+    const auto source = sequence({name(controller), {0}});
+    const uint8_t length = 15 + source.size();
+    const auto resources =
+        sequence({{0x8e, length, 0, 2, 0, 1, 2, 0, 0, 1, 6, 0, 0x80, 0x1a, 0x06, 0, 0x15, 0},
+                  source,
+                  {0x79, 0}});
+    const Bytes guid{0xf7, 0xf6, 0xdf, 0x3c, 0x67, 0x42, 0x55, 0x45,
+                     0xad, 0x05, 0xb3, 0x0a, 0x3d, 0x89, 0x38, 0xde};
+    const auto method =
+        block({0x14}, sequence({name("_DSM"),
+                                {4},
+                                block({0xa0}, sequence({{0x93, 0x68},
+                                                        block({0x11}, sequence({{0x0a, 16}, guid})),
+                                                        {0xa4, 0x0b, 0x22, 0x01}})),
+                                {0xa4},
+                                block({0x11}, {1, 0})}));
+    auto inspect = [&](const Bytes& current, bool present, I2cHidDevices& devices) {
+        const auto hid = data("_HID", sequence({{0x0d}, name("ELAN0406"), {0}}));
+        const auto cid = data("_CID", package(1, {0x0c, 0x41, 0xd0, 0x0c, 0x50}));
+        const auto crs =
+            data("_CRS", block({0x11}, sequence({{0x0a, uint8_t(current.size())}, current})));
+        const auto table = definition(
+            block({0x5b, 0x82}, sequence({name("TPAD"), hid, cid, crs, method,
+                                          data("_STA", {0x0a, uint8_t(present ? 15 : 0)})})));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_i2c_hid_devices(blocks, devices);
+    };
+    I2cHidDevices devices{};
+    assert(inspect(resources, true, devices) && devices.count == 1);
+    const auto& device = devices.devices[0];
+    assert(!std::strcmp(device.hardware_id, "ELAN0406") &&
+           !std::strcmp(device.controller, controller) && device.address == 0x15 &&
+           device.max_hz == 400000 && !device.ten_bit && device.has_descriptor_register &&
+           device.descriptor_register == 0x122);
+    assert(inspect(resources, false, devices) && !devices.count);
+    auto bad = resources;
+    bad[10] = 5; // The I2C type data must include speed and address.
+    assert(inspect(bad, true, devices) && !devices.count);
+    bad = resources;
+    bad[17] = 2; // A seven-bit address cannot use upper address bits.
+    assert(inspect(bad, true, devices) && !devices.count);
+    bad = resources;
+    bad.back() = 1; // Invalid resource-template checksum.
+    assert(inspect(bad, true, devices) && !devices.count);
+    std::puts("ACPI_I2C_HID_PASS descriptor_register bounded_resource_template");
+}
 } // namespace
 
 int main() {
@@ -439,4 +491,5 @@ int main() {
     bridge_cases();
     dynamic_cases();
     programmable_cases();
+    i2c_hid_cases();
 }

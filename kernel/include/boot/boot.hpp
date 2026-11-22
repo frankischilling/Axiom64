@@ -68,6 +68,7 @@ struct DefinitionBlocks;
 } // namespace Acpi
 
 bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology&, Acpi::DefinitionBlocks&);
+void firmware_probe_i2c_hid(const Acpi::DefinitionBlocks&);
 void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology&,
                                        const Acpi::DefinitionBlocks&);
 } // namespace ax

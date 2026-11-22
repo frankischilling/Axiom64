@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "drivers/platform/pci.hpp"
+#include "firmware/aml.hpp"
 #include "firmware/acpi.hpp"
 
 namespace ax {
@@ -89,6 +90,24 @@ bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,
     else
         log("ACPI: MCFG absent or rejected\n");
     return have_topology;
+}
+
+void firmware_probe_i2c_hid(const Acpi::DefinitionBlocks& blocks) {
+    Acpi::I2cHidDevices devices{};
+    if (!Acpi::decode_i2c_hid_devices(blocks, devices)) {
+        log("ACPI I2C HID: firmware discovery failed\n");
+        return;
+    }
+    log("ACPI I2C HID: devices=%u\n", uint64_t(devices.count));
+    for (unsigned i = 0; i < devices.count; ++i) {
+        const auto& device = devices.devices[i];
+        log("ACPI I2C HID: id=%s controller=%s bus=%u address=%x bits=%u speed-hz=%u\n",
+            device.hardware_id, device.controller, uint64_t(device.source_index),
+            uint64_t(device.address), uint64_t(device.ten_bit ? 10 : 7), uint64_t(device.max_hz));
+        if (device.has_descriptor_register)
+            log("ACPI I2C HID: id=%s descriptor-register=%x\n", device.hardware_id,
+                uint64_t(device.descriptor_register));
+    }
 }
 
 void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology& topology,

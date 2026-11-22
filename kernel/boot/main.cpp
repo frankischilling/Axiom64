@@ -103,6 +103,8 @@ BootInfo boot_info;
     else
         log("Interrupts: PIC/PIT fallback, no validated MADT\n");
     firmware_configure_pci_interrupts(rsdp, topology, definitions);
+    if (arguments.has("hid.i2c.probe"))
+        firmware_probe_i2c_hid(definitions);
     random_init(!arguments.has("random.trust_cpu=off"), arguments.has("random.trust_virtio=on"));
     if (!boot_info.initramfs || !boot_info.initramfs_size)
         panic("missing or empty root filesystem module");

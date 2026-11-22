@@ -100,6 +100,23 @@ struct PciLinkProgram {
 bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&, PciBridges* = nullptr,
                            PciConfigRead = nullptr, PciLinkProgram = {});
 
+struct I2cHidDevice {
+    char hardware_id[16];
+    char controller[82];
+    uint32_t max_hz;
+    uint16_t address, descriptor_register;
+    uint8_t source_index;
+    bool ten_bit, has_descriptor_register;
+};
+
+struct I2cHidDevices {
+    I2cHidDevice devices[8];
+    unsigned count;
+};
+
+// Inspect firmware HID-over-I2C resources without programming the controller.
+bool decode_i2c_hid_devices(const DefinitionBlocks&, I2cHidDevices&);
+
 const PciPinRoute* find_pci_pin(const PciPinRoutes&, uint16_t segment, uint8_t bus, uint8_t slot,
                                 uint8_t function, uint8_t pin, const PciBridges* = nullptr);
 

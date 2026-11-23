@@ -37,6 +37,10 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
+eduroam=/usr/share/axiom64/auto-eduroam
+if test -n "${HOME:-}" && test -d "$eduroam"; then
+    ln -sT "$eduroam" "$HOME/auto-eduroam" 2>/dev/null || true
+fi
 seed_desktop() {
     test -n "${HOME:-}" || return 0
     state="$HOME/.local/share/axiom64/$1"

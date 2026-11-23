@@ -139,6 +139,11 @@ def prepare():
     inputs.extend(doom_sources())
     from build_cupidfetch import source_inputs as cupidfetch_sources
     inputs.append(cupidfetch_sources())
+    eduroam = ROOT / 'vendor/auto-eduroam'
+    pin = LOCK['auto_eduroam']
+    inputs.append(('auto-eduroam', [verify(eduroam / pin['archive'], pin['sha256'], 'sha256'),
+                                    eduroam / 'connect-eduroam.sh', eduroam / 'README.md',
+                                    eduroam / 'LICENSE']))
     password = LOCK['libxcrypt']
     signature = verify(download(password['signature_url'], CACHE / 'libxcrypt-upstream' /
                                 (password['archive'] + '.asc')), password['signature_sha256'], 'sha256')

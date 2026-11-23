@@ -35,7 +35,7 @@ ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_ope
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py scripts/build_curl.py scripts/ca_bundle.py
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
 ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h) build/desktop-terminal build/desktop-session-bus
-ROOTFS_INPUTS += $(DOOM_INPUTS) mk/rootfs.mk
+ROOTFS_INPUTS += $(DOOM_INPUTS) $(EDUROAM_INPUTS) mk/rootfs.mk
 ROOTFS_INPUTS += scripts/build_cupidfetch.py
 
 build/desktop-session-bus: userspace/desktop/session-bus.c

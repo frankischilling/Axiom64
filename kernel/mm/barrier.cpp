@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "mm/barrier.hpp"
+#include "process/scheduler.hpp"
 #include "process/task.hpp"
 
 namespace ax {
@@ -48,6 +49,10 @@ constexpr uint32_t supported = global | global_expedited | register_global_exped
 int memory_barrier(MemoryContext& memory, uint32_t command, uint32_t flags) {
     if (flags)
         return -22;
+    if (scheduler_cpu_count() > 1) {
+        // The current operations fence only the CPU executing this syscall.
+        return command == query || command == get_registrations ? 0 : -22;
+    }
 
     switch (command) {
     case query:

@@ -23,16 +23,22 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/cpu.hpp"
+#include "boot/boot.hpp"
+#include "process/scheduler.hpp"
 #include "process/signals.hpp"
 #include "core/time.hpp"
 
 namespace ax {
 namespace {
-Task* owner;
-uint64_t started;
-bool user;
-bool accounting_started;
-CpuTotals totals;
+struct CpuAccounting {
+    Task* owner;
+    uint64_t started;
+    bool user;
+    bool accounting_started;
+    CpuTotals totals;
+};
+
+CpuAccounting accounts[max_boot_processors];
 
 constexpr uint64_t load_period = 501; // Five seconds plus one 100 Hz tick.
 constexpr uint64_t load_scale = 1 << 11;
@@ -82,8 +88,8 @@ LoadAverages cpu_load_averages() {
     return {load_average.one << 5, load_average.five << 5, load_average.fifteen << 5};
 }
 
-void cpu_account(Task* next, bool userspace) {
-    clock_refresh();
+static void update_account(CpuAccounting& account) {
+    auto& [owner, started, user, accounting_started, totals] = account;
     uint64_t elapsed = ticks - started;
     if (owner) {
         auto& process = *owner->process;
@@ -102,27 +108,51 @@ void cpu_account(Task* next, bool userspace) {
     else
         totals.system_ticks = elapsed;
     accounting_started = true;
-    owner = next;
-    user = userspace;
     started = ticks;
 }
 
+void cpu_account(Task* next, bool userspace) {
+    clock_refresh();
+    auto& account = accounts[scheduler_cpu_number()];
+    update_account(account);
+    account.owner = next;
+    account.user = userspace;
+}
+
 void cpu_refresh() {
-    cpu_account(owner, user);
+    clock_refresh();
+    update_account(accounts[scheduler_cpu_number()]);
+}
+
+static void refresh_all_accounts() {
+    clock_refresh();
+    for (unsigned cpu = 0; cpu < scheduler_cpu_count(); ++cpu)
+        update_account(accounts[cpu]);
 }
 
 CpuTotals cpu_totals() {
-    cpu_refresh();
+    refresh_all_accounts();
+    CpuTotals totals{};
+    for (unsigned cpu = 0; cpu < scheduler_cpu_count(); ++cpu) {
+        const auto& local = accounts[cpu].totals;
+        totals.user_ticks = add(totals.user_ticks, local.user_ticks);
+        totals.system_ticks = add(totals.system_ticks, local.system_ticks);
+        totals.idle_ticks = add(totals.idle_ticks, local.idle_ticks);
+    }
     return totals;
 }
 
+CpuTotals cpu_core_totals(unsigned cpu) {
+    return accounts[cpu].totals;
+}
+
 void cpu_depart(Task& task) {
-    if (owner == &task)
+    if (accounts[scheduler_cpu_number()].owner == &task)
         cpu_account();
 }
 
 CpuUsage cpu_usage(const Task& task, bool thread) {
-    cpu_refresh();
+    refresh_all_accounts();
     if (thread)
         return {task.cpu_user_ticks, task.cpu_system_ticks};
     return {task.process->cpu_user_ticks, task.process->cpu_system_ticks};

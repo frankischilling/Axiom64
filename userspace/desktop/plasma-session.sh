@@ -33,5 +33,7 @@ trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
 trap 'exit 0' HUP INT TERM
 
 export QT_QUICK_BACKEND=software LIBGL_ALWAYS_SOFTWARE=1
+# Each Qt process can create its own llvmpipe worker pool.
+export LP_NUM_THREADS="${LP_NUM_THREADS:-2}"
 export QT_QPA_PLATFORMTHEME=kde XCURSOR_THEME=breeze_cursors
 /usr/bin/startplasma-wayland > "$state/plasma-session.log" 2>&1

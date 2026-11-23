@@ -42,6 +42,7 @@
 #include "ipc/timerfd.hpp"
 #include "process/task.hpp"
 #include "process/cpu.hpp"
+#include "process/scheduler.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
 #include "core/time.hpp"
@@ -925,7 +926,7 @@ static void cpu_info_number(Text& text, const char* field, unsigned value) {
     text.character('\n');
 }
 
-static void cpu_information(Text& text) {
+static void cpu_information(Text& text, unsigned cpu) {
     uint32_t registers[4];
     cpuid(0, registers);
     const uint32_t maximum = registers[0];
@@ -933,7 +934,7 @@ static void cpu_information(Text& text) {
     memcpy(vendor, &registers[1], 4);
     memcpy(vendor + 4, &registers[3], 4);
     memcpy(vendor + 8, &registers[2], 4);
-    cpu_info_number(text, "processor", 0);
+    cpu_info_number(text, "processor", cpu);
     text.string("vendor_id\t: ");
     text.string(vendor);
     text.character('\n');
@@ -973,8 +974,7 @@ static void mem_kib(Text& text, const char* label, uint64_t bytes) {
     text.string(" kB\n");
 }
 
-static void cpu_stat_line(Text& text, const char* label, const CpuTotals& totals) {
-    text.string(label);
+static void cpu_stat_line(Text& text, const CpuTotals& totals) {
     text.number(totals.user_ticks);
     text.string(" 0 ");
     text.number(totals.system_ticks);
@@ -990,14 +990,18 @@ static void uptime_seconds(Text& text, uint64_t value) {
 }
 
 static int system_snapshot(Kind kind, Snapshot& output) {
-    constexpr size_t capacity = 1024;
+    const unsigned cpus = scheduler_cpu_count();
+    const size_t capacity = kind == Kind::cpuinfo       ? 1024u * cpus
+                            : kind == Kind::system_stat ? 1024u + 128u * cpus
+                                                        : 1024u;
     auto bytes = static_cast<char*>(alloc(capacity));
     if (!bytes)
         return -12;
     Text text{bytes, 0, capacity};
-    if (kind == Kind::cpuinfo)
-        cpu_information(text);
-    else if (kind == Kind::meminfo) {
+    if (kind == Kind::cpuinfo) {
+        for (unsigned cpu = 0; cpu < cpus; ++cpu)
+            cpu_information(text, cpu);
+    } else if (kind == Kind::meminfo) {
         auto ram = physical_memory_stats();
         mem_kib(text, "MemTotal", ram.total);
         mem_kib(text, "MemFree", ram.free);
@@ -1013,8 +1017,14 @@ static int system_snapshot(Kind kind, Snapshot& output) {
             uptime_seconds(text, totals.idle_ticks);
             text.character('\n');
         } else {
-            cpu_stat_line(text, "cpu  ", totals);
-            cpu_stat_line(text, "cpu0 ", totals);
+            text.string("cpu  ");
+            cpu_stat_line(text, totals);
+            for (unsigned cpu = 0; cpu < cpus; ++cpu) {
+                text.string("cpu");
+                text.number(cpu);
+                text.character(' ');
+                cpu_stat_line(text, cpu_core_totals(cpu));
+            }
             const auto realtime = clock_realtime_ticks();
             text.string("btime ");
             text.number(realtime > ticks ? (realtime - ticks) / 100 : 0);

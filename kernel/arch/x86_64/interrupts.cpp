@@ -42,7 +42,7 @@ constexpr uint32_t ioapic_delivery_mask = 7 << 8;
 constexpr uint32_t task_priority = 0x80, end_of_interrupt = 0xb0, spurious_register = 0xf0;
 constexpr unsigned icr_low = 0x300, icr_high = 0x310, icr_msr = 0x830;
 constexpr uint32_t icr_busy = 1 << 12;
-constexpr uint8_t wake_vector = 0xf1, secondary_timer_vector = 0xf2;
+constexpr uint8_t wake_vector = Irq::first_cpu_vector, secondary_timer_vector = 0xf2;
 constexpr uint8_t invalidate_vector = 0xf3;
 constexpr unsigned timer_lvt = 0x320, timer_initial_count = 0x380, timer_divide = 0x3e0;
 constexpr uint32_t timer_divide_by_16 = 0x3;
@@ -406,6 +406,10 @@ bool interrupt_send_tlb_ipi(uint32_t destination) {
     return send_secondary_ipi(destination, invalidate_vector);
 }
 
+bool interrupt_send_scheduler_ipi(uint32_t destination) {
+    return send_secondary_ipi(destination, Irq::scheduler_vector);
+}
+
 void interrupt_arm_secondary_timer(uint32_t count) {
     // Programming the initial count starts a one-shot on this CPU.
     ipi_local.write(timer_lvt, secondary_timer_vector);
@@ -529,6 +533,12 @@ bool interrupt_dispatch(uint64_t vector) {
     // The LAPIC never puts its spurious vector in the in-service register.
     if (vector == Irq::spurious)
         return false;
+    if (vector == Irq::scheduler_vector && secondary_handler) {
+        if (!ipi_local.in_service(unsigned(vector)))
+            return false;
+        ipi_local.write(end_of_interrupt, 0);
+        return true;
+    }
     if (vector == invalidate_vector && secondary_handler) {
         if (ipi_local.in_service(invalidate_vector)) {
             service_tlb_ipi();

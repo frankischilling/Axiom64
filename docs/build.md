@@ -93,6 +93,14 @@ the target page tables loaded. It replaces the backing page and checks that
 each secondary CPU sees the replacement after a directed interrupt. The
 scheduler still runs on the bootstrap processor.
 
+Add `--scheduler` to run the separate twelve-CPU userspace test under BIOS and
+UEFI, including with HPET disabled. It boots with `smp.scheduler`, forks
+workers, and checks execution on all twelve logical CPUs. It also starts and
+joins 320 concurrent threads. For a custom image, pass
+`--kernel-option smp.scheduler` to the image builder. The option requires the
+Limine processor list, a working shared ACPI PM timer or HPET counter, and
+successful secondary CPU checks. Ordinary boots continue to use the boot CPU.
+
 The same invalidation path serves ordinary userspace memory changes. Replaced
 and unmapped pages stay allocated until the CPUs using those page tables have
 responded. The address-space lock covers CR3 switches and target selection.
@@ -102,7 +110,8 @@ translations with PCID disabled.
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a
 key press through QEMU and checks the press and release from the keyboard's HID
-reports. It also boots without a controller to check that case. For descriptor
+reports. It also checks USB mouse clicks, motion, vertical scrolling, and
+reconnects, and includes a boot without a controller. For descriptor
 and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.

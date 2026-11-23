@@ -58,7 +58,7 @@ struct BootInfo {
 extern BootInfo boot_info;
 constexpr unsigned max_boot_processors = 256;
 [[noreturn]] void boot_kernel();
-void boot_probe_application_processors();
+void boot_probe_application_processors(bool schedule_userspace);
 
 const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
 

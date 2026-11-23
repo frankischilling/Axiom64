@@ -216,7 +216,7 @@ Acceptance evidence:
 
 ### F07. SMP scheduling and kernel synchronization
 
-The scheduler runs one CPU with fixed process and descriptor limits. The [SMP boot probe](build.md#raw-disk-and-network-boot) checks secondary CPU entry, directed wake interrupts, and local APIC timers.
+The [experimental scheduler](threads.md#experimental-multiprocessor-scheduling) runs independent process groups on multiple logical CPUs. It uses a shared kernel lock and the existing process and descriptor limits. The [SMP boot probe](build.md#raw-disk-and-network-boot) checks secondary CPU entry, directed wake interrupts, local APIC timers, and remote translation invalidation.
 
 Required work:
 

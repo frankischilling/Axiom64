@@ -32,6 +32,8 @@ struct InterruptTopology;
 }
 
 namespace Irq {
+constexpr uint8_t first_cpu_vector = 0xf1;
+constexpr uint8_t scheduler_vector = 0xf4;
 constexpr uint8_t pic_timer = 0x20;
 constexpr uint8_t apic_timer = 0x30;
 constexpr uint8_t spurious = 0xff;
@@ -103,6 +105,7 @@ bool interrupt_prepare_secondary(Irq::SecondaryHandler);
 bool interrupt_enable_secondary_ipi();
 bool interrupt_send_ipi(uint32_t destination);
 bool interrupt_send_tlb_ipi(uint32_t destination);
+bool interrupt_send_scheduler_ipi(uint32_t destination);
 // Called only on a secondary CPU after enabling its local APIC.
 void interrupt_arm_secondary_timer(uint32_t count);
 void interrupt_stop_secondary_timer();

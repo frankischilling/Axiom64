@@ -28,6 +28,7 @@
 #include "boot/boot.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/platform/poll.hpp"
+#include "process/scheduler.hpp"
 #include "limine.h"
 
 namespace ax {
@@ -59,7 +60,8 @@ extern "C" [[noreturn]] void ap_enter_stack(uint64_t stack_top, void* state);
 
 namespace {
 constexpr unsigned ap_timeout_ticks = 200;
-constexpr unsigned ap_stack_pages = 4, ap_fault_pages = 2;
+constexpr unsigned ap_probe_stack_pages = 4, ap_probe_fault_pages = 2;
+constexpr unsigned ap_task_stack_pages = 32, ap_task_fault_pages = 4;
 constexpr unsigned ap_wakeups = 2, ap_wakeup_timeout_ticks = 20;
 constexpr unsigned ap_timer_firings = 2, ap_timer_timeout_ticks = 50;
 constexpr uint32_t ap_timer_count = 32768;
@@ -90,6 +92,7 @@ AddressSpace tlb_space;
 uint64_t* tlb_leaf;
 uint64_t tlb_original, tlb_replacement;
 bool tlb_finished;
+bool schedule_userspace;
 
 void release_tlb_probe() {
     if (tlb_leaf) {
@@ -211,10 +214,12 @@ void check_tlb_probe() {
         for (const auto& state : application_processors) {
             if (!state.stack || !__atomic_load_n(&state.tlb_left, __ATOMIC_ACQUIRE))
                 continue;
-            if (state.tlb_after == probe_second)
+            if (state.tlb_after == probe_second) {
                 log("SMP: application processor apic=%u remote page invalidation verified\n",
                     uint64_t(state.expected_apic_id));
-            else
+                if (schedule_userspace && state.task_slot_idle)
+                    scheduler_admit(state.slot + 1, state.expected_apic_id);
+            } else
                 log("SMP: application processor apic=%u remote page invalidation read=%x\n",
                     uint64_t(state.expected_apic_id), state.tlb_after);
         }
@@ -227,7 +232,8 @@ void check_tlb_probe() {
 [[noreturn]] void application_processor_entry(limine_mp_info* processor) {
     asm volatile("cli; cld" ::: "memory");
     auto state = reinterpret_cast<ApplicationProcessor*>(processor->extra_argument);
-    const auto stack_top = uint64_t(physical(state->stack + ap_stack_pages * page_size));
+    const auto pages = schedule_userspace ? ap_task_stack_pages : ap_probe_stack_pages;
+    const auto stack_top = uint64_t(physical(state->stack + pages * page_size));
     ap_enter_stack(stack_top, state);
 }
 } // namespace
@@ -236,8 +242,10 @@ extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
     auto state = static_cast<ApplicationProcessor*>(argument);
     write_cr3(kernel_memory_root());
     const auto stack_bottom = uint64_t(physical(state->stack));
-    const auto stack_top = stack_bottom + ap_stack_pages * page_size;
-    const auto fault_top = stack_top + ap_fault_pages * page_size;
+    const auto stack_pages = schedule_userspace ? ap_task_stack_pages : ap_probe_stack_pages;
+    const auto fault_pages = schedule_userspace ? ap_task_fault_pages : ap_probe_fault_pages;
+    const auto stack_top = stack_bottom + stack_pages * page_size;
+    const auto fault_top = stack_top + fault_pages * page_size;
     uint64_t current_stack;
     asm volatile("mov %%rsp,%0" : "=r"(current_stack));
     state->observed_apic_id = arch_current_apic_id();
@@ -256,15 +264,21 @@ extern "C" [[noreturn]] void ap_entry_on_stack(void* argument) {
         if (tlb_space.root)
             probe_tlb_on_secondary(*state);
     }
-    if (state->local_tables)
+    const bool join = schedule_userspace && state->wakeup_ready && state->task_slot_idle &&
+                      state->tlb_after == probe_second;
+    if (state->local_tables && !join)
         unregister_tlb_cpu();
     __atomic_store_n(&state->tlb_left, true, __ATOMIC_RELEASE);
-    // Device interrupts and the scheduler still belong to the BSP.
+    if (join) {
+        scheduler_join();
+        unregister_tlb_cpu();
+    }
     for (;;)
         asm volatile("hlt");
 }
 
-void boot_probe_application_processors() {
+void boot_probe_application_processors(bool enable_scheduler) {
+    schedule_userspace = enable_scheduler;
     const auto response = mp_request.response;
     if (!response || !response->cpus || !response->cpu_count ||
         response->cpu_count > max_boot_processors) {
@@ -291,7 +305,8 @@ void boot_probe_application_processors() {
         log("SMP: bootstrap processor ID mismatch\n");
         return;
     }
-    constexpr unsigned stack_pages = ap_stack_pages + ap_fault_pages;
+    const unsigned stack_pages = enable_scheduler ? ap_task_stack_pages + ap_task_fault_pages
+                                                  : ap_probe_stack_pages + ap_probe_fault_pages;
     for (unsigned i = 0; i < response->cpu_count; ++i) {
         if (response->cpus[i]->lapic_id == response->bsp_lapic_id)
             continue;

@@ -113,6 +113,7 @@ The installed desktop starts PipeWire, WirePlumber, and PipeWire's PulseAudio
 server. Plasma's audio panel and the Front Left and Front Right tests use this
 server. On a system with the Axiom64 HD Audio playback device, the session
 exposes it as **HD Audio Speakers** when the account belongs to the audio
+group. The graphical first-boot setup adds the first administrator to that
 group. The profile uses 48 kHz stereo playback and software volume control.
 Run `wpctl status` to see the PipeWire output or `pactl list short sinks` to
 check what PulseAudio applications can see. Microphone and headphone routing

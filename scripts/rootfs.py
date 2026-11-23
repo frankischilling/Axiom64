@@ -214,6 +214,8 @@ if installed_desktop:
     files["etc/xdg/mimeapps.list"] = (
         0o100644, b"[Default Applications]\ninode/directory=thunar.desktop;\n"
     )
+    # Leave CPU time for desktop startup on the software-rendered seat.
+    files.setdefault("etc/xdg/ksplashrc", (0o100644, b"[KSplash]\nEngine=None\n"))
     compile_desktop_data()
     directory("etc/ssh")
     directory("var/empty")
@@ -241,6 +243,8 @@ if installed_desktop:
     if desktop.count(command) != 1:
         raise ValueError(f'{autostart} does not have the expected PipeWire command')
     files[autostart] = mode, desktop.replace(command, b'\nExec=/usr/libexec/axiom64-pipewire-launcher\n')
+    files.setdefault('etc/pam.d', (0o40755, b''))
+    regular('etc/pam.d/kde', ROOT / 'userspace/desktop/kde.pam', 0o100644)
     autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'
     mode, desktop = files[autostart]
     command = b'\nExec=/usr/bin/plasmashell\n'

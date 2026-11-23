@@ -93,7 +93,8 @@ static void bootstrap_busy_identity(void) {
     close(finish[0]);
     char byte;
     CHECK(read(started[0], &byte, 1) == 1);
-    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, &published) == -1 &&
+    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, 0, &published) ==
+              -1 &&
           errno == EBUSY && !published);
     struct stat untouched_home;
     CHECK(stat(home, &untouched_home) == -1 && errno == ENOENT);
@@ -114,12 +115,18 @@ int main(int argc, char** argv) {
     CHECK(snprintf(home, sizeof(home), "%s/admin", argv[1]) < (int)sizeof(home));
     bootstrap_busy_identity();
     int published;
-    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, &published) == 0 &&
+    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, 1, &published) ==
+              0 &&
           published);
-    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, &published) == -1 &&
+    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, 0, &published) ==
+              -1 &&
           errno == EEXIST && !published);
     observed("complete_bootstrap_and_existing_store_denial");
     struct account_profile* profile = authenticate(first, ACCOUNT_AUTH_ACCEPTED);
+    int playback = 0;
+    for (size_t i = 0; i < profile->group_count; ++i)
+        playback |= profile->groups[i] == 29;
+    CHECK(playback);
     struct account_profile impostor = *profile;
     impostor.uid = 1001;
     CHECK(account_password_update(database, records, profile, &impostor, second, &published) ==

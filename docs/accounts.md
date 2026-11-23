@@ -47,6 +47,11 @@ Password locking, password changes, shell updates and membership changes remain 
 
 `auth.c` validates the protected database and checks the maintained password verifier, aging fields and optional membership in `sudo` inside one locked snapshot. Wrong passwords, missing or locked accounts, account expiration, expired inactivity and disabled elevation deny access. Password aging follows the documented [shadow fields](https://man7.org/linux/man-pages/man5/shadow.5.html) and the boundary behavior checked against [Linux-PAM 1.7.1](https://github.com/linux-pam/linux-pam/blob/v1.7.1/modules/pam_unix/passverify.c). A forced or expired password change produces a profile that cannot install session credentials until reauthentication after the change. Returned profiles retain identity and group data without retaining the hash.
 
+The installed Plasma profile uses the `kde` PAM service to verify the account
+that owns the locked session. The verifier binds the requested account to the
+caller's real UID and reads the password through a pipe. The usual account
+password and aging rules apply to unlock.
+
 Installing a nonroot profile sets all real/effective/saved and filesystem UID/GID values, installs supplementary groups, clears retained capabilities, and verifies the resulting credentials. Service mode additionally sets no-new-privileges. Login environment construction replaces inherited variables with the identity's HOME, USER, LOGNAME and SHELL, a fixed PATH and locale, and an optional validated terminal type. A failed credential transition must terminate the child; it must never continue an application after a partial drop.
 
 Real root administrators can select an existing locked service identity without a password. This operation is separate from password authentication. Ordinary session profiles permit later use of explicitly authorized set-ID tools; service profiles prevent privilege acquisition through exec.

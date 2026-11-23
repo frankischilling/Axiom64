@@ -25,6 +25,7 @@
  */
 #include "fs/vfs.hpp"
 #include "fs/cgroup.hpp"
+#include "fs/tmpfs.hpp"
 #include "fs/memfd.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/pipe.hpp"
@@ -799,6 +800,10 @@ bool node_referenced(Node* node) {
 
 static bool reclaim_pending;
 
+void schedule_filesystem_reclaim() {
+    reclaim_pending = true;
+}
+
 void node_reference_released(Node* node) {
     // Reference drops can run in interrupt or socket teardown paths.
     // Queue the inode here and let the scheduler boundary perform disk I/O.
@@ -853,7 +858,7 @@ static bool mount_busy(Mount* mount, bool writers_only) {
 }
 
 int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags,
-                     bool check_dirty) {
+                     bool check_dirty, const char* options) {
     if (current_task() && !capable(current_task()->credentials, Capability::sys_admin))
         return -1;
     if (flags & ~uint64_t(1 | 2 | 4 | 8 | 32 | 32768)) // MS_SILENT is used by mount.
@@ -868,6 +873,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
     if ((point->mode & 0170000) != directory)
         return -20;
     if (flags & 32) {
+        if (options && options[0])
+            return -22;
         if (!mount_root(point))
             return -22;
         auto mount = point->mount;
@@ -893,7 +900,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
     bool ram = queues || (type && !strcmp(type, "ramfs"));
     bool proc = type && !strcmp(type, "proc");
     bool cgroup = type && !strcmp(type, "cgroup2");
-    if (!ram && !disk && !proc && !cgroup)
+    bool temporary = type && !strcmp(type, "tmpfs");
+    if (!ram && !disk && !proc && !cgroup && !temporary)
         return -19;
     Node* device = nullptr;
     if (disk) {
@@ -912,11 +920,12 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                      nullptr,
                      point,
                      point->mount,
-                     queues   ? &posix_queue_filesystem()
-                     : ram    ? &ramfs_ops
-                     : proc   ? &procfs_ops
-                     : cgroup ? &cgroup2_ops
-                              : &ext2_ops,
+                     queues      ? &posix_queue_filesystem()
+                     : ram       ? &ramfs_ops
+                     : proc      ? &procfs_ops
+                     : cgroup    ? &cgroup2_ops
+                     : temporary ? &tmpfs_ops
+                                 : &ext2_ops,
                      nullptr,
                      false,
                      bool(flags & 1)};
@@ -927,7 +936,9 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                     return -28;
                 }
             } else {
-                error = cgroup ? cgroup2_mount(&mount) : ext2_mount(&mount, device, check_dirty);
+                error = cgroup      ? cgroup2_mount(&mount)
+                        : temporary ? tmpfs_mount(&mount, options)
+                                    : ext2_mount(&mount, device, check_dirty);
                 if (error) {
                     mount = {};
                     return error;
@@ -1205,6 +1216,8 @@ bool handle_has_poll(const Handle& handle) {
         return device_has_poll(handle);
     if ((node->mode & 0170000) != regular_file)
         return false;
+    if (auto control = node_control(node); control && control->poll_events)
+        return true;
     auto filesystem = node->mount->ops;
     return filesystem == &posix_queue_filesystem() ||
            (filesystem == &procfs_ops && procfs_has_poll(*node));

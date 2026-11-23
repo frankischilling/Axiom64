@@ -231,6 +231,8 @@ if installed_desktop:
     for path in (session_root, session_root + '/display-sessions', session_root + '/native-wayland-sessions'):
         directory(path)
     regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    if 'usr/lib/security/pam_elogind.so' not in files:
+        raise ValueError('Installed Plasma login requires the elogind PAM module')
     for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
         regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
                 0o100644)

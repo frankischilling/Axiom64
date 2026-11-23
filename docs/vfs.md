@@ -19,7 +19,7 @@ newly allocated pages and empty page tables before returning `ENOMEM`.
 
 | Operation | Supported behavior |
 | --- | --- |
-| `mount` | `ramfs`, `ext2`, `proc`, `mqueue`, and `cgroup2`; optional `MS_RDONLY` and mount utility `MS_SILENT`; `MS_REMOUNT` where supported |
+| `mount` | `ramfs`, `tmpfs`, `ext2`, `proc`, `mqueue`, and `cgroup2`; optional `MS_RDONLY` and mount utility `MS_SILENT`; `MS_REMOUNT` where supported |
 | `umount2` | Flags zero; sync before detach and restore covered contents |
 | `openat`, `mkdirat`, `unlinkat`, `linkat`, `renameat`, `symlinkat`, `readlinkat` | Relative directory identity and filesystem dispatch |
 | `O_PATH` descriptors | Retained object identity, metadata, duplication, directory bases and empty-path symlink reads |
@@ -31,6 +31,26 @@ newly allocated pages and empty page tables before returning `ENOMEM`.
 | `flock` | [Advisory shared/exclusive locks](file-locks.md) owned by a canonical local file description |
 | `fcntl` record locks | POSIX and open-file-description byte ranges, foreign conflict queries, blocking acquisition and descriptor lifetime |
 | `proc` mounts | Process and thread status, caller-relative self links, descriptor links, and description-owned read buffers |
+
+## Temporary filesystems
+
+`tmpfs` uses RAM and releases its storage at unmount. Elogind mounts a
+private instance for each user's runtime directory. Mount options set the
+root's octal `mode`, decimal `uid` and `gid`, and limits through `size`,
+`nr_blocks`, and `nr_inodes`. `size` accepts bytes, binary suffixes from
+`K` through `T`, or a percentage of physical memory. By default, backing
+pages and inode limits each use half the number of physical pages. The
+kernel's shared inode pool also limits available inodes.
+
+The mount charges allocated backing pages and retains the charge while an
+open description or shared mapping pins an unlinked file. The limits appear
+in `statfs`. A write or new name that would exceed its limit returns
+`ENOSPC`. Files use contiguous backing, with a 256 MiB per-file limit.
+Swap and changing quotas at remount remain future work.
+
+`make test-tmpfs` checks ownership, mount flags, capacity accounting,
+unlinked files, and read-only mounts in BIOS and UEFI guests. The mount
+interface follows [Linux tmpfs](https://docs.kernel.org/filesystems/tmpfs.html).
 
 ## Control groups
 

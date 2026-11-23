@@ -1781,11 +1781,11 @@ static int64_t dispatch(Frame* f, Task* running) {
         if (c && !running->memory->space.string(c, type, sizeof(type)))
             return -14;
         bool check_dirty = false;
+        char options[1024]{};
         if (e) {
-            char options[1024];
             if (!running->memory->space.string(e, options, sizeof(options)))
                 return -14;
-            if (options[0]) {
+            if (options[0] && strcmp(type, "tmpfs")) {
                 if (!ext_volume_type(type) || (d & 32) || strcmp(options, "recovery=check"))
                     return -22;
                 check_dirty = true;
@@ -1794,7 +1794,7 @@ static int64_t dispatch(Frame* f, Task* running) {
         Path source;
         if (!(d & 32) && ext_volume_type(type) && !path_at(-100, a, source))
             return source.error;
-        return mount_filesystem(path, source, type, d, check_dirty);
+        return mount_filesystem(path, source, type, d, check_dirty, options);
     }
     case 166: {
         Path path;

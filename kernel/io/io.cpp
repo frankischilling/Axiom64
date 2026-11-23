@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "io/io.hpp"
+#include "fs/tmpfs.hpp"
 #include "request.hpp"
 #include "packet.hpp"
 #include "io/socket_splice.hpp"
@@ -1227,7 +1228,8 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
 static bool splice_regular(const Handle& handle) {
     auto node = handle.node;
     return node && (node->mode & 0170000) == regular_file &&
-           (node->mount->ops == &ramfs_ops || node->mount->ops == &ext2_ops || is_memfd(node));
+           (node->mount->ops == &ramfs_ops || node->mount->ops == &tmpfs_ops ||
+            node->mount->ops == &ext2_ops || is_memfd(node));
 }
 
 static int64_t sendfile_attempt(Task& task, IoRequest& request) {

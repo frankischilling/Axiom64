@@ -341,6 +341,8 @@ uint32_t readiness(Handle* h, const Task* task) {
         return epoll_readable(*h->epoll, task) ? read_events : 0;
     if (h->node && h->node->mount->ops == &procfs_ops)
         return default_poll_mask;
+    if (auto control = node_control(h->node); control && control->poll_events)
+        return control->poll_events(*h);
     uint32_t events = 0;
     if (auto pipe = h->pipe) {
         unsigned mode = h->flags & 3;
@@ -1082,6 +1084,7 @@ int64_t ipc_syscall(Frame* f) {
         int value = c == 3             ? s->type
                     : c == 4           ? 0
                     : c == 7 || c == 8 ? int(UnixStreamQueue::capacity)
+                    : c == 30          ? s->listener
                                        : -1;
         if (s->uses_record_queue() && (c == 7 || c == 8))
             value = c == 7 ? s->datagram_send->size() : s->datagram_receive;

@@ -53,10 +53,11 @@ the shell. Look for the result in `plasma-activities.log` and session output
 in `plasma-session.log`. Both are in `~/.local/state/axiom64/`, or in the
 `axiom64/` directory under `$XDG_STATE_HOME` when set.
 
-New installed images use UTC. Plasma's authorization agent uses the
-installed PolicyKit service and the Axiom64 account database. Applying
-Date & Time changes from the desktop also requires a registered login
-session.
+New installed images use UTC. Breeze registers the authenticated session
+with elogind. Plasma uses that session's private runtime directory at
+`/run/user/<uid>` when available. If registration is unavailable, sign-in
+can start Plasma with a temporary directory. Changing the system clock
+from Plasma also requires PolicyKit authorization.
 
 Attach the image as a new VM disk. The command creates a regular image file and
 refuses an existing destination. Guided partitioning and installation to existing
@@ -67,6 +68,12 @@ fbconsole` to display the text login on the local screen. The text console
 accepts a PS/2 keyboard and keeps serial input and output available. Xorg
 takes over the screen in graphics mode. Console text and keyboard input
 return when the virtual terminal returns to text mode.
+
+`/sys/class/tty/tty0/active` exposes the foreground virtual terminal to
+desktop session managers. It reports `tty1`, the console also returned by
+`VT_GETSTATE`. The attribute can be watched with poll or epoll. Axiom64
+currently has one virtual terminal, so there are no switch events.
+`make test-virtual-console` checks this interface in BIOS and UEFI guests.
 
 Add `--kernel-option usb.xhci=keyboard` to enable USB boot keyboards and mice.
 Plug them into xHCI root ports before powering on. Axiom64 reads up to eight

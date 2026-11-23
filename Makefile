@@ -393,6 +393,14 @@ test-cgroup-session:
 test-device-events:
 	$(PYTHON) scripts/device_event_test.py
 
+.PHONY: test-virtual-console
+test-virtual-console:
+	$(PYTHON) scripts/virtual_console_test.py
+
+.PHONY: test-tmpfs
+test-tmpfs:
+	$(PYTHON) scripts/tmpfs_test.py
+
 test-clock-wall:
 	$(PYTHON) scripts/clock_wall_test.py
 test-clock-wall-native:

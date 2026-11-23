@@ -28,7 +28,6 @@
 namespace ax {
 namespace {
 uint64_t sequence;
-char control_marker;
 constexpr const char* actions[] = {"add",    "remove",  "change", "move",
                                    "online", "offline", "bind",   "unbind"};
 
@@ -130,12 +129,8 @@ const ControlFileOps device_event_ops = {access, read, write,
                                          [](Node*, size_t size) { return size ? -22 : 0; }};
 } // namespace
 
-const ControlFileOps* device_event_control(Node* node) {
-    return node->filesystem_data == &control_marker ? &device_event_ops : nullptr;
-}
-
 int publish_device_event(Node* node) {
-    node->filesystem_data = &control_marker;
+    ramfs_set_control(node, &device_event_ops);
     return emit_device_event(node, "add", false);
 }
 } // namespace ax

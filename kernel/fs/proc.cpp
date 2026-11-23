@@ -25,6 +25,7 @@
  */
 #include "fs/proc.hpp"
 #include "fs/cgroup.hpp"
+#include "fs/tmpfs.hpp"
 #include "fs/descriptor_inode.hpp"
 #include "fs/ext2/ext2.hpp"
 #include "fs/inotify.hpp"
@@ -1049,6 +1050,8 @@ static const char* filesystem_name(const Mount& mount) {
         return "ext2";
     if (mount.ops == &ramfs_ops)
         return "ramfs";
+    if (mount.ops == &tmpfs_ops)
+        return "tmpfs";
     if (mount.ops == &procfs_ops)
         return "proc";
     if (mount.ops == &cgroup2_ops)
@@ -1172,8 +1175,8 @@ static int make_snapshot(Node* node, Snapshot& output) {
         return 0;
     }
     if (item->kind == Kind::filesystem_types) {
-        constexpr char types[] =
-            "nodev\tramfs\nnodev\tproc\nnodev\tmqueue\nnodev\tcgroup2\n\text2\n\text3\n\text4\n";
+        constexpr char types[] = "nodev\tramfs\nnodev\ttmpfs\nnodev\tproc\nnodev\tmqueue\nnodev\tcg"
+                                 "roup2\n\text2\n\text3\n\text4\n";
         auto bytes = static_cast<char*>(alloc(sizeof(types)));
         if (!bytes)
             return -12;

@@ -25,8 +25,5 @@
 
 namespace ax {
 struct Node;
-struct ControlFileOps;
-
-const ControlFileOps* device_event_control(Node*);
 int publish_device_event(Node*);
 } // namespace ax

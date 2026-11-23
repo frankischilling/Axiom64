@@ -109,6 +109,7 @@ struct ControlFileOps {
     int64_t (*read)(Handle*, void*, size_t);
     int64_t (*write)(Handle*, const void*, size_t);
     int (*truncate)(Node*, size_t);
+    uint32_t (*poll_events)(const Handle&) = nullptr;
 };
 
 // Methods return Linux negative errors; read/write return a byte count on success.
@@ -237,7 +238,8 @@ int remove_node(const Path&, bool directory);
 
 int rename_node(const Path&, const Path&, bool no_replace = false);
 
-int mount_filesystem(const Path&, const Path&, const char*, uint64_t, bool check_dirty = false);
+int mount_filesystem(const Path&, const Path&, const char*, uint64_t, bool check_dirty = false,
+                     const char* options = nullptr);
 
 int unmount(const Path&, uint64_t);
 
@@ -257,6 +259,7 @@ int node_setattr(Node*, uint32_t, Timestamp, Timestamp, uint32_t event_mask = 0)
 int node_access(Node*, unsigned mask, bool real = false);
 
 const ControlFileOps* node_control(Node*);
+void ramfs_set_control(Node*, const ControlFileOps*);
 int node_validate(Node*);
 int node_chmod(Node*, uint32_t);
 int node_chown(Node*, uint32_t, uint32_t);
@@ -278,6 +281,7 @@ int node_stats(Node*, FilesystemStats&);
 
 bool node_referenced(Node*);
 void node_reference_released(Node*);
+void schedule_filesystem_reclaim();
 void reclaim_released_nodes();
 bool node_open_for_write(const Node*);
 

@@ -551,6 +551,19 @@
       "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac"
     },
     {
+      "name": "dbus-x11",
+      "version": "1.16.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/dbus-x11-1.16.2-r1.apk",
+      "archive": "dbus-x11-1.16.2-r1.apk",
+      "sha256": "fc1d5d531de7448abea6f67fc93491633ef67679f8b6fac134557ec588120017",
+      "license": "AFL-2.1 OR GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/Software/dbus",
+      "origin": "dbus",
+      "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac",
+      "installed_only": true
+    },
+    {
       "name": "dconf",
       "version": "0.40.0-r6",
       "repository": "community",
@@ -6518,6 +6531,19 @@
       "installed_only": true
     },
     {
+      "name": "qt6-qtvirtualkeyboard",
+      "version": "6.8.3-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/qt6-qtvirtualkeyboard-6.8.3-r0.apk",
+      "archive": "qt6-qtvirtualkeyboard-6.8.3-r0.apk",
+      "sha256": "7d7f7352f7c7cb1b465e0c31f59a46fcfe45d26d2bb007cd24c00cc5bf637efb",
+      "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
+      "upstream": "https://qt.io/",
+      "origin": "qt6-qtvirtualkeyboard",
+      "source_commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
+      "installed_only": true
+    },
+    {
       "name": "qt6-qtwayland",
       "version": "6.8.3-r0",
       "repository": "community",
@@ -6618,6 +6644,32 @@
       "upstream": "https://www.samba.org/",
       "origin": "samba",
       "source_commit": "e6bdca47b2e422eaa0243187a344fe89e364273b",
+      "installed_only": true
+    },
+    {
+      "name": "sddm",
+      "version": "0.21.0-r4",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/sddm-0.21.0-r4.apk",
+      "archive": "sddm-0.21.0-r4.apk",
+      "sha256": "f300bc913c09aa0aac30cdf12a35603dfd1e52ade72b9a443efb8b3d5fe83d84",
+      "license": "GPL-2.0-only",
+      "upstream": "https://github.com/sddm/sddm/",
+      "origin": "sddm",
+      "source_commit": "9aa9c9d33cd9d4f3546f15a4f83f465977175b87",
+      "installed_only": true
+    },
+    {
+      "name": "sddm-breeze",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/sddm-breeze-6.3.6-r0.apk",
+      "archive": "sddm-breeze-6.3.6-r0.apk",
+      "sha256": "cca2fb9a305093cbdb6efcda3bd903c66260745ca3097fb14bf60b97dccf6f37",
+      "license": "GPL-2.0-only AND LGPL-2.1-only",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "plasma-desktop",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
       "installed_only": true
     },
     {
@@ -7147,6 +7199,19 @@
       "upstream": "https://www.unicode.org/",
       "origin": "unicode-character-database",
       "source_commit": "050142af403817cc388872ea192b8282c775ab74",
+      "installed_only": true
+    },
+    {
+      "name": "upower",
+      "version": "1.90.9-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/upower-1.90.9-r0.apk",
+      "archive": "upower-1.90.9-r0.apk",
+      "sha256": "7bef8586ca31bd1d14407242a6e76572e3d975f37438b2cf15a7ce249b32c3a7",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://upower.freedesktop.org",
+      "origin": "upower",
+      "source_commit": "6cfe91b6b718bd9cd4cc3488ee400ad6bb33ff08",
       "installed_only": true
     },
     {

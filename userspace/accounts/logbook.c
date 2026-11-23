@@ -526,12 +526,12 @@ int account_logbook_active(const struct account_logbook* book, uid_t uid) {
     return 0;
 }
 
-int account_logbook_begin(struct account_logbook* book, const struct account_profile* profile,
-                          pid_t child, const char* terminal,
-                          struct account_session_lease** output) {
+static int begin_lease(struct account_logbook* book, const struct account_profile* profile,
+                       pid_t owner, int require_leader, const char* terminal,
+                       struct account_session_lease** output) {
     if (authorized() < 0)
         return -1;
-    if (!book || !profile || !output || child <= 0)
+    if (!book || !profile || !output || owner <= 0)
         return failed(EINVAL);
     *output = NULL;
     size_t active = 0;
@@ -539,7 +539,7 @@ int account_logbook_begin(struct account_logbook* book, const struct account_pro
         active += book->frames[i].kind == ACCOUNT_LOGIN_START && !account_logbook_ended(book, i);
     if (active >= ACCOUNT_LOGIN_LIVE_LIMIT)
         return failed(ENOSPC);
-    if (getsid(child) != child || getpgid(child) != child)
+    if (require_leader && (getsid(owner) != owner || getpgid(owner) != owner))
         return failed(EINVAL);
     struct account_session_lease* lease = calloc(1, sizeof(*lease));
     if (!lease)
@@ -552,7 +552,7 @@ int account_logbook_begin(struct account_logbook* book, const struct account_pro
         error = errno;
     if (!error &&
         account_login_frame_make(&lease->start, ACCOUNT_LOGIN_START, profile->name, profile->uid,
-                                 profile->gid, child, terminal, NULL, 0, nonce) < 0)
+                                 profile->gid, owner, terminal, NULL, 0, nonce) < 0)
         error = errno;
     if (!error) {
         account_nonce_name(lease->name, 'l', nonce);
@@ -585,6 +585,18 @@ int account_logbook_begin(struct account_logbook* book, const struct account_pro
     free(lease->path);
     free(lease);
     return failed(error ? error : EIO);
+}
+
+int account_logbook_begin(struct account_logbook* book, const struct account_profile* profile,
+                          pid_t child, const char* terminal,
+                          struct account_session_lease** output) {
+    return begin_lease(book, profile, child, 1, terminal, output);
+}
+
+int account_logbook_begin_supervised(struct account_logbook* book,
+                                     const struct account_profile* profile, const char* terminal,
+                                     struct account_session_lease** output) {
+    return begin_lease(book, profile, getpid(), 0, terminal, output);
 }
 
 int account_logbook_end(struct account_session_lease* lease, int status) {

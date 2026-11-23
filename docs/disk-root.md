@@ -33,10 +33,17 @@ python3 scripts/boot_media.py disk build/axiom64-installed.raw --installed \
 The image contains Limine, an EFI System Partition and a writable ext2 system
 partition. The boot configuration selects the system partition by its GPT ID.
 On first boot, create the administrator from the console as described in
-[accounts.md](accounts.md). After login, the installed desktop starts KDE Plasma
-with software rendering on the Xorg seat. The desktop includes shortcuts for
+[accounts.md](accounts.md). SDDM starts the Breeze sign-in screen when setup
+finishes. It starts KDE Plasma with software rendering on its Xorg display.
+The desktop includes shortcuts for
 Kitty, Thunar, btop, and both Freedoom campaigns. Use `build/rootfs-desktop.cpio`
 for a smaller disk image with twm and xterm.
+
+The serial console remains available for recovery. Create the root-owned
+`/etc/axiom64/console-desktop` file and reboot to have console sign-in start
+the desktop directly. Remove the file to restore SDDM.
+The `console.text` kernel option starts a text-only login and skips SDDM.
+
 
 The installed desktop skips the animated splash by default to free CPU time
 for sign-in. You can choose a splash screen in Plasma System Settings.

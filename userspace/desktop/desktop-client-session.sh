@@ -23,8 +23,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://gnu.org/licenses/>.
 set -eu
-export DISPLAY=:0
-export XAUTHORITY=/run/axiom64-seat/client.auth
+if test "${1:-}" = --display-manager; then
+    : "${DISPLAY:?SDDM did not set DISPLAY.}" "${XAUTHORITY:?SDDM did not set XAUTHORITY.}"
+else
+    export DISPLAY=:0
+    export XAUTHORITY=/run/axiom64-seat/client.auth
+fi
 cleanup() {
     for process in "${terminal:-}" "${xeyes:-}" "${twm:-}"; do
         if test -n "$process"; then kill "$process" 2>/dev/null || true; fi

@@ -227,6 +227,18 @@ files['var/lib/dbus/machine-id'] = (0o120777, b'/etc/machine-id')
 for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 if installed_desktop:
+    session_root = 'usr/share/axiom64'
+    for path in (session_root, session_root + '/display-sessions', session_root + '/native-wayland-sessions'):
+        directory(path)
+    regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
+        regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
+                0o100644)
+    regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
+    regular(session_root + '/display-sessions/plasma.desktop',
+            ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)
+    regular('usr/libexec/axiom64-display-manager', ROOT / 'userspace/services/display-manager.sh')
+    regular('usr/libexec/axiom64-display-session', ROOT / 'userspace/desktop/display-session.sh')
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
     regular('usr/libexec/axiom64-pipewire-launcher', ROOT / 'userspace/desktop/pipewire-launcher.sh')

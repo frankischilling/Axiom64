@@ -136,15 +136,15 @@ static int regular_policy(int fd, mode_t mode) {
     return 0;
 }
 
-int account_executable_open(int directory, const char* name) {
+int account_executable_open(int directory, const char* name, mode_t mode) {
     if (root() < 0)
         return -1;
-    if (!name_valid(name))
+    if (!name_valid(name) || (mode != 0755 && mode != 04755))
         return failed(EINVAL);
     int fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
         return -1;
-    if (regular_policy(fd, 04755) < 0) {
+    if (regular_policy(fd, mode) < 0) {
         int error = errno;
         close(fd);
         return failed(error);

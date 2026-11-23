@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Plasma
+Exec=/usr/libexec/axiom64-display-session
+TryExec=/usr/libexec/axiom64-display-session
+DesktopNames=KDE

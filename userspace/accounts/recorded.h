@@ -42,6 +42,8 @@ struct account_recorded_session {
 // revision must still be current when the child is registered. Administration
 // holding those same transactions cannot pass the active-user guard in between.
 int account_recorded_begin(void*, pid_t child, const char* terminal);
+int account_recorded_begin_supervised(struct account_recorded_session*, const char* terminal);
 int account_recorded_end(void*, pid_t child, int wait_status);
+int account_recorded_deny(const char* records, const char* name, const char* terminal);
 
 #endif

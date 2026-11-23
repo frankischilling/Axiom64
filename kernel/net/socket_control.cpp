@@ -24,9 +24,51 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "net/socket_control.hpp"
+#include "net/socket_filter.hpp"
 #include "process/task.hpp"
 
 namespace ax {
+int SocketFilter::attach(Task& task, uint64_t pointer, size_t length) {
+    struct Program {
+        uint16_t count;
+        uint64_t code;
+    } program;
+
+    static_assert(sizeof(Program) == 16 && offsetof(Program, code) == 8);
+    if (length != sizeof(program))
+        return -22;
+    if (!task.memory->space.copy_in(&program, pointer, sizeof(program)))
+        return -14;
+    if (!program.count || program.count > max_socket_filter_instructions)
+        return -22;
+    const size_t bytes = size_t(program.count) * sizeof(FilterInstruction);
+    const size_t mask_bytes = size_t(program.count) * sizeof(uint16_t);
+    auto candidate = static_cast<FilterInstruction*>(alloc(bytes + mask_bytes));
+    if (!candidate)
+        return -12;
+    if (!task.memory->space.copy_in(candidate, program.code, bytes)) {
+        release(candidate);
+        return -14;
+    }
+    auto masks = reinterpret_cast<uint16_t*>(candidate + program.count);
+    if (!validate_socket_filter(candidate, program.count, masks)) {
+        release(candidate);
+        return -22;
+    }
+    release(code);
+    code = candidate;
+    count = program.count;
+    return 0;
+}
+
+int SocketFilter::detach() {
+    if (!code)
+        return -2;
+    release(code);
+    *this = {};
+    return 0;
+}
+
 void SocketControlWriter::append(uint32_t type, const void* bytes, size_t size) {
     if (!address || capacity < 16) {
         flags |= 8;

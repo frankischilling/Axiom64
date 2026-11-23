@@ -62,6 +62,12 @@ def inspect_disk(directory, image, kernel, initramfs):
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
+def send_wheel(monitor, button):
+    monitor.command("input-send-event", {"events": [
+        {"type": "btn", "data": {"button": button, "down": down}} for down in (True, False)
+    ]})
+
+
 def send_usb_input(monitor, guest, log, empty_controller):
     mouse_bus = "xhci-second" if empty_controller else "xhci"
     if empty_controller:
@@ -80,6 +86,8 @@ def send_usb_input(monitor, guest, log, empty_controller):
         {"type": "btn", "data": {"button": "left", "down": True}}
     ]})
     await_serial(guest, log, (b"BOOT_USB_MOUSE_PRESSED",), 8)
+    send_wheel(monitor, "wheel-up")
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_SCROLL_UP",), 8)
     monitor.command("device_del", {"id": "boot-mouse"})
     await_serial(guest, log, (b"BOOT_USB_MOUSE_RELEASED",), 8)
     monitor.command("device_add", {"driver": "usb-mouse", "bus": mouse_bus + ".0",
@@ -91,6 +99,8 @@ def send_usb_input(monitor, guest, log, empty_controller):
         {"type": "btn", "data": {"button": "left", "down": True}},
     ]})
     await_serial(guest, log, (b"BOOT_USB_HOTPLUG_MOUSE_PRESSED",), 8)
+    send_wheel(monitor, "wheel-down")
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_SCROLL_DOWN",), 8)
     monitor.command("input-send-event", {"events": [
         {"type": "btn", "data": {"button": "left", "down": False}},
     ]})

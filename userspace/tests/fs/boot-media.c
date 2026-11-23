@@ -27,6 +27,7 @@
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
 #include <unistd.h>
@@ -43,8 +44,13 @@ static int check_usb_input(void) {
                                {open("/dev/input/event1", O_RDONLY), POLLIN, 0}};
     if (devices[0].fd < 0 || devices[1].fd < 0)
         return -1;
+    uint8_t relative[2] = {0};
+    if (ioctl(devices[1].fd, 0x80024522, relative) < 0 || (relative[0] & 3) != 3 ||
+        !(relative[1] & 1))
+        return -1;
     unsigned keys[3] = {0}, button = 0;
     int dx = 0, dy = 0;
+    unsigned scroll = 0;
     puts("BOOT_USB_INPUT_READY");
     fflush(stdout);
     for (unsigned i = 0; i < 64; ++i) {
@@ -66,6 +72,12 @@ static int check_usb_input(void) {
                 dx += event.value;
             if (j && event.type == 2 && event.code == 1)
                 dy += event.value;
+            if (j && event.type == 2 && event.code == 8) {
+                if (scroll > 1 || event.value != (scroll ? -1 : 1))
+                    return -1;
+                puts(++scroll == 1 ? "BOOT_USB_MOUSE_SCROLL_UP" : "BOOT_USB_MOUSE_SCROLL_DOWN");
+                fflush(stdout);
+            }
             if (j && event.type == 1 && event.code == button_left) {
                 if (button > 3 || event.value != (int)(1 - button % 2))
                     return -1;
@@ -85,7 +97,8 @@ static int check_usb_input(void) {
                 }
             }
         }
-        if (keys[0] == 2 && keys[1] == 2 && keys[2] == 2 && button == 4 && dx == 19 && dy == -12) {
+        if (keys[0] == 2 && keys[1] == 2 && keys[2] == 2 && button == 4 && dx == 19 && dy == -12 &&
+            scroll == 2) {
             puts("BOOT_USB_INPUT_PASS");
             return close(devices[0].fd) || close(devices[1].fd) ? -1 : 0;
         }

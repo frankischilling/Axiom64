@@ -110,7 +110,8 @@ translations with PCID disabled.
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a
 key press through QEMU and checks the press and release from the keyboard's HID
-reports. It also boots without a controller to check that case. For descriptor
+reports. It also checks USB mouse clicks, motion, vertical scrolling, and
+reconnects, and includes a boot without a controller. For descriptor
 and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.

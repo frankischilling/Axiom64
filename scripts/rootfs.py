@@ -207,6 +207,8 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 if installed_desktop:
+    for module in sorted((ROOT / "vendor/cmake").glob("*.cmake")):
+        regular("usr/share/cmake/Modules/Platform/" + module.name, module, 0o100644)
     for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
     files.setdefault("etc/xdg", (0o40755, b""))

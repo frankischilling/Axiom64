@@ -10,7 +10,14 @@ ordinary terminal. The smaller desktop initramfs leaves out the toolchain.
 Build with `make build/axiom64.elf build/rootfs-installed-desktop.cpio` and run
 `python3 scripts/installed_toolchain_test.py` to check the installed profile.
 The test compiles and runs the examples as a signed-in user on BIOS and UEFI
-NVMe guests.
+NVMe guests. It also clones a Git repository, builds a C and C++ project
+with Ninja, runs it through CTest, and searches files and output with ripgrep.
+
+The installed desktop ships Git 2.49.1, CMake 3.31.7, Ninja 1.12.1, and
+ripgrep 14.1.1. The port locks pin their Alpine packages, needed libraries,
+source archives, and build recipes. CMake recognizes Axiom64 and uses the ELF
+shared-library settings for its Linux ABI. Git, CMake, and ripgrep manual
+pages are under `/usr/share/man`.
 
 The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
 UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools

@@ -178,6 +178,12 @@ struct Task {
     Wait wait;
     int wait_fd, wait_pid;
     uint64_t deadline, wait_generation;
+
+    struct {
+        uint64_t deadline, remaining, request_ns;
+        bool realtime;
+    } sleep;
+
     int vfork_parent;
     FutexWait futex;
     IoRequest* io;

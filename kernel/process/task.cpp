@@ -48,6 +48,7 @@
 #include "drivers/audio/pcm.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
+#include "process/clock_sleep.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
 #include "io/descriptor_wait.hpp"
@@ -497,6 +498,8 @@ static bool awaken(Task& t) {
     if (resume_fifo_open(t) || epoll_resume_wait(t) || descriptor_wait_resume(t) ||
         io_resume_signal_descriptor(t))
         return true;
+    if (t.wait == Wait::sleep && clock_sleep_resume(t))
+        return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
         return true;
@@ -525,8 +528,7 @@ static bool awaken(Task& t) {
                 ready = true;
         break;
     case Wait::sleep:
-        ready = ticks >= t.deadline;
-        break;
+        return false;
     case Wait::vfork:
         ready = true;
         for (auto& c : tasks)

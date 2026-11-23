@@ -61,9 +61,23 @@ accepted IDs retain boot-relative accounting; this does not establish CPU-time
 clock semantics. Absolute `FUTEX_WAIT_BITSET` deadlines with
 `FUTEX_CLOCK_REALTIME` are converted to remaining monotonic time, with expired
 deadlines and expected-word error ordering preserved. Complete
-Linux clock-ID semantics, realtime setting and permissions, ACPI PM timer,
-higher-resolution deadlines, SMP clock handling, power transitions,
+Linux clock-ID semantics, higher-resolution deadlines, power transitions,
 suspend/resume, and synchronization remain unfinished.
+
+## Sleeping until a deadline
+
+`nanosleep` and `clock_nanosleep` use the same task wait. Relative intervals use
+elapsed time and are rounded up for the 10 ms clock. Absolute sleeps use
+`CLOCK_MONOTONIC`, `CLOCK_BOOTTIME`, or `CLOCK_REALTIME` as requested.
+Boottime currently tracks monotonic time because the system does not suspend.
+An absolute realtime waiter checks the current wall clock on wake, so setting
+the clock forward across its deadline expires it. Relative sleeps keep their
+original interval across clock changes.
+
+A caught signal interrupts both sleep calls even with `SA_RESTART`. A relative
+sleep can return the remaining duration. An absolute sleep leaves the caller's
+remaining-time buffer untouched. CPU-time, alarm, TAI, and device-specific
+clocks are outside the current sleep support.
 
 ## Boot calendar
 
@@ -80,8 +94,9 @@ configured yet.
 The accepted seconds become a calendar offset over the existing elapsed
 counter. An unavailable or invalid RTC is reported and leaves calendar calls
 boot-relative; the kernel cannot infer a valid date from that hardware state.
-There is no NTP synchronization, RTC update, suspend correction, or wall-clock
-setting interface yet.
+Privileged callers can adjust the live wall clock with `clock_settime` or
+`settimeofday`. RTC updates, NTP synchronization, and suspend correction
+remain open.
 
 Filesystem creation and mutation timestamps use the same calendar offset.
 RAM files retain the 10 ms clock resolution; classic ext2 stores whole seconds.
@@ -96,8 +111,14 @@ make test-clock
 make test-clock-wall-native
 make test-clock-wall-boundary
 make test-clock-wall
+python3 scripts/wall_clock_set_test.py
 python3 scripts/clock_test.py --firmware bios --transport modern --counter tsc --delay 3
 ```
+
+The clock-setting test boots BIOS and UEFI guests to check authorization and
+absolute realtime and relative waits during wall-clock changes. The sleep
+fixture also runs on native Linux and as static and dynamic musl programs
+under both guest firmware modes.
 
 Native GNU ASAN/UBSAN checks 4096 counter fixtures against independent 128-bit
 arithmetic (49152 samples), fractional intervals, invalid scales, backward

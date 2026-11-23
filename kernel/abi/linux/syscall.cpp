@@ -36,6 +36,7 @@
 #include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
+#include "process/clock_sleep.hpp"
 #include "process/task.hpp"
 #include "process/scheduler.hpp"
 #include "process/cpu.hpp"
@@ -1275,24 +1276,8 @@ static int64_t dispatch(Frame* f, Task* running) {
     }
     case 33:
         return dup_fd(a, b);
-    case 35: {
-        Timespec ts;
-        if (!running->memory->space.copy_in(&ts, a, sizeof(ts)))
-            return -14;
-        if (ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1000000000)
-            return -22;
-        if (running->deadline && ticks >= running->deadline) {
-            running->deadline = 0;
-            return 0;
-        }
-        if (!running->deadline)
-            running->deadline = ticks + uint64_t(ts.sec) * 100 + (ts.nsec + 9999999) / 10000000;
-        if (running->deadline == ticks) {
-            running->deadline = 0;
-            return 0;
-        }
-        return block(Wait::sleep);
-    }
+    case 35:
+        return linux_clock_nanosleep(*running, 1, 0, a, b);
     case 39:
         return running->process->pid;
     case 186:
@@ -1761,6 +1746,8 @@ static int64_t dispatch(Frame* f, Task* running) {
         Timespec ts{0, 10000000};
         return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
+    case 230:
+        return linux_clock_nanosleep(*running, int32_t(a), int32_t(b), c, d);
     case 137: {
         Path path;
         if (!path_at(-100, a, path))

@@ -23,6 +23,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/pci_inventory.hpp"
+#include "drivers/platform/device_event.hpp"
 #include "drivers/platform/pci.hpp"
 #include "fs/vfs.hpp"
 
@@ -73,22 +74,23 @@ bool link_at(Node* parent, const char* name, const char* target) {
     return create_node(relative, symlink | 0777, node, target) == 0;
 }
 
-bool publish_file(Node* parent, const char* name, const void* data, size_t size) {
+Node* publish_file(Node* parent, const char* name, const void* data, size_t size,
+                   unsigned mode = 0444) {
     auto bytes = static_cast<uint8_t*>(alloc(size));
     if (!bytes)
-        return false;
+        return nullptr;
     Path relative{.base = parent};
     memcpy(relative.text, name, strlen(name) + 1);
     Node* node = nullptr;
-    if (create_node(relative, regular_file | 0444, node)) {
+    if (create_node(relative, regular_file | mode, node)) {
         release(bytes);
-        return false;
+        return nullptr;
     }
     memcpy(bytes, data, size);
     node->data = bytes;
     node->size = node->capacity = size;
     node->owned = true;
-    return true;
+    return node;
 }
 
 bool publish_hex(Node* parent, const char* name, uint32_t value, unsigned width) {
@@ -186,6 +188,24 @@ bool publish_function(const PciFunction& function) {
         !publish_file(node, "modalias", modalias, end - modalias) ||
         !publish_file(node, "config", config, config_size) ||
         !link_at(node, "subsystem", "/sys/bus/pci") || !link_at(lookup(bus_devices), name, path))
+        return false;
+    char properties[200];
+    const unsigned class_code = class_revision >> 8;
+    auto property = hex(append(properties, "SUBSYSTEM=pci\nPCI_CLASS="), class_code,
+                        class_code > 0xfffff  ? 6
+                        : class_code > 0xffff ? 5
+                                              : 4,
+                        true);
+    property = hex(append(property, "\nPCI_ID="), vendor, 4, true);
+    property = hex(append(property, ":"), device, 4, true);
+    property = hex(append(property, "\nPCI_SUBSYS_ID="), uint16_t(subsystem), 4, true);
+    property = hex(append(property, ":"), uint16_t(subsystem >> 16), 4, true);
+    property = append(append(property, "\nPCI_SLOT_NAME="), name);
+    property = append(property, "\nMODALIAS=");
+    memcpy(property, modalias, end - modalias);
+    auto uevent =
+        publish_file(node, "uevent", properties, property - properties + (end - modalias), 0644);
+    if (!uevent || publish_device_event(uevent))
         return false;
     ++published;
     return true;

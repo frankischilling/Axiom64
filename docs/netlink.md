@@ -46,6 +46,29 @@ Poll and epoll report read availability and capacity for a minimum acknowledgmen
 
 `list` returns at most 65 route records and can filter by interface/protocol. It verifies kernel sender, sequence, port identity, record bounds, and multipart completion. Failure leaves the caller's records and count unchanged. It drains an undersized result before returning `ENOSPC`; malformed, timed-out, or interrupted exchanges discard the private socket. The caller can reopen it for later work. The [Configuration module](network-configuration.md) uses this adapter for DHCP/static tuple and route ownership. Normal startup supervises the [network manager](network-manager.md) as a Ring 3 child.
 
+## Device events
+
+`NETLINK_KOBJECT_UEVENT` has its own port space. Subscribe to kernel events
+with multicast group 1. The PCI inventory publishes device metadata and emits
+an `add` event after publication. A caller with `CAP_SYS_ADMIN` can write an
+action such as `change` to a PCI device's `uevent` attribute under
+`/sys/bus/pci/devices` to replay that device's properties. Each record carries
+its action, canonical device path, properties, and sequence number.
+
+Group 2 carries events processed and republished by userspace. Sending to this
+group requires `CAP_NET_ADMIN`. `SO_PASSCRED` supplies the real sender's
+credentials for group 2 and the kernel identity for group 1. Device sockets
+share the bounded datagram queue and report `ENOBUFS` on an overrun.
+
+`SO_ATTACH_FILTER` supports the classic BPF instructions used by elogind's
+device monitor. The filter validates forward jumps before installation.
+Supported instructions load a big-endian word from the payload, mask the
+accumulator, branch on equality, and return a capture length.
+
+`make test-device-events` checks PCI event delivery, filtering, relay
+permissions, and queue behavior in BIOS and UEFI. The message layout follows
+the [Linux device-event implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c).
+
 ## Verification
 
 ```sh

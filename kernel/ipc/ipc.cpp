@@ -51,7 +51,6 @@ static constexpr uint32_t read_events = 1 | 0x40;                     // POLLIN 
 static constexpr uint32_t write_events = 4 | 0x100;                   // POLLOUT | POLLWRNORM
 static constexpr uint32_t socket_write_events = write_events | 0x200; // Also POLLWRBAND.
 static constexpr uint32_t stream_peer_close = read_events | socket_write_events | 16 | 0x2000;
-static void epoll_notify_source(const void*, uint32_t);
 
 bool socket_node_busy(Node* node) {
     for (auto& socket : sockets)
@@ -363,6 +362,8 @@ uint32_t readiness(Handle* h, const Task* task) {
         events |= h->inotify ? inotify_read_events : 1;
     if (handle_ready(h, true, task))
         events |= 4;
+    if (h->netlink && netlink_overrun(h->netlink))
+        events |= 8;
     if (h->packet) {
         auto info = net_info(packet_interface(h->packet));
         if (info && !info->live)
@@ -645,6 +646,8 @@ const void* readiness_source(const Handle& handle) {
         return handle.inet;
     if (handle.inet6)
         return handle.inet6;
+    if (handle.netlink)
+        return handle.netlink;
     return &handle;
 }
 
@@ -747,7 +750,7 @@ static void epoll_refresh(Epoll& epoll, const void* source, uint32_t events, uin
         ++epoll.notification;
 }
 
-static void epoll_notify_source(const void* source, uint32_t events) {
+void epoll_notify_source(const void* source, uint32_t events) {
     if (source)
         descriptor_wait_notify(source, events);
     epoll_notify_exclusive(source, events);

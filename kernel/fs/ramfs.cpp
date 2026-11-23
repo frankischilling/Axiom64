@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/vfs.hpp"
+#include "drivers/platform/device_event.hpp"
 #include "fs/inotify.hpp"
 #include "fs/xattr.hpp"
 #include "process/task.hpp"
@@ -259,6 +260,8 @@ static int sync(Mount* mount, Node*, bool) {
 }
 
 static int map_shared(Node* node, uint64_t offset, size_t length, uint64_t& physical_address) {
+    if (device_event_control(node))
+        return -19;
     if (offset > SIZE_MAX - length)
         return -27;
     size_t old = node->size;
@@ -329,6 +332,26 @@ static int removexattr(Node* node, const XattrName& name) {
 }
 
 const FilesystemOps ramfs_ops = {
-    find, create,     link,  remove,  rename,  read,    write,    truncate,  setattr,  readdir,
-    sync, map_shared, stats, destroy, nullptr, nullptr, getxattr, listxattr, setxattr, removexattr};
+    .lookup = find,
+    .create = create,
+    .link = link,
+    .remove = remove,
+    .rename = rename,
+    .read = read,
+    .write = write,
+    .truncate = truncate,
+    .setattr = setattr,
+    .readdir = readdir,
+    .sync = sync,
+    .map_shared = map_shared,
+    .stats = stats,
+    .destroy = destroy,
+    .remount = nullptr,
+    .prepare_unmount = nullptr,
+    .getxattr = getxattr,
+    .listxattr = listxattr,
+    .setxattr = setxattr,
+    .removexattr = removexattr,
+    .control = device_event_control,
+};
 } // namespace ax

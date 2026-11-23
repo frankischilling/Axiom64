@@ -173,7 +173,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (!request.write)
         return 0;
     if (request.handle->netlink) {
-        if (int error = netlink_target(request.netlink_destination))
+        if (int error = netlink_target(request.handle->netlink, request.netlink_destination))
             return error;
         if (request.packet_length > netlink_max_request)
             return -90;
@@ -256,7 +256,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     if (request.write) {
         if (request.handle->netlink)
             return netlink_send(task, request.handle->netlink, request.packet_data,
-                                request.packet_length);
+                                request.packet_length, request.netlink_destination);
         if (request.handle->inet) {
             if (request.inet_output.header_included && request.inet_output.probe)
                 return int64_t(request.packet_length);
@@ -287,6 +287,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     }
     if (!request.socket && !request.packet_length)
         return 0;
+    if (request.handle->netlink && netlink_take_overrun(request.handle->netlink))
+        return -105;
     if (request.handle->inet)
         if (int error = inet_error(request.handle->inet, true))
             return -error;
@@ -367,6 +369,9 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             control_length =
                 inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
                                       request.control_capacity, message_flags);
+        else if (nl && netlink_pass_credentials(request.handle->netlink))
+            control_length = nl->credentials.write(task, request.control_pointer,
+                                                   request.control_capacity, message_flags);
     }
     if ((ip || ip6) && request.address_pointer) {
         // Linux stores the full source length before copying any address bytes.

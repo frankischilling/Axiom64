@@ -164,6 +164,13 @@ size_t unix_write_control(Task& task, const UnixMessageCredentials* credentials,
     return used;
 }
 
+UnixMessageCredentials UnixMessageCredentials::kernel() {
+    UnixMessageCredentials credentials;
+    credentials.uid = credentials.gid = 0;
+    credentials.captured = true;
+    return credentials;
+}
+
 void UnixMessageCredentials::capture(const Task& task) {
     if (captured)
         return;

@@ -152,6 +152,7 @@ uint32_t readiness(Handle*, const Task*);
 const void* readiness_source(const Handle&);
 
 void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
+void epoll_notify_source(const void*, uint32_t events);
 void epoll_signal_notify(const SignalHandlers&);
 
 void epoll_close(Epoll*);

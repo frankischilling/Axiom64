@@ -389,6 +389,10 @@ test-usb-hid-mouse: build/usb-hid-mouse-test
 test-cgroup-session:
 	$(PYTHON) scripts/cgroup_session_test.py
 
+.PHONY: test-device-events
+test-device-events:
+	$(PYTHON) scripts/device_event_test.py
+
 test-clock-wall:
 	$(PYTHON) scripts/clock_wall_test.py
 test-clock-wall-native:

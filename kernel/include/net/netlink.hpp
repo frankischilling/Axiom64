@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #pragma once
+#include "ipc/unix_credentials.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv6.hpp"
 
@@ -49,6 +50,7 @@ constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4176,
 
 struct NetlinkFrame {
     NetlinkAddress source;
+    UnixMessageCredentials credentials;
     size_t length, reserved;
 };
 
@@ -89,10 +91,15 @@ void netlink_consume(NetlinkSocket*);
 size_t netlink_available(NetlinkSocket*);
 int netlink_reserve_delivery(NetlinkSocket*, size_t, NetlinkFrame*&);
 void netlink_publish_delivery(NetlinkSocket*, NetlinkFrame*);
+void netlink_device_event(const void*, size_t);
+bool netlink_pass_credentials(const NetlinkSocket*);
+bool netlink_overrun(const NetlinkSocket*);
+bool netlink_take_overrun(NetlinkSocket*);
 
-int netlink_target(const NetlinkAddress&);
+int netlink_target(const NetlinkSocket*, const NetlinkAddress&);
 
-int64_t netlink_send(Task&, NetlinkSocket*, const void*, size_t);
+int64_t netlink_send(Task&, NetlinkSocket*, const void*, size_t,
+                     const NetlinkAddress& destination = {});
 
 int64_t netlink_read(NetlinkSocket*, void*, size_t);
 

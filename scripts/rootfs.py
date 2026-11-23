@@ -164,11 +164,10 @@ package_payloads = {
     "weston-clients": ("usr/bin/weston-simple-shm",),
     "openssh-server-common": (),  # The installed server requires a local configuration.
 }
-installed_libraries = {'gmp', 'libgomp'} if installed_desktop else set()
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
-    if args.profile != "full" and package["name"] not in installed_libraries and package["name"] in {
+    if args.profile == "desktop" and package["name"] in {
         "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
         "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
         "libisoburn", "libisofs", "xorriso"

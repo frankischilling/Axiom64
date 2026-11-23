@@ -1156,8 +1156,24 @@ static int64_t touchpad_ioctl(Handle& handle, uint64_t request, uint64_t arg) {
     unsigned bytes = input_capabilities(Device::touchpad, number, bitmap);
     if (bytes)
         return output(arg, bitmap, min(bytes, size)) ? -14 : int64_t(min(bytes, size));
+    // Linux exposes empty bitmaps for event classes a device does not provide.
+    // libevdev still queries these classes while opening a touchpad.
+    switch (number) {
+    case 0x19: // EVIOCGLED
+    case 0x1a: // EVIOCGSND
+    case 0x1b: // EVIOCGSW
+    case 0x24: // EVIOCGBIT(EV_MSC)
+    case 0x25: // EVIOCGBIT(EV_SW)
+    case 0x31: // EVIOCGBIT(EV_LED)
+    case 0x32: // EVIOCGBIT(EV_SND)
+    case 0x35: // EVIOCGBIT(EV_FF)
+        bytes = min(number == 0x35 ? 2 * sizeof(uint64_t) : sizeof(uint64_t), size_t(size));
+        return output(arg, bitmap, bytes) ? -14 : int64_t(bytes);
+    default:
+        break;
+    }
     if (number != 0x18) // EVIOCGKEY
-        return -25;
+        return number >= 0x20 && number < 0x40 ? -22 : -25;
     const auto mark = [&](uint16_t code) { bitmap[code / 8] |= 1u << (code % 8); };
     if (touchpad.key_down(btn_left))
         mark(btn_left);

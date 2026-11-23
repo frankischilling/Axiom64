@@ -97,7 +97,7 @@ static const char* alias(const char* executable) {
 static void usage(void) {
     fputs("usage: account-access [--database PATH] [--records PATH] COMMAND\n"
           "  login [NAME] | su [NAME] [-c COMMAND] | sudo [-u NAME] COMMAND...\n"
-          "  passwd [NAME] | provision NAME HOME SHELL\n",
+          "  passwd [NAME] | provision NAME HOME SHELL [--audio]\n",
           stderr);
 }
 
@@ -338,11 +338,12 @@ int main(int argc, char** argv) {
     if (!error && provision) {
         char secret[ACCOUNT_PASSWORD_MAX + 1] = {0};
         int published = 0;
-        if (argc - first != 3)
+        int playback = argc - first == 4 && !strcmp(argv[first + 3], "--audio");
+        if (argc - first != 3 && !playback)
             error = EINVAL;
         else if (new_password(terminal, secret) < 0 ||
                  account_bootstrap(database, records, argv[first], argv[first + 1], argv[first + 2],
-                                   secret, &published) < 0)
+                                   secret, playback, &published) < 0)
             error = errno;
         account_password_clear(secret, sizeof(secret));
         if (published)

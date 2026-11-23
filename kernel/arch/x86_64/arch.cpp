@@ -97,7 +97,8 @@ static void init_cpu_entry(CpuEntry& entry, uint64_t kernel_top, unsigned index)
     cr0 = (cr0 & ~4ull) | 0x10022;
     asm volatile("mov %0,%%cr0" ::"r"(cr0));
     asm volatile("mov %%cr4,%0" : "=r"(cr4));
-    cr4 |= 0x600;
+    // The memory manager uses a leaf PTE protection-key bit for its lock state.
+    cr4 = (cr4 & ~(1ull << 22)) | 0x600;
     asm volatile("mov %0,%%cr4" ::"r"(cr4));
     wrmsr(0xc0000080, rdmsr(0xc0000080) | 0x801);
     wrmsr(0xc0000081, (uint64_t(0x13) << 48) | (uint64_t(8) << 32));

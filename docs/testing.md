@@ -35,6 +35,9 @@ untouched anonymous pages, protection changes, unmapped holes, output faults,
 and vectors spanning more than one kernel buffer. They also check residency
 through memfd and ext2 aliases and verify that an ordinary user cannot read
 the cache state of a file they lack permission to write.
+The probes also exercise `mlock` and `munlock` on anonymous and ext2 mappings.
+They check `RLIMIT_MEMLOCK`, `VmLck`, and how page locks follow protection
+changes, remaps, forks, and unmaps.
 
 For firmware and PCI changes, run `make test-clock-codec test-pci-interrupts
 test-acpi-routing` for sanitizer checks. Run `make test-udp` for interrupt

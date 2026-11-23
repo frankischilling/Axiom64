@@ -78,7 +78,8 @@ def run_guest(output, disk, firmware):
                                 stdin=subprocess.DEVNULL, timeout=90)
     data = log.read_text(errors="replace")
     markers = ("MINCORE_ANONYMOUS_PASS", "MINCORE_LONG_VECTOR_PASS", "MINCORE_MEMFD_PASS",
-               "MINCORE_FILE_PRIVACY_PASS", "MINCORE_FILE_PASS", "MINCORE_PASS")
+               "MEMORY_LOCKS_PASS", "MINCORE_FILE_PRIVACY_PASS", "MINCORE_FILE_PASS",
+               "MINCORE_PASS")
     if (result.returncode != 1 or "VFS_ROOT_PASS filesystem=ext2 device=PARTUUID=" not in data or
             "nvme: controller=0 nsid=1" not in data or "MINCORE_FAIL" in data or
             any(data.splitlines().count(marker) != 2 for marker in markers)):

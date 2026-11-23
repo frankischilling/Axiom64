@@ -104,7 +104,8 @@ int64_t remap_memory(Task& task, uint64_t address, size_t old_size, size_t new_s
                        (page_private | page_anonymous))
             return -38;
         uint64_t read_bit = !file && !(*entry & page_mask) ? page_anonymous_access : readable;
-        uint64_t bits = (*entry & (writable | nx)) | (*entry & read_bit ? readable : 0);
+        uint64_t bits =
+            (*entry & (writable | nx | page_locked)) | (*entry & read_bit ? readable : 0);
         if (page == address)
             protection_bits = bits;
         else if (new_size > old_size && bits != protection_bits)
@@ -125,6 +126,9 @@ int64_t remap_memory(Task& task, uint64_t address, size_t old_size, size_t new_s
     }
 
     size_t growth = new_size - old_size;
+    const bool locked = protection_bits & page_locked;
+    if (locked && !memory_lock_growth_allowed(task, growth))
+        return -11;
     int protection = (protection_bits & readable ? 1 : 0) | (protection_bits & writable ? 2 : 0) |
                      (protection_bits & nx ? 0 : 4);
     if (file && new_size - 1 > uint64_t(INT64_MAX) - file->offset)
@@ -132,12 +136,20 @@ int64_t remap_memory(Task& task, uint64_t address, size_t old_size, size_t new_s
     if (!memory_growth_allowed(task, end, growth) ||
         ((protection & 2) && (!file || !file->shared) && !data_growth_allowed(task, end, growth)))
         return -12;
+    auto finish = [&](uint64_t base) -> int64_t {
+        if (locked) {
+            const auto tail = base + old_size;
+            update_memory_lock(space, tail, growth, true);
+            populate_locked_pages(space, tail, growth);
+        }
+        return base;
+    };
     if (growth <= user_limit - end && !space.mapped_size(end, growth)) {
         if (file)
-            return grow_file_mapping(*file, address, new_size, protection) ? int64_t(address) : -12;
+            return grow_file_mapping(*file, address, new_size, protection) ? finish(address) : -12;
         bool grown = reserve ? space.map_anonymous_reservation(end, growth, protection)
                              : space.map(end, growth, protection, page_private | page_anonymous);
-        return grown ? int64_t(address) : -12;
+        return grown ? finish(address) : -12;
     }
     if (!(flags & may_move))
         return -12;
@@ -151,6 +163,6 @@ int64_t remap_memory(Task& task, uint64_t address, size_t old_size, size_t new_s
     if (!moved)
         return -12;
     space.next_map = destination + new_size + page_size;
-    return destination;
+    return finish(destination);
 }
 } // namespace ax

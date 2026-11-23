@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -106,6 +107,63 @@ static void memory_file(void) {
     puts("MINCORE_MEMFD_PASS");
 }
 
+static unsigned locked_kib(void) {
+    FILE* status = fopen("/proc/self/status", "r");
+    CHECK(status);
+    char line[192];
+    unsigned locked = 0;
+    while (fgets(line, sizeof(line), status))
+        if (sscanf(line, "VmLck: %u", &locked) == 1) {
+            CHECK(fclose(status) == 0);
+            return locked;
+        }
+    CHECK(0);
+    return 0;
+}
+
+static void memory_locks(void) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        if (geteuid() == 0)
+            CHECK(setgid(12345) == 0 && setuid(12345) == 0);
+        struct rlimit limit = {2 * page_size, 2 * page_size};
+        CHECK(setrlimit(RLIMIT_MEMLOCK, &limit) == 0);
+        unsigned char* pages = mmap(NULL, 3 * page_size, PROT_READ | PROT_WRITE, anonymous, -1, 0);
+        CHECK(pages != MAP_FAILED && locked_kib() == 0);
+        CHECK(mlock(pages + 1, page_size) == 0 && locked_kib() == 8);
+        unsigned char vec[3];
+        CHECK(mincore(pages, 3 * page_size, vec) == 0 && vec[0] == 1 && vec[1] == 1 && vec[2] == 0);
+        CHECK(mlock(pages, page_size) == 0 && locked_kib() == 8);
+        CHECK(mlock(pages + 2 * page_size, page_size) == -1 && errno == ENOMEM);
+        CHECK(mremap(pages, 2 * page_size, 3 * page_size, MREMAP_MAYMOVE) == MAP_FAILED &&
+              errno == EAGAIN);
+        CHECK(mprotect(pages, page_size, PROT_NONE) == 0 && locked_kib() == 8);
+        pid_t sub = fork();
+        CHECK(sub >= 0);
+        if (!sub)
+            _exit(locked_kib() != 0);
+        int result;
+        CHECK(waitpid(sub, &result, 0) == sub && WIFEXITED(result) && WEXITSTATUS(result) == 0);
+        CHECK(munlock(pages, page_size) == 0 && locked_kib() == 4);
+        CHECK(mlock(pages + 2 * page_size, page_size) == 0 && locked_kib() == 8);
+        CHECK(munmap(pages, 3 * page_size) == 0 && locked_kib() == 0);
+
+        pages = mmap(NULL, 2 * page_size, PROT_READ | PROT_WRITE, anonymous, -1, 0);
+        CHECK(pages != MAP_FAILED && mlock(pages, page_size) == 0);
+        pages[0] = 0x37;
+        unsigned char* moved = mremap(pages, page_size, 2 * page_size, MREMAP_MAYMOVE);
+        CHECK(moved != MAP_FAILED && moved != pages && moved[0] == 0x37 && locked_kib() == 8);
+        CHECK(mincore(moved, 2 * page_size, vec) == 0 && vec[0] == 1 && vec[1] == 1);
+        CHECK(munmap(moved, 2 * page_size) == 0 && munmap(pages + page_size, page_size) == 0 &&
+              locked_kib() == 0);
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    puts("MEMORY_LOCKS_PASS");
+}
+
 static void file_residency(void) {
     char path[] = "mincore-file-XXXXXX";
     const int fd = mkstemp(path);
@@ -117,6 +175,9 @@ static void file_residency(void) {
     CHECK(mincore(view, 3 * page_size, vec) == 0 && vec[1] == 0 && vec[2] == 0);
     CHECK(alias[0] == 0);
     CHECK(mincore(view, 3 * page_size, vec) == 0 && vec[1] == 1 && vec[2] == 0);
+    CHECK(mlock(view, 2 * page_size) == 0 && locked_kib() == 8);
+    CHECK(mincore(view, 3 * page_size, vec) == 0 && vec[0] == 1 && vec[1] == 1 && vec[2] == 0);
+    CHECK(munlock(view, 2 * page_size) == 0 && locked_kib() == 0);
     CHECK(fchmod(fd, 0444) == 0);
 
     if (geteuid() == 0) {
@@ -151,6 +212,7 @@ int main(void) {
     anonymous_residency();
     long_vector();
     memory_file();
+    memory_locks();
     file_residency();
     puts("MINCORE_PASS");
     return 0;

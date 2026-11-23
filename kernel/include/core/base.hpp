@@ -50,6 +50,8 @@ constexpr uint64_t page_no_execute = 1ull << 52;
 constexpr uint64_t page_private = 1ull << 53, page_stack = 1ull << 54;
 constexpr uint64_t page_file = 1ull << 55, page_file_access = 1ull << 56,
                    page_file_write = 1ull << 57, page_file_cow = 1ull << 58;
+// User protection keys are disabled, leaving this leaf bit available to the kernel.
+constexpr uint64_t page_locked = 1ull << 60;
 // Non-file entries reuse the file access bit to identify private anonymous mmap pages.
 constexpr uint64_t page_anonymous = page_file_access;
 constexpr uint64_t page_anonymous_access = page_file_write;
@@ -196,6 +198,7 @@ struct AddressSpace {
 
     uint64_t mapped_size(uint64_t start = 0, uint64_t length = user_limit) const;
     uint64_t resident_size() const;
+    uint64_t locked_size(uint64_t start = 0, uint64_t length = user_limit) const;
 
     uint64_t find_unmapped(size_t length) const;
 

@@ -29,6 +29,8 @@
 namespace ax {
 namespace {
 uint64_t epoch_ticks, initial_ticks;
+ClockTimezone timezone;
+bool timezone_set;
 
 uint8_t rtc_register(uint8_t reg, void*) {
     out8(0x70, reg);
@@ -49,5 +51,37 @@ void clock_realtime_init() {
 uint64_t clock_realtime_ticks() {
     uint64_t elapsed = ticks >= initial_ticks ? ticks - initial_ticks : 0;
     return elapsed > UINT64_MAX - epoch_ticks ? UINT64_MAX : epoch_ticks + elapsed;
+}
+
+ClockTimezone clock_timezone() {
+    return timezone;
+}
+
+int clock_update_realtime(const uint64_t* new_time, const ClockTimezone* new_timezone) {
+    clock_refresh();
+    if (new_time && *new_time < ticks)
+        return -22;
+    if (new_time) {
+        epoch_ticks = *new_time;
+        initial_ticks = ticks;
+    }
+    if (new_timezone) {
+        // The legacy timezone-only request can convert a CMOS clock kept in
+        // local time to UTC on the first call.
+        if (!timezone_set && !new_time) {
+            const auto now = clock_realtime_ticks();
+            const auto delta = int64_t(new_timezone->minutes_west) * 60 * 100;
+            if (delta >= 0 && uint64_t(delta) <= UINT64_MAX - now) {
+                epoch_ticks = now + uint64_t(delta);
+                initial_ticks = ticks;
+            } else if (delta < 0 && uint64_t(-delta) <= now - min(now, ticks)) {
+                epoch_ticks = now - uint64_t(-delta);
+                initial_ticks = ticks;
+            }
+        }
+        timezone = *new_timezone;
+        timezone_set = true;
+    }
+    return 0;
 }
 } // namespace ax

@@ -940,12 +940,15 @@ test-udp:
 	$(PYTHON) scripts/udp_matrix.py --platform
 	$(PYTHON) scripts/pci_bridge_windows_test.py
 
-.PHONY: test-pci-interrupts
+.PHONY: test-pci-interrupts test-pci-inventory
 build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kernel/drivers/platform/pci.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include -Ivendor $(filter %.cpp,$^) -o $@
 test-pci-interrupts: build/pci-interrupt-tests
 	./build/pci-interrupt-tests
+
+test-pci-inventory: build/axiom64.elf | busybox
+	$(PYTHON) scripts/pci_inventory_test.py
 
 .PHONY: test-acpi-routing
 build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp $(call rwildcard,kernel/include/,*.hpp)

@@ -22,7 +22,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
 | `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
 | `kernel/net/netlink/` | Link/address inventories, IPv6 link-generation controls, route/address message validation, owned replies, and control socket lifecycle |
-| `kernel/drivers/platform/` | PCI, ISA Plug and Play discovery, polled legacy devices, and PIIX4 power off |
+| `kernel/drivers/platform/` | PCI and its userspace inventory, ISA Plug and Play discovery, polled legacy devices, and PIIX4 power off |
 | `kernel/drivers/block/` | Virtio, AHCI, NVMe, IDE and floppy I/O, partition decoding, volume bounds, overlapping filesystem claims and read-through buffers |
 | `kernel/drivers/audio/` | Intel HD Audio controller and codec setup, PCM DMA rings and OSS device operations |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |

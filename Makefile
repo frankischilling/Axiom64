@@ -31,7 +31,7 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
-.PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
+.PHONY: test-rtc-codec test-clock-wall test-clock-wall-native test-usb-hid-mouse
 .PHONY: test-partitions test-partitions-native
 .PHONY: test-block-cache test-guest-media
 .PHONY: test-vm-journal
@@ -379,6 +379,12 @@ build/rtc-codec: kernel/tests/time/rtc.cpp kernel/firmware/rtc.cpp kernel/includ
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/time/rtc.cpp kernel/firmware/rtc.cpp -o $@
 test-rtc-codec: build/rtc-codec
 	ASAN_OPTIONS=detect_leaks=1 ./build/rtc-codec
+build/usb-hid-mouse-test: kernel/tests/usb/hid_mouse.cpp kernel/drivers/usb/hid_mouse.cpp kernel/include/drivers/usb/hid_mouse.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $< kernel/drivers/usb/hid_mouse.cpp -o $@
+test-usb-hid-mouse: build/usb-hid-mouse-test
+	ASAN_OPTIONS=detect_leaks=1 ./build/usb-hid-mouse-test
+
 test-clock-wall:
 	$(PYTHON) scripts/clock_wall_test.py
 test-clock-wall-native:

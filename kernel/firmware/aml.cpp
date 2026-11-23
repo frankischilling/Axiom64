@@ -491,7 +491,7 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
             write_buffer_bits(local->bytes, local->bit_shift, local->number, input.number);
         } else if (local->type == Type::LocalMemoryField) {
             Value current{};
-            return local->access_bytes != 4 && input.type == Type::Integer &&
+            return replay_initialization && input.type == Type::Integer &&
                    read_local_memory(*local, current) &&
                    stage_memory_bits(local->number + local->bit_shift / 8, local->bit_shift % 8,
                                      local->content.left, input.number);
@@ -960,13 +960,15 @@ bool Namespace::declare_local_fields(Cursor& stream, Frame& frame) {
     uint64_t flags;
     if (!stream.block(field) || !read_name(field, name) || !field.read(1, flags))
         return false;
-    const bool pci_dwords = flags == 3 && read_pci_bars;
-    const bool pci_words = flags == 2 && replay_initialization && read_pci_words;
-    if (!pci_dwords && !pci_words && (!replay_initialization || (flags != 0 && flags != 1)))
+    const bool bar_pair = flags == 3 && !replay_initialization && read_pci_bars;
+    const bool ecam = (flags == 2 || flags == 3) && replay_initialization && read_pci_ecam;
+    if (!bar_pair && !ecam && (!replay_initialization || (flags != 0 && flags != 1)))
         return false;
     const auto* region = frame.find(name);
     if (!region || region->type != Type::LocalRegion)
         return false;
+    const unsigned unit = bar_pair || ecam ? 1u << (flags - 1) : 1;
+    const unsigned unit_bits = 8 * unit;
 
     uint64_t offset = 0;
     while (field.left) {
@@ -979,19 +981,19 @@ bool Namespace::declare_local_fields(Cursor& stream, Frame& frame) {
         const uint64_t end = offset + bits;
         if (end < offset || end / 8 + (end % 8 != 0) > region->content.left)
             return false;
-        const unsigned unit = pci_dwords ? 4 : pci_words ? 2 : 1;
-        const unsigned shift = offset % (8 * unit);
-        if (term && (!bits || bits > (integer_mask == UINT32_MAX ? 32u : 64u) ||
-                     region->number % unit || (pci_dwords && (shift || bits % 32)) ||
-                     (pci_words && (end / 16 + (end % 16 != 0)) > region->content.left / 2) ||
-                     !frame.add(field_name, {Type::LocalMemoryField,
-                                             region->number + (offset - shift) / 8,
-                                             {nullptr, bits},
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             uint8_t(shift),
-                                             uint8_t(unit == 1 ? 0 : unit)})))
+        const unsigned shift = offset % unit_bits;
+        if (term &&
+            (!bits || bits > (integer_mask == UINT32_MAX ? 32u : 64u) || region->number % unit ||
+             (bar_pair && (shift || bits % 32)) ||
+             (ecam && (end / unit_bits + (end % unit_bits != 0)) > region->content.left / unit) ||
+             !frame.add(field_name, {Type::LocalMemoryField,
+                                     region->number + (offset - shift) / 8,
+                                     {nullptr, bits},
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     uint8_t(shift),
+                                     uint8_t(unit == 1 ? 0 : unit)})))
             return false;
         offset = end;
     }
@@ -1368,22 +1370,26 @@ bool Namespace::read_memory_field(const Object& field, Value& result, unsigned d
 
 bool Namespace::read_local_memory(const Value& field, Value& result) {
     const unsigned bits = field.content.left;
-    if (field.access_bytes == 4) {
+    if (field.access_bytes == 4 && !replay_initialization) {
         uint32_t values[2]{};
         if (!read_pci_bars(field.number, values, bits / 32))
             return false;
         result = {Type::Integer, values[0] | (uint64_t(values[1]) << 32), {}, nullptr};
         return true;
     }
-    uint8_t data[10]{}; // A 64-bit word field can start at bit 15.
-    if (field.access_bytes == 2) {
-        const unsigned bytes = ((field.bit_shift + bits + 15) / 16) * 2;
-        for (unsigned offset = 0; offset < bytes; offset += 2) {
-            uint16_t word;
-            if (!read_pci_words(field.number + offset, word))
+    uint8_t data[12]{}; // A 64-bit field can span three aligned dwords.
+    if (const unsigned unit = field.access_bytes) {
+        const unsigned unit_bits = 8 * unit;
+        const unsigned bytes = (field.bit_shift + bits + unit_bits - 1) / unit_bits * unit;
+        // One field cannot straddle two PCI functions.
+        if (bytes > 4096 - (field.number & 0xfff))
+            return false;
+        for (unsigned offset = 0; offset < bytes; offset += unit) {
+            uint32_t value;
+            if (!read_pci_ecam(field.number + offset, unit, value))
                 return false;
-            data[offset] = uint8_t(word);
-            data[offset + 1] = uint8_t(word >> 8);
+            for (unsigned byte = 0; byte < unit; ++byte)
+                data[offset + byte] = uint8_t(value >> (8 * byte));
         }
         apply_memory_overlay(field.number, data, bytes);
     } else if (!read_memory_bytes(field.number, data, (field.bit_shift + bits + 7) / 8, false,
@@ -1480,7 +1486,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->read_system_memory = read_system_memory;
     space->read_registers = nullptr;
     space->read_pci_bars = nullptr;
-    space->read_pci_words = nullptr;
+    space->read_pci_ecam = nullptr;
     space->register_context = nullptr;
     space->query_osi = nullptr;
     space->link_program = program;

@@ -239,7 +239,7 @@ struct Namespace {
     SystemMemoryRead read_system_memory;
     RegisterRead read_registers;
     PciBarRead read_pci_bars;
-    PciWordRead read_pci_words;
+    PciEcamRead read_pci_ecam;
     void* register_context;
     OsiQuery query_osi;
     PciLinkProgram link_program;

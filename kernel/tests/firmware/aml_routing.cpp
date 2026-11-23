@@ -1087,30 +1087,45 @@ void aml_integer_match_cases() {
     std::puts("ACPI_AML_MATCH_PASS operators start uninitialized integer_width malformed");
 }
 
-void aml_pci_word_replay_cases() {
+void aml_pci_config_replay_cases() {
     using namespace ax::Acpi;
-    const auto read_word = +[](uint64_t address, uint16_t& value) {
-        if (address != 0xe00000d8 && address != 0xe00000da)
+    const auto read_config = +[](uint64_t address, unsigned bytes, uint32_t& value) {
+        if (bytes == 2 && (address == 0xe00000d8 || address == 0xe00000da))
+            value = address == 0xe00000d8 ? 0xa5a5 : 0x5a5a;
+        else if (bytes == 4 && (address == 0xe0000548 || address == 0xe0000ffc))
+            value = 0xa5a5a5a5;
+        else if (bytes == 4 && (address == 0xe000054c || address == 0xe0001000))
+            value = 0x5a5a5a5a;
+        else
             return false;
-        value = address == 0xe00000d8 ? 0xa5a5 : 0x5a5a;
         return true;
     };
     const Bytes serial{0x8e, 19,   0, 2, 0,    1, 2,   0,   0,   1, 6,    0,
                        0x80, 0x1a, 6, 0, 0x15, 0, 'I', '2', 'C', 0, 0x79, 0};
-    auto inspect = [&](uint8_t start, uint8_t length, Bytes target, uint8_t event,
-                       PciWordRead provider) {
+    auto inspect = [&](uint16_t start, uint8_t length, Bytes target, uint8_t event,
+                       PciEcamRead provider, bool dword = false) {
+        const uint8_t access = dword ? 3 : 2;
+        const uint8_t offset = dword ? 30 : 14;
+        const uint8_t bits = dword ? 64 : 32;
+        const Bytes expected = dword ? Bytes{0x0e, 0xa5, 0xa5, 0xa5, 0x65, 0x59, 0x5a, 0x5a, 0x5a}
+                                     : Bytes{0x0c, 0xa5, 0x65, 0x59, 0x5a};
         const auto region =
-            sequence({{0x5b, 0x80}, name("ECFG"), {0, 0x0c, start, 0, 0, 0xe0, 0x0a, length}});
+            sequence({{0x5b, 0x80},
+                      name("ECFG"),
+                      {0, 0x0c, uint8_t(start), uint8_t(start >> 8), 0, 0xe0, 0x0a, length}});
         const auto fields =
-            block({0x5b, 0x81}, sequence({name("ECFG"), {2, 0, 14}, name("BITS"), {4}}));
-        const auto full = block({0x5b, 0x81}, sequence({name("ECFG"), {2}, name("FULL"), {32}}));
+            block({0x5b, 0x81}, sequence({name("ECFG"), {access, 0, offset}, name("BITS"), {4}}));
+        const auto width = bits == 64 ? Bytes{0x40, 4} : Bytes{bits};
+        const auto full =
+            block({0x5b, 0x81}, sequence({name("ECFG"), {access}, name("FULL"), width}));
         const auto record = block(
             {0xa0}, sequence({{0x93}, name("BITS"), {0x0a, 10, 0x70, 0x0a, 5}, name("BITS")}));
         const Bytes arithmetic{0x70, 0, 0x60, 0x76, 0x60, 0x80, 0x60, 0x61};
         const auto activated =
             block({0xa0}, sequence({{0x90, 0x93, 0x60, 0xff, 0x90, 0x93, 0x61, 0, 0x93},
                                     name("FULL"),
-                                    {0x0c, 0xa5, 0x65, 0x59, 0x5a, 0x70, 1},
+                                    expected,
+                                    {0x70, 1},
                                     name("LIVE")}));
         const auto ini = block({0x14}, sequence({name("_INI"),
                                                  {0},
@@ -1129,27 +1144,32 @@ void aml_pci_word_replay_cases() {
         const auto pad = block({0x5b, 0x82},
                                sequence({name("TPAD"), data("_HID", {0x0c, 0x41, 0xd0, 0x0c, 0x50}),
                                          sta, buffer("_CRS", serial)}));
-        const auto table =
+        auto table =
             definition(block({0x5b, 0x82}, sequence({name("PCI0"), data("LIVE", {0}), ini, pad})));
+        table[8] = 2;
         DefinitionBlocks blocks{};
         blocks.dsdt = {table.data(), 0x1000, table.size()};
         I2cHidDevices devices{};
-        assert(decode_i2c_hid_devices(blocks, devices, {.pci_words = provider}));
+        assert(decode_i2c_hid_devices(blocks, devices, {.pci_ecam = provider}));
         assert(!devices.count);
-        assert(decode_i2c_hid_devices(blocks, devices, {.pci_words = provider},
+        assert(decode_i2c_hid_devices(blocks, devices, {.pci_ecam = provider},
                                       HidDiscovery::replay_initialization));
         return devices;
     };
     const Bytes parent_name{0x5e, 0};
-    assert(inspect(0xd8, 4, parent_name, 0, read_word).count == 1);
-    assert(inspect(0xd8, 4, parent_name, 2, read_word).count == 1);
-    assert(inspect(0xd9, 4, parent_name, 0, read_word).initialization_failures == 1);
-    assert(inspect(0xd8, 3, parent_name, 0, read_word).initialization_failures == 1);
-    assert(inspect(0xd6, 4, parent_name, 0, read_word).initialization_failures == 1);
-    assert(inspect(0xd8, 4, parent_name, 3, read_word).initialization_failures == 1);
-    assert(inspect(0xd8, 4, name("LIVE"), 0, read_word).initialization_failures == 1);
+    assert(inspect(0xd8, 4, parent_name, 0, read_config).count == 1);
+    assert(inspect(0xd8, 4, parent_name, 2, read_config).count == 1);
+    assert(inspect(0xd9, 4, parent_name, 0, read_config).initialization_failures == 1);
+    assert(inspect(0xd8, 3, parent_name, 0, read_config).initialization_failures == 1);
+    assert(inspect(0xd6, 4, parent_name, 0, read_config).initialization_failures == 1);
+    assert(inspect(0xd8, 4, parent_name, 3, read_config).initialization_failures == 1);
+    assert(inspect(0xd8, 4, name("LIVE"), 0, read_config).initialization_failures == 1);
     assert(inspect(0xd8, 4, parent_name, 0, nullptr).initialization_failures == 1);
-    std::puts("ACPI_AML_PCI_WORD_PASS alignment bounds notify shadow_writes");
+    assert(inspect(0x548, 8, parent_name, 0, read_config, true).count == 1);
+    assert(inspect(0x548, 7, parent_name, 0, read_config, true).initialization_failures == 1);
+    assert(inspect(0x549, 8, parent_name, 0, read_config, true).initialization_failures == 1);
+    assert(inspect(0xffc, 8, parent_name, 0, read_config, true).initialization_failures == 1);
+    std::puts("ACPI_AML_ECAM_PASS width16 width32 alignment bounds notify shadow_writes");
 }
 
 void aml_sync_replay_cases() {
@@ -1487,7 +1507,7 @@ int main() {
     composed_i2c_resources();
     hid_initialization_cases();
     aml_integer_match_cases();
-    aml_pci_word_replay_cases();
+    aml_pci_config_replay_cases();
     aml_sync_replay_cases();
     intel_gpio_replay_cases();
 }

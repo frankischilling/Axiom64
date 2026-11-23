@@ -560,12 +560,17 @@ static bool read_platform_bars(uint64_t address, uint32_t* values, size_t words)
     return true;
 }
 
-static bool read_ecam_word(uint64_t address, uint16_t& value) {
+static bool read_ecam_field(uint64_t address, unsigned bytes, uint32_t& value) {
     const unsigned offset = address & 0xfff;
     PciFunction pci{};
-    if ((offset & 1) || offset >= 0x100 || !ecam_function(address, pci))
+    if ((bytes != 2 && bytes != 4) || (offset & (bytes - 1)) || (bytes == 2 && offset >= 0x100) ||
+        !ecam_function(address, pci))
         return false;
-    value = pci.read16(0) == UINT16_MAX ? UINT16_MAX : pci.read16(offset);
+    const bool absent = pci.read16(0) == UINT16_MAX;
+    if (bytes == 4)
+        value = absent ? UINT32_MAX : pci.read32(offset);
+    else
+        value = absent ? UINT16_MAX : pci.read16(offset);
     return true;
 }
 
@@ -575,7 +580,7 @@ Acpi::ReadRegions pci_firmware_read_regions() {
             .pci = read_pci_field<true>,
             .bridges = &bridges,
             .pci_bars = read_platform_bars,
-            .pci_words = read_ecam_word};
+            .pci_ecam = read_ecam_field};
 }
 
 static bool extended_config_mirrors_header(const PciFunction& pci) {

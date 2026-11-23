@@ -120,7 +120,7 @@ using SystemMemoryRead = bool (*)(uint64_t address, uint8_t* bytes, size_t lengt
 using RegisterRead = bool (*)(void* context, uint64_t address, uint8_t* bytes, size_t length);
 using OsiQuery = bool (*)(const uint8_t* name, size_t length);
 using PciBarRead = bool (*)(uint64_t address, uint32_t* values, size_t words);
-using PciWordRead = bool (*)(uint64_t address, uint16_t& value);
+using PciEcamRead = bool (*)(uint64_t address, unsigned bytes, uint32_t& value);
 
 struct ReadRegions {
     SystemMemoryRead memory = nullptr;
@@ -130,7 +130,7 @@ struct ReadRegions {
     void* register_context = nullptr;
     OsiQuery osi = nullptr;
     PciBarRead pci_bars = nullptr;
-    PciWordRead pci_words = nullptr;
+    PciEcamRead pci_ecam = nullptr;
 };
 
 // Decode fixed, identity-mapped memory apertures. An aperture is not a reservation.

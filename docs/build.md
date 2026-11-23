@@ -180,6 +180,8 @@ resource buffers in a private copy when AML declares writable fields.
 The HID initialization replay keeps named mutexes and events in that copy.
 It can consume its own event signals and perform zero-timeout polls. It
 rejects waits that would need another firmware thread to signal the event.
+It reads aligned PCI configuration fields through the validated ECAM window
+and keeps changes to those fields in the private copy.
 They can compare integers in AML packages and assemble resource templates
 that firmware builds across several AML methods. The motherboard scan can
 also read aligned BAR words in a validated PCI configuration aperture. On

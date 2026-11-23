@@ -164,11 +164,10 @@ package_payloads = {
     "weston-clients": ("usr/bin/weston-simple-shm",),
     "openssh-server-common": (),  # The installed server requires a local configuration.
 }
-installed_libraries = {'acl-libs', 'gmp', 'libgomp'} if installed_desktop else set()
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
-    if args.profile != "full" and package["name"] not in installed_libraries and package["name"] in {
+    if args.profile == "desktop" and package["name"] in {
         "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
         "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
         "libisoburn", "libisofs", "xorriso"
@@ -208,6 +207,8 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 if installed_desktop:
+    for module in sorted((ROOT / "vendor/cmake").glob("*.cmake")):
+        regular("usr/share/cmake/Modules/Platform/" + module.name, module, 0o100644)
     for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
     files.setdefault("etc/xdg", (0o40755, b""))

@@ -488,6 +488,32 @@
       "installed_only": true
     },
     {
+      "name": "cmake",
+      "version": "3.31.7-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/cmake-3.31.7-r1.apk",
+      "archive": "cmake-3.31.7-r1.apk",
+      "sha256": "3f99fc6bb19b8e41f33764bf641bb181d57bdd1afb63f2dfee8d4547e1362341",
+      "license": "BSD-3-Clause",
+      "upstream": "https://www.cmake.org/",
+      "origin": "cmake",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "installed_only": true
+    },
+    {
+      "name": "cmake-doc",
+      "version": "3.31.7-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/cmake-doc-3.31.7-r1.apk",
+      "archive": "cmake-doc-3.31.7-r1.apk",
+      "sha256": "0bbf8fe25998ca8538f0995ef41ec4f80ae641e7004b6c721ee7e626939bb3b9",
+      "license": "BSD-3-Clause",
+      "upstream": "https://www.cmake.org/",
+      "origin": "cmake",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "installed_only": true
+    },
+    {
       "name": "cups-libs",
       "version": "2.4.18-r0",
       "repository": "main",
@@ -1187,6 +1213,45 @@
       "upstream": "https://sourceforge.net/projects/giflib/",
       "origin": "giflib",
       "source_commit": "ab17c9ef3de3423c445cd0a9680d6eb1e1dc7077",
+      "installed_only": true
+    },
+    {
+      "name": "git",
+      "version": "2.49.1-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/git-2.49.1-r0.apk",
+      "archive": "git-2.49.1-r0.apk",
+      "sha256": "42f4573799ffce0c7dd4954d2247eb882eb87360dc18637930624484ecfd1c90",
+      "license": "GPL-2.0-only",
+      "upstream": "https://www.git-scm.com/",
+      "origin": "git",
+      "source_commit": "d896b70b77339c50bea678a19895df6331872d82",
+      "installed_only": true
+    },
+    {
+      "name": "git-doc",
+      "version": "2.49.1-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/git-doc-2.49.1-r0.apk",
+      "archive": "git-doc-2.49.1-r0.apk",
+      "sha256": "e51526945bb166236d08d5a7c79af399989436e2139b498adfdae58851dd98ba",
+      "license": "GPL-2.0-only",
+      "upstream": "https://www.git-scm.com/",
+      "origin": "git",
+      "source_commit": "d896b70b77339c50bea678a19895df6331872d82",
+      "installed_only": true
+    },
+    {
+      "name": "git-init-template",
+      "version": "2.49.1-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/git-init-template-2.49.1-r0.apk",
+      "archive": "git-init-template-2.49.1-r0.apk",
+      "sha256": "b8d9dc864aa8c68e93d1cc80d069d56f1ebbed9e8bd90a5fd9a6f2d183258fcc",
+      "license": "GPL-2.0-only",
+      "upstream": "https://www.git-scm.com/",
+      "origin": "git",
+      "source_commit": "d896b70b77339c50bea678a19895df6331872d82",
       "installed_only": true
     },
     {
@@ -3091,6 +3156,19 @@
       "upstream": "https://gitlab.com/accounts-sso/libaccounts-qt",
       "origin": "libaccounts-qt",
       "source_commit": "05edcc41948f8e636d61d670487eb86dd123d187",
+      "installed_only": true
+    },
+    {
+      "name": "libarchive",
+      "version": "3.8.11-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libarchive-3.8.11-r0.apk",
+      "archive": "libarchive-3.8.11-r0.apk",
+      "sha256": "b172d4ed8bc4a9e0c9aa9db9086ceeafba9ad887e1d81447dc8c584dbf74d72c",
+      "license": "BSD-2-Clause AND BSD-3-Clause AND Public-Domain",
+      "upstream": "https://libarchive.org/",
+      "origin": "libarchive",
+      "source_commit": "0071be33046272571a204451ffe9545ee17ba2af",
       "installed_only": true
     },
     {
@@ -5314,6 +5392,19 @@
       "installed_only": true
     },
     {
+      "name": "lz4-libs",
+      "version": "1.10.0-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/lz4-libs-1.10.0-r0.apk",
+      "archive": "lz4-libs-1.10.0-r0.apk",
+      "sha256": "b4f393b9d8ce5a431788b31c899734f84d60a47487a6b833ee8d8012c501fe3f",
+      "license": "BSD-2-Clause AND GPL-2.0-or-later",
+      "upstream": "https://github.com/lz4/lz4",
+      "origin": "lz4",
+      "source_commit": "a886e2e46171e6d5991dc91c492ae748a83b40e4",
+      "installed_only": true
+    },
+    {
       "name": "m4",
       "version": "1.4.19-r4",
       "repository": "main",
@@ -5635,6 +5726,32 @@
       "upstream": "https://nghttp2.org",
       "origin": "nghttp2",
       "source_commit": "87de39802b2c34c9a7c62a52b3e39e05af1c974e",
+      "installed_only": true
+    },
+    {
+      "name": "ninja-build",
+      "version": "1.12.1-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ninja-build-1.12.1-r1.apk",
+      "archive": "ninja-build-1.12.1-r1.apk",
+      "sha256": "9313eea4362e35331263910c6b52187e074c4fa73efa9929195b2a882247f804",
+      "license": "Apache-2.0",
+      "upstream": "https://ninja-build.org/",
+      "origin": "ninja-build",
+      "source_commit": "6f7e910bbb2d8c50b3f27ce9a353f110ca69098f",
+      "installed_only": true
+    },
+    {
+      "name": "ninja-is-really-ninja",
+      "version": "1.12.1-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ninja-is-really-ninja-1.12.1-r1.apk",
+      "archive": "ninja-is-really-ninja-1.12.1-r1.apk",
+      "sha256": "c7b359a80bcba5bb04d5096d08a3ccd3f64dfe50daad842f6e9723156b6ea331",
+      "license": "Apache-2.0",
+      "upstream": "https://ninja-build.org/",
+      "origin": "ninja-build",
+      "source_commit": "6f7e910bbb2d8c50b3f27ce9a353f110ca69098f",
       "installed_only": true
     },
     {
@@ -6697,6 +6814,45 @@
       "upstream": "https://tiswww.cwru.edu/php/chet/readline/rltop.html",
       "origin": "readline",
       "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
+    },
+    {
+      "name": "rhash-libs",
+      "version": "1.4.5-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/rhash-libs-1.4.5-r0.apk",
+      "archive": "rhash-libs-1.4.5-r0.apk",
+      "sha256": "c48bd5cf228e606e961f07a67bf08cfae60136cf93f86f5005678ea7b374bfb9",
+      "license": "0BSD",
+      "upstream": "http://rhash.anz.ru",
+      "origin": "rhash",
+      "source_commit": "86f1a467115dbaf5c05a6683aaf6b66c2c5cad80",
+      "installed_only": true
+    },
+    {
+      "name": "ripgrep",
+      "version": "14.1.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ripgrep-14.1.1-r0.apk",
+      "archive": "ripgrep-14.1.1-r0.apk",
+      "sha256": "ead003b3ebc2e15b198a98c5e6f5a0de995d5973504cbdce827e2f3b6196ff1a",
+      "license": "MIT OR Unlicense",
+      "upstream": "https://github.com/BurntSushi/ripgrep",
+      "origin": "ripgrep",
+      "source_commit": "4e899d119e4c983a938436d6f397a509521225d1",
+      "installed_only": true
+    },
+    {
+      "name": "ripgrep-doc",
+      "version": "14.1.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ripgrep-doc-14.1.1-r0.apk",
+      "archive": "ripgrep-doc-14.1.1-r0.apk",
+      "sha256": "d4a485252edc8417629e40f4001ba982b147b274faecd695ae39f1592aeea52b",
+      "license": "MIT OR Unlicense",
+      "upstream": "https://github.com/BurntSushi/ripgrep",
+      "origin": "ripgrep",
+      "source_commit": "4e899d119e4c983a938436d6f397a509521225d1",
+      "installed_only": true
     },
     {
       "name": "roc-toolkit-libs",

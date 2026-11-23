@@ -124,7 +124,7 @@ BootInfo boot_info;
     const bool usb_keyboard = arguments.has("usb.xhci=keyboard");
     if (!usb_keyboard && (usb_keyboard_probe || arguments.has("usb.xhci=probe")))
         xhci_probe(usb_keyboard_probe);
-    devices_init(arguments.has("fbconsole"));
+    devices_init(arguments.has("fbconsole"), arguments.has("virtio.gpu=2d"));
     if (usb_keyboard)
         xhci_keyboard_init();
     net_init();

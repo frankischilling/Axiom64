@@ -950,6 +950,10 @@ test-pci-interrupts: build/pci-interrupt-tests
 test-pci-inventory: build/axiom64.elf | busybox
 	$(PYTHON) scripts/pci_inventory_test.py
 
+.PHONY: test-virtio-gpu
+test-virtio-gpu: build/axiom64.elf
+	$(PYTHON) scripts/virtio_gpu_test.py
+
 .PHONY: test-acpi-routing
 build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build

@@ -658,19 +658,6 @@ static int child_gate(int gate, pid_t parent) {
     return error ? failed(error) : 0;
 }
 
-static const char* xorg_config(void) {
-    const char* discovery = "/etc/X11/xorg-udev.conf";
-    if (access(discovery, R_OK) == 0 && access("/sys/class/input", X_OK) == 0) {
-        for (unsigned attempt = 0; attempt < 20; ++attempt) {
-            if (access("/run/axiom64-input-ready", R_OK) == 0)
-                return discovery;
-            struct timespec delay = {0, 100000000};
-            nanosleep(&delay, NULL);
-        }
-    }
-    return "/etc/X11/xorg.conf";
-}
-
 static void child(const struct account_profile* profile, int output, int server, pid_t parent,
                   int gate) {
     if (child_gate(gate, parent) < 0)
@@ -698,10 +685,8 @@ static void child(const struct account_profile* profile, int output, int server,
         // Xorg resets its umask before opening a named log. Keep all diagnostics
         // on the already private stderr descriptor at its normal file verbosity.
         umask(077);
-        char* const arguments[] = {"Xorg",
+        char* const arguments[] = {"axiom64-xorg-seat",
                                    ":0",
-                                   "-config",
-                                   (char*)xorg_config(),
                                    "-nolisten",
                                    "tcp",
                                    "-noreset",
@@ -717,7 +702,7 @@ static void child(const struct account_profile* profile, int output, int server,
                                                                                    : "-extension",
                                    "GLX",
                                    NULL};
-        execv("/usr/libexec/Xorg", arguments);
+        execv("/usr/libexec/axiom64-xorg-seat", arguments);
     } else {
         umask(077);
         execl("/usr/bin/dbus-run-session", "dbus-run-session",

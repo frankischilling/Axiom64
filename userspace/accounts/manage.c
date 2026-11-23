@@ -42,7 +42,7 @@ static void usage(void) {
           "  user-rename NAME NEW | user-shell NAME SHELL | user-home NAME HOME\n"
           "  member-add GROUP USER | member-delete GROUP USER\n"
           "  password NAME --password-fd FD | lock NAME | unlock NAME\n"
-          "  ensure-messagebus\n"
+          "  ensure-messagebus | ensure-sddm\n"
           "  show NAME\n",
           stderr);
 }
@@ -267,12 +267,9 @@ static int guard(struct account_database* db, const struct account_logbook* book
     return 0;
 }
 
-static int ensure_messagebus(struct account_database* db, const char* records) {
-    const struct account_group service_group = {"messagebus", 81, NULL, 0};
-    const struct account_user service = {
-        "messagebus", "!", "System message bus",     "/dev/null", "/bin/nologin",
-        81,           81,  {-1, -1, -1, -1, -1, -1},
-    };
+static int ensure_service(struct account_database* db, const char* records,
+                          struct account_user service, int create_home) {
+    const struct account_group service_group = {service.name, service.gid, NULL, 0};
     const struct account_user* user = account_database_user(db, service.name);
     const struct account_group* group = account_database_group(db, service_group.name);
     if (user && group && user->uid == service.uid && user->gid == service.gid &&
@@ -301,7 +298,8 @@ static int ensure_messagebus(struct account_database* db, const char* records) {
     if (!intended || account_guard_new_ids(book, service.uid, service.gid) < 0 ||
         account_database_put_group(db, NULL, &service_group) < 0 ||
         account_database_put_user(db, NULL, &service) < 0 ||
-        account_database_commit(db, &published) < 0)
+        (create_home ? account_database_commit_home(db, service.name, &published)
+                     : account_database_commit(db, &published)) < 0)
         error = errno;
     if (intended &&
         account_logbook_audit(book, ACCOUNT_LOGIN_USER_ADD, "root", 0, service.name, "", error) <
@@ -342,10 +340,19 @@ int main(int argc, char** argv) {
     if (recovery_error)
         fprintf(stderr, "accountctl: pending home recovery: %s; updates are blocked\n",
                 strerror(recovery_error));
-    if (!strcmp(argv[first], "ensure-messagebus") && argc == first + 1) {
-        int result = ensure_messagebus(db, records);
+    int messagebus = !strcmp(argv[first], "ensure-messagebus");
+    if ((messagebus || !strcmp(argv[first], "ensure-sddm")) && argc == first + 1) {
+        const struct account_user bus = {
+            "messagebus", "!", "System message bus",     "/dev/null", "/bin/nologin",
+            81,           81,  {-1, -1, -1, -1, -1, -1},
+        };
+        const struct account_user greeter = {
+            "sddm", "!", "Display manager",        "/var/lib/sddm", "/bin/nologin",
+            499,    499, {-1, -1, -1, -1, -1, -1},
+        };
+        int result = ensure_service(db, records, messagebus ? bus : greeter, !messagebus);
         if (result < 0)
-            perror("accountctl: messagebus account");
+            perror(messagebus ? "accountctl: messagebus account" : "accountctl: sddm account");
         account_database_end(db);
         return result < 0;
     }

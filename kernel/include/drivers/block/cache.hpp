@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-20
  *
- * Declares fixed-size cache entries indexed by sectors relative to their volume.
+ * Stores clean blocks in four-way sets indexed relative to their volume.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -28,18 +28,37 @@
 namespace ax {
 class BlockCache {
   public:
-    static constexpr unsigned slots = 128, max_sectors = 8;
+    static constexpr unsigned ways = 4, max_sectors = 8;
 
-    void initialize(unsigned sectors);
-    bool read(uint64_t sector, void* data, size_t count) const;
-    void remember(uint64_t sector, const void* data, size_t count);
+    static size_t sets_for_budget(unsigned sectors, uint64_t budget);
+    bool initialize(unsigned sectors, size_t sets);
+    void destroy();
+    uint64_t maximum_bytes() const;
+    uint64_t allocated_bytes() const;
+    size_t growth_bytes() const;
+    bool read(uint64_t sector, void* data, size_t count);
+    void remember(uint64_t sector, const void* data, size_t count, bool allow_growth);
     void invalidate(uint64_t sector, size_t count);
 
   private:
+    static constexpr size_t metadata_overhead = 3 * page_size;
+    static constexpr size_t sets_per_slab = 4;
+
+    struct Entry {
+        uint64_t tag, recency;
+    };
+
+    struct Set {
+        uint8_t* data;
+        Entry entries[ways];
+    };
+
+    static size_t slab_budget(unsigned sectors);
     bool cacheable(uint64_t sector, size_t count) const;
 
     unsigned sectors_, shift_;
-    uint64_t tags_[slots];
-    uint8_t data_[slots][max_sectors * sector_size];
+    size_t set_count_, resident_slabs_;
+    uint64_t access_;
+    Set* sets_;
 };
 } // namespace ax

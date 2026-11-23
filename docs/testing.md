@@ -47,6 +47,23 @@ close the inner bridge window. They check that the kernel avoids mapping the
 blocked BAR and that the independent adapter still appears in userspace.
 Use `make test-virtio` to exercise modern and legacy BARs with real disk I/O.
 
+Run `make test-pci-inventory` to boot BIOS and UEFI guests with two graphics
+adapters, one behind a PCI bridge. The test checks that
+`/sys/bus/pci/devices` links resolve to the device's bridge path, that the
+reported IDs, class and modalias match the configuration header, and that
+an ordinary user can read the header while writes fail. It also boots a
+headless guest.
+
+Axiom64 publishes a read-only snapshot of each PCI function's standard
+configuration header after boot drivers finish setup. Device files identify
+the hardware. GPU drivers, PCI hotplug and userspace access to BARs are
+separate interfaces.
+
+Run `make test-virtio-gpu` for a framebuffer presentation test. A BIOS guest
+and a UEFI guest draw two patterns through `/dev/fb0`. The host checks the
+pixels QEMU displays after a refresh request and after writes through the
+mapping alone. A UEFI guest without a Virtio GPU checks firmware fallback.
+
 `make test-suite SUITE=mmio` runs the boot-time mapper against simulated
 page tables with address and undefined behavior sanitizers. It checks physical
 address limits, boot memory reservations, uncacheable mappings, existing

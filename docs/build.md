@@ -24,6 +24,13 @@ Choose **Weston** from the X11 menu or run `weston-nested` in the graphical term
 
 On WSL, the graphical command requires a working WSLg display. `make run-serial` starts the same image with a hidden framebuffer and exposes the serial console.
 
+For a VM with a modern Virtio GPU, add `virtio.gpu=2d` to the kernel
+command line to use its first enabled output as `/dev/fb0`. The backend
+refreshes the mapped framebuffer as the guest draws. If Virtio setup fails,
+the boot framebuffer remains available when firmware provides one. This
+backend drives a fixed 2D output. DRM/KMS and 3D rendering require further
+driver work.
+
 To boot the same persistent VM through UEFI:
 
 ```sh

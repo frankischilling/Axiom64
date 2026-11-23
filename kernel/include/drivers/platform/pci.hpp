@@ -39,6 +39,13 @@ struct MotherboardResources;
 
 enum class PciPowerState : uint8_t { d0, d1, d2, d3hot, unavailable };
 
+struct PciAddress {
+    uint16_t segment;
+    uint8_t bus, slot, function;
+};
+
+enum class PciBusParent { root, bridge, ambiguous };
+
 struct PciFunction {
     uint8_t bus, slot, function;
     uint16_t segment;
@@ -122,6 +129,7 @@ void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t li
 Acpi::ReadRegions pci_firmware_read_regions();
 void pci_scan(void (*visit)(const PciFunction&));
 void pci_scan(void (*visit)(const PciFunction&, void*), void* context);
+PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress&);
 // Records occupied configuration-space ranges without writing to the device.
 void pci_record_memory(const PciFunction&, PciMemoryInventory&);
 void pci_memory_inventory(PciMemoryInventory&);

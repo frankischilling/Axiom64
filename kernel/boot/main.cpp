@@ -30,6 +30,7 @@
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
 #include "drivers/platform/intel_lpss.hpp"
+#include "drivers/platform/pci_inventory.hpp"
 #include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
@@ -134,12 +135,13 @@ BootInfo boot_info;
     const bool usb_keyboard = arguments.has("usb.xhci=keyboard");
     if (!usb_keyboard && (usb_keyboard_probe || arguments.has("usb.xhci=probe")))
         xhci_probe(usb_keyboard_probe);
-    devices_init(arguments.has("fbconsole"));
+    devices_init(arguments.has("fbconsole"), arguments.has("virtio.gpu=2d"));
     if (usb_keyboard)
         xhci_keyboard_init();
     if (arguments.has("lpss.i2c.input"))
         intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, LpssProbe::input);
     net_init();
+    publish_pci_inventory();
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

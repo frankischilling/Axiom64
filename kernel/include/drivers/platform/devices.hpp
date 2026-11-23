@@ -72,7 +72,7 @@ struct Pty {
     uint16_t rows, columns;
 };
 
-void devices_init(bool display_console);
+void devices_init(bool display_console, bool virtio_graphics);
 void input_device_added(unsigned index, bool synthetic);
 const ControlFileOps* input_uevent_control(Node*);
 

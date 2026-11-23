@@ -55,6 +55,10 @@ int account_logbook_active(const struct account_logbook*, uid_t);
 // On a late error, output may still own a published lease and must be ended.
 int account_logbook_begin(struct account_logbook*, const struct account_profile*, pid_t child,
                           const char* terminal, struct account_session_lease** output);
+// A display manager opens its PAM session before starting the user process.
+// The calling supervisor owns the lease and is the process recorded in utmp.
+int account_logbook_begin_supervised(struct account_logbook*, const struct account_profile*,
+                                     const char* terminal, struct account_session_lease** output);
 // Consumes the lease even on error. Journal recovery reconciles a late failure.
 int account_logbook_end(struct account_session_lease*, int wait_status);
 // Never pass passwords, hashes, environment or arbitrary command arguments.

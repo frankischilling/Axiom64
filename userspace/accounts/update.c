@@ -107,7 +107,7 @@ int account_password_update(const char* database, const char* records,
 }
 
 int account_bootstrap(const char* database, const char* records, const char* name, const char* home,
-                      const char* shell, const char* password, int* published) {
+                      const char* shell, const char* password, int playback, int* published) {
     if (!name || !home || !shell || !password || !published || !account_name_valid(name))
         return failed(EINVAL);
     *published = 0;
@@ -125,6 +125,7 @@ int account_bootstrap(const char* database, const char* records, const char* nam
     if (!error && now < 0)
         error = EIO;
     struct account_group primary = {name, 1000, NULL, 0}, sudo = {"sudo", 27, NULL, 0};
+    const struct account_group audio = {"audio", 29, NULL, 0};
     struct account_user user = {name,
                                 encoded,
                                 "Administrator",
@@ -138,11 +139,16 @@ int account_bootstrap(const char* database, const char* records, const char* nam
                    account_database_put_user(db, NULL, &user) < 0 ||
                    account_database_member(db, "sudo", name, 1) < 0))
         error = errno;
+    if (!error && playback &&
+        (account_database_put_group(db, NULL, &audio) < 0 ||
+         account_database_member(db, audio.name, name, 1) < 0))
+        error = errno;
     if (!error && account_logbook_open(records, 1, &book) < 0)
         error = errno;
     int intended = 0;
     if (!error && (account_guard_new_ids(book, 1000, 1000) < 0 ||
-                   account_guard_new_ids(book, (uid_t)-1, 27) < 0))
+                   account_guard_new_ids(book, (uid_t)-1, sudo.gid) < 0 ||
+                   (playback && account_guard_new_ids(book, (uid_t)-1, audio.gid) < 0)))
         error = errno;
     if (!error) {
         if (account_logbook_audit(book, ACCOUNT_LOGIN_BOOTSTRAP, "root", 0, name, "", EINPROGRESS) <

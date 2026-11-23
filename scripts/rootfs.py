@@ -200,6 +200,7 @@ def xorg_config(name):
 
 
 xorg_config("xorg.conf")
+regular("usr/libexec/axiom64-xorg-seat", desktop / "xorg-seat.sh")
 regular("etc/X11/system.twmrc", desktop / "system.twmrc", 0o100644)
 if installed_desktop:
     xorg_config("xorg-udev.conf")
@@ -225,6 +226,8 @@ if installed_desktop:
     files["etc/xdg/mimeapps.list"] = (
         0o100644, b"[Default Applications]\ninode/directory=thunar.desktop;\n"
     )
+    # Leave CPU time for desktop startup on the software-rendered seat.
+    files.setdefault("etc/xdg/ksplashrc", (0o100644, b"[KSplash]\nEngine=None\n"))
     compile_desktop_data()
     directory("etc/ssh")
     directory("var/empty")
@@ -236,8 +239,34 @@ files['var/lib/dbus/machine-id'] = (0o120777, b'/etc/machine-id')
 for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
     regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 if installed_desktop:
+    session_root = 'usr/share/axiom64'
+    for path in (session_root, session_root + '/display-sessions', session_root + '/native-wayland-sessions'):
+        directory(path)
+    regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
+        regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
+                0o100644)
+    regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
+    regular(session_root + '/display-sessions/plasma.desktop',
+            ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)
+    regular('usr/libexec/axiom64-display-manager', ROOT / 'userspace/services/display-manager.sh')
+    regular('usr/libexec/axiom64-display-session', ROOT / 'userspace/desktop/display-session.sh')
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
+    regular('usr/libexec/axiom64-pipewire-launcher', ROOT / 'userspace/desktop/pipewire-launcher.sh')
+    audio_profile = 'etc/axiom64/pipewire-hda'
+    for path in ('etc/axiom64', audio_profile, audio_profile + '/pipewire.conf.d'):
+        directory(path)
+    files[audio_profile + '/pipewire.conf'] = (0o120777, b'/usr/share/pipewire/pipewire.conf')
+    regular(audio_profile + '/pipewire.conf.d/70-hda.conf',
+            ROOT / 'userspace/desktop/pipewire-hda.conf', 0o100644)
+    files.pop('etc/xdg/autostart/pulseaudio.desktop', None)
+    autostart = 'etc/xdg/autostart/pipewire.desktop'
+    mode, desktop = files[autostart]
+    command = b'\nExec=/usr/libexec/pipewire-launcher\n'
+    if desktop.count(command) != 1:
+        raise ValueError(f'{autostart} does not have the expected PipeWire command')
+    files[autostart] = mode, desktop.replace(command, b'\nExec=/usr/libexec/axiom64-pipewire-launcher\n')
     files.setdefault('etc/pam.d', (0o40755, b''))
     regular('etc/pam.d/kde', ROOT / 'userspace/desktop/kde.pam', 0o100644)
     autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'

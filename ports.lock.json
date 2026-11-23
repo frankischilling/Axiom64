@@ -3232,6 +3232,19 @@
       "installed_only": true
     },
     {
+      "name": "libcanberra-pulse",
+      "version": "0.30-r11",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/libcanberra-pulse-0.30-r11.apk",
+      "archive": "libcanberra-pulse-0.30-r11.apk",
+      "sha256": "a302ba6719792dc6e1d3df930bdc069ecb9067674da6c9cd289304651f84a30c",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://0pointer.de/lennart/projects/libcanberra/",
+      "origin": "libcanberra",
+      "source_commit": "adca566f692094aa4d18f7163a5f24aefa993b3c",
+      "installed_only": true
+    },
+    {
       "name": "libcap2",
       "version": "2.78-r0",
       "repository": "main",
@@ -5857,6 +5870,19 @@
       "installed_only": true
     },
     {
+      "name": "pipewire-pulse",
+      "version": "1.4.7-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/pipewire-pulse-1.4.7-r0.apk",
+      "archive": "pipewire-pulse-1.4.7-r0.apk",
+      "sha256": "6b0414922cc7f5322ee79f91e0f0ebc6db06e79ce6677d2f26e9ad4807edb5ab",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://pipewire.org/",
+      "origin": "pipewire",
+      "source_commit": "2edae09896c4e1e6563ab6f8ec9ca032f4f26992",
+      "installed_only": true
+    },
+    {
       "name": "pixman",
       "version": "0.46.4-r0",
       "repository": "main",
@@ -6073,6 +6099,19 @@
       "upstream": "https://invent.kde.org/libraries/pulseaudio-qt",
       "origin": "pulseaudio-qt",
       "source_commit": "0d56d6286a0df5cd61ba70d7f2c0ae1b46e481ff",
+      "installed_only": true
+    },
+    {
+      "name": "pulseaudio-utils",
+      "version": "17.0-r5",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/pulseaudio-utils-17.0-r5.apk",
+      "archive": "pulseaudio-utils-17.0-r5.apk",
+      "sha256": "b7243344922339f74937fbbe4cda8900a36c1f15400e0abbaa3975db933149e6",
+      "license": "LGPL-2.1-or-later",
+      "upstream": "https://www.freedesktop.org/wiki/Software/PulseAudio/",
+      "origin": "pulseaudio",
+      "source_commit": "2a6b4856c0c0acd9145849df274964af70bdcf46",
       "installed_only": true
     },
     {

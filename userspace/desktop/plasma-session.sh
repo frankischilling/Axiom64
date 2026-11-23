@@ -28,6 +28,7 @@ state=${XDG_STATE_HOME:-$HOME/.local/state}/axiom64
 mkdir -p "$state"
 XDG_RUNTIME_DIR=$(mktemp -d /tmp/axiom64-plasma-XXXXXX)
 export XDG_RUNTIME_DIR
+export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
 trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
 trap 'exit 0' HUP INT TERM
 

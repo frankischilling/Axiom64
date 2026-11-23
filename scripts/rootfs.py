@@ -227,6 +227,20 @@ for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
 if installed_desktop:
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
+    regular('usr/libexec/axiom64-pipewire-launcher', ROOT / 'userspace/desktop/pipewire-launcher.sh')
+    audio_profile = 'etc/axiom64/pipewire-hda'
+    for path in ('etc/axiom64', audio_profile, audio_profile + '/pipewire.conf.d'):
+        directory(path)
+    files[audio_profile + '/pipewire.conf'] = (0o120777, b'/usr/share/pipewire/pipewire.conf')
+    regular(audio_profile + '/pipewire.conf.d/70-hda.conf',
+            ROOT / 'userspace/desktop/pipewire-hda.conf', 0o100644)
+    files.pop('etc/xdg/autostart/pulseaudio.desktop', None)
+    autostart = 'etc/xdg/autostart/pipewire.desktop'
+    mode, desktop = files[autostart]
+    command = b'\nExec=/usr/libexec/pipewire-launcher\n'
+    if desktop.count(command) != 1:
+        raise ValueError(f'{autostart} does not have the expected PipeWire command')
+    files[autostart] = mode, desktop.replace(command, b'\nExec=/usr/libexec/axiom64-pipewire-launcher\n')
     autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'
     mode, desktop = files[autostart]
     command = b'\nExec=/usr/bin/plasmashell\n'

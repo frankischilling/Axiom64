@@ -158,6 +158,7 @@ struct Value {
     Value* entries = nullptr;
     uint8_t* bytes = nullptr;
     uint8_t bit_shift = 0;
+    uint8_t access_bytes = 0;
 
     bool is_reference() const {
         return type == Type::Reference || type == Type::ObjectReference;
@@ -235,6 +236,7 @@ struct Namespace {
     PciConfigRead read_pci;
     SystemMemoryRead read_system_memory;
     RegisterRead read_registers;
+    PciBarRead read_pci_bars;
     void* register_context;
     OsiQuery query_osi;
     PciLinkProgram link_program;

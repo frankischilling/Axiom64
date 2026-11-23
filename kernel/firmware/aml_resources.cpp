@@ -866,6 +866,7 @@ bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardRes
         result.incomplete = true;
         return false;
     }
+    space->read_pci_bars = regions.pci_bars;
     for (unsigned i = 0; i < space->count; ++i) {
         const auto& device = space->objects[i];
         if (device.kind != Kind::Device || !space->child(device.path, name_segment("_CRS")))

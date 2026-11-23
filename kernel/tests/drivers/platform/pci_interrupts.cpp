@@ -437,6 +437,34 @@ void test_memory_inventory(const ax::PciFunction& pci) {
     inventory.incomplete = false;
     pci_record_memory(pci, inventory);
     assert(inventory.incomplete);
+
+    // The chain may link back to a lower offset without forming a loop.
+    pci.write32(0x100, 0x25810001);
+    pci.write32(0x258, 0x12810002);
+    pci.write32(0x128, 0x00010002);
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 3 && !inventory.incomplete);
+    pci.write32(0x128, 0x25810002); // A loop across two capabilities.
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+    pci.write32(0x128, 0); // A link to an empty header.
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+
+    // A legacy function may repeat its identity beyond conventional config.
+    pci.write32(0, 0x6a38086);
+    for (uint16_t offset = 0x100; offset < 0x1000; offset += 0x100)
+        pci.write32(offset, pci.read32(0));
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 3 && !inventory.incomplete);
+    pci.write32(0xf00, 0); // One matching word does not establish aliasing.
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
     pci.write32(0x100, 0);
 
     pci.write32(0x0c, 1u << 16); // Type 1 header.
@@ -463,7 +491,7 @@ void test_memory_inventory(const ax::PciFunction& pci) {
     inventory.count = sizeof(inventory.ranges) / sizeof(*inventory.ranges);
     inventory.incomplete = false;
     assert(!inventory.add(0xa0000000, 4096) && inventory.incomplete);
-    std::puts("PCI_MEMORY_INVENTORY_PASS bar32 bar64 rom bridge malformed sriov capacity");
+    std::puts("PCI_MEMORY_INVENTORY_PASS bar32 bar64 rom bridge malformed sriov capacity aliases");
 }
 
 uint32_t bridge_config[2][16];

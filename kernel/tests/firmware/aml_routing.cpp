@@ -624,7 +624,50 @@ void motherboard_resource_cases() {
     };
     assert(scoped_names(12) && result.count == 2 && !result.incomplete);
     assert(scoped_names(129) && result.count == 1 && result.incomplete);
+
+    const auto bars = +[](uint64_t address, uint32_t* values, size_t words) {
+        if (address != 0xe0000010 || words != 2)
+            return false;
+        values[0] = 0xfd240004;
+        values[1] = 0;
+        return true;
+    };
+    auto inspect_dwords = [&](uint8_t offset, uint8_t length, bool write, PciBarRead read) {
+        const auto region =
+            sequence({{0x5b, 0x80}, name("RCFG"), {0, 0x0c, offset, 0, 0, 0xe0, 0x0a, length}});
+        const auto fields =
+            block({0x5b, 0x81}, sequence({name("RCFG"), {3}, name("BAR0"), {0x40, 4}}));
+        const auto field = sequence({{0x8a}, name("RSRC"), {0x0a, 4}, name("BASE")});
+        const auto change = write ? sequence({{0x70, 0}, name("BAR0")}) : Bytes{};
+        const auto crs = block({0x14}, sequence({name("_CRS"),
+                                                 {0},
+                                                 region,
+                                                 fields,
+                                                 change,
+                                                 buffer("RSRC", sequence({fixed, {0x79, 0}})),
+                                                 field,
+                                                 {0x7b},
+                                                 name("BAR0"),
+                                                 {0x0c, 0, 0xf0, 0xff, 0xff},
+                                                 name("BASE"),
+                                                 {0xa4},
+                                                 name("RSRC")}));
+        auto table =
+            definition(block({0x5b, 0x82}, sequence({name("MBRD"), data("_HID", board_id), crs})));
+        table[8] = 2; // This table uses a 64-bit BAR field.
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_motherboard_resources(blocks, result, {.pci_bars = read});
+    };
+    assert(inspect_dwords(0x10, 8, false, bars) && result.count == 1 && !result.incomplete);
+    assert(result.memory[0].base == 0xfd240000 && result.memory[0].size == 0x1000);
+    assert(inspect_dwords(0x11, 8, false, bars) && !result.count && result.incomplete);
+    assert(inspect_dwords(0x10, 7, false, bars) && !result.count && result.incomplete);
+    assert(inspect_dwords(0x18, 8, false, bars) && !result.count && result.incomplete);
+    assert(inspect_dwords(0x10, 8, true, bars) && !result.count && result.incomplete);
+    assert(inspect_dwords(0x10, 8, false, nullptr) && !result.count && result.incomplete);
     std::puts("ACPI_MOTHERBOARD_MEMORY_PASS fixed variable translated inactive partial");
+    std::puts("ACPI_MOTHERBOARD_ECAM_PASS words bounds read_only no_provider");
 }
 
 unsigned nvs_reads;
@@ -1017,6 +1060,33 @@ void hid_initialization_cases() {
               "candidate_isolation");
 }
 
+void aml_integer_match_cases() {
+    using namespace ax::Acpi;
+    const Bytes serial{0x8e, 19,   0, 2, 0,    1, 2,   0,   0,   1, 6,    0,
+                       0x80, 0x1a, 6, 0, 0x15, 0, 'I', '2', 'C', 0, 0x79, 0};
+    auto present = [&](Bytes comparison, Bytes expected, unsigned revision = 2) {
+        const auto match = sequence({{0x89}, package(4, {1, 0x0a, 5, 1}), comparison});
+        const auto sta = block({0x14}, sequence({name("_STA"), {0, 0xa4, 0x93}, match, expected}));
+        auto table = definition(block(
+            {0x5b, 0x82}, sequence({name("TPAD"), data("_HID", {0x0c, 0x41, 0xd0, 0x0c, 0x50}), sta,
+                                    buffer("_CRS", serial)})));
+        table[8] = revision;
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        I2cHidDevices devices{};
+        return decode_i2c_hid_devices(blocks, devices) && devices.count == 1;
+    };
+    assert(present({1, 1, 0, 0, 0}, {0}));             // First equality match.
+    assert(present({1, 1, 0, 0, 1}, {0x0a, 2}));       // Start after the first match.
+    assert(present({4, 0x0a, 5, 2, 0x0a, 5, 0}, {1})); // Inclusive range includes 5.
+    assert(present({5, 1, 3, 0x0a, 5, 0}, {0xff}));    // Strict range excludes both ends.
+    assert(present({1, 0x0a, 7, 0, 0, 0}, {0xff}, 1)); // AML v1 uses 32-bit Ones.
+    assert(present({0, 0, 0, 0, 0x0a, 3}, {0xff}));    // Uninitialized entry is skipped.
+    assert(!present({0, 0, 0, 0, 0x0a, 4}, {0xff}));   // Start outside the package.
+    assert(!present({6, 1, 0, 0, 0}, {0}));            // Invalid comparison opcode.
+    std::puts("ACPI_AML_MATCH_PASS operators start uninitialized integer_width malformed");
+}
+
 void intel_gpio_replay_cases() {
     using namespace ax::Acpi;
     using Model = IntelGpioResources::Model;
@@ -1301,5 +1371,6 @@ int main() {
     namespace_buffer_fields();
     composed_i2c_resources();
     hid_initialization_cases();
+    aml_integer_match_cases();
     intel_gpio_replay_cases();
 }

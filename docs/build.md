@@ -133,9 +133,11 @@ outside the boot memory map, PCI configuration windows, motherboard
 reservations, and existing PCI resources. The PCI inventory reads assigned
 BARs, ROMs, and bridge windows without probing other devices for their sizes.
 It uses the programmed alignment to bound each BAR, so it can exclude more
-space than a device actually occupies. The inventory also excludes the local
-and I/O APICs and the HPET register pages. If the inventory is incomplete, the
-probe reports no candidate.
+space than a device actually occupies. The inventory follows PCIe capability
+links in their recorded order and rejects loops and broken links. It ignores
+extended configuration that mirrors the device's conventional header. The
+inventory also excludes the local and I/O APICs and the HPET register pages.
+If the inventory is incomplete, the probe reports no candidate.
 
 Use `lpss.i2c.bar-test` to try a candidate on an unassigned LPSS BAR0 during
 early boot. The test keeps bus mastering and interrupts disabled, checks BAR
@@ -172,8 +174,9 @@ reserved memory listed in the boot memory map. Fields that require the
 firmware global lock still need a valid FACS in ACPI NVS.
 The probes can follow conditional namespace references and hold firmware
 resource buffers in a private copy when AML declares writable fields.
-They can read packed PCI configuration fields and assemble resource templates
-that firmware builds across several AML methods.
+They can compare integers in AML packages and assemble resource templates
+that firmware builds across several AML methods. The motherboard scan can
+also read aligned BAR words in a validated PCI configuration aperture.
 
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.

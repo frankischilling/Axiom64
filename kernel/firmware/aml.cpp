@@ -485,7 +485,8 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
             write_buffer_bits(local->bytes, local->bit_shift, local->number, input.number);
         } else if (local->type == Type::LocalMemoryField) {
             Value current{};
-            return input.type == Type::Integer && read_local_memory(*local, current) &&
+            return !local->access_bytes && input.type == Type::Integer &&
+                   read_local_memory(*local, current) &&
                    stage_memory_bits(local->number, local->bit_shift, local->content.left,
                                      input.number);
         } else if (local->type == Type::LocalRegion) {
@@ -595,6 +596,24 @@ uint64_t explicit_integer(Cursor string, uint64_t maximum) {
         string.skip(1);
     }
     return result;
+}
+
+static bool integer_match(unsigned op, uint64_t element, uint64_t operand) {
+    switch (op) {
+    case 0:
+        return true; // MTR
+    case 1:
+        return element == operand;
+    case 2:
+        return element <= operand;
+    case 3:
+        return element < operand;
+    case 4:
+        return element >= operand;
+    case 5:
+        return element > operand;
+    }
+    return false;
 }
 
 bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value& result,
@@ -737,6 +756,36 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         result = {Type::Reference, 0, {}, nullptr, package.entries + index.number};
         return store(stream, scope, frame, result, depth + 1);
     }
+    case 0x89: { // Match
+        Value package{}, operands[2]{}, start{};
+        uint64_t operators[2]{};
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, package, depth + 1) ||
+            package.type != Type::Package)
+            return false;
+        for (unsigned i = 0; i < 2; ++i)
+            if (!stream.read(1, operators[i]) || operators[i] > 5 ||
+                !evaluate(stream, scope, frame, operands[i], depth + 1) ||
+                operands[i].type != Type::Integer)
+                return false;
+        if (!evaluate(stream, scope, frame, start, depth + 1) || start.type != Type::Integer ||
+            start.number >= package.number)
+            return false;
+        result = {Type::Integer, integer_mask, {}, nullptr};
+        for (auto index = start.number; index < package.number; ++index) {
+            const auto& element = package.entries[index];
+            if (element.type == Type::None)
+                continue;
+            // The firmware resource evaluator supports integer package matching.
+            if (element.type != Type::Integer)
+                return false;
+            if (integer_match(operators[0], element.number, operands[0].number) &&
+                integer_match(operators[1], element.number, operands[1].number)) {
+                result.number = index;
+                break;
+            }
+        }
+        return true;
+    }
     case 0x99: { // ToInteger
         Value input{};
         if (!stream.skip(1) || !evaluate(stream, scope, frame, input, depth + 1))
@@ -834,8 +883,10 @@ bool Namespace::declare_local_fields(Cursor& stream, Frame& frame) {
     Cursor field;
     Name name;
     uint64_t flags;
-    if (!stream.block(field) || !read_name(field, name) || !field.read(1, flags) ||
-        (flags != 0 && flags != 1))
+    if (!stream.block(field) || !read_name(field, name) || !field.read(1, flags))
+        return false;
+    const bool pci_dwords = flags == 3 && read_pci_bars;
+    if (!pci_dwords && (!replay_initialization || (flags != 0 && flags != 1)))
         return false;
     const auto* region = frame.find(name);
     if (!region || region->type != Type::LocalRegion)
@@ -853,13 +904,15 @@ bool Namespace::declare_local_fields(Cursor& stream, Frame& frame) {
         if (end < offset || end / 8 + (end % 8 != 0) > region->content.left)
             return false;
         if (term && (!bits || bits > (integer_mask == UINT32_MAX ? 32u : 64u) ||
+                     (pci_dwords && ((region->number % 4) || (offset % 32) || (bits % 32))) ||
                      !frame.add(field_name, {Type::LocalMemoryField,
                                              region->number + offset / 8,
                                              {nullptr, bits},
                                              nullptr,
                                              nullptr,
                                              nullptr,
-                                             uint8_t(offset % 8)})))
+                                             uint8_t(offset % 8),
+                                             uint8_t(pci_dwords ? 4 : 0)})))
             return false;
         offset = end;
     }
@@ -967,7 +1020,8 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
             return evaluate(stream, scope, &frame, result, depth + 1) &&
                    result.type != Type::None && !result.is_reference();
         case 0x5b: // Extended opcode
-            if (replay_initialization && (stream.peek() == 0x80 || stream.peek() == 0x81)) {
+            if ((replay_initialization || read_pci_bars) &&
+                (stream.peek() == 0x80 || stream.peek() == 0x81)) {
                 const unsigned extended = stream.peek();
                 stream.skip(1);
                 const bool declared = extended == 0x80
@@ -1215,6 +1269,13 @@ bool Namespace::read_memory_field(const Object& field, Value& result, unsigned d
 
 bool Namespace::read_local_memory(const Value& field, Value& result) {
     const unsigned bits = field.content.left;
+    if (field.access_bytes == 4) {
+        uint32_t values[2]{};
+        if (!read_pci_bars(field.number, values, bits / 32))
+            return false;
+        result = {Type::Integer, values[0] | (uint64_t(values[1]) << 32), {}, nullptr};
+        return true;
+    }
     uint8_t data[9]{};
     if (!read_memory_bytes(field.number, data, (field.bit_shift + bits + 7) / 8, false, true))
         return false;
@@ -1307,6 +1368,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->read_pci = read_pci;
     space->read_system_memory = read_system_memory;
     space->read_registers = nullptr;
+    space->read_pci_bars = nullptr;
     space->register_context = nullptr;
     space->query_osi = nullptr;
     space->link_program = program;

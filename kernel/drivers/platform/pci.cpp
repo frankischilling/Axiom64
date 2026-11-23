@@ -504,9 +504,50 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
     return true;
 }
 
+static bool read_ecam_bars(uint64_t address, uint32_t* values, size_t words) {
+    const unsigned offset = address & 0xfff;
+    if ((offset & 3) || offset < 0x10 || offset >= 0x28 || !words || words > (0x28 - offset) / 4)
+        return false;
+    for (unsigned i = 0; i < window_count; ++i) {
+        auto& window = windows[i];
+        if (address < window.region.bus_address(window.region.first_bus) ||
+            address >= window.region.bus_address(window.region.last_bus + 1))
+            continue;
+        const auto relative = address - window.region.base;
+        const auto bus = uint8_t(relative >> 20);
+        const auto slot = uint8_t((relative >> 15) & 31);
+        const auto function = uint8_t((relative >> 12) & 7);
+        auto* ecam = map_bus(window, bus);
+        if (!ecam)
+            return false;
+        PciFunction pci{bus, slot, function, window.region.segment,
+                        ecam + (unsigned(slot) << 15) + (unsigned(function) << 12)};
+        if (pci.read16(0) == UINT16_MAX)
+            return false;
+        const unsigned header = pci.read8(0x0e) & 0x7f;
+        if (header > 1 || (header == 1 && offset + words * 4 > 0x18))
+            return false;
+        for (unsigned word = 0; word < words; ++word)
+            values[word] = pci.read32(offset + word * 4);
+        return true;
+    }
+    return false;
+}
+
 Acpi::ReadRegions pci_firmware_read_regions() {
     discover_bridges();
-    return {firmware_read_system_memory, read_pci_field<true>, &bridges};
+    return {.memory = firmware_read_system_memory,
+            .pci = read_pci_field<true>,
+            .bridges = &bridges,
+            .pci_bars = read_ecam_bars};
+}
+
+static bool extended_config_mirrors_header(const PciFunction& pci) {
+    const uint32_t identity = pci.read32(0);
+    for (uint16_t offset = 0x100; offset < 0x1000; offset += 0x100)
+        if (pci.read32(offset) != identity)
+            return false;
+    return true;
 }
 
 static bool unsupported_memory_resources(const PciFunction& pci) {
@@ -514,16 +555,25 @@ static bool unsupported_memory_resources(const PciFunction& pci) {
         return true;
     if (!pci.configuration)
         return pci.find_capability(0x10) != 0;
+    // Some devices expose their conventional configuration in every ECAM page.
+    if (extended_config_mirrors_header(pci))
+        return false;
+    uint64_t visited[16]{};
     for (uint16_t offset = 0x100; offset;) {
+        const unsigned index = offset / 4;
+        const uint64_t bit = 1ull << (index % 64);
+        if (visited[index / 64] & bit)
+            return true;
+        visited[index / 64] |= bit;
         const uint32_t header = pci.read32(offset);
         if (!header || header == UINT32_MAX)
-            return false;
+            return offset != 0x100;
         if (uint16_t(header) == 0x10) { // SR-IOV
             if (offset > 0xff4 || (pci.read16(offset + 8) & 1))
                 return true; // The PF's VF BARs are separate from standard BARs.
         }
         const uint16_t next = header >> 20;
-        if (next && (next <= offset || (next & 3)))
+        if (next && (next < 0x100 || (next & 3)))
             return true;
         offset = next;
     }

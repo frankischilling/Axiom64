@@ -1236,6 +1236,9 @@ static int64_t dispatch(Frame* f, Task* running) {
         return sync_file_mappings(running->memory->space, a, b, unsigned(c));
     case 27:
         return mapped_residency(*running, a, b, c);
+    case 149:
+    case 150:
+        return set_memory_lock(*running, a, b, f->rax == 149);
     case 28:
         return running->memory->space.valid(a, b) ? 0 : -12;
     case 29:

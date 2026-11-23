@@ -654,6 +654,8 @@ static int status(Node* node, Snapshot& snapshot) {
     if (owner->memory) {
         text.string("VmSize:\t");
         text.number(owner->memory->space.mapped_size() / 1024);
+        text.string(" kB\nVmLck:\t");
+        text.number(owner->memory->space.locked_size() / 1024);
         text.string(" kB\nVmRSS:\t");
         text.number(owner->memory->space.resident_size() / 1024);
         text.string(" kB\n");

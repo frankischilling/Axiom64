@@ -49,6 +49,11 @@ The installed desktop profile also uses `glib-compile-schemas` and
 `update-mime-database`. Install `libglib2.0-bin` and `shared-mime-info` on
 Ubuntu or Debian before building that profile.
 
+On the installed desktop, init starts udev and asks it to classify the input
+devices already present at boot. Xorg uses libinput when that database is
+ready. If the input service is unavailable at login, Xorg can start with the
+fixed keyboard and mouse configuration.
+
 ```sh
 python3 scripts/boot_media.py disk build/axiom64-boot.raw
 qemu-system-x86_64 -m 2G -serial stdio -boot order=c \

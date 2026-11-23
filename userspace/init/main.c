@@ -39,6 +39,9 @@
 
 static const char debug_network[] = "/etc/axiom64-debug-network";
 static const char debug_ssh_config[] = "/etc/ssh/sshd_config.debug";
+static const char input_daemon[] = "/sbin/udevd";
+static const char input_coldplug[] = "/usr/libexec/axiom64-input-coldplug";
+static const char input_ready[] = "/run/axiom64-input-ready";
 
 static pid_t network(int debug) {
     pid_t child = fork();
@@ -58,7 +61,7 @@ static pid_t network(int debug) {
     return child;
 }
 
-static pid_t start_system_bus(void) {
+static pid_t start_service(const char* path) {
     pid_t child = fork();
     if (!child) {
         int input = open("/dev/null", O_RDONLY);
@@ -66,14 +69,14 @@ static pid_t start_system_bus(void) {
             _exit(126);
         if (input != STDIN_FILENO)
             close(input);
-        char* const arguments[] = {"/usr/libexec/axiom64-system-bus", NULL};
+        char* const arguments[] = {(char*)path, NULL};
         char* const environment[] = {"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/", NULL};
         execve(arguments[0], arguments, environment);
-        perror("init: system bus exec");
+        perror(path);
         _exit(127);
     }
     if (child < 0)
-        perror("init: system bus fork");
+        perror(path);
     return child;
 }
 
@@ -132,6 +135,21 @@ static int enabled(const char* name) {
     return value && !strcmp(value, "1");
 }
 
+static int retry_due(const struct timespec* now, const struct timespec* retry) {
+    return now->tv_sec > retry->tv_sec ||
+           (now->tv_sec == retry->tv_sec && now->tv_nsec >= retry->tv_nsec);
+}
+
+static int publish_input_ready(void) {
+    int ready = open(input_ready, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0444);
+    if (ready < 0) {
+        perror("init: input readiness");
+        return 0;
+    }
+    close(ready);
+    return 1;
+}
+
 static unsigned long long milliseconds(const struct timespec* now) {
     return (unsigned long long)now->tv_sec * 1000 + (unsigned long long)now->tv_nsec / 1000000;
 }
@@ -187,9 +205,18 @@ int main(void) {
         struct timespec seed_retry = retry;
         pid_t seeder = seed_service(&seed_retry);
         int seeded = 0;
-        const int bus_installed = access("/usr/libexec/axiom64-system-bus", X_OK) == 0;
+        const char* bus_path = "/usr/libexec/axiom64-system-bus";
+        const int bus_installed = access(bus_path, X_OK) == 0;
         struct timespec bus_retry = retry;
-        pid_t bus = bus_installed ? start_system_bus() : -1;
+        pid_t bus = bus_installed ? start_service(bus_path) : -1;
+        const int input_installed = access(input_daemon, X_OK) == 0 &&
+                                    access(input_coldplug, X_OK) == 0 &&
+                                    access("/sys/class/input", X_OK) == 0;
+        struct timespec input_retry = retry;
+        pid_t udev = -1, coldplug = -1;
+        int coldplugged = 0;
+        if (input_installed)
+            unlink(input_ready);
         pid_t ssh = -1;
         struct timespec ssh_retry = retry;
         const int ssh_enabled = debug && debug_ssh_configured();
@@ -241,6 +268,15 @@ int main(void) {
                 if (monotonic(&bus_retry) < 0)
                     return 1;
                 bus_retry.tv_sec++;
+            } else if (child > 0 && child == udev) {
+                fprintf(stderr, "Input device manager exited status=%d. Retrying.\n", status);
+                unlink(input_ready);
+                udev = -1;
+                coldplugged = 0;
+            } else if (child > 0 && child == coldplug) {
+                coldplug = -1;
+                if (udev > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0)
+                    coldplugged = publish_input_ready();
             } else if (child > 0 && child == ssh) {
                 fprintf(stderr, "Debug SSH exited status=%d. Retrying.\n", status);
                 ssh = -1;
@@ -252,8 +288,7 @@ int main(void) {
                 perror("init: authenticated console recovery");
                 return 1;
             }
-            if (manager < 0 && (now.tv_sec > retry.tv_sec ||
-                                (now.tv_sec == retry.tv_sec && now.tv_nsec >= retry.tv_nsec))) {
+            if (manager < 0 && retry_due(&now, &retry)) {
                 manager = network(debug);
                 if (manager < 0)
                     perror("init: network manager fork");
@@ -262,23 +297,25 @@ int main(void) {
                 retry = now;
                 retry.tv_sec++;
             }
-            if (!seeded && seeder < 0 &&
-                (now.tv_sec > seed_retry.tv_sec ||
-                 (now.tv_sec == seed_retry.tv_sec && now.tv_nsec >= seed_retry.tv_nsec))) {
+            if (!seeded && seeder < 0 && retry_due(&now, &seed_retry)) {
                 seeder = seed_service(&now);
                 seed_retry = now;
                 seed_retry.tv_sec++;
             }
-            if (bus_installed && bus < 0 &&
-                (now.tv_sec > bus_retry.tv_sec ||
-                 (now.tv_sec == bus_retry.tv_sec && now.tv_nsec >= bus_retry.tv_nsec))) {
-                bus = start_system_bus();
+            if (bus_installed && bus < 0 && retry_due(&now, &bus_retry)) {
+                bus = start_service(bus_path);
                 bus_retry = now;
                 bus_retry.tv_sec++;
             }
-            if (ssh_enabled && seeded && ssh < 0 &&
-                (now.tv_sec > ssh_retry.tv_sec ||
-                 (now.tv_sec == ssh_retry.tv_sec && now.tv_nsec >= ssh_retry.tv_nsec))) {
+            if (input_installed && coldplug < 0 && !coldplugged && retry_due(&now, &input_retry)) {
+                if (udev < 0)
+                    udev = start_service(input_daemon);
+                if (udev > 0)
+                    coldplug = start_service(input_coldplug);
+                input_retry = now;
+                input_retry.tv_sec++;
+            }
+            if (ssh_enabled && seeded && ssh < 0 && retry_due(&now, &ssh_retry)) {
                 if (debug_ssh_configured())
                     ssh = start_debug_ssh();
                 ssh_retry = now;

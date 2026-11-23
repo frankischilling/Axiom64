@@ -658,6 +658,19 @@ static int child_gate(int gate, pid_t parent) {
     return error ? failed(error) : 0;
 }
 
+static const char* xorg_config(void) {
+    const char* discovery = "/etc/X11/xorg-udev.conf";
+    if (access(discovery, R_OK) == 0 && access("/sys/class/input", X_OK) == 0) {
+        for (unsigned attempt = 0; attempt < 20; ++attempt) {
+            if (access("/run/axiom64-input-ready", R_OK) == 0)
+                return discovery;
+            struct timespec delay = {0, 100000000};
+            nanosleep(&delay, NULL);
+        }
+    }
+    return "/etc/X11/xorg.conf";
+}
+
 static void child(const struct account_profile* profile, int output, int server, pid_t parent,
                   int gate) {
     if (child_gate(gate, parent) < 0)
@@ -688,7 +701,7 @@ static void child(const struct account_profile* profile, int output, int server,
         char* const arguments[] = {"Xorg",
                                    ":0",
                                    "-config",
-                                   "/etc/X11/xorg.conf",
+                                   (char*)xorg_config(),
                                    "-nolisten",
                                    "tcp",
                                    "-noreset",

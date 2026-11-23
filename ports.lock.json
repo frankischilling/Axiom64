@@ -7528,6 +7528,19 @@
       "source_commit": "4f8157b2e125ac222cade929bb25bda16305fefc"
     },
     {
+      "name": "xf86-input-libinput",
+      "version": "1.5.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/xf86-input-libinput-1.5.0-r0.apk",
+      "archive": "xf86-input-libinput-1.5.0-r0.apk",
+      "sha256": "4e4dbd24e6a0be4886a2259dea92a53c594ec5f5d9c3af90fea0de6b26f9f6ad",
+      "license": "MIT",
+      "upstream": "https://xorg.freedesktop.org",
+      "origin": "xf86-input-libinput",
+      "source_commit": "7787f52ced2a897fd64df3f78dd0fac3d9426f5c",
+      "installed_only": true
+    },
+    {
       "name": "xf86-video-fbdev",
       "version": "0.5.0-r6",
       "repository": "community",

@@ -13282,6 +13282,23 @@
       ]
     },
     {
+      "origin": "xf86-input-libinput",
+      "commit": "7787f52ced2a897fd64df3f78dd0fac3d9426f5c",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7787f52ced2a897fd64df3f78dd0fac3d9426f5c/community/xf86-input-libinput/APKBUILD",
+      "recipe_sha256": "54b09d44695870946afc5b7bfcc853d90483b00770f5d7d65128edd2bdb18958",
+      "files": [
+        {
+          "name": "xf86-input-libinput-1.5.0.tar.xz",
+          "sha512": "03090beb7c162fdf55e9bb9da41ffb8601b20047e4a53895bad27de47b3197fc920e710f26fa23e7322b367ab65fa56ba5f9a195ec69801529af3958632c2d6e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/xf86-input-libinput-1.5.0.tar.xz",
+            "https://www.x.org/releases/individual/driver/xf86-input-libinput-1.5.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "xf86-video-fbdev",
       "commit": "614e9166706cec427fc3d907b8d981390a42e088",
       "license": "MIT",

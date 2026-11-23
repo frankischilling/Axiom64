@@ -590,6 +590,32 @@
       "installed_only": true
     },
     {
+      "name": "diffutils",
+      "version": "3.12-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/diffutils-3.12-r0.apk",
+      "archive": "diffutils-3.12-r0.apk",
+      "sha256": "6ac2404adcea38557cf45668261cc36a83358aae037df8ce22bf5d301be6e986",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/diffutils/",
+      "origin": "diffutils",
+      "source_commit": "9ec020208a8c26f5321dd82eb48a184ea9809ab4",
+      "installed_only": true
+    },
+    {
+      "name": "diffutils-doc",
+      "version": "3.12-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/diffutils-doc-3.12-r0.apk",
+      "archive": "diffutils-doc-3.12-r0.apk",
+      "sha256": "98e27b7c23f2bfb0f57de608e37c25b9d9400a47727a90d7484e5853cc96c4d3",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/diffutils/",
+      "origin": "diffutils",
+      "source_commit": "9ec020208a8c26f5321dd82eb48a184ea9809ab4",
+      "installed_only": true
+    },
+    {
       "name": "docbook-xml",
       "version": "4.5-r10",
       "repository": "main",
@@ -5832,6 +5858,32 @@
       "source_commit": "7072d5b4762ad6280669406526c5f391e444800e"
     },
     {
+      "name": "patch",
+      "version": "2.8-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/patch-2.8-r0.apk",
+      "archive": "patch-2.8-r0.apk",
+      "sha256": "f34098dde672a06d7b601c12d2e585bbf473292dd08d7e0a81e9ad27962196a6",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/patch/patch.html",
+      "origin": "patch",
+      "source_commit": "094514d20ffc2b3cd1b7eca3fc27744b87df57dd",
+      "installed_only": true
+    },
+    {
+      "name": "patch-doc",
+      "version": "2.8-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/patch-doc-2.8-r0.apk",
+      "archive": "patch-doc-2.8-r0.apk",
+      "sha256": "adc88994b95b9c827769e9efadd37e3393d159a9dc4851ec482a38db8b06892a",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/patch/patch.html",
+      "origin": "patch",
+      "source_commit": "094514d20ffc2b3cd1b7eca3fc27744b87df57dd",
+      "installed_only": true
+    },
+    {
       "name": "pcre2",
       "version": "10.46-r1",
       "repository": "main",
@@ -7202,6 +7254,32 @@
       "installed_only": true
     },
     {
+      "name": "unzip",
+      "version": "6.0-r15",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/unzip-6.0-r15.apk",
+      "archive": "unzip-6.0-r15.apk",
+      "sha256": "1418cdf985579b1ea58747b2e484108a09add2b26827cdaecfae86d163345b7a",
+      "license": "custom",
+      "upstream": "http://www.info-zip.org/UnZip.html",
+      "origin": "unzip",
+      "source_commit": "7fb0462fc2d9b15d8a2b21d4e81e58ca5fffcd01",
+      "installed_only": true
+    },
+    {
+      "name": "unzip-doc",
+      "version": "6.0-r15",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/unzip-doc-6.0-r15.apk",
+      "archive": "unzip-doc-6.0-r15.apk",
+      "sha256": "e0d36f46e6ca41f2f6f56352a92e8d8c00b38bc30e7c2c8aa68931f0eb541972",
+      "license": "custom",
+      "upstream": "http://www.info-zip.org/UnZip.html",
+      "origin": "unzip",
+      "source_commit": "7fb0462fc2d9b15d8a2b21d4e81e58ca5fffcd01",
+      "installed_only": true
+    },
+    {
       "name": "upower",
       "version": "1.90.9-r0",
       "repository": "community",
@@ -7781,6 +7859,32 @@
       "installed_only": true
     },
     {
+      "name": "xz",
+      "version": "5.8.4-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/xz-5.8.4-r0.apk",
+      "archive": "xz-5.8.4-r0.apk",
+      "sha256": "3d76841fc8d03c1226969f44f248363acefc13d51e243c34dfbb4b16b35bd2d5",
+      "license": "GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later",
+      "upstream": "https://tukaani.org/xz/",
+      "origin": "xz",
+      "source_commit": "4ad8da6dc8e2b7ed46653b9844835babc3a166ae",
+      "installed_only": true
+    },
+    {
+      "name": "xz-doc",
+      "version": "5.8.4-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/xz-doc-5.8.4-r0.apk",
+      "archive": "xz-doc-5.8.4-r0.apk",
+      "sha256": "6a6330545eb0f20acc33a70974f3524f43ac54e143cb6b004a383322a60426e3",
+      "license": "GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later",
+      "upstream": "https://tukaani.org/xz/",
+      "origin": "xz",
+      "source_commit": "4ad8da6dc8e2b7ed46653b9844835babc3a166ae",
+      "installed_only": true
+    },
+    {
       "name": "xz-libs",
       "version": "5.8.4-r0",
       "repository": "main",
@@ -7816,6 +7920,32 @@
       "upstream": "https://github.com/sekrit-twc/zimg",
       "origin": "zimg",
       "source_commit": "6f7e910bbb2d8c50b3f27ce9a353f110ca69098f",
+      "installed_only": true
+    },
+    {
+      "name": "zip",
+      "version": "3.0-r13",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/zip-3.0-r13.apk",
+      "archive": "zip-3.0-r13.apk",
+      "sha256": "ca16cc1d7c482d29e2c287c4d7b0697eedd5102a9e352ca447f0c3fa41b960af",
+      "license": "Info-ZIP",
+      "upstream": "http://www.info-zip.org/pub/infozip/Zip.html",
+      "origin": "zip",
+      "source_commit": "14226268fa7d58f8faa74d8971ce1503959b8345",
+      "installed_only": true
+    },
+    {
+      "name": "zip-doc",
+      "version": "3.0-r13",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/zip-doc-3.0-r13.apk",
+      "archive": "zip-doc-3.0-r13.apk",
+      "sha256": "b646ac2940a76eee13cea77462948de6e46081c7d3ed12acdc6d992dbd8977c0",
+      "license": "Info-ZIP",
+      "upstream": "http://www.info-zip.org/pub/infozip/Zip.html",
+      "origin": "zip",
+      "source_commit": "14226268fa7d58f8faa74d8971ce1503959b8345",
       "installed_only": true
     },
     {
@@ -7855,6 +7985,32 @@
       "upstream": "https://www.zsh.org/",
       "origin": "zsh",
       "source_commit": "8cd10457339db83d978b3814b239119d64d53832"
+    },
+    {
+      "name": "zstd",
+      "version": "1.5.7-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/zstd-1.5.7-r0.apk",
+      "archive": "zstd-1.5.7-r0.apk",
+      "sha256": "2075231e0d0c123e5a5cede1272ba8adc261728e6edb2736560e73aa0cb41938",
+      "license": "BSD-3-Clause OR GPL-2.0-or-later",
+      "upstream": "https://facebook.github.io/zstd/",
+      "origin": "zstd",
+      "source_commit": "fc7fd35c7bf99156ae31962877c074f679f45b73",
+      "installed_only": true
+    },
+    {
+      "name": "zstd-doc",
+      "version": "1.5.7-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/zstd-doc-1.5.7-r0.apk",
+      "archive": "zstd-doc-1.5.7-r0.apk",
+      "sha256": "9e3daa02a4fe9b083b8e56195aba4fcf61c4a45665cecd163b46b99ae2e0eb4e",
+      "license": "BSD-3-Clause OR GPL-2.0-or-later",
+      "upstream": "https://facebook.github.io/zstd/",
+      "origin": "zstd",
+      "source_commit": "fc7fd35c7bf99156ae31962877c074f679f45b73",
+      "installed_only": true
     },
     {
       "name": "zstd-libs",

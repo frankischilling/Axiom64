@@ -952,15 +952,16 @@ static void byte_quota(int fd) {
     Route filter;
     filter.protocol = 0;
     dump.route(filter, true);
-    for (unsigned i = 0; i < 15; i++)
+    constexpr unsigned dump_count = 14;
+    for (unsigned i = 0; i < dump_count; i++)
         send_packet(fd, dump);
     check(send(fd, dump.bytes, dump.size, 0) == -1 && errno == EAGAIN,
           "reserved dump storage reaches byte quota before packet-count quota");
     int capped = 0;
     check(setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &capped, sizeof(capped)) == 0,
           "full echo accounts for reserved bytes");
-    // Fifteen maximum IPv4 dumps reserve 15 * 4176 bytes. Keep the
-    // original oversized echo as a rejection control, then fill all 65536.
+    // Fourteen maximum IPv4 dumps reserve 14 * 4432 bytes. An uncapped
+    // acknowledgment adds 20 bytes to the request echoed in the remainder.
     uint8_t oversized[3776]{};
     nlmsghdr rejected{};
     rejected.nlmsg_len = sizeof(oversized);
@@ -970,7 +971,7 @@ static void byte_quota(int fd) {
     memcpy(oversized, &rejected, sizeof(rejected));
     check(send(fd, oversized, sizeof(oversized), 0) == -1 && errno == EAGAIN,
           "oversized full echo cannot overrun remaining byte quota");
-    uint8_t large[2876]{};
+    uint8_t large[3468]{};
     nlmsghdr original{};
     original.nlmsg_len = sizeof(large);
     original.nlmsg_type = 0x777;
@@ -978,7 +979,7 @@ static void byte_quota(int fd) {
     original.nlmsg_seq = ++sequence;
     memcpy(large, &original, sizeof(original));
     check(send(fd, large, sizeof(large), 0) == ssize_t(sizeof(large)),
-          "fifteen dump reservations and full error echo exactly fill 65536 bytes");
+          "dump reservations and full error echo exactly fill 65536 bytes");
     pollfd writable{fd, POLLOUT, 0};
     check(poll(&writable, 1, 0) == 0, "byte exhaustion removes write readiness");
     Route own = onlink(0, 0x0a660000, 16, 4501);
@@ -1003,7 +1004,7 @@ static void byte_quota(int fd) {
     check(poll(&writable, 1, 0) == 1 && (writable.revents & POLLOUT),
           "releasing reserved bytes restores write readiness");
     send_packet(fd, mutation);
-    for (unsigned i = 0; i < 14; i++)
+    for (unsigned i = 1; i < dump_count; i++)
         receive(fd, reply, sizeof(reply));
     size = receive(fd, reply, sizeof(reply));
     nlmsghdr header;
@@ -1022,7 +1023,7 @@ static void byte_quota(int fd) {
     check(setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &capped, sizeof(capped)) == 0 &&
               close(observer) == 0,
           "restore capped replies and release byte-quota observer");
-    puts("NETLINK_BYTE_QUOTA_PASS reserved=65536 packets=16");
+    puts("NETLINK_BYTE_QUOTA_PASS reserved=65536 packets=15");
 }
 
 static void uncapped_reply(int fd) {

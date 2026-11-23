@@ -144,6 +144,7 @@ BootInfo boot_info;
     DeviceInventory::network_inventory_init();
     net_init(DeviceInventory::publish_ethernet);
     net_observe_links(netlink_link_event);
+    ipv4_observe_routes(netlink_ipv4_route_event);
     ipv6_observe_addresses(netlink_ipv6_address_event);
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));

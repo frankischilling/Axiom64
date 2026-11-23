@@ -228,6 +228,13 @@ void netlink_link_event(const NetInfo& info, uint32_t changed_flags) {
                                {16, 0, 0, netlink_link_group});
 }
 
+void netlink_ipv4_route_event(const Ipv4Route& route, bool removed) {
+    constexpr uint32_t ipv4_route_group = 1u << 6; // RTNLGRP_IPV4_ROUTE
+    uint8_t bytes[netlink_ipv4_route_record];
+    size_t length = netlink_format_ipv4_route_event(route, removed, bytes);
+    broadcast_notification(route_protocol, nullptr, bytes, length, {16, 0, 0, ipv4_route_group});
+}
+
 void netlink_ipv6_address_event(const Ipv6Address& address, const Ipv6AddressCacheInfo& lifetime,
                                 bool removed) {
     constexpr uint32_t ipv6_address_group = 1u << 8; // RTNLGRP_IPV6_IFADDR

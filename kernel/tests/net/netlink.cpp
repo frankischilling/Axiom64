@@ -166,6 +166,19 @@ int main() {
               changed.gateway == 0x0a170101 && changed.index == 1 && changed.metric == 100 &&
               changed.protocol == 16 && changed.preferred_source == 0x0a170128,
           "DHCP default route append retains its preferred source");
+    uint8_t event[netlink_ipv4_route_record + 8];
+    memset(event, 0x5a, sizeof(event));
+    size_t event_length = netlink_format_ipv4_route_event(changed, true, event);
+    NetlinkHeader deletion;
+    memcpy(&deletion, event, sizeof(deletion));
+    check(event_length == sizeof(dhcp) && deletion.length == event_length && deletion.type == 25 &&
+              !deletion.flags && !deletion.sequence && !deletion.port,
+          "unsolicited route deletion has a kernel event header");
+    check(!memcmp(event + 16, default_route, sizeof(default_route)) && event[28] == 8 &&
+              event[30] == 15 && event[32] == 254 && event[54] == 7 && event[56] == 10 &&
+              event[59] == 40 && event[60] == 8 && event[62] == 4 && event[64] == 1 &&
+              event[event_length] == 0x5a,
+          "route event retains the preferred source and output interface");
     header.type = 26;
     header.flags = 1 | 0x300;
     header.length = 28;

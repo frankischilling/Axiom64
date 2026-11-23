@@ -89,7 +89,10 @@ reports `ENOBUFS` so the listener can refresh its inventory. Subscribers
 to `RTNLGRP_IPV6_IFADDR` receive `RTM_NEWADDR` when an IPv6 address
 becomes usable after duplicate-address detection or changes flags or
 lifetimes. `RTM_DELADDR` reports explicit removal and expiry. IPv4
-address and route notifications remain open. `SIOCETHTOOL` returns the
+address and IPv6 route notifications still need support. Subscribers to
+`RTNLGRP_IPV4_ROUTE` receive `RTM_NEWROUTE` and `RTM_DELROUTE` for main-table
+routes added or removed through configuration or address and link changes.
+`SIOCETHTOOL` returns the
 bound Ethernet driver and PCI address with `ETHTOOL_GDRVINFO` and
 reports link state with `ETHTOOL_GLINK`.
 

@@ -63,7 +63,7 @@ struct Ipv4Route {
     uint32_t destination = 0, mask = 0, gateway = 0;
     unsigned index = 0, metric = 0;
     uint8_t protocol = 3, scope = 255;
-    // Listing metadata; mutation requests select their source independently.
+    // Preferred source for new output that does not specify its own address.
     uint32_t preferred_source = 0;
 };
 
@@ -99,6 +99,9 @@ int ipv4_route(const Ipv4Route&, bool remove);
 int ipv4_route_control(const Ipv4Route&, bool remove, bool exclusive, bool append = false);
 
 size_t ipv4_routes(Ipv4Route*, size_t capacity);
+
+using Ipv4RouteObserver = void (*)(const Ipv4Route&, bool removed);
+void ipv4_observe_routes(Ipv4RouteObserver);
 
 bool ipv4_local(uint32_t address);
 

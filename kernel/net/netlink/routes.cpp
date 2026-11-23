@@ -38,6 +38,8 @@ struct Attribute {
 };
 
 static_assert(sizeof(RouteHeader) == 12 && sizeof(Attribute) == 4);
+static_assert(netlink_ipv4_route_record ==
+              sizeof(NetlinkHeader) + sizeof(RouteHeader) + 6 * (sizeof(Attribute) + 4));
 
 size_t aligned(size_t size) {
     return (size + 3) & ~size_t(3);
@@ -134,9 +136,29 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
     return 0;
 }
 
+size_t format_route(const Ipv4Route& value, NetlinkHeader header, uint8_t* output) {
+    RouteHeader route{2, uint8_t(prefix(value.mask)), 0, 0, 254, value.protocol, value.scope, 1, 0};
+    memcpy(output + sizeof(header), &route, sizeof(route));
+    size_t size = sizeof(header) + sizeof(route);
+    attribute(output, size, 15, 254);
+    if (value.mask)
+        attribute(output, size, 1, __builtin_bswap32(value.destination));
+    if (value.gateway)
+        attribute(output, size, 5, __builtin_bswap32(value.gateway));
+    if (value.metric)
+        attribute(output, size, 6, value.metric);
+    if (value.preferred_source)
+        attribute(output, size, 7, __builtin_bswap32(value.preferred_source));
+    attribute(output, size, 4, value.index);
+    header.length = size;
+    memcpy(output, &header, sizeof(header));
+    return size;
+}
+
 size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter, uint8_t* output) {
     Ipv4Route routes[32 + ipv4_address_capacity + 1];
-    static_assert(32 * 76 + (ipv4_address_capacity + 1) * 60 + 20 <= netlink_ipv4_route_reply);
+    static_assert(32 * netlink_ipv4_route_record + (ipv4_address_capacity + 1) * 60 + 20 <=
+                  netlink_ipv4_route_reply);
     static_assert(netlink_ipv4_route_reply + netlink_ipv6_route_reply <= netlink_max_reply);
     size_t count = ipv4_routes(routes, sizeof(routes) / sizeof(routes[0])), size = 0;
     for (size_t i = 0; i < count; i++) {
@@ -144,26 +166,7 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
         if ((filter.index && value.index != filter.index) ||
             (filter.protocol && value.protocol != filter.protocol))
             continue;
-        size_t start = size;
-        NetlinkHeader header{0, 24, 2, request.sequence, port};
-        RouteHeader route{2, uint8_t(prefix(value.mask)), 0, 0, 254, value.protocol, value.scope, 1,
-                          0};
-        memcpy(output + size, &header, sizeof(header));
-        size += sizeof(header);
-        memcpy(output + size, &route, sizeof(route));
-        size += sizeof(route);
-        attribute(output, size, 15, 254);
-        if (value.mask)
-            attribute(output, size, 1, __builtin_bswap32(value.destination));
-        if (value.gateway)
-            attribute(output, size, 5, __builtin_bswap32(value.gateway));
-        if (value.metric)
-            attribute(output, size, 6, value.metric);
-        if (value.preferred_source)
-            attribute(output, size, 7, __builtin_bswap32(value.preferred_source));
-        attribute(output, size, 4, value.index);
-        header.length = size - start;
-        memcpy(output + start, &header, sizeof(header));
+        size += format_route(value, {0, 24, 2, request.sequence, port}, output + size);
     }
     NetlinkHeader done{20, 3, 2, request.sequence, port};
     int status = 0;
@@ -172,6 +175,11 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
     return size + done.length;
 }
 } // namespace
+
+size_t netlink_format_ipv4_route_event(const Ipv4Route& value, bool removed, void* output) {
+    return format_route(value, {0, uint16_t(removed ? 25 : 24), 0, 0, 0},
+                        static_cast<uint8_t*>(output));
+}
 
 size_t routing_capacity(const NetlinkHeader& request, const void* data) {
     if (!routing_dump(request.type))

@@ -51,6 +51,25 @@ bool RouteTable::owns(uint64_t owner) const {
     return false;
 }
 
+void RouteTable::observe(Ipv4RouteObserver listener) {
+    observer = listener;
+}
+
+void RouteTable::publish(const Entry& entry, bool removed) const {
+    if (observer) {
+        Ipv4Route route = entry.value;
+        route.preferred_source = entry.preferred_source;
+        observer(route, removed);
+    }
+}
+
+void RouteTable::clear(Slot& slot) {
+    const auto previous = slot;
+    slot = {};
+    if (previous.installed)
+        publish(previous.entry, true);
+}
+
 int RouteTable::insert(const Ipv4Route& value, bool exclusive, bool append) {
     for (const auto& slot : entries) {
         const auto& other = slot.entry.value;
@@ -95,6 +114,7 @@ int RouteTable::insert(const Ipv4Route& value, bool exclusive, bool append) {
         empty = &entries[next];
     }
     *empty = {entry, true};
+    publish(entry, false);
     return 0;
 }
 
@@ -109,10 +129,11 @@ int RouteTable::erase(const Ipv4Route& value, bool control, uint64_t& removed_ow
             (!control || ((!value.protocol || other.protocol == value.protocol) &&
                           (value.scope == 255 || other.scope == value.scope)))) {
             removed_owner = slot.entry.owner;
-            if (slot.entry.automatic)
+            if (slot.entry.automatic) {
                 slot.installed = false;
-            else
-                slot = {};
+                publish(slot.entry, true);
+            } else
+                clear(slot);
             return 0;
         }
     }
@@ -122,24 +143,26 @@ int RouteTable::erase(const Ipv4Route& value, bool control, uint64_t& removed_ow
 void RouteTable::withdraw(unsigned index) {
     for (auto& slot : entries)
         if (slot.entry.value.index == index)
-            slot = {};
+            clear(slot);
 }
 
 void RouteTable::withdraw_source(uint32_t source) {
     for (auto& slot : entries)
         if (slot.installed && !slot.entry.automatic && slot.entry.preferred_source == source)
-            slot = {};
+            clear(slot);
 }
 
 int RouteTable::synchronize(const AddressBook& addresses, uint16_t active_interfaces) {
     Slot next[ipv4_address_capacity]{};
+    bool keep[ipv4_address_capacity]{}, add[ipv4_address_capacity]{};
     unsigned count = 0, fresh = 0;
     for (unsigned n = 0; auto address = addresses.at(n); n++) {
         if (address->secondary || !address->index || address->index > max_net_devices ||
             !(active_interfaces & (1u << (address->index - 1))))
             continue;
         const auto& config = address->config;
-        auto& target = next[count++];
+        const auto position = count++;
+        auto& target = next[position];
         target.entry = {{config.address & config.mask, config.mask, 0, address->index, 0, 2, 253},
                         0,
                         config.address,
@@ -151,11 +174,13 @@ int RouteTable::synchronize(const AddressBook& addresses, uint16_t active_interf
             if (old.entry.value.index == address->index && old.entry.value.mask == config.mask &&
                 old.entry.preferred_source == config.address) {
                 target = old;
+                keep[at] = true;
                 retained = true;
                 break;
             }
         }
         fresh += !retained;
+        add[position] = !retained;
     }
     // Refuse exhaustion before changing any installed route or lifetime ID.
     if (fresh > UINT64_MAX - next_owner)
@@ -177,8 +202,14 @@ int RouteTable::synchronize(const AddressBook& addresses, uint16_t active_interf
         if (!slot.entry.owner)
             slot.entry.owner = ++next_owner;
     }
-    for (unsigned n = 0; n < ipv4_address_capacity; n++)
+    for (unsigned n = 0; n < ipv4_address_capacity; n++) {
+        if (entries[n].installed && !keep[n])
+            clear(entries[n]);
         entries[n] = next[n];
+    }
+    for (unsigned n = 0; n < count; n++)
+        if (add[n])
+            publish(entries[n].entry, false);
     return 0;
 }
 } // namespace ax::ip4

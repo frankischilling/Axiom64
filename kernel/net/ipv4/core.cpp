@@ -1181,6 +1181,10 @@ int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive, bool
     return change_route(value, remove, true, exclusive, append);
 }
 
+void ipv4_observe_routes(Ipv4RouteObserver observer) {
+    routes.observe(observer);
+}
+
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
     refresh_addresses();
     size_t count = 0;

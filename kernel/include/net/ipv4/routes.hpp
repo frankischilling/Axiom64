@@ -49,6 +49,7 @@ class RouteTable {
     int synchronize(const AddressBook&, uint16_t active_interfaces = UINT16_MAX);
     void withdraw(unsigned index);
     void withdraw_source(uint32_t source);
+    void observe(Ipv4RouteObserver);
 
   private:
     struct Slot {
@@ -56,7 +57,10 @@ class RouteTable {
         bool installed = false;
     };
 
+    void clear(Slot&);
+    void publish(const Entry&, bool removed) const;
     Slot entries[capacity]{};
     uint64_t next_owner = 0;
+    Ipv4RouteObserver observer = nullptr;
 };
 } // namespace ax::ip4

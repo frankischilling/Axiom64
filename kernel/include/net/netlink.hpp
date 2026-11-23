@@ -98,6 +98,9 @@ int netlink_ipv6_route(const void*, const NetlinkHeader&, uint32_t port, void*, 
                        size_t& size, bool strict);
 
 void netlink_link_event(const NetInfo&, uint32_t changed_flags);
+void netlink_ipv4_route_event(const Ipv4Route&, bool removed);
+constexpr size_t netlink_ipv4_route_record = 76;
+size_t netlink_format_ipv4_route_event(const Ipv4Route&, bool removed, void*);
 
 size_t netlink_format_link_event(const NetInfo&, uint32_t changed_flags, void*, size_t);
 void netlink_ipv6_address_event(const Ipv6Address&, const Ipv6AddressCacheInfo&, bool removed);

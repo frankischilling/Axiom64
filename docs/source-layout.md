@@ -27,6 +27,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/drivers/audio/` | Intel HD Audio controller and codec setup, PCM DMA rings and OSS device operations |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |
 | `kernel/drivers/random/` | Virtio entropy input, completion validation and source lifetime |
+| `kernel/drivers/graphics/` | Display scanout and framebuffer backends |
 | `kernel/drivers/virtio/` | Shared PCI transport and split queues |
 | `kernel/include/` | Public internal headers with matching module paths |
 | `kernel/tests/` | Host tests grouped by module; excluded from kernel linking |

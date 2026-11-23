@@ -23,9 +23,11 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/intel_lpss.hpp"
+#include "arch/x86_64/interrupts.hpp"
 #include "boot/boot.hpp"
 #include "core/base.hpp"
 #include "drivers/input/hid_touchpad.hpp"
+#include "drivers/input/touchpad.hpp"
 #include "drivers/platform/designware_i2c.hpp"
 #include "drivers/platform/intel_gpio.hpp"
 #include "drivers/platform/pci.hpp"
@@ -40,6 +42,10 @@ constexpr unsigned register_bytes = lpss_capabilities + sizeof(uint32_t);
 constexpr uint32_t designware_i2c = 0x44570140;
 constexpr unsigned lpss_reset = 0x204, function_reset_release = 3;
 constexpr uint32_t comet_lake_i2c_clock = 216000000;
+
+bool discovers_hid(LpssProbe mode) {
+    return mode == LpssProbe::hid || mode == LpssProbe::input;
+}
 
 struct ProbeResources {
     Acpi::PciRootWindows windows;
@@ -61,6 +67,24 @@ struct Registers {
         mmio[offset / 4] = value;
     }
 };
+
+struct LiveTouchpad {
+    enum class Phase : uint8_t { off, resetting, ready };
+    static constexpr unsigned max_input = 64;
+
+    Irq::Line irq;
+    Registers io;
+    PciFunction pci;
+    DesignWareI2c::HidDescriptor descriptor;
+    HidTouchpad::Layouts layouts;
+    uint64_t reset_started;
+    uint32_t speed, saved_reset, saved_bar;
+    unsigned failures, frames;
+    uint16_t address, saved_command;
+    PciPowerState saved_power;
+    Phase phase;
+    bool pending, assigned_bar;
+} touchpad{};
 
 void reserve_platform_memory(PciMemoryInventory& inventory,
                              const Acpi::InterruptTopology* topology) {
@@ -94,6 +118,107 @@ bool set_command(const PciFunction& pci, uint16_t command) {
     return pci.read16(4) == command;
 }
 
+DesignWareI2c::Result exchange(Registers& io, uint32_t speed, uint16_t address,
+                               const uint8_t* output, unsigned output_size, uint8_t* input,
+                               unsigned input_size, unsigned timeout = 0) {
+    uint32_t abort;
+    const auto result = DesignWareI2c::transfer(io, comet_lake_i2c_clock, speed, address, output,
+                                                output_size, input, input_size, abort, timeout);
+    if (result != DesignWareI2c::Result::ok)
+        log("LPSS I2C: touchpad transfer result=%u abort=%x\n", uint64_t(result), uint64_t(abort));
+    return result;
+}
+
+bool hid_command(Registers& io, const Acpi::I2cHidDevice& device,
+                 const DesignWareI2c::HidDescriptor& descriptor, uint8_t argument, uint8_t opcode) {
+    const uint8_t output[]{uint8_t(descriptor.command_register),
+                           uint8_t(descriptor.command_register >> 8), argument, opcode};
+    return exchange(io, device.max_hz, device.address, output, sizeof(output), nullptr, 0) ==
+           DesignWareI2c::Result::ok;
+}
+
+bool touchpad_interrupt(void*) {
+    if (touchpad.phase == LiveTouchpad::Phase::off ||
+        !interrupt_mask_exclusive_line(touchpad.irq, true))
+        return false;
+    touchpad.pending = true;
+    return true;
+}
+
+bool start_touchpad(Registers& io, const Acpi::I2cHidDevice& device,
+                    const DesignWareI2c::HidDescriptor& descriptor,
+                    const HidTouchpad::Layouts& layouts, uint32_t reset) {
+    using enum Acpi::I2cHidInterrupt::Source;
+    const auto& route = device.interrupt;
+    log("LPSS I2C: configure touchpad gsi=%u source=%u polarity=%u edge=%u shared=%u cmd=%x\n",
+        uint64_t(route.line), uint64_t(route.source), uint64_t(route.polarity),
+        uint64_t(route.edge), uint64_t(route.shared), uint64_t(descriptor.command_register));
+    if (touchpad.phase != LiveTouchpad::Phase::off ||
+        descriptor.input_bytes > LiveTouchpad::max_input || !descriptor.command_register ||
+        route.source != gsi || route.edge || route.shared ||
+        route.polarity == Acpi::I2cHidInterrupt::Polarity::both_edges ||
+        !interrupt_register_line(route.line,
+                                 route.polarity == Acpi::I2cHidInterrupt::Polarity::active_low,
+                                 false, touchpad_interrupt, nullptr, touchpad.irq))
+        return false;
+    bool ready = hid_command(io, device, descriptor, 0, 0x08); // SET_POWER, on.
+    for (unsigned ms = 0; ready && ms < 60; ++ms)
+        ready = clock_delay_us(1000);
+    if (!ready || !hid_command(io, device, descriptor, 0, 0x01)) { // RESET.
+        hid_command(io, device, descriptor, 1, 0x08);              // SET_POWER, sleep.
+        interrupt_retire_line(touchpad.irq);
+        return false;
+    }
+    touchpad.io = io;
+    touchpad.descriptor = descriptor;
+    touchpad.layouts = layouts;
+    touchpad.speed = device.max_hz;
+    touchpad.address = device.address;
+    touchpad.saved_reset = reset;
+    clock_refresh();
+    touchpad.reset_started = ticks;
+    touchpad.phase = LiveTouchpad::Phase::resetting;
+    log("LPSS I2C: awaiting touchpad reset gsi=%u\n", uint64_t(route.line));
+    return true;
+}
+
+bool select_touchpad_mode() {
+    using DesignWareI2c::Result;
+    const auto& mode = touchpad.layouts.input_mode;
+    if (!mode.field.width)
+        return true;
+    const unsigned bytes = mode.bytes + 3; // Length word, report ID, then the feature payload.
+    if (bytes > LiveTouchpad::max_input || !touchpad.descriptor.data_register)
+        return false;
+    const auto command = touchpad.descriptor.command_register;
+    const auto data_port = touchpad.descriptor.data_register;
+    uint8_t transfer[7 + LiveTouchpad::max_input]{
+        uint8_t(command), uint8_t(command >> 8), uint8_t(0x30 | min(unsigned(mode.report_id), 15u)),
+        2};
+    unsigned prefix = 4;
+    if (mode.report_id >= 15)
+        transfer[prefix++] = mode.report_id;
+    transfer[prefix++] = uint8_t(data_port);
+    transfer[prefix++] = uint8_t(data_port >> 8);
+    auto* reply = transfer + prefix;
+    if (exchange(touchpad.io, touchpad.speed, touchpad.address, transfer, prefix, reply, bytes,
+                 2) != Result::ok ||
+        unsigned(reply[0] | reply[1] << 8) != bytes || reply[2] != mode.report_id)
+        return false;
+    for (unsigned i = 0; i < mode.field.width; ++i) {
+        const unsigned bit = mode.field.offset + i;
+        const uint8_t mask = 1u << (bit & 7);
+        auto& byte = reply[3 + bit / 8];
+        byte = (byte & ~mask) | ((3u & (1u << i)) ? mask : 0);
+    }
+    transfer[3] = 3; // SET_REPORT. Preserve all other feature fields.
+    const bool selected = exchange(touchpad.io, touchpad.speed, touchpad.address, transfer,
+                                   prefix + bytes, nullptr, 0, 2) == Result::ok;
+    log("LPSS I2C: touchpad mode report=%u selected=%u\n", uint64_t(mode.report_id),
+        uint64_t(selected));
+    return selected;
+}
+
 uint32_t report_identity(const volatile uint32_t* registers, uint64_t base, uint64_t size) {
     const uint32_t capabilities = registers[lpss_capabilities / 4];
     const uint32_t component = registers[component_type / 4];
@@ -103,7 +228,8 @@ uint32_t report_identity(const volatile uint32_t* registers, uint64_t base, uint
 }
 
 bool probe_hid_report(Registers& io, const Acpi::I2cHidDevice& device,
-                      const DesignWareI2c::HidDescriptor& descriptor) {
+                      const DesignWareI2c::HidDescriptor& descriptor, LpssProbe mode,
+                      uint32_t reset) {
     using namespace DesignWareI2c;
 
     struct Storage {
@@ -146,6 +272,9 @@ bool probe_hid_report(Registers& io, const Acpi::I2cHidDevice& device,
                 log("LPSS I2C: touchpad report id=%u payload-bits=%u finger-slots=%u\n",
                     uint64_t(report.id), uint64_t(report.bits), uint64_t(report.finger_count));
             }
+            if (mode == LpssProbe::input &&
+                !start_touchpad(io, device, descriptor, storage->layouts, reset))
+                log("LPSS I2C: cannot start touchpad input\n");
         } else {
             log("LPSS I2C: no supported touchpad input layout\n");
         }
@@ -190,7 +319,9 @@ bool read_hid_descriptors(const PciFunction& pci, const ProbeResources& resource
                     uint64_t(descriptor.vendor), uint64_t(descriptor.product),
                     uint64_t(descriptor.revision), uint64_t(descriptor.report_bytes),
                     uint64_t(descriptor.input_bytes));
-                clean = probe_hid_report(io, device, descriptor);
+                clean = probe_hid_report(io, device, descriptor, resources.mode, reset);
+                if (touchpad.phase == LiveTouchpad::Phase::resetting)
+                    return clean;
             }
         }
         if (io.read(lpss_reset) != reset)
@@ -206,7 +337,7 @@ bool read_hid_descriptors(const PciFunction& pci, const ProbeResources& resource
 bool inspect_registers(const PciFunction& pci, const ProbeResources& resources,
                        volatile uint32_t* registers, uint64_t base, uint64_t size,
                        bool& identified) {
-    if (resources.mode == LpssProbe::hid)
+    if (discovers_hid(resources.mode))
         return read_hid_descriptors(pci, resources, registers, base, size, identified);
     identified = report_identity(registers, base, size) == designware_i2c;
     return true;
@@ -227,15 +358,27 @@ bool test_unassigned_bar(const PciFunction& pci, uint64_t size, const ProbeResou
     if (resources.mode == LpssProbe::inspect || size < register_bytes)
         return true;
     bool clean = true;
+    const auto saved_bar = pci.read32(0x10);
     const auto result = PciBarProbe::test_unassigned_memory(
-        pci, gap, size, physical_address_limit(), [&](uint64_t address) {
+        pci, gap, size, physical_address_limit(),
+        [&](uint64_t address) {
             auto* registers = static_cast<volatile uint32_t*>(map_mmio(address, register_bytes));
             if (!registers)
                 return false;
             bool identified = false;
             clean = inspect_registers(pci, resources, registers, address, size, identified);
-            return clean && identified;
-        });
+            return clean && identified &&
+                   (resources.mode != LpssProbe::input ||
+                    touchpad.phase == LiveTouchpad::Phase::resetting);
+        },
+        resources.mode == LpssProbe::input);
+    if (result == PciBarStatus::valid && resources.mode == LpssProbe::input) {
+        touchpad.assigned_bar = true;
+        touchpad.saved_bar = saved_bar;
+        resources.inventory->add(gap, size);
+        log("LPSS I2C: touchpad BAR0 assigned base=%x\n", gap);
+        return true;
+    }
     log("LPSS I2C: BAR0 temporary test accepted=%u address-restored=%u\n",
         uint64_t(result == PciBarStatus::valid), uint64_t(result != PciBarStatus::restore_failed));
     if (!clean || result == PciBarStatus::restore_failed) {
@@ -279,6 +422,8 @@ void probe(const PciFunction& pci, void* context) {
         return;
     auto& resources = *static_cast<ProbeResources*>(context);
     ++resources.controllers;
+    if (resources.mode == LpssProbe::input && touchpad.phase != LiveTouchpad::Phase::off)
+        return;
 
     const auto initial = pci.power_state();
     const uint16_t command = pci.read16(4);
@@ -301,6 +446,12 @@ void probe(const PciFunction& pci, void* context) {
         uint64_t(pci.read32(0x14)), uint64_t(pci.read32(0x10)));
     const bool bar_intact =
         !awake || (set_command(pci, quiet) && probe_registers(pci, quiet, resources));
+    if (bar_intact && touchpad.phase == LiveTouchpad::Phase::resetting) {
+        touchpad.pci = pci;
+        touchpad.saved_command = command;
+        touchpad.saved_power = initial;
+        return;
+    }
 
     // Leave bus mastering off unless the original power and command can be restored.
     const bool settled = awake || pci.power_state() == initial;
@@ -309,7 +460,77 @@ void probe(const PciFunction& pci, void* context) {
     log("LPSS I2C: restored=%u power=%u command=%x\n", uint64_t(restored),
         uint64_t(pci.power_state()), uint64_t(pci.read16(4)));
 }
+
+void stop_touchpad() {
+    interrupt_retire_line(touchpad.irq);
+    touchpad.pending = false;
+    const bool published = touchpad.phase == LiveTouchpad::Phase::ready;
+    if (published)
+        TouchpadInput::reset();
+    touchpad.phase = LiveTouchpad::Phase::off;
+    auto& pci = touchpad.pci;
+    touchpad.io.write(lpss_reset, touchpad.saved_reset);
+    const auto quiet = uint16_t((touchpad.saved_command & ~7u) | intx_disabled);
+    bool restored = set_command(pci, quiet);
+    if (restored && touchpad.assigned_bar) {
+        pci.write32(0x10, touchpad.saved_bar);
+        if (touchpad.saved_bar & 4)
+            pci.write32(0x14, 0);
+        restored = pci.read32(0x10) == touchpad.saved_bar &&
+                   (!(touchpad.saved_bar & 4) || !pci.read32(0x14));
+    }
+    restored = restored && pci.set_power_state(touchpad.saved_power) &&
+               set_command(pci, touchpad.saved_command);
+    log("LPSS I2C: touchpad stopped restored=%u\n", uint64_t(restored));
+}
 } // namespace
+
+void intel_lpss_input_poll() {
+    using enum LiveTouchpad::Phase;
+    if (touchpad.phase == off)
+        return;
+    if (!touchpad.pending) {
+        if (touchpad.phase == resetting && ticks - touchpad.reset_started >= 100) {
+            log("LPSS I2C: touchpad reset interrupt timed out\n");
+            stop_touchpad();
+        }
+        return;
+    }
+    touchpad.pending = false;
+    uint8_t packet[LiveTouchpad::max_input];
+    const auto result = exchange(touchpad.io, touchpad.speed, touchpad.address, nullptr, 0, packet,
+                                 touchpad.descriptor.input_bytes, 2);
+    if (result == DesignWareI2c::Result::ok) {
+        touchpad.failures = 0;
+        HidTouchpad::Frame frame{};
+        const auto type =
+            HidTouchpad::decode(touchpad.layouts, packet, touchpad.descriptor.input_bytes, frame);
+        if (type == HidTouchpad::Packet::reset && touchpad.phase == resetting) {
+            const auto& id = touchpad.descriptor;
+            if (!select_touchpad_mode() ||
+                !TouchpadInput::register_device(touchpad.layouts, id.vendor, id.product,
+                                                id.revision, true)) {
+                log("LPSS I2C: touchpad reset completed but input setup failed\n");
+                stop_touchpad();
+                return;
+            }
+            touchpad.phase = ready;
+            log("LPSS I2C: touchpad ready /dev/input/event2\n");
+        } else if (type == HidTouchpad::Packet::reset) {
+            TouchpadInput::reset();
+        } else if (type == HidTouchpad::Packet::input && touchpad.phase == ready &&
+                   TouchpadInput::submit(frame) && touchpad.frames < 4) {
+            ++touchpad.frames;
+            log("LPSS I2C: touchpad input report=%u contacts=%u\n", uint64_t(frame.report_id),
+                uint64_t(frame.contact_count));
+        }
+    } else if (result == DesignWareI2c::Result::restore_failed || ++touchpad.failures == 3) {
+        stop_touchpad();
+        return;
+    }
+    if (!interrupt_mask_exclusive_line(touchpad.irq, false))
+        stop_touchpad();
+}
 
 void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
                           const Acpi::InterruptTopology* topology, LpssProbe mode) {
@@ -319,7 +540,7 @@ void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks& blocks,
     Acpi::IntelGpioResources gpio{};
     if (mode != LpssProbe::inspect)
         Acpi::decode_intel_gpio_resources(blocks, gpio, providers);
-    if (mode == LpssProbe::hid) {
+    if (discovers_hid(mode)) {
         Acpi::decode_i2c_hid_devices(blocks, resources.hid, providers);
         if (!resources.hid.count) {
             auto replay = providers;

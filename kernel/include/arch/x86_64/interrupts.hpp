@@ -118,6 +118,8 @@ bool interrupt_register_line(uint32_t gsi, bool active_low, bool shared, Irq::Li
                              void* context, Irq::Line&);
 void interrupt_retire_line(Irq::Line&);
 bool interrupt_line_ready(const Irq::Line&);
+// A sole owner may mask a level line while it drains its device outside the IRQ handler.
+bool interrupt_mask_exclusive_line(const Irq::Line&, bool masked);
 bool interrupt_wait_for(const volatile bool& observed);
 bool interrupt_dispatch(uint64_t vector);
 } // namespace ax

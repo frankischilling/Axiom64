@@ -366,6 +366,15 @@ void test_temporary_memory_bar() {
     assert(pci.flags == 0x400 && !pci.bars[0] && pci.bar_writes == 2);
     pci.flags |= 4;
     assert(check(true) == invalid && pci.bar_writes == 2);
+    pci = {};
+    pci.flags = 0x400;
+    pci.bars[0] = 4;
+    assert(PciBarProbe::test_unassigned_memory(
+               pci, address, 4096, limit, [](uint64_t) { return false; }, true) == invalid);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    assert(PciBarProbe::test_unassigned_memory(
+               pci, address, 4096, limit, [](uint64_t) { return true; }, true) == valid);
+    assert(pci.flags == 0x402 && pci.bars[0] == 0x1004 && pci.bars[1] == 2);
     std::puts("PCI_TEMPORARY_BAR_PASS width32 width64 command_guard reject restore_failure");
 }
 

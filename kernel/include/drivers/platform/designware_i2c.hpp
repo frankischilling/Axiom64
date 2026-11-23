@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/drivers/platform/designware_i2c.hpp
- * @brief   Reads registers through a quiescent DesignWare I²C controller.
+ * @brief   Transfers bytes through a quiescent DesignWare I²C controller.
  * @author  frankischilling
  * @date    2026-11-22
  *
@@ -39,6 +39,7 @@ enum class Result : uint8_t { ok, invalid, busy, timeout, bus_error, restore_fai
 
 struct HidDescriptor {
     uint16_t report_bytes, report_register, input_register, input_bytes;
+    uint16_t command_register, data_register;
     uint16_t vendor, product, revision;
 };
 
@@ -46,7 +47,7 @@ inline bool decode_hid(const uint8_t (&raw)[hid_descriptor_bytes], HidDescriptor
     auto word = [&](unsigned offset) { return uint16_t(raw[offset] | raw[offset + 1] << 8); };
     if (word(0) != hid_descriptor_bytes || word(2) != 0x0100 || !word(4) || word(10) < 2)
         return false;
-    out = {word(4), word(6), word(8), word(10), word(20), word(22), word(24)};
+    out = {word(4), word(6), word(8), word(10), word(16), word(18), word(20), word(22), word(24)};
     return true;
 }
 
@@ -57,11 +58,14 @@ inline unsigned clock_count(uint32_t input_hz, unsigned period_ns) {
 // The caller owns the bus, powers the controller and supplies its input clock.
 // Byte mode leaves at most one read request in flight and needs no FIFO-depth assumptions.
 template <class Registers>
-Result read_register(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t address,
-                     uint16_t device_register, uint8_t* bytes, unsigned length, uint32_t& abort) {
+Result transfer(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t address,
+                const uint8_t* output, unsigned output_size, uint8_t* input, unsigned input_size,
+                uint32_t& abort, unsigned timeout_override = 0) {
     abort = 0;
-    if (!bytes || !length || length > max_report_descriptor_bytes || address < 0x08 ||
-        address > 0x77 || input_hz < 10000000 || input_hz > 1000000000 || max_speed < 100000)
+    if ((!output_size && !input_size) || (output_size && !output) || (input_size && !input) ||
+        output_size > max_report_descriptor_bytes || input_size > max_report_descriptor_bytes ||
+        address < 0x08 || address > 0x77 || input_hz < 10000000 || input_hz > 1000000000 ||
+        max_speed < 100000)
         return Result::invalid;
     if (io.read(enable) || (io.read(enable_status) & 1) || (io.read(status) & active) ||
         io.read(tx_level) || io.read(rx_level))
@@ -87,7 +91,9 @@ Result read_register(Registers& io, uint32_t input_hz, uint32_t max_speed, uint1
 
     const unsigned bus_hz = fast ? 400000 : 100000;
     // Each byte takes nine SCL clocks. Allow two wire times and margin for clock stretching.
-    const unsigned timeout = 20 + ((length + 4) * 18000 + bus_hz - 1) / bus_hz;
+    const unsigned timeout =
+        timeout_override ? timeout_override
+                         : 20 + ((input_size + output_size + 2) * 18000 + bus_hz - 1) / bus_hz;
     unsigned sent = 0, requested = 0, received = 0;
     Result result = Result::timeout;
     if (DevicePoll::wait([&] { return io.read(enable_status) & 1; }, 5)) {
@@ -106,20 +112,24 @@ Result read_register(Registers& io, uint32_t input_hz, uint32_t max_speed, uint1
                         result = Result::bus_error;
                         return true;
                     }
-                    bytes[received++] = io.read(data);
+                    input[received++] = io.read(data);
                 }
-                if (received == length && (interrupts & stop_seen) && !(port & active)) {
+                if (sent == output_size && received == input_size && (interrupts & stop_seen) &&
+                    !(port & active)) {
                     result = Result::ok;
                     return true;
                 }
                 if (port & tx_room) {
-                    if (sent < 2)
-                        io.write(data, (device_register >> (8 * sent++)) & 0xff);
-                    else if (requested == received && requested < length) {
+                    if (sent < output_size) {
+                        unsigned command = output[sent++];
+                        if (sent == output_size && !input_size)
+                            command |= stop;
+                        io.write(data, command);
+                    } else if (requested == received && requested < input_size) {
                         unsigned command = read_byte;
-                        if (requested == 0)
+                        if (requested == 0 && output_size)
                             command |= restart;
-                        if (++requested == length)
+                        if (++requested == input_size)
                             command |= stop;
                         io.write(data, command);
                     }
@@ -154,6 +164,17 @@ Result read_register(Registers& io, uint32_t input_hz, uint32_t max_speed, uint1
         io.read(dma) != old_dma)
         return Result::restore_failed;
     return result;
+}
+
+template <class Registers>
+Result read_register(Registers& io, uint32_t input_hz, uint32_t max_speed, uint16_t address,
+                     uint16_t device_register, uint8_t* bytes, unsigned length, uint32_t& abort) {
+    if (!length) {
+        abort = 0;
+        return Result::invalid;
+    }
+    const uint8_t output[]{uint8_t(device_register), uint8_t(device_register >> 8)};
+    return transfer(io, input_hz, max_speed, address, output, sizeof(output), bytes, length, abort);
 }
 
 template <class Registers>

@@ -153,10 +153,13 @@ It restores controller settings after the transfer and reports the device
 IDs and report sizes if the descriptor is valid. The probe then reads the
 report descriptor and logs the report IDs and finger slots it recognizes.
 It requires an idle controller and a firmware-provided descriptor register.
-The Linux input layer can publish `/dev/input/event2` for an initialized
-touchpad. It reports contact slots, click state, and coordinate ranges
-through the standard event interface. The boot probe still needs a live
-interrupt-driven report source to register that device.
+Use `lpss.i2c.input` to enable live touchpad input on a supported Intel LPSS
+controller with an exclusive, level-triggered firmware interrupt. The driver
+retains the controller's BAR, powers and resets the HID device, and selects
+touchpad mode when the report descriptor declares it. After the reset
+interrupt, it publishes `/dev/input/event2` with contact slots, click state,
+and coordinate ranges. The interrupt is masked while the kernel device loop
+reads a pending packet and is rearmed when the read finishes.
 
 If the resource scan finds no devices, the HID descriptor probe can replay
 supported ACPI initialization methods in a private namespace. The firmware

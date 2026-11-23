@@ -82,11 +82,13 @@ struct Local {
 struct Collection {
     unsigned finger;
     bool touchpad;
+    bool configuration;
 };
 
 struct Parser {
     Layouts& result;
     unsigned input_bits[256]{};
+    unsigned feature_bits[256]{};
     unsigned fingers[max_reports][max_fingers]{};
     Global globals{}, stack[8]{};
     Local local{};
@@ -279,6 +281,31 @@ struct Parser {
         return true;
     }
 
+    bool feature(unsigned flags) {
+        // Keep feature offsets independent from input reports with the same ID.
+        auto& offset = feature_bits[globals.id];
+        const uint64_t size = uint64_t(globals.size) * globals.count;
+        if (size > UINT16_MAX - offset)
+            return false;
+        const unsigned start = offset;
+        offset += unsigned(size);
+        if (!scope.configuration || (flags & 7) != 2)
+            return true;
+        for (unsigned i = 0; i < globals.count; ++i) {
+            if (local.at(i) != 0x000d0052) // Digitizer Input Mode.
+                continue;
+            auto& mode = result.input_mode;
+            if (mode.field.width || !globals.id || globals.size < 2 || globals.size > 32 ||
+                globals.minimum < 0 || globals.minimum > 3 || globals.maximum < 3 ||
+                globals.maximum > INT32_MAX)
+                return false;
+            mode.field = {uint16_t(start + i * globals.size), uint8_t(globals.size),
+                          globals.minimum, int32_t(globals.maximum), 0};
+            mode.report_id = globals.id;
+        }
+        return true;
+    }
+
     bool main(unsigned tag, uint32_t value) {
         if (local.pending_minimum)
             return false;
@@ -290,7 +317,7 @@ struct Parser {
                 return false;
             collections[collection_depth++] = scope;
             if (value == 1)
-                scope = {0, local.at(0) == touchpad_usage};
+                scope = {0, local.at(0) == touchpad_usage, local.at(0) == 0x000d000e};
             else if (scope.touchpad && local.at(0) == finger_usage)
                 scope.finger = ++next_finger;
             return true;
@@ -299,6 +326,8 @@ struct Parser {
                 return false;
             scope = collections[--collection_depth];
             return true;
+        case 11: // Feature
+            return feature(value);
         default:
             return true;
         }
@@ -308,6 +337,8 @@ struct Parser {
         if (collection_depth || pushed || local.pending_minimum || (saw_report_id && input_bits[0]))
             return false;
         result.numbered = saw_report_id;
+        if (result.input_mode.field.width)
+            result.input_mode.bytes = (feature_bits[result.input_mode.report_id] + 7) / 8;
         unsigned complete = 0;
         for (unsigned i = 0; i < result.count; ++i) {
             auto& layout = result.reports[i];

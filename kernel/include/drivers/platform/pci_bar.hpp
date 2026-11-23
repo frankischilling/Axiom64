@@ -165,7 +165,8 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
 // The address must already have passed the platform ownership check.
 template <class Config, class Access>
 PciBarStatus test_unassigned_memory(const Config& pci, uint64_t base, uint64_t size,
-                                    uint64_t physical_limit, const Access& access) {
+                                    uint64_t physical_limit, const Access& access,
+                                    bool keep_on_success = false) {
     using enum PciBarStatus;
     constexpr uint16_t command_register = 4, low_register = 0x10, high_register = 0x14;
     constexpr uint16_t memory_enable = 2;
@@ -189,6 +190,8 @@ PciBarStatus test_unassigned_memory(const Config& pci, uint64_t base, uint64_t s
         pci.write16(command_register, memory);
         accepted = pci.read16(command_register) == memory && access(base);
     }
+    if (accepted && keep_on_success)
+        return valid;
 
     // A half-written 64-bit BAR must never decode. Confirm the command before restoring it.
     if (pci.read16(command_register) != quiet)

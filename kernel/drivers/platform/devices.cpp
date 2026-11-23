@@ -29,6 +29,7 @@
 #include "drivers/block/floppy.hpp"
 #include "drivers/block/nvme.hpp"
 #include "drivers/platform/fb_console.hpp"
+#include "drivers/platform/intel_lpss.hpp"
 #include "drivers/usb/xhci.hpp"
 #include "drivers/input/touchpad.hpp"
 #include "drivers/audio/alsa_pcm.hpp"
@@ -1417,6 +1418,7 @@ void devices_poll() {
     floppy_poll();
     Pcm::poll();
     xhci_keyboard_poll();
+    intel_lpss_input_poll();
     for (unsigned i = 0; i < 64; i++) {
         int c = serial_read();
         if (c < 0)

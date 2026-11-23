@@ -106,9 +106,11 @@ struct Controller {
         if (mode == Mode::nack) {
             events |= tx_abort;
             busy = false;
-        } else if ((value & read_byte) && mode != Mode::silent) {
-            assert(!queued);
-            queued = true;
+        } else if (mode != Mode::silent) {
+            if (value & read_byte) {
+                assert(!queued);
+                queued = true;
+            }
             if (value & stop) {
                 events |= stop_seen;
                 busy = false;
@@ -201,6 +203,26 @@ void check_large_register_read() {
     puts("DESIGNWARE_REPORT_READ_PASS bytes=4096 stop_bounds");
 }
 
+void check_input_transport() {
+    auto output = fresh(Mode::normal);
+    const uint8_t reset[]{5, 0, 0, 1};
+    uint32_t abort;
+    assert(transfer(output, 216000000, 400000, 0x15, reset, sizeof(reset), nullptr, 0, abort) ==
+           Result::ok);
+    assert(!abort && output.count == 4 && output.commands[0] == 5 && output.commands[1] == 0 &&
+           output.commands[2] == 0 && output.commands[3] == (stop | 1));
+    auto input = fresh(Mode::normal);
+    const uint8_t reply[]{4, 0, 3, 1};
+    uint8_t packet[sizeof(reply)]{};
+    input.reply = reply;
+    input.reply_length = sizeof(reply);
+    assert(transfer(input, 216000000, 400000, 0x15, nullptr, 0, packet, sizeof(packet), abort) ==
+           Result::ok);
+    assert(!abort && input.count == 4 && input.commands[0] == read_byte &&
+           input.commands[3] == (stop | read_byte) && !memcmp(packet, reply, sizeof(reply)));
+    puts("DESIGNWARE_INPUT_TRANSFER_PASS raw_read write_stop");
+}
+
 #define FINGER_ITEMS                                                                               \
     0x09, 0x22, 0xa1, 0x02, /* Finger logical collection */                                        \
         0x15, 0, 0x25, 1, 0x09, 0x42, 0x09, 0x47, 0x75, 1, 0x95, 2, 0x81, 0x02, /* Flags */        \
@@ -265,6 +287,35 @@ void check_touchpad_layout() {
         0x81,
         6,
         0xc0, // Relative mouse.
+        5,
+        0x0d,
+        9,
+        0x0e,
+        0xa1,
+        1,
+        0x85,
+        3, // Digitizer configuration, feature report 3.
+        0x75,
+        7,
+        0x95,
+        1,
+        0xb1,
+        1, // Seven preceding bits.
+        9,
+        0x52,
+        0x15,
+        0,
+        0x25,
+        3,
+        0x75,
+        2,
+        0xb1,
+        2, // Input Mode crosses a byte boundary.
+        0x75,
+        7,
+        0xb1,
+        1,
+        0xc0,
     };
     uint8_t raw[sizeof(descriptor)]{};
     auto controller = fresh(Mode::normal);
@@ -279,6 +330,8 @@ void check_touchpad_layout() {
     assert(parse(raw, sizeof(raw), 17, layouts));
     assert(layouts.numbered && layouts.count == 1 && layouts.reports[0].id == 7 &&
            layouts.reports[0].finger_count == 2 && layouts.reports[0].bits == 112);
+    assert(layouts.input_mode.report_id == 3 && layouts.input_mode.bytes == 2 &&
+           layouts.input_mode.field.offset == 7 && layouts.input_mode.field.width == 2);
     assert(layouts.reports[0].fingers[0].x.resolution == 11 &&
            layouts.reports[0].fingers[0].y.resolution == 11);
     uint8_t packet[]{17, 0, 7, 3, 4, 0xe8, 0xff, 200, 0, 1, 6, 0xee, 2, 0xff, 3, 2, 1, 0, 0};
@@ -411,6 +464,7 @@ void check_touchpad_events() {
 int main() {
     check_transfer();
     check_large_register_read();
+    check_input_transport();
     check_touchpad_layout();
     check_touchpad_events();
     fflush(stdout);

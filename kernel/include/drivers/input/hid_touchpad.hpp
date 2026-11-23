@@ -50,6 +50,12 @@ struct Layouts {
     ReportLayout reports[max_reports];
     unsigned count;
     bool numbered;
+
+    struct {
+        Field field;
+        uint16_t bytes;
+        uint8_t report_id;
+    } input_mode;
 };
 
 struct Finger {

@@ -137,6 +137,8 @@ BootInfo boot_info;
     devices_init(arguments.has("fbconsole"));
     if (usb_keyboard)
         xhci_keyboard_init();
+    if (arguments.has("lpss.i2c.input"))
+        intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, LpssProbe::input);
     net_init();
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));

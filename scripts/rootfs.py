@@ -190,6 +190,10 @@ files["etc/network"] = (0o40700, b"")
 # Keep the shell built from our pinned upstream source after importing packages.
 regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")
+if installed_desktop:
+    files["bin/man"] = (0o120777, b"/usr/bin/man")
+    files["usr/bin/ip"] = (0o120777, b"/sbin/ip")
+    files["usr/bin/ss"] = (0o120777, b"/sbin/ss")
 for filename in ["xorg.conf", "system.twmrc"]:
     regular(f"etc/X11/{filename}", ROOT / "userspace/desktop" / filename, 0o100644)
 # Package shell-registration hooks are not run. Supply the conventional list

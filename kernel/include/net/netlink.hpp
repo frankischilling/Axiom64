@@ -100,6 +100,9 @@ int netlink_ipv6_route(const void*, const NetlinkHeader&, uint32_t port, void*, 
 void netlink_link_event(const NetInfo&, uint32_t changed_flags);
 
 size_t netlink_format_link_event(const NetInfo&, uint32_t changed_flags, void*, size_t);
+void netlink_ipv6_address_event(const Ipv6Address&, const Ipv6AddressCacheInfo&, bool removed);
+size_t netlink_format_ipv6_address_event(const Ipv6Address&, const Ipv6AddressCacheInfo&,
+                                         bool removed, void*, size_t);
 
 void netlink_close(NetlinkSocket*);
 

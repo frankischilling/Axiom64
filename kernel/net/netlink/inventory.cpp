@@ -155,12 +155,10 @@ bool address(Writer& output, const NetlinkHeader& request, uint32_t port, const 
     return true;
 }
 
-bool address6(Writer& output, const NetlinkHeader& request, uint32_t port,
-              const Ipv6Address& entry) {
+bool address6(Writer& output, NetlinkHeader message, const Ipv6Address& entry,
+              const Ipv6AddressCacheInfo& lifetime) {
     size_t start = output.size;
-    NetlinkHeader message{0, 20, 2, request.sequence, port};
     uint32_t flags = entry.flags;
-    auto lifetime = ipv6_address_cache(entry);
     AddressHeader header{10, entry.prefix, uint8_t(flags),
                          uint8_t(entry.index == ipv6_loopback ? 254
                                  : entry.address.link_local() ? 253
@@ -180,6 +178,14 @@ size_t netlink_format_link_event(const NetInfo& info, uint32_t changed_flags, vo
     Writer output(bytes, capacity);
     const NetlinkHeader event{};
     return link(output, event, 0, info, false, false, false, changed_flags) ? output.size : 0;
+}
+
+size_t netlink_format_ipv6_address_event(const Ipv6Address& address,
+                                         const Ipv6AddressCacheInfo& lifetime, bool removed,
+                                         void* bytes, size_t capacity) {
+    Writer output(bytes, capacity);
+    NetlinkHeader event{0, uint16_t(removed ? 21 : 20), 0, 0, 0};
+    return address6(output, event, address, lifetime) ? output.size : 0;
 }
 
 int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint32_t port,
@@ -230,7 +236,8 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
     }
     if (request.type == 22 && input[0] != 2)
         for (unsigned n = 0; auto entry = ipv6_address(n); n++)
-            if (!address6(output, request, port, *entry))
+            if (!address6(output, {0, 20, 2, request.sequence, port}, *entry,
+                          ipv6_address_cache(*entry)))
                 return -90;
     if (direct) {
         if (request.flags & 4) {

@@ -83,8 +83,11 @@ membership can be set at bind time or changed with
 `NETLINK_ADD_MEMBERSHIP` and `NETLINK_DROP_MEMBERSHIP`. Route sockets
 subscribed to `RTNLGRP_LINK` receive kernel `RTM_NEWLINK` messages when
 administrative state, MTU or physical carrier changes. A full queue
-reports `ENOBUFS` so the listener can refresh its inventory. Address
-and route change notifications remain open. `SIOCETHTOOL` returns the
+reports `ENOBUFS` so the listener can refresh its inventory. Subscribers
+to `RTNLGRP_IPV6_IFADDR` receive `RTM_NEWADDR` when an IPv6 address
+becomes usable after duplicate-address detection or changes flags or
+lifetimes. `RTM_DELADDR` reports explicit removal and expiry. IPv4
+address and route notifications remain open. `SIOCETHTOOL` returns the
 bound Ethernet driver and PCI address with `ETHTOOL_GDRVINFO` and
 reports link state with `ETHTOOL_GLINK`.
 

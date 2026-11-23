@@ -356,6 +356,60 @@ static void dad() {
     assert((ipv6_address(1)->flags & 0x48) == 0x48);
 }
 
+static void address_notifications() {
+    struct Notification {
+        uint16_t type;
+        uint32_t flags;
+        Ipv6AddressCacheInfo lifetime;
+    };
+
+    static std::vector<Notification> received;
+    reset();
+    ipv6_observe_addresses([](const Ipv6Address& entry, const Ipv6AddressCacheInfo& cache,
+                              bool removed) {
+        uint8_t bytes[72];
+        assert(netlink_format_ipv6_address_event(entry, cache, removed, bytes, sizeof(bytes)) ==
+               sizeof(bytes));
+        NetlinkHeader header;
+        uint32_t index, flags;
+        Ipv6AddressCacheInfo lifetime;
+        memcpy(&header, bytes, sizeof(header));
+        memcpy(&index, bytes + 20, sizeof(index));
+        memcpy(&flags, bytes + 48, sizeof(flags));
+        memcpy(&lifetime, bytes + 56, sizeof(lifetime));
+        assert(!header.flags && !header.sequence && !header.port && header.length == sizeof(bytes));
+        assert(bytes[16] == 10 && bytes[17] == 64 && bytes[18] == uint8_t(flags) && !bytes[19]);
+        assert(index == 1 && !memcmp(bytes + 28, entry.address.bytes, 16));
+        received.push_back({header.type, flags, lifetime});
+    });
+    const Ipv6Address local{address(0, 2), 1, 0x200, 64};
+    assert(!ipv6_address_add(local, {2, 4}) && received.empty());
+    net_poll();
+    ticks = 100;
+    net_poll();
+    assert(received.empty());
+    ticks = 101;
+    net_poll();
+    assert(received.size() == 1 && received[0].type == 20 && received[0].flags == 0x200);
+    assert(received[0].lifetime.preferred == 1 && received[0].lifetime.valid == 3);
+    ticks = 200;
+    net_poll();
+    net_poll();
+    assert(received.size() == 2 && received[1].type == 20 && received[1].flags == 0x220);
+    assert(!ipv6_address_add(local, {1, 2}, true));
+    assert(received.size() == 3 && received[2].type == 20 && received[2].flags == 0x200);
+    ticks = 400;
+    net_poll();
+    assert(received.size() == 4 && received[3].type == 21 && !received[3].lifetime.valid);
+    assert(!ipv6_address_add({local.address, 1, 0x202, 64}));
+    assert(received.size() == 5 && received[4].type == 20 && received[4].flags == 0x282);
+    assert(!ipv6_address_remove(1, local.address));
+    assert(received.size() == 6 && received[5].type == 21 &&
+           received[5].lifetime.valid == UINT32_MAX);
+    ipv6_observe_addresses(nullptr);
+    received.clear();
+}
+
 int ipv6_fixture::route(const Ipv6Route& value, bool remove, bool privileged, unsigned flags) {
     std::vector<uint8_t> bytes(28);
     NetlinkHeader header{0, uint16_t(remove ? 25 : 24), uint16_t(remove ? 5 : flags), 29, 0};
@@ -735,6 +789,7 @@ int main() {
     route_append();
     scoped_multicast_output();
     dad();
+    address_notifications();
     echo_and_ownership();
     routed_reply_hops();
     routes_and_deadlines();

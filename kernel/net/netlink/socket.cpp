@@ -228,6 +228,17 @@ void netlink_link_event(const NetInfo& info, uint32_t changed_flags) {
                                {16, 0, 0, netlink_link_group});
 }
 
+void netlink_ipv6_address_event(const Ipv6Address& address, const Ipv6AddressCacheInfo& lifetime,
+                                bool removed) {
+    constexpr uint32_t ipv6_address_group = 1u << 8; // RTNLGRP_IPV6_IFADDR
+    uint8_t bytes[128];
+    size_t length =
+        netlink_format_ipv6_address_event(address, lifetime, removed, bytes, sizeof(bytes));
+    if (length)
+        broadcast_notification(route_protocol, nullptr, bytes, length,
+                               {16, 0, 0, ipv6_address_group});
+}
+
 int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
     if (int error = netlink_error(socket, true))
         return -error;

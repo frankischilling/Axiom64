@@ -941,12 +941,15 @@ test-udp:
 	$(PYTHON) scripts/udp_matrix.py --platform
 	$(PYTHON) scripts/pci_bridge_windows_test.py
 
-.PHONY: test-pci-interrupts
+.PHONY: test-pci-interrupts test-pci-inventory
 build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kernel/drivers/platform/pci.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include -Ivendor $(filter %.cpp,$^) -o $@
 test-pci-interrupts: build/pci-interrupt-tests
 	./build/pci-interrupt-tests
+
+test-pci-inventory: build/axiom64.elf | busybox
+	$(PYTHON) scripts/pci_inventory_test.py
 
 .PHONY: test-designware-i2c
 build/designware-i2c-tests: kernel/tests/drivers/platform/designware_i2c.cpp kernel/drivers/input/hid_touchpad.cpp kernel/drivers/input/touchpad.cpp kernel/include/drivers/platform/designware_i2c.hpp kernel/include/drivers/platform/poll.hpp
@@ -954,6 +957,10 @@ build/designware-i2c-tests: kernel/tests/drivers/platform/designware_i2c.cpp ker
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-designware-i2c: build/designware-i2c-tests
 	./build/designware-i2c-tests
+
+.PHONY: test-virtio-gpu
+test-virtio-gpu: build/axiom64.elf
+	$(PYTHON) scripts/virtio_gpu_test.py
 
 .PHONY: test-acpi-routing
 build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_resources.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)

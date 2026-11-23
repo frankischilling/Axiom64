@@ -88,8 +88,10 @@ administrative state, MTU or physical carrier changes. A full queue
 reports `ENOBUFS` so the listener can refresh its inventory. Subscribers
 to `RTNLGRP_IPV6_IFADDR` receive `RTM_NEWADDR` when an IPv6 address
 becomes usable after duplicate-address detection or changes flags or
-lifetimes. `RTM_DELADDR` reports explicit removal and expiry. IPv4
-address and IPv6 route notifications still need support. Subscribers to
+lifetimes. `RTM_DELADDR` reports explicit removal and expiry.
+`RTNLGRP_IPV4_IFADDR` reports additions, lifetime and flag updates, and
+removals. IPv4 events carry the same address fields as a dump. IPv6 route
+notifications still need support. Subscribers to
 `RTNLGRP_IPV4_ROUTE` receive `RTM_NEWROUTE` and `RTM_DELROUTE` for main-table
 routes added or removed through configuration or address and link changes.
 `SIOCETHTOOL` returns the

@@ -103,6 +103,9 @@ constexpr size_t netlink_ipv4_route_record = 76;
 size_t netlink_format_ipv4_route_event(const Ipv4Route&, bool removed, void*);
 
 size_t netlink_format_link_event(const NetInfo&, uint32_t changed_flags, void*, size_t);
+void netlink_ipv4_address_event(const Ipv4Address&, const Ipv4AddressCacheInfo&, bool removed);
+size_t netlink_format_ipv4_address_event(const Ipv4Address&, const Ipv4AddressCacheInfo&,
+                                         bool removed, void*, size_t capacity);
 void netlink_ipv6_address_event(const Ipv6Address&, const Ipv6AddressCacheInfo&, bool removed);
 size_t netlink_format_ipv6_address_event(const Ipv6Address&, const Ipv6AddressCacheInfo&,
                                          bool removed, void*, size_t);

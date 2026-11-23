@@ -808,6 +808,28 @@ void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint
     }
 }
 
+static PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress& address) {
+    if (!bus)
+        return PciBusParent::root;
+    discover_bridges();
+    if (bridges.overflow)
+        return PciBusParent::ambiguous;
+    const auto parent = Acpi::parent_bridge(bridges, segment, bus);
+    if (parent.invalid)
+        return PciBusParent::ambiguous;
+    if (parent.bridge) {
+        const auto& bridge = *parent.bridge;
+        address = {segment, bridge.primary, bridge.slot, bridge.function};
+        return PciBusParent::bridge;
+    }
+    for (unsigned i = 0; i < bridges.count; ++i) {
+        const auto& bridge = bridges.entries[i];
+        if (bridge.segment == segment && bus >= bridge.secondary && bus <= bridge.subordinate)
+            return PciBusParent::ambiguous;
+    }
+    return PciBusParent::root;
+}
+
 void pci_scan(void (*visit)(const PciFunction&)) {
     discover_bridges();
     log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(visit)));
@@ -822,18 +844,18 @@ void pci_scan(void (*visit)(const PciFunction&, void*), void* context) {
 bool pci_device_path(const PciFunction& function, char* output, size_t capacity) {
     if (bridges.overflow)
         return false;
-    PciFunction chain[16]{function};
+    // An upstream bridge always reduces the bus number. There are at most
+    // 256 buses in a PCI segment.
+    PciAddress chain[256]{{function.segment, function.bus, function.slot, function.function}};
     unsigned depth = 1;
     for (;;) {
-        const auto parent = Acpi::parent_bridge(bridges, function.segment, chain[depth - 1].bus);
-        if (parent.invalid)
-            return false;
-        if (!parent.bridge)
+        PciAddress parent{};
+        const auto result = pci_bus_parent(function.segment, chain[depth - 1].bus, parent);
+        if (result == PciBusParent::root)
             break;
-        if (depth == sizeof(chain) / sizeof(*chain))
+        if (result == PciBusParent::ambiguous || depth == sizeof(chain) / sizeof(*chain))
             return false;
-        const auto& bridge = *parent.bridge;
-        chain[depth++] = {bridge.primary, bridge.slot, bridge.function, bridge.segment, nullptr};
+        chain[depth++] = parent;
     }
 
     constexpr char prefix[] = "/sys/devices/pci";
@@ -843,11 +865,15 @@ bool pci_device_path(const PciFunction& function, char* output, size_t capacity)
     if (offset + depth * component + 1 > capacity)
         return false;
     char address[13];
-    chain[depth - 1].format_address(address);
+    auto format = [&](const PciAddress& part) {
+        PciFunction{part.bus, part.slot, part.function, part.segment, nullptr}.format_address(
+            address);
+    };
+    format(chain[depth - 1]);
     memcpy(output, prefix, sizeof(prefix) - 1);
     memcpy(output + sizeof(prefix) - 1, address, root_length);
     while (depth) {
-        chain[--depth].format_address(address);
+        format(chain[--depth]);
         output[offset++] = '/';
         memcpy(output + offset, address, sizeof(address) - 1);
         offset += sizeof(address) - 1;

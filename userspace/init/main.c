@@ -28,6 +28,7 @@
 #include "seed_records.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,11 +45,11 @@ static const char input_daemon[] = "/sbin/udevd";
 static const char input_coldplug[] = "/usr/libexec/axiom64-input-coldplug";
 static const char input_ready[] = "/run/axiom64-input-ready";
 
-static pid_t start_service(const char* path);
+static pid_t start_service(const char* path, int own_session);
 
 static pid_t network(int debug) {
     if (!debug && access(desktop_network, X_OK) == 0)
-        return start_service(desktop_network);
+        return start_service(desktop_network, 0);
 
     pid_t child = fork();
     if (!child) {
@@ -67,7 +68,7 @@ static pid_t network(int debug) {
     return child;
 }
 
-static pid_t start_service(const char* path) {
+static pid_t start_service(const char* path, int own_session) {
     pid_t child = fork();
     if (!child) {
         int input = open("/dev/null", O_RDONLY);
@@ -75,6 +76,8 @@ static pid_t start_service(const char* path) {
             _exit(126);
         if (input != STDIN_FILENO)
             close(input);
+        if (own_session && setsid() < 0)
+            _exit(126);
         char* const arguments[] = {(char*)path, NULL};
         char* const environment[] = {"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/", NULL};
         execve(arguments[0], arguments, environment);
@@ -214,7 +217,7 @@ int main(void) {
         const char* bus_path = "/usr/libexec/axiom64-system-bus";
         const int bus_installed = access(bus_path, X_OK) == 0;
         struct timespec bus_retry = retry;
-        pid_t bus = bus_installed ? start_service(bus_path) : -1;
+        pid_t bus = bus_installed ? start_service(bus_path, 0) : -1;
         const int input_installed = access(input_daemon, X_OK) == 0 &&
                                     access(input_coldplug, X_OK) == 0 &&
                                     access("/sys/class/input", X_OK) == 0;
@@ -223,6 +226,12 @@ int main(void) {
         int coldplugged = 0;
         if (input_installed)
             unlink(input_ready);
+        const int text_console = enabled("AXIOM64_TEXT_CONSOLE");
+        const char* display_path = "/usr/libexec/axiom64-display-manager";
+        const int use_display_manager = !text_console && access(display_path, X_OK) == 0 &&
+                                        access("/etc/axiom64/console-desktop", F_OK) != 0;
+        struct timespec display_retry = retry;
+        pid_t display = use_display_manager ? start_service(display_path, 1) : -1;
         pid_t ssh = -1;
         struct timespec ssh_retry = retry;
         const int ssh_enabled = debug && debug_ssh_configured();
@@ -234,9 +243,12 @@ int main(void) {
         retry.tv_sec++;
         struct init_console console;
         struct timespec console_start;
+        const char* service_accounts = use_display_manager ? "desktop"
+                                       : bus_installed     ? "bus"
+                                                           : "none";
         if (monotonic(&console_start) < 0 ||
-            init_console_initialize(&console, &console_start, enabled("AXIOM64_TEXT_CONSOLE")) <
-                0) {
+            init_console_initialize(&console, &console_start, text_console || use_display_manager,
+                                    service_accounts) < 0) {
             perror("init: authenticated console setup");
             return 1;
         }
@@ -283,6 +295,15 @@ int main(void) {
                 coldplug = -1;
                 if (udev > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0)
                     coldplugged = publish_input_ready();
+            } else if (child > 0 && child == display) {
+                if (kill(-display, SIGKILL) < 0 && errno != ESRCH)
+                    perror("init: display manager cleanup");
+                fprintf(stderr, "Display manager exited status=%d. Retrying in five seconds.\n",
+                        status);
+                display = -1;
+                if (monotonic(&display_retry) < 0)
+                    return 1;
+                display_retry.tv_sec += 5;
             } else if (child > 0 && child == ssh) {
                 fprintf(stderr, "Debug SSH exited status=%d. Retrying.\n", status);
                 ssh = -1;
@@ -309,17 +330,22 @@ int main(void) {
                 seed_retry.tv_sec++;
             }
             if (bus_installed && bus < 0 && retry_due(&now, &bus_retry)) {
-                bus = start_service(bus_path);
+                bus = start_service(bus_path, 0);
                 bus_retry = now;
                 bus_retry.tv_sec++;
             }
             if (input_installed && coldplug < 0 && !coldplugged && retry_due(&now, &input_retry)) {
                 if (udev < 0)
-                    udev = start_service(input_daemon);
+                    udev = start_service(input_daemon, 0);
                 if (udev > 0)
-                    coldplug = start_service(input_coldplug);
+                    coldplug = start_service(input_coldplug, 0);
                 input_retry = now;
                 input_retry.tv_sec++;
+            }
+            if (use_display_manager && display < 0 && retry_due(&now, &display_retry)) {
+                display = start_service(display_path, 1);
+                display_retry = now;
+                display_retry.tv_sec += 5;
             }
             if (ssh_enabled && seeded && ssh < 0 && retry_due(&now, &ssh_retry)) {
                 if (debug_ssh_configured())

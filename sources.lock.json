@@ -11276,6 +11276,23 @@
       ]
     },
     {
+      "origin": "qt6-qtvirtualkeyboard",
+      "commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
+      "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/2a4d0d253cd2886bd694c45b5602c927676096b3/community/qt6-qtvirtualkeyboard/APKBUILD",
+      "recipe_sha256": "6fb768599613724aaa914990444245ddc60d900e17a269e14803a100515ae5a6",
+      "files": [
+        {
+          "name": "qtvirtualkeyboard-everywhere-src-6.8.3.tar.xz",
+          "sha512": "a128c8210eec799d81c76b20e32e3c09ccb345d822b5c59b1fbf0960a1e2bec50c43140d86aaae9419a1fc514fc3e14bd283f612bf9133676db1a21e7217f528",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/qtvirtualkeyboard-everywhere-src-6.8.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2a4d0d253cd2886bd694c45b5602c927676096b3/community/qt6-qtvirtualkeyboard/qtvirtualkeyboard-everywhere-src-6.8.3.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "qt6-qtwayland",
       "commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
       "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
@@ -11855,6 +11872,63 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/samba.logrotate",
             "https://raw.githubusercontent.com/alpinelinux/aports/e6bdca47b2e422eaa0243187a344fe89e364273b/main/samba/samba.logrotate"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "sddm",
+      "commit": "9aa9c9d33cd9d4f3546f15a4f83f465977175b87",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/APKBUILD",
+      "recipe_sha256": "2af85e145b0f0ed1cc8bcd19c40bad1b1e90135bff9c68c55da72d08b7005eda",
+      "files": [
+        {
+          "name": "sddm-v0.21.0.tar.gz",
+          "sha512": "2e8e460e7f318f20a406dcbb1a9fa1dc78b6a5b8d888bfbbaae22b9c642dbc49cf2ac682b4ea9ed847bbafa9bdc361ba08795e59cad970088b370caaaa70f458",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/sddm-v0.21.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/sddm-v0.21.0.tar.gz"
+          ]
+        },
+        {
+          "name": "0001-pam-path-fix.patch",
+          "sha512": "42a0b24717820d98a42d178b5d3a40441672d496c9d8f7c2f8002d770a2718324e9d00d0f27602232b91e8bb042693125507d6cb8371b6f6f211f2b95babe666",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0001-pam-path-fix.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/0001-pam-path-fix.patch"
+          ]
+        },
+        {
+          "name": "0003-disable-automatic-portal-launching.patch",
+          "sha512": "bc7b572331de32245abba234e3537885a3d9dd20273a12bd7a82eb754467dd3c753fc4d90ec24cc206f7df0210cf3119dd056c477168b4173b77fc335b6546b0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0003-disable-automatic-portal-launching.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/0003-disable-automatic-portal-launching.patch"
+          ]
+        },
+        {
+          "name": "sddm.initd",
+          "sha512": "aa2dba75888e56f0b1203a59400a4fcd71382763375f958372d7c6f929b09f4e0966f10632ec055bcee405e6818e8ffe0d14b262bedae411217538b41f7bd253",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/sddm.initd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/sddm.initd"
+          ]
+        },
+        {
+          "name": "sddm.confd",
+          "sha512": "b841282b96110ec59a7aa539db0737327b09549d55c78dc4b2c3b28b4a6ad1facf015b3175cb6d3a38f13e47aa6314ef3dc1514a4e60dd653a97409ec54ba706",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/sddm.confd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/sddm.confd"
+          ]
+        },
+        {
+          "name": "weston.conf",
+          "sha512": "7431d893cf30b4e212403d88f1a7a617f8d5613aa1083e4646cdb8ce511c89478128c546f56026c1ec1b41dd10c74597409321dd18ff3e4afc008df917b9dcf3",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/weston.conf",
+            "https://raw.githubusercontent.com/alpinelinux/aports/9aa9c9d33cd9d4f3546f15a4f83f465977175b87/community/sddm/weston.conf"
           ]
         }
       ]
@@ -12719,6 +12793,31 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/emoji-test-17.0.0.txt",
             "https://raw.githubusercontent.com/alpinelinux/aports/050142af403817cc388872ea192b8282c775ab74/community/unicode-character-database/emoji-test-17.0.0.txt"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "upower",
+      "commit": "6cfe91b6b718bd9cd4cc3488ee400ad6bb33ff08",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/6cfe91b6b718bd9cd4cc3488ee400ad6bb33ff08/community/upower/APKBUILD",
+      "recipe_sha256": "b28ab79615a77789d06e4acb6b1919151526774f0cbf86f81cccd966ce8fe9ee",
+      "files": [
+        {
+          "name": "upower-v1.90.9.tar.bz2",
+          "sha512": "7308e03125a5a888242253f9260f68283f5b53677c08dbc4d7e4d48cc6f600f50f8ab161d100f152138208d5119acddc90f0f19742aa8cca58e3a0ec54975110",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/upower-v1.90.9.tar.bz2",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6cfe91b6b718bd9cd4cc3488ee400ad6bb33ff08/community/upower/upower-v1.90.9.tar.bz2"
+          ]
+        },
+        {
+          "name": "0001-fix-self-test-sleep-duration.patch",
+          "sha512": "1b582f31660b82444682b6786913a6eb4e8e13c8370205b31da1bf9328e0d2e62c2596bfb4e82faf25e658f379ddb92d7f3f97ec8ddfdb512339d4d3d663f708",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0001-fix-self-test-sleep-duration.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6cfe91b6b718bd9cd4cc3488ee400ad6bb33ff08/community/upower/0001-fix-self-test-sleep-duration.patch"
           ]
         }
       ]

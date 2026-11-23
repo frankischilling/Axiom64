@@ -26,6 +26,7 @@
 #include "../../accounts/auth.h"
 #include "../../accounts/database.h"
 #include "../../accounts/logbook.h"
+#include "../../accounts/protected.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -255,7 +256,17 @@ int main(int argc, char** argv) {
     finish(&call, 1);
     unpublished();
     observed("root_identity_and_foreground_terminal_required_without_account_publication");
+    char executable[PATH_MAX];
+    CHECK(snprintf(executable, sizeof(executable), "%s", frontend) < (int)sizeof(executable));
+    char* name = strrchr(executable, '/');
+    CHECK(name && name != executable && name[1]);
+    *name++ = 0;
+    int workers = account_directory_open(executable, 0755, 0);
+    CHECK(workers >= 0);
+    CHECK(account_executable_open(workers, name, 0755) == -1 && errno == EACCES);
     CHECK(chmod(frontend, 0755) == 0);
+    int admin_worker = account_executable_open(workers, name, 0755);
+    CHECK(admin_worker >= 0 && close(admin_worker) == 0 && close(workers) == 0);
     unsafe_worker(&call);
     CHECK(chmod(frontend, 04755) == 0);
     char duplicate[PATH_MAX];

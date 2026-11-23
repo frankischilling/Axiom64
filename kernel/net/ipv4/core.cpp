@@ -90,6 +90,7 @@ struct Selection {
 };
 
 static ip4::AddressBook addresses;
+static Ipv4AddressObserver address_observer;
 static Ipv4Config loopback{0x7f000001, 0xff000000, 0};
 static ip4::RouteTable routes;
 static Neighbor neighbors[neighbor_count];
@@ -900,6 +901,10 @@ Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address& entry) {
     return addresses.cache(entry, ticks);
 }
 
+void ipv4_observe_addresses(Ipv4AddressObserver observer) {
+    address_observer = observer;
+}
+
 const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint) {
     refresh_addresses();
     if (index == ipv4_loopback)
@@ -932,6 +937,24 @@ static uint16_t active_interfaces() {
         if (auto info = net_info(index); info && info->administrative)
             active |= 1u << (index - 1);
     return active;
+}
+
+static void notify_addresses(const ip4::AddressBook& before, unsigned index) {
+    if (!address_observer)
+        return;
+    for (unsigned n = 0; auto old = before.at(n); ++n)
+        if (old->index == index && !addresses.find(index, old->config.address, old->config.mask))
+            address_observer(*old, before.cache(*old, ticks), true);
+    for (unsigned n = 0; auto current = addresses.at(n); ++n) {
+        if (current->index != index)
+            continue;
+        auto old = before.find(index, current->config.address, current->config.mask);
+        auto cache = addresses.cache(*current, ticks);
+        if (!old || old->secondary != current->secondary || old->flags != current->flags ||
+            old->config.broadcast != current->config.broadcast ||
+            strcmp(old->label, current->label) || before.cache(*old, ticks) != cache)
+            address_observer(*current, cache, false);
+    }
 }
 
 static int addresses_changed(const ip4::AddressBook& before, unsigned index, bool rollback = true) {
@@ -1015,6 +1038,7 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index, boo
         for (auto& neighbor : neighbors)
             if (neighbor.index == index)
                 neighbor = {};
+    notify_addresses(before, index);
     return error;
 }
 

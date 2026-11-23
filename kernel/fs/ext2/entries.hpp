@@ -32,6 +32,7 @@ struct Entry {
     Node node;
     Entry *next, *inode_next, *reclaim_next;
     uint32_t number;
+    uint16_t next_read_block; // Low bits of the next sequential block, used only as a hint.
     bool atime_dirty, reclaim_queued;
 };
 

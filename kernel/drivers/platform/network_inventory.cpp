@@ -31,22 +31,9 @@ namespace ax::DeviceInventory {
 namespace {
 constexpr char net_class[] = "/sys/class/net";
 
-bool create_ancestors(char* path) {
-    for (char* component = path + 1; *component; ++component) {
-        if (*component != '/')
-            continue;
-        *component = 0;
-        bool ready = inventory_directory(path);
-        *component = '/';
-        if (!ready)
-            return false;
-    }
-    return inventory_directory(path);
-}
-
 bool publish_interface(const NetInfo& info, const char* parent, const char* type) {
     char path[256], target[256], index[16];
-    if (!inventory_path(path, parent, info.name) || !create_ancestors(path) ||
+    if (!inventory_path(path, parent, info.name) || !inventory_directories(path) ||
         !inventory_path(target, "../..", path + sizeof("/sys/") - 1))
         return false;
     number_path(index, "", info.index);
@@ -80,7 +67,7 @@ bool publish_interface(const NetInfo& info, const char* parent, const char* type
 bool publish_pci_parent(const NetInfo& info, const char* path) {
     char driver[128];
     constexpr char drivers[] = "/sys/bus/pci/drivers";
-    if (!inventory_path(driver, drivers, info.driver) || !create_ancestors(driver) ||
+    if (!inventory_path(driver, drivers, info.driver) || !inventory_directories(driver) ||
         !inventory_link(path, "subsystem", "/sys/bus/pci") ||
         !inventory_link(path, "driver", driver) ||
         !inventory_link("/sys/bus/pci/devices", info.bus_address, path))
@@ -103,7 +90,7 @@ void network_inventory_init() {
     NetInfo loopback{};
     loopback.index = ipv4_loopback;
     memcpy(loopback.name, "lo", 3);
-    if (!create_ancestors(class_path) || !create_ancestors(pci_devices) ||
+    if (!inventory_directories(class_path) || !inventory_directories(pci_devices) ||
         !publish_interface(loopback, "/sys/devices/virtual/net", "772"))
         log("net: cannot publish loopback inventory\n");
 }
@@ -111,7 +98,7 @@ void network_inventory_init() {
 void publish_ethernet(const NetInfo& info, const PciFunction* pci) {
     char device[256], network[256];
     if (!pci || !info.driver || !pci_device_path(*pci, device, sizeof(device)) ||
-        !create_ancestors(device) || !publish_pci_parent(info, device) ||
+        !inventory_directories(device) || !publish_pci_parent(info, device) ||
         !inventory_path(network, device, "net") || !publish_interface(info, network, "1"))
         log("net: cannot publish inventory for %s\n", info.name);
 }

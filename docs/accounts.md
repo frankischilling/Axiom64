@@ -47,6 +47,20 @@ Password locking, password changes, shell updates and membership changes remain 
 
 `auth.c` validates the protected database and checks the maintained password verifier, aging fields and optional membership in `sudo` inside one locked snapshot. Wrong passwords, missing or locked accounts, account expiration, expired inactivity and disabled elevation deny access. Password aging follows the documented [shadow fields](https://man7.org/linux/man-pages/man5/shadow.5.html) and the boundary behavior checked against [Linux-PAM 1.7.1](https://github.com/linux-pam/linux-pam/blob/v1.7.1/modules/pam_unix/passverify.c). A forced or expired password change produces a profile that cannot install session credentials until reauthentication after the change. Returned profiles retain identity and group data without retaining the hash.
 
+The installed desktop profile includes a PAM module for SDDM login. It reads the
+same account database as the console, records denied attempts, and checks that
+the username and account generation are still current before the helper opens a
+session. The login journal records the privileged display-manager helper and
+protects the signed-in account until the helper closes the session. The next
+journal access recovers the record if the helper exits without closing it. Use
+the console to complete a required password change.
+
+`make test-account-pam` checks this module on disposable QEMU NVMe disks under
+BIOS and UEFI. It covers denied sign-ins, a valid account, identity changes,
+stale credentials, expired passwords, and unprivileged callers. It also checks
+account protection during a session, logout, and recovery after the helper
+exits.
+
 The installed Plasma profile uses the `kde` PAM service to verify the account
 that owns the locked session. The verifier binds the requested account to the
 caller's real UID and reads the password through a pipe. The usual account

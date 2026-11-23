@@ -33,6 +33,7 @@ namespace DeviceInventory {
 void number_path(char*, const char*, unsigned);
 
 bool inventory_directory(const char*);
+bool inventory_directories(char* path);
 
 Node* inventory_attribute(const char*, const char*, const char*);
 

@@ -90,7 +90,8 @@ int init_console_update(struct init_console* console, pid_t reaped, int status,
         if (sigprocmask(SIG_SETMASK, &mask, NULL) < 0 || setsid() < 0 || ioctl(0, TIOCSCTTY, 1) < 0)
             _exit(126);
         execl("/sbin/account-console", "account-console", "--session",
-              console->text_console ? "shell" : "desktop", (char*)NULL);
+              console->text_console ? "shell" : "desktop", "--services", console->services,
+              (char*)NULL);
         perror("init: authenticated console exec");
         _exit(127);
     }
@@ -105,8 +106,9 @@ int init_console_update(struct init_console* console, pid_t reaped, int status,
 }
 
 int init_console_initialize(struct init_console* console, const struct timespec* now,
-                            int text_console) {
-    *console = (struct init_console){.pid = -1, .text_console = text_console, .retry = *now};
+                            int text_console, const char* services) {
+    *console = (struct init_console){
+        .pid = -1, .text_console = text_console, .services = services, .retry = *now};
     console->flags = fcntl(0, F_GETFL);
     if (console->flags < 0 || tcgetattr(0, &console->original) < 0)
         return -1;

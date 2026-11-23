@@ -134,15 +134,14 @@ bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const Net
     return true;
 }
 
-bool address(Writer& output, const NetlinkHeader& request, uint32_t port, const NetInfo& info,
-             const Ipv4Address& entry, bool loopback) {
+bool address4(Writer& output, NetlinkHeader message, const Ipv4Address& entry,
+              const Ipv4AddressCacheInfo& lifetime) {
     const auto& value = entry.config;
     size_t start = output.size;
-    NetlinkHeader message{0, 20, 2, request.sequence, port};
-    uint32_t flags = entry.flags | (entry.secondary ? 1 : 0);
-    const auto lifetime = ipv4_address_cache(entry);
+    const uint32_t flags = entry.flags | (entry.secondary ? 1 : 0);
+    const bool loopback = entry.index == ipv4_loopback;
     AddressHeader header{2, uint8_t(prefix(value.mask)), uint8_t(flags),
-                         uint8_t(loopback ? 254 : 0), info.index};
+                         uint8_t(loopback ? 254 : 0), entry.index};
     uint32_t local = __builtin_bswap32(value.address),
              broadcast = __builtin_bswap32(value.broadcast);
     if (!output.append(&message, sizeof(message)) || !output.append(&header, sizeof(header)) ||
@@ -178,6 +177,14 @@ size_t netlink_format_link_event(const NetInfo& info, uint32_t changed_flags, vo
     Writer output(bytes, capacity);
     const NetlinkHeader event{};
     return link(output, event, 0, info, false, false, false, changed_flags) ? output.size : 0;
+}
+
+size_t netlink_format_ipv4_address_event(const Ipv4Address& address,
+                                         const Ipv4AddressCacheInfo& lifetime, bool removed,
+                                         void* bytes, size_t capacity) {
+    Writer output(bytes, capacity);
+    NetlinkHeader event{0, uint16_t(removed ? 21 : 20), 0, 0, 0};
+    return address4(output, event, address, lifetime) ? output.size : 0;
 }
 
 size_t netlink_format_ipv6_address_event(const Ipv6Address& address,
@@ -230,8 +237,8 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
                 return -90;
         } else if (input[0] != 10)
             for (unsigned n = 0; auto entry = ipv4_address(n); n++)
-                if (entry->index == index &&
-                    !address(output, request, port, *info, *entry, loopback))
+                if (entry->index == index && !address4(output, {0, 20, 2, request.sequence, port},
+                                                       *entry, ipv4_address_cache(*entry)))
                     return -90;
     }
     if (request.type == 22 && input[0] != 2)

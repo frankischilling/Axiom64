@@ -47,6 +47,8 @@ struct Ipv4AddressLifetimes {
 
 struct Ipv4AddressCacheInfo {
     uint32_t preferred = UINT32_MAX, valid = UINT32_MAX, created = 0, updated = 0;
+
+    bool operator==(const Ipv4AddressCacheInfo&) const = default;
 };
 
 static_assert(sizeof(Ipv4AddressLifetimes) == 8 && sizeof(Ipv4AddressCacheInfo) == 16);
@@ -75,6 +77,9 @@ const Ipv4Config* ipv4_config(unsigned index);
 const Ipv4Address* ipv4_address(unsigned position);
 
 Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address&);
+
+using Ipv4AddressObserver = void (*)(const Ipv4Address&, const Ipv4AddressCacheInfo&, bool removed);
+void ipv4_observe_addresses(Ipv4AddressObserver);
 
 const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint = 0);
 

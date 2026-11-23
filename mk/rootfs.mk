@@ -42,19 +42,28 @@ build/desktop-session-bus: userspace/desktop/session-bus.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 
+build/pam_axiom64.so: scripts/build_pam_accounts.py scripts/build_accounts.py scripts/build_musl.py \
+	scripts/build_libxcrypt.py scripts/ports.py scripts/sources.py dependencies.json \
+	ports.lock.json sources.lock.json $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
+	@mkdir -p build
+	$(PYTHON) scripts/build_pam_accounts.py $@
+
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
-build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) userspace/desktop/kde.pam | busybox
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam | busybox
 	$(PYTHON) scripts/rootfs.py --profile installed-desktop
 
 image: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py
 
-.PHONY: test-weston test-kitty
+.PHONY: test-weston test-kitty test-account-pam
+test-account-pam: build/axiom64.elf build/pam_axiom64.so | busybox
+	$(PYTHON) scripts/account_pam_test.py
+
 test-weston: build/axiom64.elf build/rootfs-desktop.cpio
 	$(PYTHON) scripts/weston_test.py $(WESTON_TEST_FLAGS)
 

@@ -45,6 +45,19 @@ bool inventory_directory(const char* path) {
     return make_node(path, directory | 0755);
 }
 
+bool inventory_directories(char* path) {
+    for (char* component = path + 1; *component; ++component) {
+        if (*component != '/')
+            continue;
+        *component = 0;
+        const bool ready = inventory_directory(path);
+        *component = '/';
+        if (!ready)
+            return false;
+    }
+    return inventory_directory(path);
+}
+
 Node* inventory_attribute(const char* parent, const char* name, const char* value) {
     char path[256];
     if (!inventory_path(path, parent, name))
@@ -70,6 +83,9 @@ bool inventory_link(const char* parent, const char* name, const char* target) {
     char text[256];
     if (!inventory_path(text, parent, name))
         return false;
+    if (auto* existing = lookup(text, false))
+        return (existing->mode & 0170000) == symlink && existing->size == strlen(target) &&
+               !memcmp(existing->data, target, existing->size);
     Path path;
     path.base = root_node;
     memcpy(path.text, text, strlen(text) + 1);

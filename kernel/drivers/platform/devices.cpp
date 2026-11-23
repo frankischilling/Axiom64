@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "drivers/graphics/virtio_gpu.hpp"
 #include "drivers/platform/inventory.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/block/block.hpp"
@@ -44,6 +45,7 @@
 
 namespace ax {
 static const BootFramebuffer* framebuffer;
+static bool virtio_framebuffer;
 static Pty ptys[32];
 static constexpr Terminal default_terminal{0x500,  5, 0xbf,
                                            0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
@@ -510,8 +512,11 @@ static bool controller_wait(bool output) {
     return false;
 }
 
-void devices_init(bool display_console) {
-    framebuffer = boot_info.framebuffer.address ? &boot_info.framebuffer : nullptr;
+void devices_init(bool display_console, bool virtio_graphics) {
+    framebuffer = virtio_graphics ? virtio_gpu_scanout_init() : nullptr;
+    virtio_framebuffer = framebuffer != nullptr;
+    if (!framebuffer && boot_info.framebuffer.address)
+        framebuffer = &boot_info.framebuffer;
     if (framebuffer) {
         tag("/dev/fb0", Device::framebuffer);
         // Expose the firmware framebuffer through the platform device interface.
@@ -1092,8 +1097,24 @@ static int64_t touchpad_ioctl(Handle& handle, uint64_t request, uint64_t arg) {
     unsigned bytes = input_capabilities(Device::touchpad, number, bitmap);
     if (bytes)
         return output(arg, bitmap, min(bytes, size)) ? -14 : int64_t(min(bytes, size));
+    // Linux exposes empty bitmaps for event classes a device does not provide.
+    // libevdev still queries these classes while opening a touchpad.
+    switch (number) {
+    case 0x19: // EVIOCGLED
+    case 0x1a: // EVIOCGSND
+    case 0x1b: // EVIOCGSW
+    case 0x24: // EVIOCGBIT(EV_MSC)
+    case 0x25: // EVIOCGBIT(EV_SW)
+    case 0x31: // EVIOCGBIT(EV_LED)
+    case 0x32: // EVIOCGBIT(EV_SND)
+    case 0x35: // EVIOCGBIT(EV_FF)
+        bytes = min(number == 0x35 ? 2 * sizeof(uint64_t) : sizeof(uint64_t), size_t(size));
+        return output(arg, bitmap, bytes) ? -14 : int64_t(bytes);
+    default:
+        break;
+    }
     if (number != 0x18) // EVIOCGKEY
-        return -25;
+        return number >= 0x20 && number < 0x40 ? -22 : -25;
     const auto mark = [&](uint16_t code) { bitmap[code / 8] |= 1u << (code % 8); };
     if (touchpad.key_down(btn_left))
         mark(btn_left);
@@ -1209,7 +1230,8 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         }
         if (request == 0x4602) {
             FbFix fix{};
-            memcpy(fix.id, "Axiom64 fb", 10);
+            const char* name = virtio_framebuffer ? "Axiom64 virtio" : "Axiom64 fb";
+            memcpy(fix.id, name, strlen(name));
             fix.smem_start = uint64_t(fb->address) - direct_map;
             fix.smem_len = fb->pitch * fb->height;
             fix.visual = 2;
@@ -1221,6 +1243,14 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
             if (!current_task()->memory->space.copy_in(&var, arg, sizeof(var)))
                 return -14;
             return var.xres == fb->width && var.yres == fb->height && var.bpp == fb->bpp ? 0 : -22;
+        }
+        if (request == 0x4606 && virtio_framebuffer) { // FBIOPAN_DISPLAY
+            FbVar var;
+            if (!current_task()->memory->space.copy_in(&var, arg, sizeof(var)))
+                return -14;
+            if (var.xoffset || var.yoffset)
+                return -22;
+            return virtio_gpu_request_refresh() ? 0 : -5;
         }
         if (request == 0x4606 || request == 0x4611)
             return 0;
@@ -1429,7 +1459,7 @@ int64_t framebuffer_map(AddressSpace& memory, uint64_t va, size_t length, int pr
     uint64_t address = uint64_t(framebuffer->address) - direct_map + offset;
     if (address % page_size)
         return -22;
-    return memory.map_physical(va, address, length, prot, true) ? int64_t(va) : -12;
+    return memory.map_physical(va, address, length, prot, !virtio_framebuffer) ? int64_t(va) : -12;
 }
 
 static void event(InputQueue& q, uint16_t type, uint16_t code, int32_t value) {
@@ -1485,6 +1515,8 @@ void usb_mouse_event(int dx, int dy, uint8_t buttons, int wheel) {
 }
 
 void devices_poll() {
+    if (virtio_framebuffer)
+        virtio_gpu_poll(ticks);
     floppy_poll();
     Pcm::poll();
     xhci_keyboard_poll();

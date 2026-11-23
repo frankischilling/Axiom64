@@ -73,7 +73,7 @@ struct Pty {
     uint16_t rows, columns;
 };
 
-void devices_init(bool display_console);
+void devices_init(bool display_console, bool virtio_graphics);
 void inventory_device_added(Node*, bool synthetic);
 const ControlFileOps* inventory_uevent_control(Node*);
 

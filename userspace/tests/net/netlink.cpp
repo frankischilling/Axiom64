@@ -731,6 +731,66 @@ static void link_subscription(int fd, bool subscribe) {
           "change link notification subscription");
 }
 
+static void ipv4_address_events(int writer) {
+    int listener = open_socket();
+    const int group = RTNLGRP_IPV4_IFADDR;
+    check(setsockopt(listener, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
+          "subscribe to IPv4 address changes");
+    constexpr uint32_t example = 0xc000020a;
+    constexpr unsigned actions[] = {RTM_NEWADDR, RTM_DELADDR};
+    for (unsigned type : actions) {
+        const unsigned flags = type == RTM_NEWADDR ? NLM_F_CREATE | NLM_F_EXCL : 0;
+        Packet request(type, NLM_F_ACK | flags);
+        ifaddrmsg body{AF_INET, 24, 0, RT_SCOPE_UNIVERSE, indexes[0]};
+        memcpy(request.bytes + request.size, &body, sizeof(body));
+        request.size += sizeof(body);
+        request.attribute(IFA_LOCAL, htonl(example));
+        request.attribute(IFA_ADDRESS, htonl(example));
+        send_packet(writer, request);
+        acknowledgment(writer, request, 0);
+
+        uint8_t bytes[96];
+        sockaddr_nl source{};
+        socklen_t length = sizeof(source);
+        pollfd ready{listener, POLLIN, 0};
+        check(poll(&ready, 1, 3000) == 1 && (ready.revents & POLLIN),
+              "IPv4 address mutation notifies an independent listener");
+        ssize_t count = recvfrom(listener, bytes, sizeof(bytes), 0,
+                                 reinterpret_cast<sockaddr*>(&source), &length);
+        check(count >= ssize_t(NLMSG_LENGTH(sizeof(body))) && length == sizeof(source) &&
+                  source.nl_family == AF_NETLINK && !source.nl_pid &&
+                  source.nl_groups == RTMGRP_IPV4_IFADDR,
+              "IPv4 notification comes from its kernel multicast group");
+        nlmsghdr header{};
+        memcpy(&header, bytes, sizeof(header));
+        memcpy(&body, bytes + NLMSG_HDRLEN, sizeof(body));
+        check(header.nlmsg_len == unsigned(count) && header.nlmsg_type == type &&
+                  !header.nlmsg_flags && !header.nlmsg_seq && !header.nlmsg_pid &&
+                  body.ifa_family == AF_INET && body.ifa_prefixlen == 24 &&
+                  body.ifa_index == indexes[0],
+              "IPv4 notification has the correct action and address identity");
+        unsigned local_count = 0;
+        for (size_t at = NLMSG_LENGTH(sizeof(body)); at < size_t(count);) {
+            rtattr field{};
+            check(size_t(count) - at >= sizeof(field), "complete IPv4 notification attribute");
+            memcpy(&field, bytes + at, sizeof(field));
+            check(field.rta_len >= RTA_LENGTH(0) &&
+                      size_t(RTA_ALIGN(field.rta_len)) <= size_t(count) - at,
+                  "bounded IPv4 notification attribute");
+            if (field.rta_type == IFA_LOCAL && field.rta_len == RTA_LENGTH(sizeof(example))) {
+                uint32_t address;
+                memcpy(&address, bytes + at + RTA_LENGTH(0), sizeof(address));
+                check(ntohl(address) == example, "IPv4 notification carries the changed address");
+                ++local_count;
+            }
+            at += RTA_ALIGN(field.rta_len);
+        }
+        check(local_count == 1, "exactly one IFA_LOCAL attribute");
+    }
+    check(close(listener) == 0, "close IPv4 address listener");
+    puts("NETLINK_IPV4_ADDRESS_EVENTS_PASS");
+}
+
 static Packet link_request(unsigned type, bool up, uint32_t mtu) {
     Packet request(type, NLM_F_ACK);
     ifinfomsg link{};
@@ -1443,6 +1503,8 @@ int main(int argc, char** argv) {
         link_controls(early, listener);
     }
     early_routes(early);
+    if (!native)
+        ipv4_address_events(early);
     check(close(early) == 0, "close early-route socket before existing lifetime tests");
     if (!native) {
         await_carrier(true);

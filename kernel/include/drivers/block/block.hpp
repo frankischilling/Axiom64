@@ -58,7 +58,12 @@ size_t block_direct_sectors(unsigned device);
 // The claim owns the cache. Reads that do not match its block geometry bypass it.
 int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* owner);
 
-int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count);
+bool block_read_from_cache(unsigned device, uint64_t sector, void* data, size_t count);
+
+// A read-ahead run begins with the requested block and holds only consecutive blocks.
+size_t block_read_ahead_limit(unsigned device, size_t block_sectors);
+int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count,
+                      size_t contiguous_blocks = 1);
 
 uint64_t block_buffer_bytes();
 

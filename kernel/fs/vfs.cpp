@@ -1362,6 +1362,43 @@ int64_t write_regular_at(Task* task, Handle& handle, uint64_t& offset, const voi
     return count;
 }
 
+int allocate_file_range(Task& task, Handle& handle, unsigned mode, uint64_t offset,
+                        uint64_t length) {
+    constexpr unsigned keep_size = 1, punch_hole = 2;
+    if (offset > INT64_MAX || length > INT64_MAX || !length)
+        return -22;
+    if (mode & ~(keep_size | punch_hole) || mode == punch_hole)
+        return -95;
+    if (!(handle.flags & 3))
+        return -9;
+    if (handle.pipe)
+        return -29;
+    auto node = file_node(handle.node);
+    const auto type = node ? node->mode & 0170000 : 0;
+    if (type == directory)
+        return -21;
+    if (type != regular_file && type != block_device)
+        return -19;
+    if (length > uint64_t(INT64_MAX) - offset)
+        return -27;
+    if (is_memfd(node))
+        return memfd_fallocate(task, handle, mode, offset, length);
+    if (mode || type != regular_file || !node->mount->ops->preallocate)
+        return -95;
+
+    const uint64_t end = offset + length;
+    if (end > node->size && end > task.process->limits.soft(Resource::file_size)) {
+        queue_signal(&task, 25, task.process->pid);
+        return -27;
+    }
+    if (int error = prepare_regular_write(&task, node))
+        return error;
+    if (int error = node->mount->ops->preallocate(node, offset, end))
+        return error;
+    inotify_dentry(handle.opened_dentry, inotify_modify);
+    return 0;
+}
+
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;

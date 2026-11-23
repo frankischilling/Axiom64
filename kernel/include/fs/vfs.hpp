@@ -150,6 +150,7 @@ struct FilesystemOps {
     void (*reclaim_queued)(Mount*) = nullptr;
     // A directory can contain kernel-owned control files that do not block rmdir.
     int (*directory_empty)(Node*) = nullptr;
+    int (*preallocate)(Node*, uint64_t offset, uint64_t end) = nullptr;
 };
 
 struct Mount {
@@ -302,6 +303,7 @@ int write_handle_limit_at(Task*, Handle&, uint64_t, size_t&);
 int64_t write_handle(Handle*, const void*, size_t);
 // Callers clamp the transfer with write_handle_limit_at before committing bytes.
 int prepare_regular_write(Task*, Node*);
+int allocate_file_range(Task&, Handle&, unsigned mode, uint64_t offset, uint64_t length);
 int64_t write_regular_at(Task*, Handle&, uint64_t&, const void*, size_t);
 
 bool handle_has_poll(const Handle&);

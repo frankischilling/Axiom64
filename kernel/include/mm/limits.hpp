@@ -28,6 +28,7 @@
 #include <stdint.h>
 
 namespace ax {
+struct AddressSpace;
 struct Task;
 
 bool memory_growth_allowed(const Task&, uint64_t start, size_t length, bool replace = false);
@@ -37,4 +38,8 @@ bool data_growth_allowed(const Task&, uint64_t start, size_t length, bool replac
 bool memory_protection_allowed(const Task&, uint64_t start, size_t length, int protection);
 
 bool heap_change_allowed(const Task&, uint64_t address);
+bool memory_lock_growth_allowed(const Task&, size_t length);
+int update_memory_lock(AddressSpace&, uint64_t start, size_t length, bool lock);
+int populate_locked_pages(AddressSpace&, uint64_t start, size_t length);
+int set_memory_lock(Task&, uint64_t address, size_t length, bool lock);
 } // namespace ax

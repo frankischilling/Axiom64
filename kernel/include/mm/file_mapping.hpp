@@ -60,6 +60,7 @@ void overlay_disk_pages(Node&, uint64_t offset, void* buffer, size_t length);
 int flush_disk_pages(Mount&, Node* = nullptr, uint64_t first = 0, uint64_t end = UINT64_MAX);
 void discard_disk_pages(Node&, uint64_t first);
 int sync_file_mappings(AddressSpace&, uint64_t start, size_t length, unsigned flags);
+bool file_page_resident(const FileMapping&, uint64_t address);
 int64_t write_disk_page(Node&, uint64_t offset, const void* buffer, size_t length);
 int flush_disk_device(Node&);
 uint64_t file_page_permissions(uint64_t);

@@ -374,6 +374,40 @@ static void private_file_reads(void) {
     puts("EXT2_PRIVATE_READ_PASS");
 }
 
+static void preallocation_tests(void) {
+    const char* path = "/tmp/ext2-volume/preallocate";
+    const size_t page = 4096;
+    const off_t start = 2 * page + 17, end = 260 * page + 23;
+    int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+    CHECK(fd >= 0 && pwrite(fd, "A", 1, 0) == 1);
+    unsigned char* tail = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    CHECK(tail != MAP_FAILED && tail[0] == 'A');
+    tail[0] = 'B';
+    tail[1] = 'X';
+
+    ERROR(fallocate(fd, 0, -1, 5), EINVAL);
+    ERROR(fallocate(fd, 0, INT64_MAX, 2), EFBIG);
+    ERROR(fallocate(fd, 1, 0, page), EOPNOTSUPP);
+    CHECK(posix_fallocate(fd, start, end - start) == 0);
+    struct stat initial, repeated;
+    CHECK(fstat(fd, &initial) == 0 && initial.st_size == end);
+    CHECK(initial.st_blocks * 512 >= end - start);
+    CHECK(tail[0] == 'B' && tail[1] == 0);
+    unsigned char data = 1;
+    CHECK(pread(fd, &data, 1, start) == 1 && data == 0);
+    CHECK(pread(fd, &data, 1, end - 1) == 1 && data == 0);
+    CHECK(lseek(fd, 0, SEEK_CUR) == 0);
+    CHECK(pwrite(fd, "Q", 1, start) == 1 && fallocate(fd, 0, start, end - start) == 0);
+    CHECK(pread(fd, &data, 1, start) == 1 && data == 'Q');
+    CHECK(fstat(fd, &repeated) == 0 && repeated.st_blocks == initial.st_blocks);
+    CHECK(munmap(tail, page) == 0 && close(fd) == 0);
+    fd = open(path, O_RDONLY);
+    CHECK(fd >= 0);
+    ERROR(fallocate(fd, 0, 0, page), EBADF);
+    CHECK(close(fd) == 0 && unlink(path) == 0);
+    puts("EXT2_PREALLOCATION_PASS");
+}
+
 static void write_tests(void) {
     int raw = open("/dev/vda", O_RDWR);
     CHECK(raw >= 0);
@@ -387,6 +421,7 @@ static void write_tests(void) {
     ERROR(mount("/dev/vda", "/tmp/ext2-second", "ext2", 0, NULL), EBUSY);
     struct statfs before, after;
     CHECK(statfs(volume, &before) == 0);
+    preallocation_tests();
     CHECK(mkdir("/tmp/ext2-volume/pinned-parent", 0755) == 0);
     CHECK(mkdir("/tmp/ext2-volume/pinned-parent/child", 0755) == 0);
     int child_dir = open("/tmp/ext2-volume/pinned-parent/child", O_RDONLY | O_DIRECTORY);

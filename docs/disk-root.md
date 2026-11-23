@@ -53,6 +53,11 @@ the shell. Look for the result in `plasma-activities.log` and session output
 in `plasma-session.log`. Both are in `~/.local/state/axiom64/`, or in the
 `axiom64/` directory under `$XDG_STATE_HOME` when set.
 
+New installed images use UTC. Plasma's authorization agent uses the
+installed PolicyKit service and the Axiom64 account database. Applying
+Date & Time changes from the desktop also requires a registered login
+session.
+
 Attach the image as a new VM disk. The command creates a regular image file and
 refuses an existing destination. Guided partitioning and installation to existing
 drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).

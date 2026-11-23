@@ -164,7 +164,7 @@ package_payloads = {
     "weston-clients": ("usr/bin/weston-simple-shm",),
     "openssh-server-common": (),  # The installed server requires a local configuration.
 }
-installed_libraries = {'gmp', 'libgomp'} if installed_desktop else set()
+installed_libraries = {'acl-libs', 'gmp', 'libgomp'} if installed_desktop else set()
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
@@ -234,6 +234,11 @@ if installed_desktop:
     for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
         regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
                 0o100644)
+    regular('etc/pam.d/polkit-1', ROOT / 'userspace/desktop/pam/polkit-1.conf', 0o100644)
+    regular('etc/polkit-1/rules.d/49-axiom64-admin.rules',
+            ROOT / 'userspace/desktop/polkit-admin.rules', 0o100644)
+    files.setdefault('etc/localtime', (0o120777, b'/usr/share/zoneinfo/Etc/UTC'))
+    files.setdefault('etc/timezone', (0o100644, b'Etc/UTC\n'))
     regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
     regular(session_root + '/display-sessions/plasma.desktop',
             ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)

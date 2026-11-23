@@ -28,6 +28,22 @@ while test ! -L /etc/axiom64/accounts/current; do
     sleep 1
 done
 /usr/bin/accountctl ensure-messagebus
+prepare_policykit() {
+    /usr/bin/accountctl ensure-polkitd || return 1
+    for directory in /etc/polkit-1/rules.d /usr/share/polkit-1/rules.d; do
+        test -d "$directory" && ! test -L "$directory" || return 1
+        case "$(stat -c '%u:%g:%a' "$directory")" in
+            498:498:700) ;;
+            0:0:700)
+                chown 498:498 "$directory" || return 1
+                ;;
+            *) return 1 ;;
+        esac
+    done
+}
+if test -x /usr/lib/polkit-1/polkitd && ! prepare_policykit; then
+    printf '%s\n' 'PolicyKit requires its service account and private rules directories.' >&2
+fi
 helper=/usr/libexec/dbus-daemon-launch-helper
 if test -e "$helper"; then
     if ! test -f "$helper" || test -L "$helper"; then

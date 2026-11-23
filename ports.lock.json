@@ -6037,6 +6037,32 @@
       "installed_only": true
     },
     {
+      "name": "polkit-common",
+      "version": "126-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/polkit-common-126-r0.apk",
+      "archive": "polkit-common-126-r0.apk",
+      "sha256": "8461a8277b62fc506f1434b52c551cd5dd364346ae7e2664834214788a01255d",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://github.com/polkit-org/polkit",
+      "origin": "polkit",
+      "source_commit": "77ce154b13a366a8f4ee9be915b72caf0e06a245",
+      "installed_only": true
+    },
+    {
+      "name": "polkit-elogind",
+      "version": "126-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/polkit-elogind-126-r0.apk",
+      "archive": "polkit-elogind-126-r0.apk",
+      "sha256": "85aadf593db2822f63260ca4c996728dc82bfe116e2b064d5bd056c07081fbe0",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://github.com/polkit-org/polkit",
+      "origin": "polkit",
+      "source_commit": "77ce154b13a366a8f4ee9be915b72caf0e06a245",
+      "installed_only": true
+    },
+    {
       "name": "polkit-elogind-libs",
       "version": "126-r0",
       "repository": "community",
@@ -6047,6 +6073,19 @@
       "upstream": "https://github.com/polkit-org/polkit",
       "origin": "polkit",
       "source_commit": "77ce154b13a366a8f4ee9be915b72caf0e06a245",
+      "installed_only": true
+    },
+    {
+      "name": "polkit-kde-agent-1",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/polkit-kde-agent-1-6.3.6-r0.apk",
+      "archive": "polkit-kde-agent-1-6.3.6-r0.apk",
+      "sha256": "cae0b2c508347db237c7e46c6f57f7ac0f1e8a5696bbcff923dd598d31098e75",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "polkit-kde-agent-1",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
       "installed_only": true
     },
     {

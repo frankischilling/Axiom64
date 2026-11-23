@@ -28,8 +28,15 @@ For a VM with a modern Virtio GPU, add `virtio.gpu=2d` to the kernel
 command line to use its first enabled output as `/dev/fb0`. The backend
 refreshes the mapped framebuffer as the guest draws. If Virtio setup fails,
 the boot framebuffer remains available when firmware provides one. This
-backend drives a fixed 2D output. DRM/KMS and 3D rendering require further
-driver work.
+backend drives a fixed 2D output.
+
+Add `drm.scanout` for the experimental DRM primary node at `/dev/dri/card0`.
+It exposes the existing 32-bit XRGB output through the legacy connector,
+CRTC, and dumb-buffer ioctls. The driver copies pixels from a mapped buffer
+to the display during modesetting and when the client submits damage.
+This interface is root-only and has no render node,
+atomic modesetting, or vblank events. The desktop still uses its existing
+display path.
 
 To boot the same persistent VM through UEFI:
 

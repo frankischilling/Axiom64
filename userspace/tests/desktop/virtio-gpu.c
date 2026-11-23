@@ -57,6 +57,7 @@ static void paint(volatile uint32_t* pixels, const struct fb_var_screeninfo* var
 
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    CHECK(access("/dev/dri/card0", F_OK) == -1 && errno == ENOENT);
     int fd = open("/dev/fb0", O_RDWR);
     CHECK(fd >= 0);
     struct fb_fix_screeninfo fix;

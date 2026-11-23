@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "drivers/graphics/drm_scanout.hpp"
 #include "boot/boot.hpp"
 #include "abi/linux/wall_clock.hpp"
 #include "drivers/audio/alsa_pcm.hpp"
@@ -460,6 +461,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         return -12;
     Handle* h = nullptr;
     bool framebuffer = false;
+    uint64_t drm_address = 0;
     if (!(flags & 0x20)) {
         h = fd_handle(fd);
         if (!h)
@@ -469,8 +471,12 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         return -17;
     if (h) {
         framebuffer = h->node && h->node->device == Device::framebuffer;
-        if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file))
+        if (h->node && h->node->device == Device::drm_scanout) {
+            if (int error = DrmScanout::mapping(*h, off, len, prot, flags, drm_address))
+                return error;
+        } else if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file)) {
             return -19;
+        }
         if (!framebuffer && h->node->mount->ops == &procfs_ops)
             return -19;
         if (!framebuffer && h->node->mount->ops == &posix_queue_filesystem())
@@ -505,6 +511,15 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
             return error;
         }
         return space.map_anonymous_reservation(addr, len, prot) ? complete() : -12;
+    }
+    if (drm_address) {
+        if (replace_existing && !space.prepare_mapping(addr, len))
+            return -12;
+        if (int error = replace()) {
+            space.trim_page_tables(addr, len);
+            return error;
+        }
+        return space.map_physical(addr, drm_address, len, prot, false) ? complete() : -12;
     }
     if (framebuffer) {
         int error = replace();

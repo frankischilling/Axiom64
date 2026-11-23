@@ -45,7 +45,8 @@ enum class Device {
     parallel,
     dsp,
     alsa_control,
-    alsa_playback
+    alsa_playback,
+    drm_scanout
 };
 
 struct Terminal {
@@ -70,7 +71,7 @@ struct Pty {
     uint16_t rows, columns;
 };
 
-void devices_init(bool display_console, bool virtio_graphics);
+void devices_init(bool display_console, bool virtio_graphics, bool drm);
 
 uint64_t device_number(Node*);
 

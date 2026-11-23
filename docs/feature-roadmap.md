@@ -58,7 +58,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F19 | [USB controllers and devices](https://github.com/frankischilling/Axiom64/issues/19) | planned | M6 | F01, F09 |
 | F20 | [Terminals, input, and framebuffer console](https://github.com/frankischilling/Axiom64/issues/20) | partial | M5 | F05, F19 |
 | F21 | [X11 and Wayland display servers](https://github.com/frankischilling/Axiom64/issues/21) | partial | M5 | F05, F13, F20 |
-| F22 | [Virtio GPU and accelerated graphics](https://github.com/frankischilling/Axiom64/issues/22) | planned | M6 | F01, F19, F21 |
+| F22 | [Virtio GPU and accelerated graphics](https://github.com/frankischilling/Axiom64/issues/22) | partial | M6 | F01, F19, F21 |
 | F23 | [Shells, window managers, and desktop environments](https://github.com/frankischilling/Axiom64/issues/23) | partial | M5 | F20, F21 |
 | F24 | [HD Audio and multimedia interfaces](https://github.com/frankischilling/Axiom64/issues/24) | partial | M6 | F01, F05, F19 |
 | F25 | [Init, login, and system services](https://github.com/frankischilling/Axiom64/issues/25) | partial | M3 | F09, F10, F14 |
@@ -566,7 +566,9 @@ Acceptance evidence:
 
 ### F22. Virtio GPU and accelerated graphics
 
-Display uses a fixed boot framebuffer without acceleration.
+Virtio 2D and UEFI firmware graphics display a fixed mode through the
+framebuffer or the experimental DRM node. The QEMU tests capture pixels
+from both paths. Hardware rendering and compositor integration remain open.
 
 Required work:
 

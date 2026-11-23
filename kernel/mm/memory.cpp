@@ -731,9 +731,9 @@ static bool clone_table(uint64_t dest, uint64_t src, int level) {
             continue;
         }
         if (level == 1 && (s[i] & 0x600)) {
+            if (!(s[i] & 0x200) && !page_try_retain(s[i] & page_mask))
+                return false;
             d[i] = s[i] & ~page_locked;
-            if (!(s[i] & 0x200))
-                page_retain(s[i] & page_mask);
             continue;
         }
         uint64_t p = page_alloc();

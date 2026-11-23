@@ -41,6 +41,7 @@ struct Timerfd;
 struct SignalDescriptor;
 struct Task;
 struct Inotify;
+struct DrmFile;
 struct Mount;
 struct Handle;
 struct Pipe;
@@ -193,6 +194,7 @@ struct Handle {
     Timerfd* timer = nullptr;
     SignalDescriptor* signal_descriptor = nullptr;
     Inotify* inotify = nullptr;
+    DrmFile* drm = nullptr;
     Node* opened_dentry = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;

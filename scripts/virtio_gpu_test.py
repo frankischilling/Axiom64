@@ -39,42 +39,45 @@ from qmp import Qmp, await_serial
 COLORS = (b"\xff\x00\x00", b"\x00\xff\x00", b"\x00\x00\xff", b"\xff\xff\xff")
 
 
-def match_frame(path, frame):
+def match_frame(path, frame, width, height):
     if not path.is_file():
         return False
     magic, dimensions, levels, data = path.read_bytes().split(b"\n", 3)
-    if magic != b"P6" or dimensions != b"800 600" or levels != b"255":
+    if magic != b"P6" or dimensions != f"{width} {height}".encode() or levels != b"255":
         return False
-    if len(data) != 800 * 600 * 3:
+    if len(data) != width * height * 3:
         return False
-    for index, (x, y) in enumerate(((100, 100), (700, 100), (100, 500), (700, 500))):
-        offset = (y * 800 + x) * 3
+    points = ((100, 100), (width - 100, 100), (100, height - 100),
+              (width - 100, height - 100))
+    for index, (x, y) in enumerate(points):
+        offset = (y * width + x) * 3
         if data[offset:offset + 3] != COLORS[(index + frame) % 4]:
             return False
     return True
 
 
-def capture(monitor, directory, frame):
+def capture(monitor, directory, frame, width, height):
     path = directory / f"frame-{frame + 1}.ppm"
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         monitor.command("screendump", {"filename": str(path), "format": "ppm"})
-        if match_frame(path, frame):
+        if match_frame(path, frame, width, height):
             return
         time.sleep(.15)
     raise RuntimeError(f"Guest frame {frame + 1} did not appear in {path}")
 
 
-def boot(directory, firmware, fallback, init):
+def boot(directory, firmware, fallback, init, drm=False):
     directory.mkdir()
     archive = directory / "rootfs.cpio"
     files = {path: (0o40755, b"") for path in ("dev", "proc", "sys", "sbin")}
     files["sbin/init"] = (0o100755, init.read_bytes())
-    if fallback:
+    if fallback and not drm:
         files["gpu-fallback"] = (0o100444, b"")
     write_cpio(archive, files)
     disk = directory / "boot.raw"
-    build_medium("disk", disk, ROOT / "build/axiom64.elf", archive, " virtio.gpu=2d")
+    options = " virtio.gpu=2d" + (" drm.scanout" if drm else "")
+    build_medium("disk", disk, ROOT / "build/axiom64.elf", archive, options)
     command = ["qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "256M",
                "-nic", "none", "-display", "none", "-monitor", "none", "-serial", "stdio",
                "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
@@ -89,19 +92,22 @@ def boot(directory, firmware, fallback, init):
         command += ["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
                     "-drive", f"if=pflash,format=raw,file={variables}"]
     log = directory / "serial.log"
+    prefix = "DRM_SCANOUT" if drm else "VIRTIO_GPU"
+    frames = tuple(f"{prefix}_FRAME_{label}".encode() for label in ("ONE", "TWO"))
+    dimensions = (1024, 768) if fallback else (800, 600)
     with tempfile.TemporaryDirectory(prefix="axiom64-gpu-qmp-", dir="/tmp") as temporary:
         qmp = Path(temporary) / "qmp"
         command += ["-qmp", f"unix:{qmp},server=on,wait=off"]
         with log.open("wb") as output, subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output,
                                                        stderr=subprocess.STDOUT) as guest:
             try:
-                if not fallback:
-                    await_serial(guest, log, (b"VIRTIO_GPU_FRAME_ONE",), 55)
+                if drm or not fallback:
+                    await_serial(guest, log, frames[:1], 55)
                     control = Qmp(qmp)
                     try:
-                        for frame, ready in enumerate((b"VIRTIO_GPU_FRAME_ONE", b"VIRTIO_GPU_FRAME_TWO")):
+                        for frame, ready in enumerate(frames):
                             await_serial(guest, log, (ready,), 12)
-                            capture(control, directory, frame)
+                            capture(control, directory, frame, *dimensions)
                             guest.stdin.write(b"\n")
                             guest.stdin.flush()
                     finally:
@@ -113,31 +119,38 @@ def boot(directory, firmware, fallback, init):
                     guest.wait()
     lines = log.read_text(errors="replace").splitlines()
     expected = {"AXIOM64_EXIT status=0", f"Firmware: {firmware.upper()}"}
-    if fallback:
+    if drm:
+        expected.add("DRM_SCANOUT_GUEST_PASS")
+    elif fallback:
         expected.add("VIRTIO_GPU_FIRMWARE_FALLBACK")
     else:
-        expected |= {"VIRTIO_GPU_GUEST_PASS", "virtio-gpu: scanout=0 800x600 pitch=3200"}
+        expected.add("VIRTIO_GPU_GUEST_PASS")
+    if not fallback:
+        expected.add("virtio-gpu: scanout=0 800x600 pitch=3200")
     if result != 1 or not expected.issubset(lines):
-        raise RuntimeError(f"Virtio GPU test failed for {directory.name}. See {log}")
-    print(f"Virtio GPU passed for {directory.name}.", flush=True)
+        raise RuntimeError(f"{prefix} test failed for {directory.name}. See {log}")
+    print(f"{prefix} passed for {directory.name}.", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path)
+    parser.add_argument("--drm", action="store_true")
     args = parser.parse_args()
     if args.directory is None:
-        directory = Path(tempfile.mkdtemp(prefix="virtio-gpu-", dir=ROOT / "build"))
+        prefix = "drm-scanout-" if args.drm else "virtio-gpu-"
+        directory = Path(tempfile.mkdtemp(prefix=prefix, dir=ROOT / "build"))
     else:
         directory = args.directory
         directory.mkdir(parents=True, exist_ok=False)
     init = directory / "init"
+    source = "drm-scanout.c" if args.drm else "virtio-gpu.c"
     subprocess.run(["musl-gcc", "-static", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-idirafter", "/usr/include", "-idirafter", "/usr/include/x86_64-linux-gnu",
-                    ROOT / "userspace/tests/desktop/virtio-gpu.c", "-o", init], check=True)
-    boot(directory / "bios-scanout", "bios", False, init)
-    boot(directory / "uefi-scanout", "uefi", False, init)
-    boot(directory / "uefi-firmware-fallback", "uefi", True, init)
+                    ROOT / "userspace/tests/desktop" / source, "-o", init], check=True)
+    boot(directory / "bios-scanout", "bios", False, init, args.drm)
+    boot(directory / "uefi-scanout", "uefi", False, init, args.drm)
+    boot(directory / "uefi-firmware-fallback", "uefi", True, init, args.drm)
 
 
 if __name__ == "__main__":

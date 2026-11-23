@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/vfs.hpp"
+#include "drivers/platform/devices.hpp"
 #include "fs/inotify.hpp"
 #include "fs/xattr.hpp"
 #include "process/task.hpp"
@@ -322,6 +323,7 @@ static int removexattr(Node* node, const XattrName& name) {
 }
 
 const FilesystemOps ramfs_ops = {
-    find, create,     link,  remove,  rename,  read,    write,    truncate,  setattr,  readdir,
-    sync, map_shared, stats, destroy, nullptr, nullptr, getxattr, listxattr, setxattr, removexattr};
+    find,     create,    link,     remove,      rename,  read,    write,   truncate,
+    setattr,  readdir,   sync,     map_shared,  stats,   destroy, nullptr, nullptr,
+    getxattr, listxattr, setxattr, removexattr, nullptr, nullptr, nullptr, input_uevent_control};
 } // namespace ax

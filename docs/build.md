@@ -166,6 +166,8 @@ Input device discovery exposes relative links under `/sys/class/input` and
 device names, event numbers, uevent files, and capability bitmaps are
 available to userspace. The bitmaps match the capabilities reported by the
 evdev ioctls. Desktop integration still needs userspace input rules.
+The [kernel uevent stream](netlink.md#input-device-events) announces those
+devices and supports coldplug through each event device's `uevent` file.
 
 If the resource scan finds no devices, the HID descriptor probe can replay
 supported ACPI initialization methods in a private namespace. The firmware

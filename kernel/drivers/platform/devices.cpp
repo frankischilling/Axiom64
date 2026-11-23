@@ -371,29 +371,29 @@ static bool inventory_directory(const char* path) {
     return make_node(path, directory | 0755);
 }
 
-static bool inventory_attribute(const char* parent, const char* name, const char* value) {
+static Node* inventory_attribute(const char* parent, const char* name, const char* value) {
     char path[64];
     const size_t prefix = strlen(parent), suffix = strlen(name);
     if (prefix + suffix + 2 > sizeof(path))
-        return false;
+        return nullptr;
     memcpy(path, parent, prefix);
     path[prefix] = '/';
     memcpy(path + prefix + 1, name, suffix + 1);
     const size_t length = strlen(value);
     auto bytes = static_cast<uint8_t*>(alloc(length + 1));
     if (!bytes)
-        return false;
+        return nullptr;
     auto node = make_node(path, regular_file | 0444);
     if (!node) {
         release(bytes);
-        return false;
+        return nullptr;
     }
     memcpy(bytes, value, length);
     bytes[length] = '\n';
     node->data = bytes;
     node->size = node->capacity = length + 1;
     node->owned = true;
-    return true;
+    return node;
 }
 
 static bool inventory_path(char (&out)[64], const char* parent, const char* name) {
@@ -495,16 +495,22 @@ static bool publish_input_inventory(Node& node, unsigned index, const char* name
     constexpr char event_suffix[] = "\nDEVNAME=input/";
     memcpy(child_event + minor_end, event_suffix, sizeof(event_suffix) - 1);
     memcpy(child_event + minor_end + sizeof(event_suffix) - 1, event, strlen(event) + 1);
-    return inventory_attribute(input, "properties", bits) &&
-           inventory_attribute(input, "uevent", parent_event) &&
-           inventory_attribute(child, "uevent", child_event) &&
-           inventory_link(input, "subsystem", "../../../../class/input") &&
-           inventory_link(child, "subsystem", "../../../../../class/input") &&
-           inventory_link(child, "device", "..") &&
-           inventory_link("/sys/class/input", input + sizeof("/sys/devices/virtual/input/") - 1,
-                          input_link) &&
-           inventory_link("/sys/class/input", event, event_link) &&
-           inventory_link("/sys/dev/char", dev, event_link);
+    auto* uevent = inventory_attribute(child, "uevent", child_event);
+    if (!uevent || !inventory_attribute(input, "properties", bits) ||
+        !inventory_attribute(input, "uevent", parent_event) ||
+        !inventory_link(input, "subsystem", "../../../../class/input") ||
+        !inventory_link(child, "subsystem", "../../../../../class/input") ||
+        !inventory_link(child, "device", "..") ||
+        !inventory_link("/sys/class/input", input + sizeof("/sys/devices/virtual/input/") - 1,
+                        input_link) ||
+        !inventory_link("/sys/class/input", event, event_link) ||
+        !inventory_link("/sys/dev/char", dev, event_link))
+        return false;
+    uevent->mode = regular_file | 0644;
+    uevent->device = Device::input_uevent;
+    uevent->device_id = index;
+    input_device_added(index, false);
+    return true;
 }
 
 bool TouchpadInput::register_device(const HidTouchpad::Layouts& layouts, uint16_t vendor,

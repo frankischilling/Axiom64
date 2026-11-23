@@ -40,6 +40,20 @@ Descriptor reads/writes, vectors, and message calls share the [retained I/O path
 
 Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, complete IPv6 control, policy routing, and general Linux netlink behavior remain required.
 
+## Input device events
+
+`AF_NETLINK` protocol `NETLINK_KOBJECT_UEVENT` exposes kernel input-device
+additions on multicast group 1. `recvmsg` supplies kernel credentials when
+`SO_PASSCRED` is enabled. Listeners can set their receive-buffer limit or
+join and leave group 1. If a listener's queue fills, an `ENOBUFS` error
+reports the loss. Route sockets and their port IDs remain independent.
+
+Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`
+to request a coldplug event. The file uses normal owner write permissions.
+Userspace sends on this protocol and other event actions are unsupported.
+The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)
+defines the datagram and coldplug format.
+
 ## Ring 3 configuration adapter
 
 `userspace/net/config/routing.hpp` exposes `ax::net::Routing` behind a private nonblocking kernel-port socket. Route `change` requires a canonical mask, explicit interface, nonzero priority/protocol, and the appropriate link/universe scope. The adapter retains preferred-source and TOS fields when reading routes; host comparisons use them to distinguish independent owners. The guest still rejects preferred-source and TOS route mutations. Address `change` requires the complete canonical tuple and explicit interface. These checks prevent accidental wildcard deletion. Results are positive errno values; requests require a checked acknowledgment within a one-second monotonic deadline.

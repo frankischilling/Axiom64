@@ -46,7 +46,8 @@ enum class Device {
     dsp,
     alsa_control,
     alsa_playback,
-    touchpad
+    touchpad,
+    input_uevent
 };
 
 struct Terminal {
@@ -72,6 +73,8 @@ struct Pty {
 };
 
 void devices_init(bool display_console);
+void input_device_added(unsigned index, bool synthetic);
+const ControlFileOps* input_uevent_control(Node*);
 
 uint64_t device_number(Node*);
 

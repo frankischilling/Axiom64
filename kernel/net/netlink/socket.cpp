@@ -24,12 +24,16 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "net/netlink.hpp"
+#include "net/socket_control.hpp"
+#include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
 namespace ax {
 namespace {
 constexpr unsigned socket_count = 64, queue_count = 32;
 constexpr size_t queue_bytes = 65536;
+constexpr unsigned routing_protocol = 0, uevent_protocol = 15;
+constexpr uint32_t kernel_uevent_group = 1;
 uint32_t next_port = UINT32_MAX;
 
 size_t aligned(size_t size) {
@@ -39,19 +43,22 @@ size_t aligned(size_t size) {
 
 struct NetlinkSocket {
     bool used = false, connected = false, capped = false, strict = false;
-    unsigned type = 3, head = 0, count = 0;
+    bool passcred = false;
+    unsigned protocol = routing_protocol, type = 3, head = 0, count = 0;
     unsigned deliveries = 0;
-    uint32_t port = 0;
-    size_t bytes = 0;
+    uint32_t port = 0, groups = 0;
+    size_t bytes = 0, byte_limit = queue_bytes;
+    int error = 0;
+    Handle* handle = nullptr;
     NetlinkFrame* queue[queue_count]{};
 };
 
 namespace {
 NetlinkSocket sockets[socket_count];
 
-bool occupied(uint32_t port) {
+bool occupied(unsigned protocol, uint32_t port) {
     for (const auto& socket : sockets)
-        if (socket.used && socket.port == port)
+        if (socket.used && socket.protocol == protocol && socket.port == port)
             return true;
     return false;
 }
@@ -61,13 +68,14 @@ int bind_port(NetlinkSocket* socket, uint32_t port, unsigned process) {
         return port == socket->port ? 0 : -22;
     if (!port) {
         port = process;
-        for (unsigned attempt = 0; occupied(port) && attempt < socket_count; attempt++) {
+        for (unsigned attempt = 0; occupied(socket->protocol, port) && attempt < socket_count;
+             attempt++) {
             port = next_port--;
             if (!next_port)
                 next_port = UINT32_MAX;
         }
     }
-    if (!port || occupied(port))
+    if (!port || occupied(socket->protocol, port))
         return -98;
     socket->port = port;
     return 0;
@@ -120,11 +128,19 @@ size_t netlink_available(NetlinkSocket* socket) {
 bool netlink_ready(NetlinkSocket* socket, bool write) {
     return write ? socket->count + socket->deliveries < queue_count &&
                        socket->bytes + 36 <= queue_bytes
-                 : socket->count != 0;
+                 : socket->count != 0 || socket->error;
 }
 
-int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
-    if (socket->count + socket->deliveries >= queue_count || length > queue_bytes - socket->bytes)
+int netlink_error(NetlinkSocket* socket, bool consume) {
+    const int error = socket->error;
+    if (consume)
+        socket->error = 0;
+    return error;
+}
+
+static int reserve_frame(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
+    if (socket->count + socket->deliveries >= queue_count || socket->bytes > socket->byte_limit ||
+        length > socket->byte_limit - socket->bytes)
         return -11;
     frame = static_cast<NetlinkFrame*>(alloc(sizeof(NetlinkFrame) + length));
     if (!frame)
@@ -136,12 +152,50 @@ int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*
     return 0;
 }
 
+int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
+    // POSIX message queues use route sockets for completion cookies. Those
+    // cookies must never enter a kernel device event stream.
+    if (socket->protocol != routing_protocol)
+        return -95;
+    return reserve_frame(socket, length, frame);
+}
+
 void netlink_publish_delivery(NetlinkSocket* socket, NetlinkFrame* frame) {
     --socket->deliveries;
     socket->queue[(socket->head + socket->count++) % queue_count] = frame;
 }
 
+void netlink_broadcast_uevent(const void* data, size_t length) {
+    for (auto& socket : sockets) {
+        if (!socket.used || socket.protocol != uevent_protocol ||
+            !(socket.groups & kernel_uevent_group))
+            continue;
+        NetlinkFrame* frame;
+        if (reserve_frame(&socket, length, frame)) {
+            socket.error = 105; // ENOBUFS: the listener lost at least one datagram.
+            epoll_notify(socket.handle, 8);
+            continue;
+        }
+        frame->source.groups = kernel_uevent_group;
+        memcpy(frame + 1, data, length);
+        netlink_publish_delivery(&socket, frame);
+        epoll_notify(socket.handle, 1);
+    }
+}
+
+size_t netlink_receive_control(Task& task, NetlinkSocket* socket, uint64_t address,
+                               uint64_t capacity, uint32_t& flags) {
+    if (socket->protocol != uevent_protocol || !socket->passcred)
+        return 0;
+    SocketControlWriter output(task, 1, address, capacity, flags); // SOL_SOCKET.
+    constexpr uint32_t credentials[3]{};                           // Kernel pid, uid and gid.
+    output.append(2, credentials, sizeof(credentials));            // SCM_CREDENTIALS.
+    return output.used;
+}
+
 int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
+    if (int error = netlink_error(socket, true))
+        return -error;
     auto frame = netlink_front(socket);
     if (!frame)
         return -11;
@@ -152,6 +206,8 @@ int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
 }
 
 int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t length) {
+    if (socket->protocol != routing_protocol)
+        return -95;
     if (length > netlink_max_request)
         return -90;
     if (!length)
@@ -224,7 +280,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             return -94;
         if (b & ~uint64_t(0x8080f))
             return -22;
-        if (c)
+        if (c != routing_protocol && c != uevent_protocol)
             return -93;
         socket = nullptr;
         for (auto& candidate : sockets)
@@ -237,12 +293,14 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         *socket = {};
         socket->used = true;
         socket->type = b & 0xf;
+        socket->protocol = c;
         auto opened = open_handle(nullptr, 2 | ((b & 0x800) ? 04000 : 0));
         if (!opened) {
             netlink_close(socket);
             return -23;
         }
         opened->netlink = socket;
+        socket->handle = opened;
         int fd = allocate_fd(&task, opened, 0, b & 0x80000);
         if (fd < 0)
             close_handle(opened);
@@ -258,10 +316,15 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             return -14;
         if (address.family != 16)
             return -22;
-        if (address.groups)
-            return -95;
-        if (frame.rax == 49)
-            return bind_port(socket, address.port, task.process->pid);
+        if (frame.rax == 49) {
+            const uint32_t allowed = socket->protocol == uevent_protocol ? kernel_uevent_group : 0;
+            if (address.groups & ~allowed)
+                return -95;
+            if (int error = bind_port(socket, address.port, task.process->pid))
+                return error;
+            socket->groups = address.groups;
+            return 0;
+        }
         if (int error = netlink_target(address))
             return error;
         if (int error = socket->port ? 0 : bind_port(socket, 0, task.process->pid))
@@ -271,7 +334,10 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
     }
     if (frame.rax == 51 || frame.rax == 52) {
         NetlinkAddress address;
-        address.port = frame.rax == 51 ? socket->port : 0;
+        if (frame.rax == 51) {
+            address.port = socket->port;
+            address.groups = socket->groups;
+        }
         return address_out(task, address, b, c);
     }
     if (frame.rax == 54) {
@@ -280,7 +346,19 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             return -22;
         if (!task.memory->space.copy_in(&value, d, 4))
             return -14;
-        if (b == 270 && c == 10)
+        if (socket->protocol == uevent_protocol && b == 1 && c == 16) // SO_PASSCRED.
+            socket->passcred = value != 0;
+        else if (socket->protocol == uevent_protocol && b == 1 && (c == 8 || c == 33)) {
+            if (c == 33 && !capable(task.credentials, Capability::net_admin))
+                return -1;
+            if (value < 0)
+                return -22;
+            socket->byte_limit = max(size_t(256), min(size_t(value) * 2, queue_bytes));
+        } else if (socket->protocol == uevent_protocol && b == 270 && (c == 1 || c == 2)) {
+            if (value != 1)
+                return -22;
+            socket->groups = c == 1 ? kernel_uevent_group : 0;
+        } else if (b == 270 && c == 10)
             socket->capped = value != 0;
         else if (b == 270 && c == 12)
             socket->strict = value != 0;
@@ -294,11 +372,17 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             value = c == 10 ? socket->capped : socket->strict;
         else if (b == 1 && c == 3)
             value = socket->type;
-        else if (b == 1 && (c == 4 || c == 38))
-            value = 0;
+        else if (b == 1 && c == 4)
+            value = netlink_error(socket);
+        else if (b == 1 && c == 16 && socket->protocol == uevent_protocol)
+            value = socket->passcred;
+        else if (b == 1 && c == 38)
+            value = socket->protocol;
         else if (b == 1 && c == 39)
             value = 16;
-        else if (b == 1 && (c == 7 || c == 8))
+        else if (b == 1 && c == 8)
+            value = socket->byte_limit;
+        else if (b == 1 && c == 7)
             value = queue_bytes;
         else
             return -92;
@@ -309,6 +393,8 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         if (!task.memory->space.copy_out(d, &value, min(capacity, actual)) ||
             !task.memory->space.copy_out(frame.r8, &actual, 4))
             return -14;
+        if (b == 1 && c == 4)
+            netlink_error(socket, true);
         return 0;
     }
     return -95;

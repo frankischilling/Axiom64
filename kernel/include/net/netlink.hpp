@@ -87,8 +87,12 @@ const NetlinkFrame* netlink_front(NetlinkSocket*);
 void netlink_consume(NetlinkSocket*);
 
 size_t netlink_available(NetlinkSocket*);
+int netlink_error(NetlinkSocket*, bool consume = false);
 int netlink_reserve_delivery(NetlinkSocket*, size_t, NetlinkFrame*&);
 void netlink_publish_delivery(NetlinkSocket*, NetlinkFrame*);
+void netlink_broadcast_uevent(const void*, size_t);
+size_t netlink_receive_control(Task&, NetlinkSocket*, uint64_t address, uint64_t capacity,
+                               uint32_t& flags);
 
 int netlink_target(const NetlinkAddress&);
 

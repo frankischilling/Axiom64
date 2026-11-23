@@ -32,6 +32,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
@@ -65,6 +66,76 @@ static int check_input_inventory(void) {
             return -1;
     }
     puts("BOOT_INPUT_INVENTORY_PASS");
+    return 0;
+}
+
+static int check_input_uevent(void) {
+    struct netlink_address {
+        uint16_t family, padding;
+        uint32_t port, groups;
+    } local = {AF_NETLINK, 0, 0, 1}, sender = {0};
+
+    enum { kernel_uevent = 15, so_passcred = 16, scm_credentials = 2 };
+
+    const int listener = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, kernel_uevent);
+    const int route = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, 0);
+    if (listener < 0 || route < 0 || bind(listener, (struct sockaddr*)&local, sizeof(local)))
+        return -1;
+    socklen_t length = sizeof(local);
+    if (getsockname(listener, (struct sockaddr*)&local, &length) || length != sizeof(local) ||
+        !local.port || local.groups != 1)
+        return -1;
+    local.groups = 0;
+    int enabled = 1;
+    if (bind(route, (struct sockaddr*)&local, sizeof(local)) ||
+        setsockopt(listener, SOL_SOCKET, so_passcred, &enabled, sizeof(enabled)))
+        return -1;
+
+    const int trigger = open("/sys/class/input/event1/uevent", O_WRONLY | O_TRUNC);
+    if (trigger < 0 || write(trigger, "bogus", 5) != -1 || errno != EINVAL ||
+        write(trigger, "add\n", 4) != 4 || close(trigger))
+        return -1;
+
+    struct pollfd ready[] = {{listener, POLLIN, 0}, {route, POLLIN, 0}};
+    if (poll(ready, 2, 100) != 1 || !(ready[0].revents & POLLIN) || ready[1].revents)
+        return -1;
+    char data[256];
+    struct iovec payload = {data, sizeof(data)};
+
+    union {
+        struct cmsghdr align;
+        unsigned char bytes[CMSG_SPACE(sizeof(uint32_t) * 3)];
+    } ancillary;
+    struct msghdr message = {0};
+    message.msg_name = &sender;
+    message.msg_namelen = sizeof(sender);
+    message.msg_iov = &payload;
+    message.msg_iovlen = 1;
+    message.msg_control = ancillary.bytes;
+    message.msg_controllen = sizeof(ancillary.bytes);
+    const ssize_t bytes = recvmsg(listener, &message, 0);
+    const struct cmsghdr* info = CMSG_FIRSTHDR(&message);
+    if (bytes < 1 || message.msg_flags || message.msg_namelen != sizeof(sender) ||
+        sender.family != AF_NETLINK || sender.port != 0 || sender.groups != 1 || !info ||
+        info->cmsg_level != SOL_SOCKET || info->cmsg_type != scm_credentials ||
+        info->cmsg_len != CMSG_LEN(sizeof(uint32_t) * 3))
+        return -1;
+    const uint32_t expected[3] = {0};
+    if (memcmp(CMSG_DATA(info), expected, sizeof(expected)))
+        return -1;
+    const char prefix[] = "add@/devices/virtual/input/input1/event1\0ACTION=add\0"
+                          "DEVPATH=/devices/virtual/input/input1/event1\0SUBSYSTEM=input\0"
+                          "MAJOR=13\0MINOR=65\0DEVNAME=input/event1\0SYNTH_UUID=0\0SEQNUM=";
+    if (bytes <= (ssize_t)sizeof(prefix) || data[bytes - 1] ||
+        memcmp(data, prefix, sizeof(prefix) - 1))
+        return -1;
+    for (size_t i = sizeof(prefix) - 1; i < (size_t)bytes - 1; ++i)
+        if (data[i] < '0' || data[i] > '9')
+            return -1;
+    if (send(listener, prefix, sizeof(prefix), 0) != -1 || errno != EOPNOTSUPP || close(route) ||
+        close(listener))
+        return -1;
+    puts("BOOT_INPUT_UEVENT_PASS");
     return 0;
 }
 
@@ -166,7 +237,8 @@ int main(int argc, char** argv) {
     int fd = open("/boot-proof", O_RDONLY);
     if (argc != 1 || getpid() != 1 || fd < 0 ||
         read(fd, token, sizeof(token)) != sizeof(token) - 1 || close(fd) || check_framebuffer() ||
-        check_input_inventory() || (!access("/boot-usb-input", F_OK) && check_usb_input()))
+        check_input_inventory() || check_input_uevent() ||
+        (!access("/boot-usb-input", F_OK) && check_usb_input()))
         return 1;
     printf("BOOT_MEDIA_PASS %s %s\n", argv[0], token);
     fflush(stdout);

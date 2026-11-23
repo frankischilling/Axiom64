@@ -128,21 +128,24 @@ void insert_range(FileMapping& mapping) {
     *link = &mapping;
 }
 
-uint64_t read_disk_page(Node& node, uint64_t offset) {
+uint64_t resident_disk_page(Node& node, uint64_t offset) {
     if (auto dirty = dirty_disk_page(node, offset))
-        return page_try_retain(dirty->page) ? dirty->page : 0;
+        return dirty->page;
     // Resident aliases supply the cache. Each PTE owns one reference, so an
     // inode with no mappings retains no pages.
     for (auto map = node.disk_mappings; map; map = map->file_next) {
         if (offset < map->offset || offset - map->offset >= map->end - map->start)
             continue;
-        uint64_t pte = *map->space->entry(map->start + offset - map->offset);
-        if (pte & shared_page) {
-            uint64_t page = pte & page_mask;
-            return page_try_retain(page) ? page : 0;
-        }
+        auto pte = map->space->entry(map->start + offset - map->offset);
+        if (pte && (*pte & shared_page))
+            return *pte & page_mask;
     }
+    return 0;
+}
 
+uint64_t read_disk_page(Node& node, uint64_t offset) {
+    if (uint64_t page = resident_disk_page(node, offset))
+        return page_try_retain(page) ? page : 0;
     uint64_t page = page_alloc();
     if (!page)
         return 0;
@@ -155,6 +158,14 @@ uint64_t read_disk_page(Node& node, uint64_t offset) {
     return page;
 }
 } // namespace
+
+bool file_page_resident(const FileMapping& map, uint64_t address) {
+    const uint64_t offset = map.offset + (address - map.start);
+    if (map.memory_file)
+        return memfd_page_resident(*map.memory_file, offset);
+    return map.disk_file && offset < map.disk_file->size &&
+           resident_disk_page(*map.disk_file, offset);
+}
 
 uint64_t file_page_permissions(uint64_t pte) {
     pte &= ~3ull;

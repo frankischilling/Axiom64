@@ -29,6 +29,13 @@ GitHub Actions runs linked below document historical results. For current work,
 run the relevant native and guest suites before committing. Match the tests to
 the change and use the complete affected matrix when qualifying a feature.
 
+Run `make test-mincore` to check the memory residency syscall with static and
+dynamic musl programs on BIOS and UEFI NVMe guests. The probes exercise
+untouched anonymous pages, protection changes, unmapped holes, output faults,
+and vectors spanning more than one kernel buffer. They also check residency
+through memfd and ext2 aliases and verify that an ordinary user cannot read
+the cache state of a file they lack permission to write.
+
 For firmware and PCI changes, run `make test-clock-codec test-pci-interrupts
 test-acpi-routing` for sanitizer checks. Run `make test-udp` for interrupt
 delivery and polling on i440fx and Q35. Run `make test-file-locks

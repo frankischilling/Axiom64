@@ -704,6 +704,12 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         uint64_t extended;
         if (!stream.skip(1) || !stream.read(1, extended))
             return false;
+        if (extended == 0x33) { // Timer
+            if (!replay_initialization || !frame)
+                return false;
+            result = {Type::Integer, replay_time_100ns & integer_mask, {}, nullptr};
+            return true;
+        }
         if (extended >= 0x23 && extended <= 0x27)
             return frame && synchronize(extended, stream, scope, *frame, result, depth);
         // CondRefOf
@@ -1114,10 +1120,24 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
         case 0xa4: // Return
             return evaluate(stream, scope, &frame, result, depth + 1) &&
                    result.type != Type::None && !result.is_reference();
-        case 0x5b: // Extended opcode
+        case 0x5b: { // Extended opcode
+            const unsigned extended = stream.peek();
+            if (replay_initialization && (extended == 0x21 || extended == 0x22)) {
+                // This private replay has no firmware threads to schedule or hardware writes
+                // to complete. Advance its clock while leaving the live clock untouched.
+                stream.skip(1);
+                Value interval{};
+                const bool stall = extended == 0x21;
+                const uint64_t scale = stall ? 10 : 10000;
+                if (!evaluate(stream, scope, &frame, interval, depth + 1) ||
+                    interval.type != Type::Integer || (stall && interval.number > 255) ||
+                    interval.number > (UINT64_MAX - replay_time_100ns) / scale)
+                    return false;
+                replay_time_100ns += interval.number * scale;
+                break;
+            }
             if ((replay_initialization || read_pci_bars) &&
-                (stream.peek() == 0x80 || stream.peek() == 0x81)) {
-                const unsigned extended = stream.peek();
+                (extended == 0x80 || extended == 0x81)) {
                 stream.skip(1);
                 const bool declared = extended == 0x80
                                           ? declare_local_region(stream, scope, frame, depth)
@@ -1127,19 +1147,20 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
                 break;
             }
             [[fallthrough]]; // Other supported operations are evaluated as expressions.
-        case 0x70:           // Store
-        case 0x84:           // ConcatenateResTemplate
-        case 0x99:           // ToInteger
-        case 0x72:           // Add
-        case 0x74:           // Subtract
-        case 0x77:           // Multiply
-        case 0x75:           // Increment
-        case 0x76:           // Decrement
-        case 0x79:           // ShiftLeft
-        case 0x7a:           // ShiftRight
-        case 0x7b:           // And
-        case 0x7d:           // Or
-        case 0x80: {         // Bitwise Not
+        }
+        case 0x70:   // Store
+        case 0x84:   // ConcatenateResTemplate
+        case 0x99:   // ToInteger
+        case 0x72:   // Add
+        case 0x74:   // Subtract
+        case 0x77:   // Multiply
+        case 0x75:   // Increment
+        case 0x76:   // Decrement
+        case 0x79:   // ShiftLeft
+        case 0x7a:   // ShiftRight
+        case 0x7b:   // And
+        case 0x7d:   // Or
+        case 0x80: { // Bitwise Not
             Value ignored{};
             if (!evaluate(term, scope, &frame, ignored, depth + 1))
                 return false;
@@ -1495,6 +1516,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->change_emitted = false;
     space->link_evaluation = false;
     space->replay_initialization = false;
+    space->replay_time_100ns = 0;
     space->held_mutex_count = 0;
     space->active_methods = 0;
     space->method_sync_level = 0;

@@ -1000,7 +1000,7 @@ void hid_initialization_cases() {
         "_STA", sequence({block({0xa0}, sequence({name("LIVE"), {0xa4, 0x0a, 15}})), {0xa4, 0}}));
     const auto field = sequence({{0x8b}, name("RBUF"), {0x0a, 16}, name("ADDR")});
     const auto rename = sequence({{0x70, 0x0d}, name("ELAN0406"), {0}, name("_HID")});
-    const auto leak = sequence({{0x70, 1}, name("LEAK"), {0x5b, 0x22, 0}});
+    const auto leak = sequence({{0x70, 1}, name("LEAK"), {0x5b, 0x21, 0x0b, 0, 1}});
     const auto init = method(
         "_INI",
         block({0xa0}, sequence({{0x92}, name("LEAK"), rename, {0x70, 0x0a, 0x15}, name("ADDR")})));
@@ -1220,6 +1220,44 @@ void aml_sync_replay_cases() {
     assert(inspect(sync(0x25, "EVNT", {1})) == -1);
     assert(inspect(sync(0x23, "\\_GL", {0xff, 0xff})) == -1);
     std::puts("ACPI_AML_SYNC_PASS recursive acquire release levels event_count reset timeout");
+}
+
+void aml_timing_replay_cases() {
+    using namespace ax::Acpi;
+    const Bytes serial{0x8e, 19,   0, 2, 0,    1, 2,   0,   0,   1, 6,    0,
+                       0x80, 0x1a, 6, 0, 0x15, 0, 'I', '2', 'C', 0, 0x79, 0};
+    const Bytes timer{0x5b, 0x33};
+    const Bytes delay{0x5b, 0x22, 0x0a, 50};
+    const auto poll = block({0xa2}, sequence({{0x94, 0x60, 0, 0x76, 0x60}, delay}));
+    const auto init_clock =
+        block({0x14}, sequence({name("POLL"), {0, 0x70, 0x0a, 100, 0x60}, poll}));
+    const auto enable_if_elapsed =
+        block({0xa0}, sequence({{0x93, 0x74},
+                                timer,
+                                {0x61, 0, 0x0c, 0xee, 0xf0, 0xfa, 2, 0x70, 1},
+                                name("LIVE")})); // 100 x 50 ms plus 11 us, in 100-ns units.
+    auto inspect = [&](const Bytes& timing) {
+        const auto init = block(
+            {0x14}, sequence({name("_INI"), {0, 0x70}, timer, {0x61}, timing, enable_if_elapsed}));
+        const auto sta = block({0x14}, sequence({name("_STA"), {0, 0xa4}, name("LIVE")}));
+        const auto pad = block({0x5b, 0x82},
+                               sequence({name("TPAD"), data("_HID", {0x0c, 0x41, 0xd0, 0x0c, 0x50}),
+                                         sta, buffer("_CRS", serial)}));
+        auto table = definition(block(
+            {0x5b, 0x82}, sequence({name("PCI0"), data("LIVE", {0}), init_clock, init, pad})));
+        table[8] = 2;
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        I2cHidDevices devices{};
+        assert(decode_i2c_hid_devices(blocks, devices, {}, HidDiscovery::replay_initialization));
+        return devices;
+    };
+    assert(inspect(sequence({name("POLL"), {0x5b, 0x21, 0x0a, 11}})).count == 1);
+    assert(inspect({0x5b, 0x21, 0x0b, 0, 1}).initialization_failures == 1);
+    assert(inspect({0x5b, 0x22, 0xff}).initialization_failures == 1);
+    assert(inspect({0x5b, 0x22, 0x0d, 'X', 0}).initialization_failures == 1);
+    assert(inspect({0x5b, 0x22, 0x0b}).initialization_failures == 1);
+    std::puts("ACPI_AML_TIMING_PASS nested_poll elapsed_units operand_bounds");
 }
 
 void intel_gpio_replay_cases() {
@@ -1509,5 +1547,6 @@ int main() {
     aml_integer_match_cases();
     aml_pci_config_replay_cases();
     aml_sync_replay_cases();
+    aml_timing_replay_cases();
     intel_gpio_replay_cases();
 }

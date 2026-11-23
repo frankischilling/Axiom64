@@ -249,6 +249,7 @@ struct Namespace {
     bool change_emitted;
     bool link_evaluation;
     bool replay_initialization;
+    uint64_t replay_time_100ns;
     // The replay runs one AML thread in a private namespace.
     Object* held_mutexes[32];
     unsigned held_mutex_count = 0;

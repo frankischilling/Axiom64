@@ -43,14 +43,18 @@ Poll and epoll report read availability and capacity for a minimum acknowledgmen
 ## Input device events
 
 `AF_NETLINK` protocol `NETLINK_KOBJECT_UEVENT` exposes kernel input-device
-additions on multicast group 1. `recvmsg` supplies kernel credentials when
-`SO_PASSCRED` is enabled. Listeners can set their receive-buffer limit or
-join and leave group 1. If a listener's queue fills, an `ENOBUFS` error
-reports the loss. Route sockets and their port IDs remain independent.
+additions on multicast group 1. A device manager with `CAP_NET_ADMIN` can
+send processed events to group 2 and pass work to another event socket
+by port ID. With `SO_PASSCRED` enabled, `recvmsg` returns the credentials
+captured by the kernel when the datagram was sent. Listeners can adjust
+their receive buffer and independently join or leave either group. If a
+listener loses a multicast event because its queue is full, it receives
+`ENOBUFS`. Route sockets and their port IDs remain independent.
 
 Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`
 to request a coldplug event. The file uses normal owner write permissions.
-Userspace sends on this protocol and other event actions are unsupported.
+Group 1 is reserved for the kernel. Other device actions and ancillary
+credentials supplied by the sender are unsupported.
 The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)
 defines the datagram and coldplug format.
 

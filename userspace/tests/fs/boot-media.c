@@ -35,6 +35,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int check_input_inventory(void) {
@@ -73,7 +74,7 @@ static int check_input_uevent(void) {
     struct netlink_address {
         uint16_t family, padding;
         uint32_t port, groups;
-    } local = {AF_NETLINK, 0, 0, 1}, sender = {0};
+    } local = {AF_NETLINK, 0, 0x13579, 1}, sender = {0};
 
     enum { kernel_uevent = 15, so_passcred = 16, scm_credentials = 2 };
 
@@ -83,7 +84,7 @@ static int check_input_uevent(void) {
         return -1;
     socklen_t length = sizeof(local);
     if (getsockname(listener, (struct sockaddr*)&local, &length) || length != sizeof(local) ||
-        !local.port || local.groups != 1)
+        local.port != 0x13579 || local.groups != 1)
         return -1;
     local.groups = 0;
     int enabled = 1;
@@ -132,8 +133,77 @@ static int check_input_uevent(void) {
     for (size_t i = sizeof(prefix) - 1; i < (size_t)bytes - 1; ++i)
         if (data[i] < '0' || data[i] > '9')
             return -1;
-    if (send(listener, prefix, sizeof(prefix), 0) != -1 || errno != EOPNOTSUPP || close(route) ||
-        close(listener))
+    if (send(listener, prefix, sizeof(prefix), 0) != -1 || errno != EOPNOTSUPP)
+        return -1;
+
+    const int relay = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, kernel_uevent);
+    struct netlink_address processed = {AF_NETLINK, 0, 0, 2};
+    int joining = 2;
+    if (relay < 0 || bind(relay, (struct sockaddr*)&processed, sizeof(processed)) ||
+        setsockopt(relay, SOL_SOCKET, so_passcred, &enabled, sizeof(enabled)) ||
+        setsockopt(relay, 270, 1, &joining, sizeof(joining)))
+        return -1;
+    socklen_t processed_length = sizeof(processed);
+    if (getsockname(relay, (struct sockaddr*)&processed, &processed_length) ||
+        processed.port == local.port || !processed.port || processed.groups != 2)
+        return -1;
+
+    // A named send uses the transport address, but credentials identify the
+    // process even when the socket is bound to a different port.
+    struct netlink_address destination = {AF_NETLINK, 0, 0, 2};
+    const char event[] = "processed input";
+    if (sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+               sizeof(destination)) != sizeof(event))
+        return -1;
+    message.msg_namelen = sizeof(sender);
+    message.msg_controllen = sizeof(ancillary.bytes);
+    if (recvmsg(relay, &message, 0) != sizeof(event) || memcmp(data, event, sizeof(event)) ||
+        sender.port != local.port || sender.groups != 2)
+        return -1;
+    info = CMSG_FIRSTHDR(&message);
+    const uint32_t relay_credentials[] = {(uint32_t)getpid(), (uint32_t)getuid(),
+                                          (uint32_t)getgid()};
+    if (!info || info->cmsg_type != scm_credentials ||
+        memcmp(CMSG_DATA(info), relay_credentials, sizeof(relay_credentials)))
+        return -1;
+
+    destination.port = processed.port;
+    destination.groups = 0;
+    if (connect(listener, (struct sockaddr*)&destination, sizeof(destination)) ||
+        send(listener, event, sizeof(event), 0) != sizeof(event))
+        return -1;
+    message.msg_namelen = sizeof(sender);
+    message.msg_controllen = sizeof(ancillary.bytes);
+    if (recvmsg(relay, &message, 0) != sizeof(event) || memcmp(data, event, sizeof(event)) ||
+        sender.port != local.port || sender.groups != 0)
+        return -1;
+    info = CMSG_FIRSTHDR(&message);
+    if (!info || memcmp(CMSG_DATA(info), relay_credentials, sizeof(relay_credentials)))
+        return -1;
+
+    pid_t child = fork();
+    if (child < 0)
+        return -1;
+    if (child == 0) {
+        destination.groups = 2;
+        destination.port = 0;
+        if (setgid(1000) || setuid(1000) || send(listener, event, sizeof(event), 0) != -1 ||
+            errno != EPERM ||
+            sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+                   sizeof(destination)) != -1 ||
+            errno != EPERM)
+            _exit(1);
+        _exit(0);
+    }
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) ||
+        recv(relay, data, sizeof(data), 0) != -1 || errno != EAGAIN)
+        return -1;
+    destination.groups = 1;
+    destination.port = 0;
+    if (sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+               sizeof(destination)) != -1 ||
+        errno != EOPNOTSUPP || close(route) || close(relay) || close(listener))
         return -1;
     puts("BOOT_INPUT_UEVENT_PASS");
     return 0;

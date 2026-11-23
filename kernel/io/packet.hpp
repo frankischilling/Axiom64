@@ -118,6 +118,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
             if (!task.memory->space.copy_in(&request.netlink_destination, address,
                                             sizeof(NetlinkAddress)))
                 return -14;
+            request.netlink_destination_named = true;
         } else if (request.handle->inet6) {
             uint32_t length = address_length;
             if (length > 128)
@@ -173,7 +174,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (!request.write)
         return 0;
     if (request.handle->netlink) {
-        if (int error = netlink_target(request.netlink_destination))
+        if (int error = netlink_target(task, request.handle->netlink, request.netlink_destination))
             return error;
         if (request.packet_length > netlink_max_request)
             return -90;
@@ -255,8 +256,9 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.write) {
         if (request.handle->netlink)
-            return netlink_send(task, request.handle->netlink, request.packet_data,
-                                request.packet_length);
+            return netlink_send(
+                task, request.handle->netlink, request.packet_data, request.packet_length,
+                request.netlink_destination_named ? &request.netlink_destination : nullptr);
         if (request.handle->inet) {
             if (request.inet_output.header_included && request.inet_output.probe)
                 return int64_t(request.packet_length);
@@ -364,7 +366,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     if (f.rax == 47) {
         if (nl)
             control_length =
-                netlink_receive_control(task, request.handle->netlink, request.control_pointer,
+                netlink_receive_control(task, request.handle->netlink, *nl, request.control_pointer,
                                         request.control_capacity, message_flags);
         else if (ip)
             control_length =

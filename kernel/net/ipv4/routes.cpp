@@ -51,14 +51,14 @@ bool RouteTable::owns(uint64_t owner) const {
     return false;
 }
 
-int RouteTable::insert(const Ipv4Route& value, bool exclusive) {
+int RouteTable::insert(const Ipv4Route& value, bool exclusive, bool append) {
     for (const auto& slot : entries) {
         const auto& other = slot.entry.value;
         if (slot.installed && other.destination == value.destination && other.mask == value.mask &&
             other.metric == value.metric &&
             (exclusive || (other.index == value.index && other.gateway == value.gateway &&
                            other.protocol == value.protocol && other.scope == value.scope &&
-                           !slot.entry.preferred_source)))
+                           slot.entry.preferred_source == value.preferred_source)))
             return -17;
     }
     Slot* empty = nullptr;
@@ -69,7 +69,7 @@ int RouteTable::insert(const Ipv4Route& value, bool exclusive) {
         }
     if (!empty)
         return -105;
-    Entry entry{value};
+    Entry entry{value, 0, value.preferred_source};
     entry.value.preferred_source = 0;
     for (const auto& slot : entries)
         if (slot.installed && same_owner(entry, slot.entry)) {
@@ -80,6 +80,19 @@ int RouteTable::insert(const Ipv4Route& value, bool exclusive) {
         if (next_owner == UINT64_MAX)
             return -75;
         entry.owner = ++next_owner;
+    }
+    if (append) {
+        // A vacated slot before an older alias must not give a new alias precedence.
+        unsigned next = ipv4_address_capacity;
+        for (unsigned n = ipv4_address_capacity; n < capacity; n++)
+            if (entries[n].installed) {
+                if (n != next) {
+                    entries[next] = entries[n];
+                    entries[n] = {};
+                }
+                next++;
+            }
+        empty = &entries[next];
     }
     *empty = {entry, true};
     return 0;
@@ -92,6 +105,7 @@ int RouteTable::erase(const Ipv4Route& value, bool control, uint64_t& removed_ow
             other.destination == value.destination && other.mask == value.mask &&
             (!value.gateway || other.gateway == value.gateway) &&
             (!value.metric || other.metric == value.metric) &&
+            (!value.preferred_source || slot.entry.preferred_source == value.preferred_source) &&
             (!control || ((!value.protocol || other.protocol == value.protocol) &&
                           (value.scope == 255 || other.scope == value.scope)))) {
             removed_owner = slot.entry.owner;
@@ -108,6 +122,12 @@ int RouteTable::erase(const Ipv4Route& value, bool control, uint64_t& removed_ow
 void RouteTable::withdraw(unsigned index) {
     for (auto& slot : entries)
         if (slot.entry.value.index == index)
+            slot = {};
+}
+
+void RouteTable::withdraw_source(uint32_t source) {
+    for (auto& slot : entries)
+        if (slot.installed && !slot.entry.automatic && slot.entry.preferred_source == source)
             slot = {};
 }
 

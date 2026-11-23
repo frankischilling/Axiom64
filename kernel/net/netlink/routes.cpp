@@ -97,7 +97,7 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
         if (field.length != 8 || field.length > message.length - at)
             return -22;
         if (field.type != 1 && field.type != 4 && field.type != 5 && field.type != 6 &&
-            field.type != 15)
+            field.type != 7 && field.type != 15)
             return -95;
         if ((dump && field.type != 4 && field.type != 15) || (seen & (1u << field.type)))
             return -22;
@@ -112,6 +112,8 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
             value.gateway = __builtin_bswap32(number);
         else if (field.type == 6)
             value.metric = number;
+        else if (field.type == 7)
+            value.preferred_source = __builtin_bswap32(number);
         else if (number != 254)
             return -95;
         at += aligned(field.length);
@@ -134,9 +136,8 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
 
 size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter, uint8_t* output) {
     Ipv4Route routes[32 + ipv4_address_capacity + 1];
-    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 60 + 20 <= netlink_family_reply);
-    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 60 + netlink_ipv6_route_reply <=
-                  netlink_max_reply);
+    static_assert(32 * 76 + (ipv4_address_capacity + 1) * 60 + 20 <= netlink_ipv4_route_reply);
+    static_assert(netlink_ipv4_route_reply + netlink_ipv6_route_reply <= netlink_max_reply);
     size_t count = ipv4_routes(routes, sizeof(routes) / sizeof(routes[0])), size = 0;
     for (size_t i = 0; i < count; i++) {
         const auto& value = routes[i];
@@ -185,6 +186,7 @@ size_t routing_capacity(const NetlinkHeader& request, const void* data) {
         if (request.length > sizeof(request) &&
             static_cast<const uint8_t*>(data)[sizeof(request)] == 10)
             return netlink_ipv6_route_reply;
+        return netlink_ipv4_route_reply;
     }
     return netlink_family_reply;
 }
@@ -200,7 +202,7 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
     int error = -95;
     bool is_dump = request.type == 26;
     bool ipv6 = request.length > sizeof(request) && input[sizeof(request)] == 10;
-    unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? (ipv6 ? 0xe00 : 0x600) : 0);
+    unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? 0xe00 : 0);
     Ipv4Route value;
     if (request.type == 18 || request.type == 22) {
         size_t size = 0;
@@ -245,7 +247,8 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
                     } else
                         return size;
                 } else
-                    error = ipv4_route_control(value, request.type == 25, request.flags & 0x200);
+                    error = ipv4_route_control(value, request.type == 25, request.flags & 0x200,
+                                               request.flags & 0x800);
             }
         }
     }

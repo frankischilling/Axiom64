@@ -9,8 +9,8 @@ Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `
 | `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, IPv6, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
 | `RTM_NEWLINK`, `RTM_SETLINK` | Change administrative state and MTU on an existing Ethernet adapter with `CAP_NET_ADMIN`. A link change may set both fields in one request. IPv6 address-generation mode uses a separate request. |
 | `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family, including flags and cache information; IPv4 labels, local/peer address and optional broadcast; IPv6 prefix and scope |
-| `RTM_NEWROUTE` | IPv4 main-table unicast supports create with optional exclusive. IPv6 main-table unicast supports create with exclusive or append. IPv6 requires an explicit interface. IPv4 gateway routes can infer it from a configured subnet. |
-| `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters; optional acknowledgment |
+| `RTM_NEWROUTE` | Main-table unicast supports create with exclusive or append. IPv4 also supports create alone and accepts a local preferred source. IPv6 requires an explicit interface. IPv4 gateway routes can infer it from a configured subnet. |
+| `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters. IPv4 also accepts a preferred source filter. |
 | `RTM_GETROUTE` | Multipart dump with `NLM_F_DUMP`; IPv4 or unspecified family, optional protocol/interface filters; main-table unicast records followed by `NLMSG_DONE` and status |
 | `RTM_NEWADDR` | Insert an IPv4 local address, prefix, label, optional broadcast and lifetimes on an explicit physical interface; replace refreshes existing lifetimes without changing its identity |
 | `RTM_DELADDR` | Delete a matching address/label; a supplied peer also requires its exact prefix; a mismatch returns `EADDRNOTAVAIL` |
@@ -26,6 +26,8 @@ Address mutation requests validate the eight-byte `ifaddrmsg`, universe scope, p
 Link and address dumps accept complete zero-filter headers. With strict checking disabled, all three supported dump types also accept the legacy family-only `rtgenmsg` request used by BusyBox. Its alignment padding is ignored, as on Linux; padding bytes are not filter fields. Strict checking requires the complete header. Unsupported filters, attributes, and families fail before a reply is published. Link inventories contain at most eight physical interfaces and loopback. Address inventories retain every assigned label plus fixed loopback, followed by checked multipart completion. Compile-time size bounds keep the complete address and route inventories within the existing reply reservation. The software transmit queue length is zero because output goes directly to bounded driver descriptors; `SIOCGIFTXQLEN` reports that same value.
 
 Create/exclusive rejects an existing destination/prefix with the same priority, including a connected route at priority zero. Create without exclusive permits distinct next-hop/protocol aliases and rejects an identical route. Existing route ioctls retain their earlier behavior and report `RTPROT_BOOT` in dumps. Delete's zero gateway/priority/interface/protocol and nowhere scope are wildcard filters; callers managing ownership should supply explicit filters. Protocol tags describe routes and do not establish a security boundary between root processes.
+
+IPv4 create/append adds a route after earlier equal-priority aliases. `RTA_PREFSRC` is optional and must identify a local address when it is nonzero. New unbound output through that route uses this address. Explicitly selected socket sources still take precedence. Removing the last assignment of a preferred source withdraws the routes that specify it.
 
 IPv6 create/append accepts distinct interfaces or gateways at the same prefix and metric. A duplicate next hop returns `EEXIST`. Equal-priority routes with the same preference keep their insertion order when selecting a next hop. Removing a route by its gateway leaves the other route available. Multipath route attributes remain unsupported.
 
@@ -91,8 +93,7 @@ address and route notifications remain open. `SIOCETHTOOL` returns the
 bound Ethernet driver and PCI address with `ETHTOOL_GDRVINFO` and
 reports link state with `ETHTOOL_GLINK`.
 
-Wireless families, Ethernet activation through NetworkManager, and its
-Plasma integration remain open.
+NetworkManager activates Ethernet with DHCPv4 and IPv6 router discovery in installed guests. Wi-Fi and the Plasma applet still need validation.
 
 The route test also checks discovery, the missing-family error, multipart
 completion, port reuse across protocols, and kernel credentials. Run the

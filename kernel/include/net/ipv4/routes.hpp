@@ -44,10 +44,11 @@ class RouteTable {
     // Borrowed entries remain valid only until the next mutation.
     const Entry* at(unsigned position) const;
     bool owns(uint64_t owner) const;
-    int insert(const Ipv4Route&, bool exclusive);
+    int insert(const Ipv4Route&, bool exclusive, bool append = false);
     int erase(const Ipv4Route&, bool control, uint64_t& removed_owner);
     int synchronize(const AddressBook&, uint16_t active_interfaces = UINT16_MAX);
     void withdraw(unsigned index);
+    void withdraw_source(uint32_t source);
 
   private:
     struct Slot {

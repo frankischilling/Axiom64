@@ -129,7 +129,7 @@ void PathMtuCache::discard_route(uint64_t route_owner) {
 
 void PathMtuCache::discard_source(unsigned index, uint32_t preferred_source) {
     for (auto& entry : entries)
-        if (entry.key.index == index && entry.key.source == preferred_source)
+        if ((!index || entry.key.index == index) && entry.key.source == preferred_source)
             entry = {};
 }
 } // namespace ax::ip4

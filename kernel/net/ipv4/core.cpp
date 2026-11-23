@@ -983,6 +983,10 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index, boo
             path_mtu.discard_source(index, old->config.address);
         if (assigned(index, old->config.address))
             continue;
+        if (!ipv4_local(old->config.address)) {
+            routes.withdraw_source(old->config.address);
+            path_mtu.discard_source(0, old->config.address);
+        }
         ip4::reassembly_discard(old->config.address);
         for (auto& item : output) {
             if (!item.bytes || item.index != index)
@@ -1118,7 +1122,8 @@ int ipv4_administrative_changed(unsigned index) {
     return 0;
 }
 
-static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive) {
+static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive,
+                        bool append) {
     refresh_addresses();
     auto value = input;
     if (!ip4::mask_valid(value.mask) || (value.destination & value.mask) != value.destination)
@@ -1151,6 +1156,8 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
         return -19;
     if (!net_info(value.index)->administrative)
         return -100;
+    if (value.preferred_source && !ipv4_local(value.preferred_source))
+        return -22;
     auto preferred = addresses.preferred(value.index, value.gateway);
     const auto config = preferred ? &preferred->config : nullptr;
     if (value.gateway &&
@@ -1160,18 +1167,18 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
         return -101;
     if (value.scope == 255)
         value.scope = value.gateway ? 0 : 253;
-    int error = routes.insert(value, exclusive);
+    int error = routes.insert(value, exclusive, append);
     if (!error)
         retire_destinations();
     return error;
 }
 
 int ipv4_route(const Ipv4Route& value, bool remove) {
-    return change_route(value, remove, false, false);
+    return change_route(value, remove, false, false, false);
 }
 
-int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive) {
-    return change_route(value, remove, true, exclusive);
+int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive, bool append) {
+    return change_route(value, remove, true, exclusive, append);
 }
 
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {

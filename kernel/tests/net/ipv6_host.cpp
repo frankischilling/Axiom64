@@ -126,7 +126,7 @@ int ipv4_administrative_changed(unsigned) {
 void ipv4_receive(const NetInfo&, const void*, size_t) {
 }
 
-int ipv4_route_control(const Ipv4Route&, bool, bool) {
+int ipv4_route_control(const Ipv4Route&, bool, bool, bool) {
     return -95;
 }
 

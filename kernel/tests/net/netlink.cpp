@@ -54,7 +54,7 @@ const NetInfo* net_info(unsigned index) {
     return index && index <= 2 ? &information[index - 1] : nullptr;
 }
 
-int ipv4_route_control(const Ipv4Route& route, bool, bool) {
+int ipv4_route_control(const Ipv4Route& route, bool, bool, bool) {
     changes++;
     changed = route;
     return 0;
@@ -65,14 +65,10 @@ size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
         size_t count = capacity < 65 ? capacity : 65;
         for (size_t i = 0; i < count; i++) {
             bool automatic = i >= 32;
-            output[i] = {uint32_t(0x64400000 + (i << 8)),
-                         0xffffff00,
-                         automatic ? 0u : 0x0a170101u,
-                         unsigned(1 + i % 2),
-                         automatic ? 0u : unsigned(1000 + i),
-                         uint8_t(automatic ? 2 : 16),
-                         uint8_t(automatic ? 253 : 0),
-                         automatic ? uint32_t(0x64400001 + (i << 8)) : 0};
+            output[i] = {uint32_t(0x64400000 + (i << 8)),     0xffffff00,
+                         automatic ? 0u : 0x0a170101u,        unsigned(1 + i % 2),
+                         automatic ? 0u : unsigned(1000 + i), uint8_t(automatic ? 2 : 16),
+                         uint8_t(automatic ? 253 : 0),        uint32_t(0x64400001 + (i << 8))};
         }
         return count;
     }
@@ -92,7 +88,7 @@ size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
 static size_t evaluate(const uint8_t* packet, bool capped, uint8_t* saved) {
     NetlinkHeader request;
     memcpy(&request, packet, sizeof(request));
-    size_t capacity = routing_capacity(request);
+    size_t capacity = routing_capacity(request, packet);
     auto output = static_cast<uint8_t*>(std::malloc(capacity + 16));
     check(output, "bounded response allocation");
     memset(output, 0xa5, capacity + 16);
@@ -157,6 +153,19 @@ int main() {
         check(evaluate(truncated, true, result) == 36 && changes == before,
               "truncated routing body never changes route storage");
     }
+    NetlinkHeader append{68, 24, 0xc05, 71, 0};
+    uint8_t dhcp[68]{};
+    const uint8_t default_route[]{2, 0, 0, 0, 254, 16, 0, 1, 0, 0, 0, 0};
+    const uint8_t fields[]{8,  0,  15, 0, 254, 0, 0, 0, 8,   0, 4, 0, 1, 0, 0, 0, 8,  0,  5, 0,
+                           10, 23, 1,  1, 8,   0, 6, 0, 100, 0, 0, 0, 8, 0, 7, 0, 10, 23, 1, 40};
+    memcpy(dhcp, &append, sizeof(append));
+    memcpy(dhcp + 16, default_route, sizeof(default_route));
+    memcpy(dhcp + 28, fields, sizeof(fields));
+    unsigned before = changes;
+    check(evaluate(dhcp, true, result) == 36 && changes == before + 1 && !changed.mask &&
+              changed.gateway == 0x0a170101 && changed.index == 1 && changed.metric == 100 &&
+              changed.protocol == 16 && changed.preferred_source == 0x0a170128,
+          "DHCP default route append retains its preferred source");
     header.type = 26;
     header.flags = 1 | 0x300;
     header.length = 28;
@@ -206,7 +215,7 @@ int main() {
         }
         at += record.length;
     }
-    check(records == 65 && preferred_sources == 33 && dumped == 4176,
+    check(records == 65 && preferred_sources == 65 && dumped == netlink_ipv4_route_reply,
           "full explicit and automatic inventories fit the exact reserved reply");
     full_inventory = false;
     packet[21] = 16;

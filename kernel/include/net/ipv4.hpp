@@ -96,7 +96,7 @@ int ipv4_administrative_changed(unsigned index);
 int ipv4_route(const Ipv4Route&, bool remove);
 
 // Routing control retains protocol/scope and applies Linux deletion filters.
-int ipv4_route_control(const Ipv4Route&, bool remove, bool exclusive);
+int ipv4_route_control(const Ipv4Route&, bool remove, bool exclusive, bool append = false);
 
 size_t ipv4_routes(Ipv4Route*, size_t capacity);
 

@@ -36,7 +36,7 @@ ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py scripts/build_
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
 ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h) build/desktop-terminal build/desktop-session-bus
 ROOTFS_INPUTS += $(DOOM_INPUTS) mk/rootfs.mk
-ROOTFS_INPUTS += scripts/build_cupidfetch.py
+ROOTFS_INPUTS += scripts/build_cupidfetch.py $(wildcard vendor/auto-eduroam/*)
 
 build/desktop-session-bus: userspace/desktop/session-bus.c
 	@mkdir -p build

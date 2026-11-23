@@ -20,6 +20,17 @@ network applet. The package and source locks include the applet, its KDE
 libraries, QCoro, and Qt WebSockets. See [persistent root boot](disk-root.md)
 for service startup and connection storage.
 
+The installed desktop includes `connect-eduroam` and `nmcli`. Run
+`connect-eduroam` from a terminal on the normal NVMe boot once Wi-Fi is
+available. The helper supports PEAP/MSCHAPv2. Use the CA certificate and
+authentication server domain from your school's instructions. NetworkManager
+asks for the password during activation and saves the profile without it.
+Reconnect from Plasma or run `nmcli --ask connection up "Axiom64 eduroam"`.
+
+The source bundle includes the upstream [auto-eduroam](https://github.com/frankischilling/auto-eduroam)
+revision, the adapted script, and the GPL notice. Association and internet
+access still need validation on the Blade.
+
 The installed desktop also ships btop 1.4.0. It reads live CPU and memory data,
 process names and arguments, and mounted filesystem capacity. The first desktop
 login adds a btop shortcut and creates a default configuration that uses the

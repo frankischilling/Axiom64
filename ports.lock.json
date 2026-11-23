@@ -5573,6 +5573,19 @@
       "installed_only": true
     },
     {
+      "name": "networkmanager-cli",
+      "version": "1.52.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/networkmanager-cli-1.52.1-r0.apk",
+      "archive": "networkmanager-cli-1.52.1-r0.apk",
+      "sha256": "c0830b81070497d2f126a69055dc1d505337561a713c1182a4f81791abb6131a",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://wiki.gnome.org/Projects/NetworkManager",
+      "origin": "networkmanager",
+      "source_commit": "cead0149994fd25246c88b86b2fc45dc9d5cc070",
+      "installed_only": true
+    },
+    {
       "name": "networkmanager-qt",
       "version": "6.13.0-r0",
       "repository": "community",

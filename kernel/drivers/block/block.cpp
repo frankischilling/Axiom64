@@ -487,6 +487,11 @@ size_t block_direct_sectors(unsigned device) {
     return is_nvme(device) ? nvme_transfer_limit(device % max_disks - nvme_first) : 1;
 }
 
+static uint64_t cache_limit(uint64_t total_memory) {
+    constexpr uint64_t maximum = 128 * 1024 * 1024;
+    return min(total_memory / 32, maximum);
+}
+
 int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* owner) {
     auto volume = volume_for(device);
     if (!volume)
@@ -499,12 +504,24 @@ int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* 
     // A floppy may be ejected, so reads must reach the controller's change check.
     if (device % max_disks >= floppy_first)
         return 0;
+    constexpr uint64_t mib = 1024 * 1024;
+    const auto ram = physical_memory_stats();
+    const auto limit = cache_limit(ram.total);
+    if (buffer_bytes >= limit)
+        return 0;
+    const auto sets =
+        BlockCache::sets_for_budget(sectors_per_block, min(limit - buffer_bytes, 64 * mib));
+    if (!sets)
+        return 0;
     auto cache = static_cast<BlockCache*>(alloc(sizeof(BlockCache)));
     if (!cache)
-        return -12;
-    cache->initialize(sectors_per_block);
+        return 0;
+    if (!cache->initialize(sectors_per_block, sets)) {
+        release(cache);
+        return 0;
+    }
     volume->cache = cache;
-    buffer_bytes += sizeof(BlockCache);
+    buffer_bytes += cache->allocated_bytes();
     return 0;
 }
 
@@ -516,8 +533,15 @@ int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count
     if (cache && cache->read(sector, data, count))
         return 0;
     int result = block_read(device, sector, data, count);
-    if (!result && cache)
-        cache->remember(sector, data, count);
+    if (!result && cache) {
+        const auto ram = physical_memory_stats();
+        const auto before = cache->allocated_bytes();
+        constexpr uint64_t max_growth_floor = 32 * 1024 * 1024;
+        const bool allow_growth = buffer_bytes + cache->growth_bytes() <= cache_limit(ram.total) &&
+                                  ram.free > min(ram.total / 8, max_growth_floor);
+        cache->remember(sector, data, count, allow_growth);
+        buffer_bytes += cache->allocated_bytes() - before;
+    }
     return result;
 }
 
@@ -550,8 +574,9 @@ void block_unclaim(unsigned device, const void* owner) {
         link = &(*link)->next_claim;
     *link = volume->next_claim;
     if (volume->cache) {
+        buffer_bytes -= volume->cache->allocated_bytes();
+        volume->cache->destroy();
         release(volume->cache);
-        buffer_bytes -= sizeof(BlockCache);
         volume->cache = nullptr;
     }
     volume->owner = nullptr;

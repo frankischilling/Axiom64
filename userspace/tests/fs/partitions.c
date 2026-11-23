@@ -105,15 +105,18 @@ int main(void) {
         CHECK(pwrite(rawfd, "q", 1, end) == -1 && errno == ENOSPC);
         CHECK(fsync(rawfd) == 0);
     }
+    // Finish root writes and lookups before measuring the sibling cache.
+    persisted("/persisted", verify);
+    CHECK(stat("/mnt", &info) == 0 && S_ISDIR(info.st_mode));
     uint64_t before = buffer_bytes();
-    CHECK(before >= 512 * 1024);
+    CHECK(before > 0);
     CHECK(mount(sibling, "/mnt", "ext2", 0, NULL) == 0);
     uint64_t mounted = buffer_bytes();
-    CHECK(mounted >= before + 512 * 1024 && mounted < before + 520 * 1024);
+    CHECK(mounted > before && mounted - before <= 64 * 1024 * 1024);
     CHECK(pwrite(siblingfd, buffer, sizeof(buffer), 0) == -1 && errno == EBUSY);
     CHECK(mount(sibling, "/other", "ext2", 0, NULL) == -1 && errno == EBUSY);
-    persisted("/persisted", verify);
     persisted("/mnt/persisted", verify);
+    CHECK(buffer_bytes() >= mounted);
     CHECK(umount("/mnt") == 0);
     CHECK(buffer_bytes() == before);
     int reopened = open(sibling, O_WRONLY);

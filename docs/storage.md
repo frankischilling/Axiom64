@@ -97,9 +97,11 @@ Syscalls run on one CPU with interrupts masked, which serializes queue access an
 
 ## Buffer cache
 
-A filesystem can enable a read-through cache after claiming and validating a volume. Each cache holds up to 128 aligned blocks of 512, 1,024, 2,048, or 4,096 bytes, with one block size per claim. Collisions replace an entry. Cache misses go to the device and only successful complete reads fill the cache. Raw reads, mount validation, and journal recovery can read the device directly.
+A filesystem can enable a read-through cache after claiming and validating a volume. The cache stores aligned blocks of 512, 1,024, 2,048, or 4,096 bytes, with one block size per claim. Four blocks can share an index before the least recently used entry is replaced. Backing memory is allocated on demand. The cache stops growing when free memory reaches the smaller of 32 MiB or one eighth of usable physical memory.
 
-Writes go through to the device. They invalidate all overlapping cached blocks before submission, including writes that later fail. An explicit flush retains its device semantics. Caches hold clean data only. Releasing the claim drops the cache, and `sysinfo.bufferram` accounts for all active cache allocations. Overlapping writable aliases are excluded while the claim is held. Disjoint partitions retain independent caches.
+Volumes share a budget of one thirty-second of usable physical memory and at most 128 MiB. Each volume can use up to 64 MiB, including metadata and allocation overhead. Backing memory that has yet to be allocated is available to other volumes. Failed optional allocations leave ordinary disk reads available. Cache misses go to the device, and only successful complete reads fill the cache. Raw reads, mount validation, and journal recovery can read the device directly.
+
+Writes go through to the device. They invalidate all overlapping cached blocks before submission, including writes that later fail. An explicit flush retains its device semantics. Caches hold clean data only. Releasing the claim drops the cache, and `sysinfo.bufferram` accounts for the backing buffers and metadata that are present. Overlapping writable aliases are excluded while the claim is held. Disjoint partitions retain independent caches.
 
 ## Format an image inside Axiom64
 

@@ -32,6 +32,7 @@ ProcessLimits::ProcessLimits(uint64_t descriptor_capacity)
         value = {resource_infinity, resource_infinity};
     values_[unsigned(Resource::open_files)] = {descriptor_capacity, descriptor_capacity};
     values_[unsigned(Resource::stack)].soft = 8 * 1024 * 1024;
+    values_[unsigned(Resource::locked_memory)] = {8 * 1024 * 1024, 8 * 1024 * 1024};
     values_[unsigned(Resource::core)].soft = 0;
     values_[unsigned(Resource::message_queue)] = {819200, 819200};
     values_[unsigned(Resource::nice)] = {0, 0};

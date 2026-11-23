@@ -185,6 +185,16 @@ int main(void) {
     CHECK(futex(words, WAIT | PRIVATE, 43, 0, 0, 0) == -1 && errno == EAGAIN);
     CHECK(futex(words, WAIT | PRIVATE, 44, &immediate, 0, 0) == -1 && errno == ETIMEDOUT);
     CHECK(futex(words, WAIT, 44, &invalid, 0, 0) == -1 && errno == EINVAL);
+    const struct timespec relative = {0, 30000000};
+    for (unsigned attempt = 0; attempt < 8; ++attempt) {
+        struct timespec before, after;
+        CHECK(clock_gettime(CLOCK_MONOTONIC, &before) == 0);
+        CHECK(futex(words, WAIT | PRIVATE, 44, &relative, 0, 0) == -1 && errno == ETIMEDOUT);
+        CHECK(clock_gettime(CLOCK_MONOTONIC, &after) == 0);
+        int64_t elapsed =
+            (after.tv_sec - before.tv_sec) * INT64_C(1000000000) + after.tv_nsec - before.tv_nsec;
+        CHECK(elapsed >= relative.tv_nsec);
+    }
     CHECK(futex(words, WAKE | PRIVATE, -1, 0, 0, 0) == 0);
     CHECK(futex(words, WAKE_BITSET | PRIVATE, 1, 0, 0, 0) == -1 && errno == EINVAL);
     CHECK(futex((uint32_t*)((char*)words + 1), WAIT, 44, 0, 0, 0) == -1 && errno == EINVAL);

@@ -234,6 +234,15 @@ int account_home_create_key(const char* path, uid_t uid, gid_t gid,
     return create(path, uid, gid, key, output);
 }
 
+static int link_eduroam(int fd) {
+    const char* bundle = "/usr/share/axiom64/auto-eduroam";
+    if (access(bundle, X_OK) < 0)
+        return errno == ENOENT ? 0 : -1;
+    if (symlinkat(bundle, fd, "auto-eduroam") < 0)
+        return errno == EEXIST ? 0 : -1;
+    return fsync(fd);
+}
+
 int account_home_finish(struct account_home* home, int published) {
     if (!home)
         return 0;
@@ -252,6 +261,8 @@ int account_home_finish(struct account_home* home, int published) {
         int matched = entry(home, home->name, &value);
         if (matched != 1)
             error = matched < 0 ? errno : ESTALE;
+        else if (link_eduroam(home->fd) < 0)
+            error = errno;
     } else {
         int removed = 0;
         const char* names[] = {home->temporary, home->name};
@@ -303,6 +314,8 @@ static int recover_entry(struct account_home* home, const char* name, int publis
             error = matched < 0 ? errno : ESTALE;
     }
     if (!error && !published && unlinkat(home->directory, name, AT_REMOVEDIR) < 0)
+        error = errno;
+    if (!error && published && link_eduroam(fd) < 0)
         error = errno;
     if (close(fd) < 0 && !error)
         error = errno;

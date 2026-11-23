@@ -35,8 +35,8 @@ ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_ope
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py scripts/build_curl.py scripts/ca_bundle.py
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
 ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h) build/desktop-terminal build/desktop-session-bus
-ROOTFS_INPUTS += $(DOOM_INPUTS) mk/rootfs.mk
-ROOTFS_INPUTS += scripts/build_cupidfetch.py $(wildcard vendor/auto-eduroam/*)
+ROOTFS_INPUTS += $(DOOM_INPUTS) $(EDUROAM_INPUTS) mk/rootfs.mk
+ROOTFS_INPUTS += scripts/build_cupidfetch.py
 
 build/desktop-session-bus: userspace/desktop/session-bus.c
 	@mkdir -p build
@@ -54,7 +54,7 @@ build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
-build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam | busybox
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam $(wildcard vendor/cmake/*.cmake) | busybox
 	$(PYTHON) scripts/rootfs.py --profile installed-desktop
 
 image: build/axiom64.elf build/rootfs.cpio

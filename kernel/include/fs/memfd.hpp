@@ -45,6 +45,7 @@ int memfd_map(Task&, Handle&, uint64_t base, size_t length, uint64_t offset, int
               bool replace);
 void memfd_link_mapping(FileMapping&);
 void memfd_unlink_mapping(FileMapping&);
+bool memfd_page_resident(Node&, uint64_t offset);
 enum class FileFault;
 FileFault memfd_fault(FileMapping&, uint64_t offset, uint64_t& pte, bool write);
 } // namespace ax

@@ -4,6 +4,33 @@ The kernel implements the Linux x86-64 ABI itself. The host builds static tests,
 
 Native development tools are GCC 14.2.0, binutils 2.44, Make 4.4.1, and NASM 2.16.03. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. The native toolchain test assembles an x86-64 ELF object and links and calls it from C. It also checks compiler diagnostics and builds a C++ shared library inside the guest. A separate executable loads the library with `dlopen`, catches its exceptions across the library boundary, and verifies that two threads use independent thread-local state.
 
+The installed desktop includes the native C and C++ toolchain and its
+development headers. Run `gcc`, `g++`, `as`, `ld`, or `make` from an
+ordinary terminal. The smaller desktop initramfs leaves out the toolchain.
+Build with `make build/axiom64.elf build/rootfs-installed-desktop.cpio` and run
+`python3 scripts/installed_toolchain_test.py` to check the installed profile.
+The test compiles and runs the examples as a signed-in user on BIOS and UEFI
+NVMe guests. It also clones a Git repository, builds a C and C++ project
+with Ninja, runs it through CTest, and searches files and output with ripgrep.
+
+The installed desktop ships Git 2.49.1, CMake 3.31.7, Ninja 1.12.1, and
+ripgrep 14.1.1. The port locks pin their Alpine packages, needed libraries,
+source archives, and build recipes. CMake recognizes Axiom64 and uses the ELF
+shared-library settings for its Linux ABI. Git, CMake, and ripgrep manual
+pages are under `/usr/share/man`.
+
+New accounts get an `auto-eduroam` folder with the setup helper and its
+instructions. Existing accounts get it at desktop sign-in if that path is
+available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.
+Connection setup needs NetworkManager, a supported Wi-Fi device, and the
+CA certificate and authentication server domain supplied by your school.
+
+The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
+UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools
+under `/usr/bin` in scripts that put `/bin` first. Their manual pages are in
+`/usr/share/man/man1`. The port locks pin the packages, source archives, and
+Alpine patches. The source bundle includes the upstream licenses.
+
 The installed desktop profile sets Thunar 4.20.3 as the system default for folders and adds a shortcut to each account's desktop. The profile includes the GTK runtime, icons, and shared MIME database. The graphical session builds the image loader cache under the user's cache directory. The port manifests pin the packages and the corresponding source recipes.
 
 All image profiles ship the pinned Alpine D-Bus 1.16.2 daemon, tools and client library. The source bundle carries the upstream sources, notices and Alpine recipe. The test probe builds against the matching development headers, which stay out of the boot images. See [the D-Bus service and session setup](accounts.md#d-bus).
@@ -15,21 +42,11 @@ includes the pinned Alpine recipes, the Go runtime and modules linked into
 `kitten`, and the release archive for its bundled symbol font. The full and
 desktop profiles use the smaller framebuffer session with xterm.
 
-The installed desktop includes NetworkManager 1.52.1 and the Plasma 6.3.6
-network applet. The package and source locks include the applet, its KDE
-libraries, QCoro, and Qt WebSockets. See [persistent root boot](disk-root.md)
-for service startup and connection storage.
-
-The installed desktop includes `connect-eduroam` and `nmcli`. Run
-`connect-eduroam` from a terminal on the normal NVMe boot once Wi-Fi is
-available. The helper supports PEAP/MSCHAPv2. Use the CA certificate and
-authentication server domain from your school's instructions. NetworkManager
-asks for the password during activation and saves the profile without it.
-Reconnect from Plasma or run `nmcli --ask connection up "Axiom64 eduroam"`.
-
-The source bundle includes the upstream [auto-eduroam](https://github.com/frankischilling/auto-eduroam)
-revision, the adapted script, and the GPL notice. Association and internet
-access still need validation on the Blade.
+The installed desktop includes NetworkManager 1.52.1, `nmcli`, and the
+Plasma 6.3.6 network applet. The package and source locks include the Wi-Fi
+backend, wpa_supplicant, the applet, and its libraries. See
+[persistent root boot](disk-root.md) for service startup and connection storage.
+Wi-Fi association on the Blade needs the Intel wireless driver.
 
 The installed desktop also ships btop 1.4.0. It reads live CPU and memory data,
 process names and arguments, and mounted filesystem capacity. The first desktop

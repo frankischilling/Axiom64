@@ -43,6 +43,7 @@ PAYLOAD = b"NVMe persisted\n\0"
 SECTORS = 8192
 PARTUUID = "PARTUUID=68ce920d-01"
 DATA_PASS = "NVME_DATA_PASS sparse_ids two_controllers io_errors queue_wrap transfer_boundaries"
+SPARSE_PASS = "NVME_SPARSE_READ_PASS hole eof truncate"
 
 
 def run(directory, machine, firmware, iso, namespaces, markers, *, dual=False, zoned=(), pxe=None):
@@ -163,7 +164,8 @@ def boot_installed_disk(output, seed):
         disk_sha256 = digest(installed)
         result = run(output / f"installed-uefi-{phase}", "q35", "uefi", None,
                      [(0, 1, installed, 512)],
-                     [marker, f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0"])
+                     [marker, f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0",
+                      *([SPARSE_PASS] if phase == "write" else [])])
         results.append(dict(result, boot_disk_sha256=disk_sha256))
     pxe = output / "installed-pxe"
     build_medium("pxe", pxe, ROOT / "build/axiom64.elf", None, " test",
@@ -241,7 +243,8 @@ def main():
             selector = "/dev/nvme0n7"
             cases.append(run(output / f"{prefix}-root-{phase}", machine, firmware, root_images[selector],
                              [(0, 7, root, 512)],
-                             [marker, f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0"]))
+                             [marker, f"VFS_ROOT_PASS filesystem=ext2 device={selector} readonly=0",
+                              *([SPARSE_PASS] if phase == "write" else [])]))
         verify_fs(root)
         partition = output / f"{prefix}-partition.raw"
         mbr = bytearray(original[:SECTOR])

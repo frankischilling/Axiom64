@@ -534,6 +534,10 @@ void memfd_unlink_mapping(FileMapping& mapping) {
     collect(memory);
 }
 
+bool memfd_page_resident(Node& node, uint64_t offset) {
+    return offset < node.size && data_page(file(&node), offset / page_size, false);
+}
+
 FileFault memfd_fault(FileMapping& map, uint64_t offset, uint64_t& pte, bool write) {
     uint64_t state = pte;
     auto& memory = file(map.memory_file);

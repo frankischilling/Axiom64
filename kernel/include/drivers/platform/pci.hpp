@@ -34,6 +34,13 @@ struct Mcfg;
 struct DefinitionBlocks;
 } // namespace Acpi
 
+struct PciAddress {
+    uint16_t segment;
+    uint8_t bus, slot, function;
+};
+
+enum class PciBusParent { root, bridge, ambiguous };
+
 struct PciFunction {
     uint8_t bus, slot, function;
     uint16_t segment;
@@ -110,4 +117,5 @@ class PciIntx {
 void pci_configure_ecam(const Acpi::Mcfg&);
 void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t link_gsis);
 void pci_scan(void (*visit)(const PciFunction&));
+PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress&);
 } // namespace ax

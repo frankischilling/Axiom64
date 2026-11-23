@@ -503,6 +503,28 @@ void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint
     }
 }
 
+PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress& address) {
+    if (!bus)
+        return PciBusParent::root;
+    discover_bridges();
+    if (bridges.overflow)
+        return PciBusParent::ambiguous;
+    const auto parent = Acpi::parent_bridge(bridges, segment, bus);
+    if (parent.invalid)
+        return PciBusParent::ambiguous;
+    if (parent.bridge) {
+        const auto& bridge = *parent.bridge;
+        address = {segment, bridge.primary, bridge.slot, bridge.function};
+        return PciBusParent::bridge;
+    }
+    for (unsigned i = 0; i < bridges.count; ++i) {
+        const auto& bridge = bridges.entries[i];
+        if (bridge.segment == segment && bus >= bridge.secondary && bus <= bridge.subordinate)
+            return PciBusParent::ambiguous;
+    }
+    return PciBusParent::root;
+}
+
 void pci_scan(void (*visit)(const PciFunction&)) {
     discover_bridges();
     log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(visit)));

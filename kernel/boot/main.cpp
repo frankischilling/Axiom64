@@ -29,6 +29,7 @@
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/platform/pci_inventory.hpp"
 #include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
@@ -127,6 +128,7 @@ BootInfo boot_info;
     if (usb_keyboard)
         xhci_keyboard_init();
     net_init();
+    publish_pci_inventory();
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

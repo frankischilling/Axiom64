@@ -1169,8 +1169,10 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
                 for (unsigned key = 272; key < 275; key++)
                     buffer[key / 8] |= 1 << (key % 8);
         } else if (number == 0x22) {
-            if (kind == Device::mouse)
-                buffer[0] = 3;
+            if (kind == Device::mouse) {
+                buffer[0] = 3; // REL_X and REL_Y.
+                buffer[1] = 1; // REL_WHEEL.
+            }
         } else if (number == 0x18)
             memcpy(buffer, keys, min(sizeof(keys), size_t(size)));
         else if (number == 0x90)
@@ -1391,7 +1393,7 @@ void usb_keyboard_event(unsigned code, bool pressed) {
     keyboard_event(usb_keys, code, pressed);
 }
 
-static void mouse_event(uint8_t& source, int dx, int dy, uint8_t buttons) {
+static void mouse_event(uint8_t& source, int dx, int dy, uint8_t buttons, int wheel) {
     const auto before = ps2_mouse_buttons | usb_mouse_buttons;
     source = buttons & 7;
     const auto after = ps2_mouse_buttons | usb_mouse_buttons;
@@ -1399,14 +1401,16 @@ static void mouse_event(uint8_t& source, int dx, int dy, uint8_t buttons) {
         event(mouse_events, 2, 0, dx);
     if (dy)
         event(mouse_events, 2, 1, dy);
+    if (wheel)
+        event(mouse_events, 2, 8, wheel);
     for (unsigned k = 0; k < 3; ++k)
         if ((before ^ after) & (1 << k))
             event(mouse_events, 1, 272 + k, (after >> k) & 1);
     event(mouse_events, 0, 0, 0);
 }
 
-void usb_mouse_event(int dx, int dy, uint8_t buttons) {
-    mouse_event(usb_mouse_buttons, dx, dy, buttons);
+void usb_mouse_event(int dx, int dy, uint8_t buttons, int wheel) {
+    mouse_event(usb_mouse_buttons, dx, dy, buttons, wheel);
 }
 
 void devices_poll() {
@@ -1438,7 +1442,7 @@ void devices_poll() {
             uint8_t buttons = mouse_packet[0] & 7;
             int dx = mouse_packet[1] - (mouse_packet[0] & 0x10 ? 256 : 0),
                 dy = mouse_packet[2] - (mouse_packet[0] & 0x20 ? 256 : 0);
-            mouse_event(ps2_mouse_buttons, dx, -dy, buttons);
+            mouse_event(ps2_mouse_buttons, dx, -dy, buttons, 0);
         } else {
             if (byte == 0xfa)
                 continue;

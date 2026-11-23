@@ -28,6 +28,7 @@
 #include "drivers/platform/pci.hpp"
 #include "drivers/platform/poll.hpp"
 #include "drivers/usb/hid_keyboard.hpp"
+#include "drivers/usb/hid_mouse.hpp"
 #include "mm/dma.hpp"
 
 namespace ax {
@@ -87,6 +88,7 @@ struct BootEndpoint {
 
 struct BootEndpoints {
     BootEndpoint keyboard, mouse;
+    unsigned mouse_report_bytes;
 };
 
 struct ReportEndpoint {
@@ -177,7 +179,8 @@ bool parse_configuration(const uint8_t* bytes, unsigned length, BootEndpoints& b
                 else if (item[7] == 2)
                     protocol = BootProtocol::mouse;
             }
-        } else if (item[1] == 0x21 && report_interface && item[0] >= 9 && item[6] == 0x22) {
+        } else if (item[1] == 0x21 && (report_interface || protocol == BootProtocol::mouse) &&
+                   item[0] >= 9 && item[6] == 0x22) {
             report_bytes = descriptor_word(item + 7);
         } else if (item[1] == 5) {
             if (item[0] < 7)
@@ -191,8 +194,11 @@ bool parse_configuration(const uint8_t* bytes, unsigned length, BootEndpoints& b
                           report_bytes};
             auto& input = protocol == BootProtocol::keyboard ? boot.keyboard : boot.mouse;
             if (protocol != BootProtocol::none && !input.address && interrupt_in &&
-                packet >= report_size(protocol) && packet <= 1024)
+                packet >= report_size(protocol) && packet <= 1024) {
                 input = {interface, item[2], packet, item[6], protocol};
+                if (protocol == BootProtocol::mouse && report_bytes <= 512)
+                    boot.mouse_report_bytes = report_bytes;
+            }
         }
         offset += item[0];
     }
@@ -278,6 +284,7 @@ struct Controller {
         uint64_t buffer = 0, ring = 0;
         unsigned transfer_bytes = 0;
         HidKeyboardLayout layout{};
+        HidMouseLayout mouse_layout{};
         uint8_t previous_flags = 0, previous_keys[max_hid_keyboard_keys]{};
     };
 
@@ -574,8 +581,20 @@ struct Controller {
         write(doorbell, input.slot * 4, input.endpoint);
     }
 
+    HidMouseLayout mouse_layout(unsigned slot, const BootEndpoint& descriptor, unsigned length) {
+        HidMouseLayout layout{};
+        const uint64_t interface = uint64_t(descriptor.interface) << 32;
+        if (!length || !control_transfer(slot, interface | 0x22000681, length))
+            return {};
+        const auto* bytes = static_cast<const uint8_t*>(physical(devices[slot] + 3 * page_size));
+        if (!hid_mouse_layout(bytes, length, layout) || layout.bytes > descriptor.packet ||
+            !control_transfer(slot, interface | 0x010b21, 0))
+            return {};
+        return layout;
+    }
+
     bool start_input(unsigned slot, unsigned port, unsigned speed, const BootEndpoint& descriptor,
-                     bool second_boot_endpoint) {
+                     bool second_boot_endpoint, unsigned mouse_report_bytes) {
         if (input_count == max_input_devices)
             return false;
         const unsigned endpoint = 2 * (descriptor.address & 15) + 1;
@@ -586,9 +605,10 @@ struct Controller {
                 return false;
             additional_input_pages[slot][0] = buffer;
         }
-        const unsigned wanted = report_size(descriptor.protocol);
+        const auto mouse = mouse_layout(slot, descriptor, mouse_report_bytes);
+        const unsigned wanted = mouse.bytes ? mouse.bytes : report_size(descriptor.protocol);
         if (!configure_input_endpoint(slot, descriptor, speed, endpoint, buffer + page_size, wanted,
-                                      true))
+                                      !mouse.bytes))
             return false;
         auto& input = inputs[input_count++];
         input.slot = slot;
@@ -598,6 +618,7 @@ struct Controller {
         input.buffer = buffer;
         input.ring = buffer + page_size;
         input.transfer_bytes = descriptor.packet;
+        input.mouse_layout = mouse;
         if (input.protocol == BootProtocol::keyboard)
             input.layout = boot_keyboard_layout;
         return true;
@@ -641,28 +662,27 @@ struct Controller {
             uint64_t(layout.key_count), uint64_t(layout.bytes));
     }
 
-    void input_report(InputDevice& input, const uint8_t* report) {
-        if (input.protocol == BootProtocol::keyboard) {
-            keyboard_report(input.previous_flags, input.previous_keys,
-                            report[input.layout.modifiers], report + input.layout.keys,
-                            input.layout.key_count);
-            return;
-        }
+    void mouse_report(InputDevice& input, const HidMouseReport& report) {
         uint8_t buttons = 0;
         for (unsigned i = 0; i < sizeof(held_buttons); ++i) {
             const uint8_t mask = 1u << i;
-            if ((input.previous_flags ^ report[0]) & mask)
-                held_buttons[i] += report[0] & mask ? 1 : -1;
+            if ((input.previous_flags ^ report.buttons) & mask)
+                held_buttons[i] += report.buttons & mask ? 1 : -1;
             if (held_buttons[i])
                 buttons |= mask;
         }
-        input.previous_flags = report[0] & 7;
-        usb_mouse_event(int8_t(report[1]), int8_t(report[2]), buttons);
+        input.previous_flags = report.buttons & 7;
+        usb_mouse_event(report.x, report.y, buttons, report.wheel);
     }
 
     void disconnect_input(InputDevice& input) {
-        uint8_t empty[65]{};
-        input_report(input, empty);
+        if (input.protocol == BootProtocol::keyboard) {
+            uint8_t empty[max_hid_keyboard_keys]{};
+            keyboard_report(input.previous_flags, input.previous_keys, 0, empty,
+                            input.layout.key_count);
+        } else {
+            mouse_report(input, {});
+        }
         log("xhci-%s-stopped: port=%u\n",
             input.protocol == BootProtocol::keyboard ? "keyboard" : "mouse", uint64_t(input.port));
         input.slot = 0;
@@ -676,13 +696,20 @@ struct Controller {
             return;
         }
         const unsigned actual = input.transfer_bytes - remaining;
-        // Boot mice can append device-specific bytes after the three standard bytes.
-        const bool complete_report = input.protocol == BootProtocol::mouse
-                                         ? actual >= mouse_report_size
-                                         : actual == input.layout.bytes;
         const auto data = static_cast<const uint8_t*>(physical(input.buffer));
-        if (complete_report && (!input.layout.report_id || data[0] == input.layout.report_id))
-            input_report(input, data);
+        if (input.protocol == BootProtocol::keyboard) {
+            if (actual == input.layout.bytes &&
+                (!input.layout.report_id || data[0] == input.layout.report_id))
+                keyboard_report(input.previous_flags, input.previous_keys,
+                                data[input.layout.modifiers], data + input.layout.keys,
+                                input.layout.key_count);
+        } else if (input.mouse_layout.bytes) {
+            HidMouseReport report{};
+            if (hid_mouse_report(input.mouse_layout, data, actual, report))
+                mouse_report(input, report);
+        } else if (actual >= mouse_report_size) {
+            mouse_report(input, {int8_t(data[1]), int8_t(data[2]), 0, data[0]});
+        }
         if (++input.index == ring_size - 1) {
             input.index = 0;
             input.cycle ^= 1;
@@ -842,7 +869,9 @@ struct Controller {
                 uint64_t(value), uint64_t(input->interface), uint64_t(input->address),
                 uint64_t(input->packet), uint64_t(input->interval));
             if (runtime) {
-                if (!start_input(slot, port, speed, *input, second_boot_endpoint))
+                const unsigned mouse_bytes =
+                    input->protocol == BootProtocol::mouse ? boot.mouse_report_bytes : 0;
+                if (!start_input(slot, port, speed, *input, second_boot_endpoint, mouse_bytes))
                     return false;
                 second_boot_endpoint = true;
             }

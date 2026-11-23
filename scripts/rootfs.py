@@ -227,6 +227,8 @@ for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
 if installed_desktop:
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
+    files.setdefault('etc/pam.d', (0o40755, b''))
+    regular('etc/pam.d/kde', ROOT / 'userspace/desktop/kde.pam', 0o100644)
     autostart = 'etc/xdg/autostart/org.kde.plasmashell.desktop'
     mode, desktop = files[autostart]
     command = b'\nExec=/usr/bin/plasmashell\n'

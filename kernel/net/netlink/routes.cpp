@@ -199,7 +199,8 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
         return 0;
     int error = -95;
     bool is_dump = request.type == 26;
-    unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? 0x600 : 0);
+    bool ipv6 = request.length > sizeof(request) && input[sizeof(request)] == 10;
+    unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? (ipv6 ? 0xe00 : 0x600) : 0);
     Ipv4Route value;
     if (request.type == 18 || request.type == 22) {
         size_t size = 0;
@@ -215,7 +216,7 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
              !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x700u : 0u))))
         error = netlink_address_change(packet, request);
     else if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
-        if (request.length > sizeof(request) && input[sizeof(request)] == 10) {
+        if (ipv6) {
             size_t size = 0;
             if (is_dump && ((request.flags & 0x300) != 0x300 ||
                             (strict && request.length < sizeof(request) + sizeof(RouteHeader))))

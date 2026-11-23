@@ -619,6 +619,29 @@ static void direct_neighbor_replies() {
     assert(last(0, 136).header.destination == address(0, 1));
 }
 
+static void route_append() {
+    reset();
+    const auto local = address(0, 2);
+    assert(!change(1, local));
+    const Ipv6Route first{{}, address(0, 1, true), 1, 100, 0, 9};
+    auto second = first;
+    second.gateway = address(0, 3, true);
+    constexpr unsigned append = 0xc05;
+    assert(route(first, false, true, 0x805) == -95);
+    assert(!route(first, false, true, append) && route(first, false, true, append) == -17);
+    assert(route(second, false) == -17);
+    assert(!route(second, false, true, append));
+    auto duplicate = second;
+    duplicate.protocol = 3;
+    assert(route(duplicate, false, true, append) == -17);
+
+    Ipv6Path path;
+    const auto remote = address(2, 1);
+    assert(!ipv6_path(local, remote, 0, path) && path.next_hop == first.gateway);
+    assert(!route(first, true));
+    assert(!ipv6_path(local, remote, 0, path) && path.next_hop == second.gateway);
+}
+
 static void scoped_multicast_output() {
     reset();
     auto local = address(1, 3, true);
@@ -709,6 +732,7 @@ int main() {
         assert(net_configure(n + 1, true, 1500) == 0);
     }
     ipv6_output_owner_tests(reset);
+    route_append();
     scoped_multicast_output();
     dad();
     echo_and_ownership();

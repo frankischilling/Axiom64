@@ -99,8 +99,6 @@ int ipv6_route_control(const Ipv6Route& requested, bool remove, bool exclusive) 
     for (unsigned bit = route.prefix; bit < 128; bit++)
         route.destination.bytes[bit / 8] &= ~(1u << (7 - bit % 8));
     if (!remove) {
-        if (!exclusive)
-            return -95;
         if (!route.protocol)
             route.protocol = 3;
         if (!route.metric)
@@ -132,11 +130,14 @@ int ipv6_route_control(const Ipv6Route& requested, bool remove, bool exclusive) 
     if (!remove) {
         Ipv6Route inventory[ipv6_route_capacity + ipv6_address_capacity + 1];
         size_t count = ipv6_routes(inventory, sizeof(inventory) / sizeof(*inventory));
-        for (size_t n = 0; n < count; n++)
-            if (inventory[n].index != ipv6_loopback && inventory[n].prefix == route.prefix &&
-                inventory[n].metric == route.metric &&
-                inventory[n].destination.matches(route.destination, route.prefix))
+        for (size_t n = 0; n < count; n++) {
+            const auto& existing = inventory[n];
+            if (existing.index != ipv6_loopback && existing.prefix == route.prefix &&
+                existing.metric == route.metric &&
+                existing.destination.matches(route.destination, route.prefix) &&
+                (exclusive || (existing.index == route.index && existing.gateway == route.gateway)))
                 return -17;
+        }
     }
     if (remove) {
         bool erased = erase_lowest_metric([&](const Ipv6Route& current) {

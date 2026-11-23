@@ -174,6 +174,12 @@ Signals use the Linux x86-64 frame layout and a userspace return trampoline. Sup
 
 The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbdev driver uses `/dev/fb0` and platform-device metadata; evdev reads PS/2 events from `/dev/input/event0` and `event1`. Unix sockets carry X11 traffic. The desktop uses software drawing with GLX disabled. Xorg's input thread remains disabled pending dedicated coverage of that path.
 
+With `usb.xhci=keyboard`, xHCI root-port keyboards and mice also feed
+those input devices. The controller stays active on empty ports, detects
+connections after boot, and releases held keys and buttons on unplug.
+Successful slot retirement returns the controller's buffers for reuse.
+USB hubs and storage devices need their own enumeration and removal paths.
+
 The Intel HD Audio driver discovers direct PCM converter and pin routes through
 the codec command rings. It uses one polled DMA stream per direction. The
 `/dev/dsp` endpoint offers signed 16-bit little-endian samples at supported

@@ -95,7 +95,8 @@ scheduler still runs on the bootstrap processor.
 
 Add `--scheduler` to run the separate twelve-CPU userspace test under BIOS and
 UEFI, including with HPET disabled. It boots with `smp.scheduler`, forks
-workers, and checks execution on all twelve logical CPUs. For a custom image, pass
+workers, and checks execution on all twelve logical CPUs. It also starts and
+joins 320 concurrent threads. For a custom image, pass
 `--kernel-option smp.scheduler` to the image builder. The option requires the
 Limine processor list, a working shared ACPI PM timer or HPET counter, and
 successful secondary CPU checks. Ordinary boots continue to use the boot CPU.

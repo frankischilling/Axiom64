@@ -346,7 +346,8 @@ def main():
     if args.scheduler:
         worker = output / "scheduler-init"
         subprocess.run(["musl-gcc", "-O2", "-static", "-Wall", "-Wextra", "-Werror",
-                        ROOT / "userspace/tests/process/smp-scheduler.c", "-o", worker], check=True)
+                        "-pthread", ROOT / "userspace/tests/process/smp-scheduler.c",
+                        "-o", worker], check=True)
         worker_ramfs = output / "scheduler.cpio"
         write_cpio(worker_ramfs, {"dev": (0o40755, b""), "proc": (0o40755, b""),
                                  "sbin": (0o40755, b""),

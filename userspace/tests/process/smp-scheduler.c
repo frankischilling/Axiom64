@@ -24,6 +24,7 @@
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +58,39 @@ static uint64_t milliseconds(void) {
 static void pause_poll(void) {
     struct timespec duration = {0, 1000000};
     nanosleep(&duration, NULL);
+}
+
+static void* hold_thread(void* input) {
+    const int fd = *(int*)input;
+    char unused;
+    check(read(fd, &unused, 1) == 0, "release held thread");
+    return NULL;
+}
+
+static void check_thread_capacity(void) {
+    enum { thread_count = 320 };
+
+    int pipe_fds[2];
+    pthread_attr_t attributes;
+    pthread_t threads[thread_count];
+    check(!pipe(pipe_fds), "thread capacity pipe");
+    check(!pthread_attr_init(&attributes) && !pthread_attr_setstacksize(&attributes, 64 * 1024),
+          "thread capacity stack");
+    unsigned started = 0;
+    while (started < thread_count) {
+        errno = pthread_create(&threads[started], &attributes, hold_thread, &pipe_fds[0]);
+        if (errno)
+            break;
+        ++started;
+    }
+    const int create_error = errno;
+    check(!close(pipe_fds[1]), "close thread capacity writer");
+    for (unsigned i = 0; i < started; ++i)
+        check(!pthread_join(threads[i], NULL), "join capacity thread");
+    check(!close(pipe_fds[0]) && !pthread_attr_destroy(&attributes), "close thread capacity test");
+    errno = create_error;
+    check(started == thread_count, "320 simultaneous threads");
+    puts("SMP_SCHED_THREAD_CAPACITY_PASS");
 }
 
 int main(void) {
@@ -102,6 +136,7 @@ int main(void) {
     }
     printf("SMP_SCHED_CPU_MASK %llx\n", (unsigned long long)state->mask);
     check(state->mask == affinity, "worker CPU coverage");
+    check_thread_capacity();
     puts("SMP_SCHED_RUNTIME_PASS");
     return 0;
 }

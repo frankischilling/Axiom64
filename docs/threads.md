@@ -236,6 +236,6 @@ that cannot be cancelled must still finish on its original file description.
 
 ## Remaining work
 
-The system has 256 task slots and 1,024 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state. Extended XSAVE state remains open. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
+The system has 512 task slots and 1,024 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state. Extended XSAVE state remains open. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
 
 Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, full fork/exec/signal semantics, and complete resource limits remain unfinished. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

@@ -31,7 +31,7 @@
 #include "process/pending_signals.hpp"
 
 namespace ax {
-constexpr unsigned max_tasks = 256, max_fds = 1024;
+constexpr unsigned max_tasks = 512, max_fds = 1024;
 enum class State { empty, runnable, blocked, zombie, stopped };
 enum class Wait {
     none,

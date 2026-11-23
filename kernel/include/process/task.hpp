@@ -51,7 +51,8 @@ enum class Wait {
     posix_queue,
     fifo_open,
     epoll_wait,
-    pcm_drain
+    pcm_drain,
+    alsa_write
 };
 
 struct Descriptor {

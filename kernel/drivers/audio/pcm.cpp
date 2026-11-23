@@ -33,7 +33,8 @@ namespace {
 using Hda::Direction;
 constexpr unsigned periods = 16, period_bytes = page_size, buffer_bytes = periods * period_bytes;
 constexpr unsigned default_rate = 48000, default_channels = 2, signed_16_le = 0x10;
-constexpr unsigned output_limit = periods - 2;
+constexpr unsigned output_limit = output_periods;
+static_assert(output_period_bytes == period_bytes && output_limit <= periods - 2);
 constexpr int again = -11, io_error = -5;
 
 struct Channel {
@@ -216,6 +217,10 @@ int begin_drain() {
     if (!draining && (playback.partial || playback.count)) {
         drain_started = ticks;
         draining = fence_pending = true;
+        // An explicitly started client may drain a full, still-primed ring.
+        // Start consuming it so there is room to insert the drain fence.
+        if (!playback.running && playback.count > output_limit - 3)
+            playback.start();
         service_output();
     }
     return playback.fault ? io_error : draining ? again : 0;
@@ -332,7 +337,7 @@ int64_t read(void* buffer, size_t length) {
     return done;
 }
 
-int64_t write(const void* buffer, size_t length) {
+int64_t queue_output(const void* buffer, size_t length) {
     service_output();
     if (playback.fault)
         return io_error;
@@ -353,9 +358,65 @@ int64_t write(const void* buffer, size_t length) {
         }
     }
     asm volatile("mfence" ::: "memory");
-    if (!playback.running && playback.count && !playback.start())
-        return io_error;
     return done ? int64_t(done) : again;
+}
+
+int64_t write(const void* buffer, size_t length) {
+    const auto done = queue_output(buffer, length);
+    if (done > 0 && playback.count && start_output())
+        return io_error;
+    return done;
+}
+
+bool output_available() {
+    return playback.supported();
+}
+
+bool output_busy() {
+    return playback.opened || closing;
+}
+
+int open_output() {
+    Handle handle{};
+    handle.flags = 1;
+    return open(handle);
+}
+
+void close_output() {
+    Handle handle{};
+    handle.flags = 1 | 04000;
+    close(handle);
+}
+
+int reset_output() {
+    draining = false;
+    playback.reset();
+    return playback.unsafe ? io_error : 0;
+}
+
+int start_output() {
+    if (playback.running)
+        return 0;
+    if (!playback.count)
+        return -32;
+    return playback.start() ? 0 : io_error;
+}
+
+int drain_output() {
+    return begin_drain();
+}
+
+OutputState output_state() {
+    service_output();
+    const auto queued = playback.count * period_bytes + playback.partial;
+    const auto space = !draining && output_space() ? output_limit * period_bytes - queued : 0;
+    // Report progress inside the current DMA period without charging silence
+    // inserted at the tail by drain to the caller's application pointer.
+    const unsigned position = playback.running ? Hda::position(Direction::playback) : 0;
+    const auto elapsed = playback.running && position / period_bytes == playback.hardware_period
+                             ? position % period_bytes
+                             : 0;
+    return {queued - min(queued, elapsed), space, playback.running, playback.fault};
 }
 
 int64_t ioctl(const Handle& handle, uint64_t request, uint64_t argument) {

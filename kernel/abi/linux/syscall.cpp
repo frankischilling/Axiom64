@@ -25,6 +25,7 @@
  */
 #include "drivers/platform/devices.hpp"
 #include "boot/boot.hpp"
+#include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
@@ -977,9 +978,18 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
         return -25;
     const auto result = device_ioctl(h, request, arg);
-    if (result == -11 && request == Pcm::sync_request && h->node->device == Device::dsp) {
-        current_task()->wait_generation = h->generation;
-        return block(Wait::pcm_drain, fd);
+    if (result == -11) {
+        const auto device = h->node->device;
+        const bool nonblock = h->flags & 04000;
+        if ((device == Device::dsp && request == Pcm::sync_request) ||
+            (device == Device::alsa_playback && request == Alsa::drain_request && !nonblock)) {
+            current_task()->wait_generation = h->generation;
+            return block(Wait::pcm_drain, fd);
+        }
+        if (device == Device::alsa_playback && request == Alsa::write_frames_request && !nonblock) {
+            current_task()->wait_generation = h->generation;
+            return block(Wait::alsa_write, fd);
+        }
     }
     return result;
 }

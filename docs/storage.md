@@ -101,6 +101,11 @@ A filesystem can enable a read-through cache after claiming and validating a vol
 
 Volumes share a budget of one thirty-second of usable physical memory and at most 128 MiB. Each volume can use up to 64 MiB, including metadata and allocation overhead. Backing memory that has yet to be allocated is available to other volumes. Failed optional allocations leave ordinary disk reads available. Cache misses go to the device, and only successful complete reads fill the cache. Raw reads, mount validation, and journal recovery can read the device directly.
 
+Sequential ext2 file reads on NVMe can fill up to 16 KiB of the cache with one
+request. The drive's transfer limit can make the request smaller. Read-ahead
+stops at a hole, the end of the file, or a non-adjacent block. If the larger
+request fails, the block layer retries just the block the caller requested.
+
 Writes go through to the device. They invalidate all overlapping cached blocks before submission, including writes that later fail. An explicit flush retains its device semantics. Caches hold clean data only. Releasing the claim drops the cache, and `sysinfo.bufferram` accounts for the backing buffers and metadata that are present. Overlapping writable aliases are excluded while the claim is held. Disjoint partitions retain independent caches.
 
 ## Format an image inside Axiom64

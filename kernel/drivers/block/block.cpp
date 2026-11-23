@@ -525,23 +525,52 @@ int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* 
     return 0;
 }
 
-int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count) {
+bool block_read_from_cache(unsigned device, uint64_t sector, void* data, size_t count) {
+    auto volume = volume_for(device);
+    return volume && volume->cache && volume->cache->read(sector, data, count);
+}
+
+size_t block_read_ahead_limit(unsigned device, size_t block_sectors) {
+    auto volume = volume_for(device);
+    if (!volume || !volume->cache || !block_sectors)
+        return 1;
+    return max(size_t(1),
+               min(block_direct_sectors(device), size_t(transfer_sectors)) / block_sectors);
+}
+
+static void remember_read(BlockCache& cache, uint64_t sector, const void* data, size_t count) {
+    const auto ram = physical_memory_stats();
+    const auto before = cache.allocated_bytes();
+    constexpr uint64_t max_growth_floor = 32 * 1024 * 1024;
+    const bool allow_growth = buffer_bytes + cache.growth_bytes() <= cache_limit(ram.total) &&
+                              ram.free > min(ram.total / 8, max_growth_floor);
+    cache.remember(sector, data, count, allow_growth);
+    buffer_bytes += cache.allocated_bytes() - before;
+}
+
+int block_read_cached(unsigned device, uint64_t sector, void* data, size_t count,
+                      size_t contiguous_blocks) {
     auto volume = volume_for(device);
     if (!volume)
         return -19;
     auto cache = volume->cache;
     if (cache && cache->read(sector, data, count))
         return 0;
-    int result = block_read(device, sector, data, count);
-    if (!result && cache) {
-        const auto ram = physical_memory_stats();
-        const auto before = cache->allocated_bytes();
-        constexpr uint64_t max_growth_floor = 32 * 1024 * 1024;
-        const bool allow_growth = buffer_bytes + cache->growth_bytes() <= cache_limit(ram.total) &&
-                                  ram.free > min(ram.total / 8, max_growth_floor);
-        cache->remember(sector, data, count, allow_growth);
-        buffer_bytes += cache->allocated_bytes() - before;
+    if (contiguous_blocks > 1 && cache) {
+        const size_t blocks = min(contiguous_blocks, block_read_ahead_limit(device, count));
+        // Synchronous block requests are serialized. Keep the shared transfer
+        // buffer off the kernel stack and out of the per-volume cache budget.
+        static uint8_t buffer[transfer_sectors * sector_size];
+        if (blocks > 1 && !block_read(device, sector, buffer, blocks * count)) {
+            memcpy(data, buffer, count * sector_size);
+            for (size_t i = 0; i < blocks; ++i)
+                remember_read(*cache, sector + i * count, buffer + i * count * sector_size, count);
+            return 0;
+        }
     }
+    int result = block_read(device, sector, data, count);
+    if (!result && cache)
+        remember_read(*cache, sector, data, count);
     return result;
 }
 

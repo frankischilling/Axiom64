@@ -1,11 +1,22 @@
 # Threads and futexes
 
-Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS and GS bases, FPU state, signal mask, alternate stack, and wait state.
+Axiom64 runs Linux x86-64 musl pthreads. Threads share selected process resources and retain their own TID, registers, FS and GS bases, FPU state, signal mask, alternate stack, and wait state.
 
 The Linux scheduler calls report `SCHED_OTHER` and priority zero for each
 thread. `sched_setparam` and `sched_setscheduler` accept priority zero for an
 authorized caller using that policy. The priority range queries use Linux's
 values. Changing to a different scheduling policy returns `EOPNOTSUPP`.
+
+## Experimental multiprocessor scheduling
+
+With `smp.scheduler`, independent process groups can run at the same time
+across the logical CPUs that pass the [boot checks](build.md#raw-disk-and-network-boot).
+A kernel lock serializes syscall and interrupt work. Each thread group gets
+one CPU at a time so that thread exit and exec can safely replace shared state.
+The boot CPU runs device polling and sends scheduling ticks to its peers.
+`getcpu`, `sched_getaffinity`, `/proc/cpuinfo`, and `/proc/stat` report the
+admitted CPUs. Setting affinity and running threads in a single group in
+parallel remain part of [F07](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization).
 
 ## Resource ownership
 
@@ -69,6 +80,9 @@ registrations. Fork inherits a copy. Successful exec starts with no registration
 `MEMBARRIER_CMD_GET_REGISTRATIONS` reports the current registrations. A sync-core
 registration also reports the common private bit. The ordinary private command
 still requires its own registration. Restartable sequence commands are unsupported.
+
+With multiprocessor scheduling enabled, the command query reports zero
+supported barriers until the kernel can fence remote CPUs.
 
 `make test-membarrier-native` compares the ABI with native Linux.
 `make test-membarrier` runs the contract with static and dynamic musl under BIOS
@@ -222,6 +236,6 @@ that cannot be cancelled must still finish on its original file description.
 
 ## Remaining work
 
-The system has 256 task slots and 1,024 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state. Extended XSAVE state remains open. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
+The system has 512 task slots and 1,024 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state. Extended XSAVE state remains open. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
 
 Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, full fork/exec/signal semantics, and complete resource limits remain unfinished. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

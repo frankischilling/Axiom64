@@ -642,7 +642,7 @@ bool read_test_nvs(uint64_t address, uint8_t* bytes, size_t length, bool lock) {
 
 void nvs_field_cases() {
     using namespace ax::Acpi;
-    auto run = [](uint8_t flags, uint8_t length, NvsRead provider, PciRootWindows& windows,
+    auto run = [](uint8_t flags, uint8_t length, SystemMemoryRead provider, PciRootWindows& windows,
                   bool large = false) {
         const auto region =
             sequence({{0x5b, 0x80}, name("GNVS"), {0, 0x0c, 0, 2, 0, 0x10, 0x0a, length}});

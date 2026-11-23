@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/task.hpp"
+#include "process/scheduler.hpp"
 #include "arch/x86_64/tlb.hpp"
 #include "arch/x86_64/interrupts.hpp"
 #include "process/exec_arguments.hpp"
@@ -42,6 +43,7 @@
 #include "mm/file_mapping.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
@@ -534,11 +536,19 @@ static bool awaken(Task& t) {
     case Wait::random:
         ready = random_ready();
         break;
+    case Wait::alsa_write:
     case Wait::pcm_drain: {
         const auto fd = unsigned(t.wait_fd);
         const auto* handle = fd < max_fds ? t.files->entries[fd].handle : nullptr;
-        const int result =
-            handle && handle->generation == t.wait_generation ? Pcm::drain_status() : -9;
+        int result = -9;
+        if (handle && handle->generation == t.wait_generation) {
+            if (t.wait == Wait::alsa_write) {
+                ready = (handle->flags & 04000) || Alsa::transfer_ready();
+                break;
+            }
+            result = handle->node->device == Device::alsa_playback ? Alsa::drain_status()
+                                                                   : Pcm::drain_status();
+        }
         if (result != -11) {
             t.frame.rip += 2;
             t.frame.rax = result;
@@ -582,17 +592,23 @@ Frame* schedule(Frame* f, bool yield) {
         return &current_task()->frame;
     }
     unsigned start = current_task() ? unsigned(current_task() - tasks) + 1 : 0;
+    scheduler_release();
     for (;;) {
-        random_refresh(ticks);
-        net_poll();
-        epoll_notify();
+        if (!current_cpu_index()) {
+            random_refresh(ticks);
+            net_poll();
+            epoll_notify();
+        }
         for (unsigned i = 0; i < max_tasks; i++) {
             Task* t = &tasks[(start + i) % max_tasks];
+            if (!t->process || !scheduler_available(*t->process))
+                continue;
             if (!awaken(*t))
                 continue;
             if (!signal_deliver(*t))
                 continue;
             reclaim_released_nodes();
+            scheduler_claim(*t->process);
             set_current_task(t);
             switch_address_space(t->memory->space.root);
             arch_task(t->fs_base, t->gs_base);
@@ -603,7 +619,11 @@ Frame* schedule(Frame* f, bool yield) {
         // No kernel continuation is retained across a task switch.
         // Timer interrupts during this idle loop only advance the clock.
         reclaim_released_nodes();
-        asm volatile("sti; hlt; cli" ::: "memory");
+        if (scheduler_cpu_count() > 1 && current_task()) {
+            set_current_task(nullptr);
+            activate_kernel_memory();
+        }
+        scheduler_idle();
     }
 }
 
@@ -1052,11 +1072,28 @@ void start_init(const char* path, bool debug_ssh, bool text_console) {
     if (arguments.capture_kernel(path, args, env, init->process->limits.soft(Resource::stack)) ||
         exec_task(init, arguments))
         panic("cannot execute init");
-    enter_user(schedule(nullptr, true));
+    scheduler_start();
+    Frame* frame;
+    {
+        KernelGuard guard;
+        scheduler_tick_peers();
+        frame = schedule(nullptr, true);
+    }
+    enter_user(frame);
 }
 
 extern "C" Frame* handle_trap(Frame* f) {
+    if (f->vector >= Irq::first_cpu_vector) {
+        const bool tick = interrupt_dispatch(f->vector);
+        scheduler_poll_stop();
+        if (tick && f->vector == Irq::scheduler_vector && (f->cs & 3) == 3) {
+            KernelGuard guard;
+            return schedule(f, true);
+        }
+        return f;
+    }
     if (f->vector >= 32) {
+        KernelGuard guard;
         if (!interrupt_dispatch(f->vector))
             return f;
         clock_refresh(true);
@@ -1066,6 +1103,7 @@ extern "C" Frame* handle_trap(Frame* f) {
         devices_poll();
         epoll_notify();
         signal_tick();
+        scheduler_tick_peers();
         if ((f->cs & 3) == 3 && current_task())
             return schedule(f, true);
         return f;
@@ -1073,6 +1111,7 @@ extern "C" Frame* handle_trap(Frame* f) {
     uint64_t cr2 = 0;
     asm volatile("mov %%cr2,%0" : "=r"(cr2));
     if ((f->cs & 3) == 3 && current_task()) {
+        KernelGuard guard;
         cpu_account();
         auto fault = FileFault::outside;
         if (f->vector == 14 && !(f->error & 8)) {

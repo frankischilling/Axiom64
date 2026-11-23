@@ -52,6 +52,7 @@ void cpu_account(Task* next = nullptr, bool userspace = false);
 
 void cpu_refresh();
 CpuTotals cpu_totals();
+CpuTotals cpu_core_totals(unsigned cpu);
 
 void cpu_depart(Task&);
 

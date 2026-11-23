@@ -48,18 +48,23 @@ const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
 }
 
 namespace {
-volatile uint8_t* map_nvs(uint64_t address, size_t length) {
+volatile uint8_t* map_acpi_memory(uint64_t address, size_t length, bool allow_reserved) {
     if (!length || !boot_info.memory_at || length > UINT64_MAX - address)
         return nullptr;
     const auto end = address + length;
     bool contained = false;
+    auto kind = BootMemoryKind::other;
     for (size_t i = 0; i < boot_info.memory_count; ++i) {
         const auto entry = boot_info.memory_at(boot_info.memory_context, i);
         if (!entry.length || entry.base >= end ||
             (entry.base < address && entry.length <= address - entry.base))
             continue;
-        if (entry.kind != BootMemoryKind::acpi_nvs)
+        if (entry.kind != BootMemoryKind::acpi_nvs &&
+            !(allow_reserved && entry.kind == BootMemoryKind::reserved))
             return nullptr;
+        if (kind != BootMemoryKind::other && kind != entry.kind)
+            return nullptr;
+        kind = entry.kind;
         if (entry.base <= address && end - entry.base <= entry.length)
             contained = true;
     }
@@ -75,7 +80,7 @@ FirmwareLock find_firmware_lock() {
     Acpi::GlobalLockControl control{};
     if (!Acpi::find_global_lock_control(boot_info.rsdp, firmware_read, nullptr, control))
         return {};
-    const auto* header = map_nvs(control.facs, 64);
+    const auto* header = map_acpi_memory(control.facs, 64, false);
     if (!header || header[0] != 'F' || header[1] != 'A' || header[2] != 'C' || header[3] != 'S')
         return {};
     uint32_t length = 0;
@@ -83,7 +88,7 @@ FirmwareLock find_firmware_lock() {
         length |= uint32_t(header[4 + i]) << (8 * i);
     if (length < 64 || length > 4096)
         return {};
-    auto* facs = map_nvs(control.facs, length);
+    auto* facs = map_acpi_memory(control.facs, length, false);
     if (!facs)
         return {};
     return {reinterpret_cast<volatile uint32_t*>(facs + 16), control.pm1a, control.pm1b};
@@ -97,10 +102,12 @@ void notify_firmware(uint16_t port) {
 }
 } // namespace
 
-bool firmware_read_nvs(uint64_t address, uint8_t* bytes, size_t length, bool firmware_lock) {
+bool firmware_read_system_memory(uint64_t address, uint8_t* bytes, size_t length,
+                                 bool firmware_lock) {
     if (!bytes || length > 9)
         return false;
-    const auto* source = map_nvs(address, length);
+    // A boot-time AML field can refer to a firmware reservation outside ACPI NVS.
+    const auto* source = map_acpi_memory(address, length, true);
     if (!source)
         return false;
     FirmwareLock lock{};

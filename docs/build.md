@@ -93,6 +93,14 @@ the target page tables loaded. It replaces the backing page and checks that
 each secondary CPU sees the replacement after a directed interrupt. The
 scheduler still runs on the bootstrap processor.
 
+Add `--scheduler` to run the separate twelve-CPU userspace test under BIOS and
+UEFI, including with HPET disabled. It boots with `smp.scheduler`, forks
+workers, and checks execution on all twelve logical CPUs. It also starts and
+joins 320 concurrent threads. For a custom image, pass
+`--kernel-option smp.scheduler` to the image builder. The option requires the
+Limine processor list, a working shared ACPI PM timer or HPET counter, and
+successful secondary CPU checks. Ordinary boots continue to use the boot CPU.
+
 The same invalidation path serves ordinary userspace memory changes. Replaced
 and unmapped pages stay allocated until the CPUs using those page tables have
 responded. The address-space lock covers CR3 switches and target selection.
@@ -158,9 +166,9 @@ in ACPI. This lets firmware resolve an I²C device's interrupt without
 changing the pad settings. The interface query used to select those
 resources applies only inside this diagnostic.
 
-Both probes can evaluate selected firmware conditions that read ACPI NVS
-memory. They honor the firmware global lock for fields that require it and
-skip discovery if they cannot acquire the lock safely.
+Both probes can evaluate selected firmware conditions that read ACPI NVS or
+reserved memory listed in the boot memory map. Fields that require the
+firmware global lock still need a valid FACS in ACPI NVS.
 The probes can follow conditional namespace references and hold firmware
 resource buffers in a private copy when AML declares writable fields.
 They can read packed PCI configuration fields and assemble resource templates

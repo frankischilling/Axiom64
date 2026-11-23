@@ -233,7 +233,7 @@ struct Namespace {
     uint64_t integer_mask;
     const PciBridges* bridges;
     PciConfigRead read_pci;
-    NvsRead read_nvs;
+    SystemMemoryRead read_system_memory;
     RegisterRead read_registers;
     void* register_context;
     OsiQuery query_osi;
@@ -386,5 +386,5 @@ struct Namespace {
 
 bool pci_root_id(Value);
 Namespace* load_namespace(const DefinitionBlocks&, const PciBridges*, PciConfigRead, PciLinkProgram,
-                          NvsRead = nullptr);
+                          SystemMemoryRead = nullptr);
 } // namespace ax::Acpi::Aml

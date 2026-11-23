@@ -44,6 +44,8 @@ enum class Device {
     full,
     parallel,
     dsp,
+    alsa_control,
+    alsa_playback,
     touchpad
 };
 

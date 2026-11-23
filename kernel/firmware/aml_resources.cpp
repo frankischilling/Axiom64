@@ -847,7 +847,7 @@ using namespace Aml;
 bool decode_pci_root_windows(const DefinitionBlocks& blocks, PciRootWindows& result,
                              ReadRegions regions) {
     result.count = 0;
-    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory);
     if (!space)
         return false;
     const bool ok = pci_root_windows(*space, result);
@@ -861,7 +861,7 @@ bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardRes
                                   ReadRegions regions) {
     result.count = 0;
     result.incomplete = false;
-    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory);
     if (!space) {
         result.incomplete = true;
         return false;
@@ -886,7 +886,7 @@ bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardRes
 bool decode_intel_gpio_resources(const DefinitionBlocks& blocks, IntelGpioResources& result,
                                  ReadRegions regions) {
     result = {};
-    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory);
     if (!space)
         return false;
 
@@ -965,7 +965,7 @@ bool decode_initialized_hid_devices(const DefinitionBlocks& blocks, I2cHidDevice
     for (unsigned i = 0; i < count; ++i) {
         const auto& path = candidates[i];
         // Reload AML so a candidate's writes cannot change the next device's resources.
-        auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+        auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory);
         if (!space)
             return false;
         space->read_registers = regions.registers;
@@ -1000,7 +1000,7 @@ bool decode_i2c_hid_devices(const DefinitionBlocks& blocks, I2cHidDevices& resul
                             ReadRegions regions, HidDiscovery mode) {
     result.count = 0;
     result.initialization_failures = 0;
-    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.nvs);
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory);
     if (!space)
         return false;
     if (mode == HidDiscovery::replay_initialization) {

@@ -38,6 +38,11 @@ struct Hpet {
     uint32_t id = 0;
 };
 
+struct PmTimer {
+    uint16_t port;
+    uint32_t mask;
+};
+
 struct Processor {
     uint32_t apic_id;
     uint32_t uid;
@@ -130,6 +135,7 @@ struct DefinitionBlocks {
 
 // Reader must return stable, mapped bytes or nullptr. Never follows unbounded lengths.
 bool find_hpet(uint64_t rsdp, Read reader, void* context, Hpet& result);
+bool find_pm_timer(uint64_t rsdp, Read reader, void* context, PmTimer& result);
 bool find_interrupt_topology(uint64_t rsdp, Read reader, void* context, InterruptTopology& result);
 bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result);
 bool find_global_lock_control(uint64_t rsdp, Read reader, void* context, GlobalLockControl& result);

@@ -113,14 +113,15 @@ struct PciRootWindows {
 };
 
 // The provider validates the physical span and enforces the requested lock.
-using NvsRead = bool (*)(uint64_t address, uint8_t* bytes, size_t length, bool firmware_lock);
+using SystemMemoryRead = bool (*)(uint64_t address, uint8_t* bytes, size_t length,
+                                  bool firmware_lock);
 
 // Read from device registers already validated by the caller. No writes reach this provider.
 using RegisterRead = bool (*)(void* context, uint64_t address, uint8_t* bytes, size_t length);
 using OsiQuery = bool (*)(const uint8_t* name, size_t length);
 
 struct ReadRegions {
-    NvsRead nvs = nullptr;
+    SystemMemoryRead memory = nullptr;
     PciConfigRead pci = nullptr;
     const PciBridges* bridges = nullptr;
     RegisterRead registers = nullptr;

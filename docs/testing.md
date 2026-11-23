@@ -117,6 +117,16 @@ fixture supplies samples from a file with a bounded ALSA buffer and runs the
 codec in callback mode. It requires no host sound card. Logs, audio files,
 and image digests stay under `build/pcm-test/`.
 
+The same suite checks ALSA playback on all four profiles. Its test client
+uses the build host's Linux UAPI declarations to check card discovery, PCM
+negotiation, exclusive playback, and drain. QEMU records the left and right
+tones so the host can check their levels and channel order.
+
+`python3 scripts/wall_clock_set_test.py` boots a disposable guest under BIOS
+and UEFI. It checks authorized clock changes, malformed requests,
+unprivileged access, and the effect of a wall-clock jump on absolute and
+relative timers.
+
 `make test-suite SUITE=freedoom` uses the regular desktop image's installed
 engine, IWADs, and launch commands. The isolated X11 fixture runs the game
 as an ordinary user with access to `/dev/dsp`. QEMU sends physical

@@ -506,7 +506,7 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
 
 Acpi::ReadRegions pci_firmware_read_regions() {
     discover_bridges();
-    return {firmware_read_nvs, read_pci_field<true>, &bridges};
+    return {firmware_read_system_memory, read_pci_field<true>, &bridges};
 }
 
 static bool unsupported_memory_resources(const PciFunction& pci) {

@@ -318,7 +318,7 @@ build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp
     kernel/include/arch/x86_64/cpu_local.hpp kernel/include/drivers/block/block.hpp \
     kernel/include/fs/ext2/ext2.hpp kernel/include/fs/vfs.hpp \
     kernel/include/ipc/posix_message_queues.hpp kernel/include/process/cpu.hpp \
-    kernel/include/process/limits.hpp kernel/include/process/task.hpp \
+    kernel/include/process/limits.hpp kernel/include/process/scheduler.hpp kernel/include/process/task.hpp \
     kernel/include/security/credentials.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
@@ -954,6 +954,13 @@ build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-acpi-routing: build/acpi-routing-tests
 	./build/acpi-routing-tests
+.PHONY: test-acpi-system-memory
+build/acpi-system-memory-tests: kernel/tests/firmware/system_memory.cpp kernel/firmware/platform.cpp kernel/firmware/acpi.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-acpi-system-memory: build/acpi-system-memory-tests
+	./build/acpi-system-memory-tests
+	./build/acpi-system-memory-tests --reserved-facs
 build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@

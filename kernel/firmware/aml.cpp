@@ -237,7 +237,7 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
             } else {
                 const unsigned values_before = used_values, bytes_before = used_bytes;
                 Value result{};
-                if (!read_nvs || !evaluate(block, scope, nullptr, result, depth + 1) ||
+                if (!read_system_memory || !evaluate(block, scope, nullptr, result, depth + 1) ||
                     result.type != Type::Integer)
                     return false;
                 condition = result.number;
@@ -267,7 +267,7 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
         case 0x8c: // CreateByteField
         case 0x8d: // CreateBitField
         case 0x8f: // CreateQWordField
-            if (!read_nvs || !declare_buffer_field(stream, scope, opcode, depth + 1))
+            if (!read_system_memory || !declare_buffer_field(stream, scope, opcode, depth + 1))
                 return false;
             break;
         case 0x10:   // Scope
@@ -348,8 +348,8 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
     if (!region || region->kind != Kind::Region)
         return true;
     const unsigned space = region->content.peek();
-    const bool system_memory = space == 0 && read_nvs;
-    const bool diagnostic_pci = space == 2 && read_nvs;
+    const bool system_memory = space == 0 && read_system_memory;
+    const bool diagnostic_pci = space == 2 && read_system_memory;
     if (!system_memory && space != 2)
         return true;
     const unsigned flags = field.peek();
@@ -900,7 +900,7 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
             if (!evaluate(stream, scope, &frame, buffer, depth + 1) || buffer.type != Type::Buffer)
                 return false;
             Name backing_name;
-            if (read_nvs && !link_evaluation && read_name(source, backing_name) &&
+            if (read_system_memory && !link_evaluation && read_name(source, backing_name) &&
                 backing_name.path.count && source.next == stream.next &&
                 !frame.find(backing_name)) {
                 auto* backing = lookup(scope, backing_name);
@@ -1173,7 +1173,7 @@ bool Namespace::memory_field_bytes(const Object& field, uint8_t* data, uint64_t&
     operands.skip(1);
     const Path scope = parent(field.region->path);
     Value base{}, length{};
-    if (!read_nvs || !evaluate(operands, scope, nullptr, base, depth + 1) ||
+    if (!read_system_memory || !evaluate(operands, scope, nullptr, base, depth + 1) ||
         !evaluate(operands, scope, nullptr, length, depth + 1) || operands.left ||
         base.type != Type::Integer || length.type != Type::Integer ||
         length.number > UINT64_MAX - base.number)
@@ -1188,7 +1188,7 @@ bool Namespace::memory_field_bytes(const Object& field, uint8_t* data, uint64_t&
 
 bool Namespace::read_memory_bytes(uint64_t address, uint8_t* data, size_t bytes, bool lock,
                                   bool local) {
-    if ((!read_nvs || !read_nvs(address, data, bytes, lock)) &&
+    if ((!read_system_memory || !read_system_memory(address, data, bytes, lock)) &&
         (!local || lock || !read_registers ||
          !read_registers(register_context, address, data, bytes)))
         return false;
@@ -1279,11 +1279,12 @@ bool Namespace::stage_field(const Object& field, Value input, unsigned depth) {
 }
 
 Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* bridges,
-                          PciConfigRead read_pci, PciLinkProgram program, NvsRead read_nvs) {
+                          PciConfigRead read_pci, PciLinkProgram program,
+                          SystemMemoryRead read_system_memory) {
     if (blocks.ssdt_count > max_root_entries)
         return nullptr;
-    const unsigned capacity = read_nvs ? 8192 : 768;
-    const unsigned slots = read_nvs ? 16384 : 2048;
+    const unsigned capacity = read_system_memory ? 8192 : 768;
+    const unsigned slots = read_system_memory ? 16384 : 2048;
     auto* space = static_cast<Namespace*>(
         alloc(sizeof(Namespace) + capacity * sizeof(Object) + slots * sizeof(uint16_t)));
     if (!space)
@@ -1304,7 +1305,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
                               : UINT32_MAX;
     space->bridges = bridges;
     space->read_pci = read_pci;
-    space->read_nvs = read_nvs;
+    space->read_system_memory = read_system_memory;
     space->read_registers = nullptr;
     space->register_context = nullptr;
     space->query_osi = nullptr;

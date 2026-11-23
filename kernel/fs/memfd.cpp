@@ -409,24 +409,7 @@ int64_t memfd_fcntl(Handle& handle, unsigned command, uint32_t requested) {
 
 int memfd_fallocate(Task& task, Handle& handle, unsigned mode, uint64_t offset, uint64_t length) {
     constexpr unsigned keep_size = 1, punch = 2;
-    if (offset > INT64_MAX || length > INT64_MAX || !length)
-        return -22;
-    if (mode & ~(keep_size | punch) || mode == punch)
-        return -95;
-    if (!(handle.flags & 3))
-        return -9;
-    if (handle.pipe)
-        return -29;
     auto node = handle.node;
-    unsigned type = node ? node->mode & 0170000 : 0;
-    if (type == directory)
-        return -21;
-    if (type != regular_file && type != block_device)
-        return -19;
-    if (length > uint64_t(INT64_MAX) - offset)
-        return -27;
-    if (!is_memfd(node))
-        return -95;
     auto& memory = file(node);
     uint64_t end = offset + length;
     if (mode & punch) {

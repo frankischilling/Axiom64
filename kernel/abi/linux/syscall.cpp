@@ -1905,7 +1905,7 @@ static int64_t dispatch(Frame* f, Task* running) {
         return signalfd_syscall(*f);
     case 285: {
         auto h = fd_handle(a);
-        return h ? memfd_fallocate(*running, *h, b, c, d) : -9;
+        return h ? allocate_file_range(*running, *h, b, c, d) : -9;
     }
     case 283:
     case 286:

@@ -4,6 +4,11 @@ Axiom64 mounts supported ext-family roots on virtio, legacy ATA, AHCI SATA, and 
 
 The [normal VM launcher](build.md) formats new persistent roots with a classic internal journal. The development fixture below uses unjournaled ext2 for compatibility and explicit recovery tests.
 
+Writable ext-family mounts support `posix_fallocate` and `fallocate` with
+mode zero. New blocks read as zeros, and existing file bytes keep their
+contents. On a full volume, a long request can retain allocations from
+completed batches. Use `fstat` or retry to check the resulting file.
+
 ## Build and boot
 
 On the Ubuntu build host, install the dependencies in [build.md](build.md), including `e2fsprogs`, then run:

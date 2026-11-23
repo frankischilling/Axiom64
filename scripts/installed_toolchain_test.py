@@ -15,7 +15,7 @@ from fetch import ROOT
 from legacy_ports_test import add_firmware
 
 SAMPLES = ("Makefile", "arithmetic.asm", "broken.c", "hello.c", "hello.cpp",
-           "library.cpp", "shared.cpp", "threads.cpp")
+           "library.cpp", "shared.cpp", "threads.cpp", "installed-build-tools.sh")
 
 
 def verify(disk, output, firmware, samples):
@@ -71,9 +71,10 @@ def verify(disk, output, firmware, samples):
             for index, name in enumerate(SAMPLES, 1):
                 encoded = base64.b64encode(samples[name]).decode()
                 run(f"printf '%s' {encoded} | base64 -d > {name}", index)
-            run("make -j2 test", 9, timeout=300)
+            run("make -j2 test", 10, timeout=300)
             run("ar rcs libnative.a /tmp/native-arithmetic.o && nm libnative.a | "
-                "grep -w native_asm_add && readelf -h /tmp/native-cpp | grep -q ELF64", 10)
+                "grep -w native_asm_add && readelf -h /tmp/native-cpp | grep -q ELF64", 11)
+            run("/bin/sh installed-build-tools.sh", 12, timeout=300)
             send("sudo /bin/busybox poweroff -f")
             wait(b"Password: ")
             send(password)
@@ -86,7 +87,7 @@ def verify(disk, output, firmware, samples):
     required = (f"Firmware: {firmware.upper()}", "VFS_ROOT_PASS filesystem=ext2 device=PARTUUID=",
                 "nvme: controller=0 nsid=1", "NATIVE_C_PASS", "NATIVE_ASSEMBLER_PASS",
                 "NATIVE_CPP_PASS", "NATIVE_THREADS_PASS", "NATIVE_SHARED_CPP_PASS",
-                "NATIVE_DIAGNOSTICS_PASS", "AXIOM64_EXIT status=0")
+                "NATIVE_DIAGNOSTICS_PASS", "NATIVE_BUILD_TOOLS_PASS", "AXIOM64_EXIT status=0")
     if vm.returncode != 1 or any(marker not in text for marker in required):
         raise RuntimeError(f"Installed toolchain checks failed. See {log}")
     print(f"INSTALLED_TOOLCHAIN_NVME_PASS {firmware}", flush=True)

@@ -1798,6 +1798,23 @@
       ]
     },
     {
+      "origin": "cmake",
+      "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "license": "BSD-3-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/cmake/APKBUILD",
+      "recipe_sha256": "82a976fbcf0c810de7ef851ddf9bade2f78b312cb5504ac4db26e8146cf18e0e",
+      "files": [
+        {
+          "name": "cmake-3.31.7.tar.gz",
+          "sha512": "896f29e8e7c897e6e346141496d3f338aeaced8300fb2fd1fedcd0236742bfe4842de1c94253adf54f4847b17c5d9699c92d199cbb4a74c99ee14972c939b09e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/cmake-3.31.7.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/cmake/cmake-3.31.7.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "cups",
       "commit": "b0a580ba82efc4e045e14a3f604f11d7fc6aa4f4",
       "license": "Apache-2.0",
@@ -3693,6 +3710,47 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/dont-build-html-pages-images.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/ab17c9ef3de3423c445cd0a9680d6eb1e1dc7077/main/giflib/dont-build-html-pages-images.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "git",
+      "commit": "d896b70b77339c50bea678a19895df6331872d82",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/d896b70b77339c50bea678a19895df6331872d82/main/git/APKBUILD",
+      "recipe_sha256": "036cd80408d2863c9945881b50f8c724b7598163ed02f6862fbc40574d8747b8",
+      "files": [
+        {
+          "name": "git-2.49.1.tar.xz",
+          "sha512": "4dc63f2935e66d708dbecfdb77c6e5d697f4bc79af51ab860ed87499336d66d44f16abc7edf414c56f30d46de3a1a676c56c240557140c91aa388136e652cbdc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/git-2.49.1.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d896b70b77339c50bea678a19895df6331872d82/main/git/git-2.49.1.tar.xz"
+          ]
+        },
+        {
+          "name": "git-daemon.initd",
+          "sha512": "89528cdd14c51fd568aa61cf6c5eae08ea0844e59f9af9292da5fc6c268261f4166017d002d494400945e248df6b844e2f9f9cd2d9345d516983f5a110e4c42a",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/git-daemon.initd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d896b70b77339c50bea678a19895df6331872d82/main/git/git-daemon.initd"
+          ]
+        },
+        {
+          "name": "git-daemon.confd",
+          "sha512": "fbf1f425206a76e2a8f82342537ed939ff7e623d644c086ca2ced5f69b36734695f9f80ebda1728f75a94d6cd2fcb71bf845b64239368caab418e4d368c141ec",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/git-daemon.confd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d896b70b77339c50bea678a19895df6331872d82/main/git/git-daemon.confd"
+          ]
+        },
+        {
+          "name": "fix-t4219-with-sticky-bit.patch",
+          "sha512": "be5d568fc5b8b84c9afb97b31e471e41f32ccfe188eba0588ea0ef98b2d96c2ce4b2c1a3d70e88205aa4f6667f850b3f32c13bbb149ecddbf670344c162a4e25",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/fix-t4219-with-sticky-bit.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d896b70b77339c50bea678a19895df6331872d82/main/git/fix-t4219-with-sticky-bit.patch"
           ]
         }
       ]
@@ -6097,6 +6155,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libaccounts-qt-VERSION_1.17.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/05edcc41948f8e636d61d670487eb86dd123d187/community/libaccounts-qt/libaccounts-qt-VERSION_1.17.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libarchive",
+      "commit": "0071be33046272571a204451ffe9545ee17ba2af",
+      "license": "BSD-2-Clause AND BSD-3-Clause AND Public-Domain",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/0071be33046272571a204451ffe9545ee17ba2af/main/libarchive/APKBUILD",
+      "recipe_sha256": "f8c398c2d13a47bbe4b70f5449ff3dee51e220d1516a18a913600c8c6fcdb31c",
+      "files": [
+        {
+          "name": "libarchive-3.8.11.tar.xz",
+          "sha512": "7e9145c51d389ae5fa4e64c9a791dcbe4960ae064ebefa40d73d6079180af17795d7d0f9dffc939f9d050b9be2669f45115bb89a9466f43617e731edab57ccf1",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libarchive-3.8.11.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/0071be33046272571a204451ffe9545ee17ba2af/main/libarchive/libarchive-3.8.11.tar.xz"
           ]
         }
       ]
@@ -8851,6 +8926,23 @@
       ]
     },
     {
+      "origin": "lz4",
+      "commit": "a886e2e46171e6d5991dc91c492ae748a83b40e4",
+      "license": "BSD-2-Clause AND GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a886e2e46171e6d5991dc91c492ae748a83b40e4/main/lz4/APKBUILD",
+      "recipe_sha256": "8ee90d625c0b4be0732750b7547f8d5f6d70023eb6a234f33665e3d10d26e7f9",
+      "files": [
+        {
+          "name": "lz4-1.10.0.tar.gz",
+          "sha512": "8c4ceb217e6dc8e7e0beba99adc736aca8963867bcf9f970d621978ba11ce92855912f8b66138037a1d2ae171e8e17beb7be99281fea840106aa60373c455b28",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/lz4-1.10.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a886e2e46171e6d5991dc91c492ae748a83b40e4/main/lz4/lz4-1.10.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "m4",
       "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
       "license": "GPL-3.0-or-later",
@@ -9522,6 +9614,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/nghttp2-1.69.0.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/87de39802b2c34c9a7c62a52b3e39e05af1c974e/main/nghttp2/nghttp2-1.69.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "ninja-build",
+      "commit": "6f7e910bbb2d8c50b3f27ce9a353f110ca69098f",
+      "license": "Apache-2.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/6f7e910bbb2d8c50b3f27ce9a353f110ca69098f/community/ninja-build/APKBUILD",
+      "recipe_sha256": "d236bfb7a676fb3297eee919e28850c60fb8def2d6915051d85c177ac1d428ba",
+      "files": [
+        {
+          "name": "ninja-build-1.12.1.tar.gz",
+          "sha512": "d6e6f0e89a4844a69069ff0c7cefc07704a41c7b0c062a57534de87decdde63e27928147b321111b806aa7efa1061f031a1319b074391db61b0cbdccf096954c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/ninja-build-1.12.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/6f7e910bbb2d8c50b3f27ce9a353f110ca69098f/community/ninja-build/ninja-build-1.12.1.tar.gz"
           ]
         }
       ]
@@ -11732,6 +11841,40 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/readline82-013.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/readline/readline82-013.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "rhash",
+      "commit": "86f1a467115dbaf5c05a6683aaf6b66c2c5cad80",
+      "license": "0BSD",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/86f1a467115dbaf5c05a6683aaf6b66c2c5cad80/main/rhash/APKBUILD",
+      "recipe_sha256": "d03a1c229abaa6af3ef960eca4f76db242e0cb464feadd83437b87a5a62a457a",
+      "files": [
+        {
+          "name": "rhash-1.4.5-src.tar.gz",
+          "sha512": "49bd6aa2497efc4871ae31eaca51d2dc78ceb7126311557d5280b14fafe9355eaecad37f0f78f865e4e1dd1aeb506d3301989cd2f9fff7b0091c81978e8c2f2e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/rhash-1.4.5-src.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/86f1a467115dbaf5c05a6683aaf6b66c2c5cad80/main/rhash/rhash-1.4.5-src.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "ripgrep",
+      "commit": "4e899d119e4c983a938436d6f397a509521225d1",
+      "license": "MIT OR Unlicense",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/4e899d119e4c983a938436d6f397a509521225d1/community/ripgrep/APKBUILD",
+      "recipe_sha256": "7140694d28d1d3fb67a347305b36f15ea3998bbd36125ea6d131acde1c77e357",
+      "files": [
+        {
+          "name": "ripgrep-14.1.1.tar.gz",
+          "sha512": "6aacbc99025c1c0c301491574953bed4d7dd04f9ce7ce999c47eaa50d71ea7edd905f718e2e94031a5ad651d4daebce772c57ed291c639938991ad4574be8244",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/ripgrep-14.1.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/4e899d119e4c983a938436d6f397a509521225d1/community/ripgrep/ripgrep-14.1.1.tar.gz"
           ]
         }
       ]

@@ -277,6 +277,33 @@ bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDesc
     return find(rsdp, reader, context, {"FACP", 116, accept_fadt, &result});
 }
 
+static bool accept_pm_timer(const uint8_t* fadt, void* output) {
+    const uint32_t flags = uint32_t(little(fadt + 112, 4));
+    if (!fadt[8] || fadt[91] != 4 || (flags & (1u << 20)))
+        return false;
+
+    const unsigned counter_bits = flags & (1u << 8) ? 32 : 24;
+    uint64_t port = little(fadt + 76, 4);
+    if (fadt[8] >= 3 && little(fadt + 4, 4) >= 220) {
+        const uint8_t* gas = fadt + 208;
+        if (const uint64_t address = little(gas + 4, 8)) {
+            // The x86 driver reads a dword from the system I/O register.
+            if (gas[0] != 1 || gas[1] < counter_bits || gas[1] > 32 || gas[2] ||
+                (gas[3] && gas[3] != 3))
+                return false;
+            port = address;
+        }
+    }
+    if (!port || port > UINT16_MAX - 3)
+        return false;
+    *static_cast<PmTimer*>(output) = {uint16_t(port), UINT32_MAX >> (32 - counter_bits)};
+    return true;
+}
+
+bool find_pm_timer(uint64_t rsdp, Read reader, void* context, PmTimer& result) {
+    return find(rsdp, reader, context, {"FACP", 116, accept_pm_timer, &result});
+}
+
 static bool read_definition(uint64_t address, const char* signature, Read reader, void* context,
                             size_t& budget, DefinitionBlock& result) {
     // The boot firmware reader can map at most one MiB per table.

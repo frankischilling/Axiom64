@@ -93,10 +93,10 @@ BootInfo boot_info;
     Acpi::InterruptTopology topology;
     Acpi::DefinitionBlocks definitions;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
-    clock_init(rsdp);
     const bool schedule_peers = arguments.has("smp.scheduler");
+    clock_init(rsdp, schedule_peers);
     if (schedule_peers && !clock_shared_counter_ready())
-        log("SMP: scheduler requires a shared HPET counter\n");
+        log("SMP: scheduler requires a shared platform counter\n");
     if (schedule_peers || arguments.has("smp.probe"))
         boot_probe_application_processors(schedule_peers && clock_shared_counter_ready());
     if (arguments.has("irq=pic"))

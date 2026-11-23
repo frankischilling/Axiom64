@@ -94,11 +94,11 @@ each secondary CPU sees the replacement after a directed interrupt. The
 scheduler still runs on the bootstrap processor.
 
 Add `--scheduler` to run the separate twelve-CPU userspace test under BIOS and
-UEFI. It boots with `smp.scheduler`, forks workers, and checks that they report
-execution on all twelve logical CPUs before exiting. For a custom image, pass
+UEFI, including with HPET disabled. It boots with `smp.scheduler`, forks
+workers, and checks execution on all twelve logical CPUs. For a custom image, pass
 `--kernel-option smp.scheduler` to the image builder. The option requires the
-Limine processor list, a working shared HPET counter, and successful secondary
-CPU checks. Ordinary boots continue to use the boot CPU.
+Limine processor list, a working shared ACPI PM timer or HPET counter, and
+successful secondary CPU checks. Ordinary boots continue to use the boot CPU.
 
 The same invalidation path serves ordinary userspace memory changes. Replaced
 and unmapped pages stay allocated until the CPUs using those page tables have

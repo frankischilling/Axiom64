@@ -32,6 +32,10 @@ uint64_t ticks;
 static Clock::Counter timeline;
 static volatile uint32_t* hpet_registers;
 static uint32_t hpet_period;
+static constexpr uint32_t pm_frequency = 3579545;
+static Acpi::PmTimer pm_timer{};
+static uint32_t pm_last;
+static uint64_t pm_extended;
 static uint64_t tsc_per_us;
 static bool use_tsc;
 
@@ -93,6 +97,45 @@ static bool initialize_hpet(uint64_t rsdp) {
     return false;
 }
 
+static bool read_pm_timer(const Acpi::PmTimer& timer, uint32_t& reading) {
+    for (unsigned attempt = 0; attempt < 8; ++attempt) {
+        const uint32_t first = in32(timer.port) & timer.mask;
+        const uint32_t middle = in32(timer.port) & timer.mask;
+        const uint32_t last = in32(timer.port) & timer.mask;
+        // Some chipsets can return a bad sample while the register is changing.
+        // Check that the middle reading lies between the other two, modulo wrap.
+        const uint32_t span = (last - first) & timer.mask;
+        if (span <= timer.mask / 2 && ((middle - first) & timer.mask) <= span) {
+            reading = middle;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool initialize_pm_timer(uint64_t rsdp) {
+    Acpi::PmTimer device{};
+    uint32_t initial;
+    if (!Acpi::find_pm_timer(rsdp, firmware_read, nullptr, device) ||
+        !read_pm_timer(device, initial))
+        return false;
+    for (unsigned spins = 0; spins < 4096; ++spins) {
+        uint32_t reading;
+        if (!read_pm_timer(device, reading))
+            return false;
+        const uint32_t delta = (reading - initial) & device.mask;
+        if (delta && delta <= device.mask / 2) {
+            if (!timeline.reset(0, 100, pm_frequency))
+                return false;
+            pm_timer = device;
+            pm_last = reading;
+            return true;
+        }
+        asm volatile("pause");
+    }
+    return false;
+}
+
 static bool initialize_tsc() {
     uint32_t a = 0, b, c = 0, d;
     asm volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
@@ -131,8 +174,11 @@ static bool initialize_tsc() {
     return true;
 }
 
-void clock_init(uint64_t rsdp) {
-    if (initialize_hpet(rsdp))
+void clock_init(uint64_t rsdp, bool prefer_pm_timer) {
+    if (prefer_pm_timer && initialize_pm_timer(rsdp))
+        log("Clock: ACPI PM timer, %u-bit counter, 100 Hz accounting\n",
+            pm_timer.mask == UINT32_MAX ? 32u : 24u);
+    else if (initialize_hpet(rsdp))
         log("Clock: HPET 64-bit counter, 100 Hz accounting\n");
     else if ((use_tsc = initialize_tsc()))
         log("Clock: calibrated TSC, fixed-frequency fallback, 100 Hz accounting\n");
@@ -142,7 +188,7 @@ void clock_init(uint64_t rsdp) {
 }
 
 bool clock_shared_counter_ready() {
-    return hpet_registers != nullptr;
+    return hpet_registers != nullptr || pm_timer.port != 0;
 }
 
 void clock_refresh(bool timer) {
@@ -150,13 +196,40 @@ void clock_refresh(bool timer) {
         uint64_t reading;
         if (counter_read(reading))
             ticks = max(ticks, timeline.sample(reading));
+    } else if (pm_timer.port) {
+        uint32_t reading;
+        // The bootstrap CPU's 100 Hz tick samples well inside the 24-bit wrap
+        // interval (about 4.69 s). Kernel entries serialize timeline updates.
+        if (read_pm_timer(pm_timer, reading)) {
+            pm_extended += (reading - pm_last) & pm_timer.mask;
+            pm_last = reading;
+            ticks = max(ticks, timeline.sample(pm_extended));
+        }
     } else if (use_tsc)
         ticks = max(ticks, timeline.sample(timestamp()));
     else if (timer && ticks != UINT64_MAX)
         ticks++;
 }
 
+static bool delay_pm_timer(unsigned microseconds) {
+    const auto counts = (uint64_t(microseconds) * pm_frequency + 999999) / 1000000;
+    uint32_t start;
+    if (counts > pm_timer.mask / 2 || !read_pm_timer(pm_timer, start))
+        return false;
+    for (unsigned attempt = 0; attempt < 100000; ++attempt) {
+        uint32_t reading;
+        if (!read_pm_timer(pm_timer, reading))
+            return false;
+        if (((reading - start) & pm_timer.mask) >= counts)
+            return true;
+        asm volatile("pause");
+    }
+    return false;
+}
+
 bool clock_delay_us(unsigned microseconds) {
+    if (pm_timer.port)
+        return delay_pm_timer(microseconds);
     uint64_t start;
     uint64_t counts;
     if (hpet_registers) {

@@ -237,6 +237,7 @@ struct Namespace {
     SystemMemoryRead read_system_memory;
     RegisterRead read_registers;
     PciBarRead read_pci_bars;
+    PciWordRead read_pci_words;
     void* register_context;
     OsiQuery query_osi;
     PciLinkProgram link_program;
@@ -314,6 +315,7 @@ struct Namespace {
     bool read_memory_field(const Object&, Value&, unsigned depth);
     bool read_memory_bytes(uint64_t address, uint8_t*, size_t, bool lock, bool local);
     bool read_local_memory(const Value& field, Value& result);
+    void apply_memory_overlay(uint64_t address, uint8_t* data, size_t bytes) const;
     bool stage_memory_bits(uint64_t address, unsigned shift, unsigned bits, uint64_t number);
     bool declare_local_region(Cursor&, const Path&, Frame&, unsigned depth);
     bool declare_local_fields(Cursor&, Frame&);

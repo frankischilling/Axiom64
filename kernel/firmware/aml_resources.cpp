@@ -970,6 +970,7 @@ bool decode_initialized_hid_devices(const DefinitionBlocks& blocks, I2cHidDevice
         if (!space)
             return false;
         space->read_registers = regions.registers;
+        space->read_pci_words = regions.pci_words;
         space->register_context = regions.register_context;
         space->query_osi = regions.osi;
         if (space->query_osi && !space->child({}, name_segment("_OSI"))) {

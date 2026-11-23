@@ -160,8 +160,11 @@ interrupt-driven report source to register that device.
 
 If the resource scan finds no devices, the HID descriptor probe can replay
 supported ACPI initialization methods in a private namespace. The firmware
-memory provider still validates and locks each read. Writes to supported
-NVS fields and resource buffers affect only that replay. A candidate whose
+memory provider still validates and locks each read. The replay also reads
+aligned words from conventional PCI configuration registers in a verified
+ECAM window. Writes to those fields, supported NVS fields and resource
+buffers affect only that replay. Bus Check and Device Wake notifications
+have no recipient in the private namespace. A candidate whose
 initialization needs an unsupported operation is skipped, and the probe
 reports how many candidates it rejected. On supported Intel GPIO
 controllers, the probe reads pad configuration from the communities named
@@ -176,7 +179,9 @@ The probes can follow conditional namespace references and hold firmware
 resource buffers in a private copy when AML declares writable fields.
 They can compare integers in AML packages and assemble resource templates
 that firmware builds across several AML methods. The motherboard scan can
-also read aligned BAR words in a validated PCI configuration aperture.
+also read aligned BAR words in a validated PCI configuration aperture. On
+the supported Comet Lake-H configuration, the probe checks the chipset and
+UART identities before reading the BAR pairs from the hidden UART page.
 
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.

@@ -504,10 +504,7 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
     return true;
 }
 
-static bool read_ecam_bars(uint64_t address, uint32_t* values, size_t words) {
-    const unsigned offset = address & 0xfff;
-    if ((offset & 3) || offset < 0x10 || offset >= 0x28 || !words || words > (0x28 - offset) / 4)
-        return false;
+static bool ecam_function(uint64_t address, PciFunction& pci) {
     for (unsigned i = 0; i < window_count; ++i) {
         auto& window = windows[i];
         if (address < window.region.bus_address(window.region.first_bus) ||
@@ -520,18 +517,56 @@ static bool read_ecam_bars(uint64_t address, uint32_t* values, size_t words) {
         auto* ecam = map_bus(window, bus);
         if (!ecam)
             return false;
-        PciFunction pci{bus, slot, function, window.region.segment,
-                        ecam + (unsigned(slot) << 15) + (unsigned(function) << 12)};
-        if (pci.read16(0) == UINT16_MAX)
-            return false;
-        const unsigned header = pci.read8(0x0e) & 0x7f;
-        if (header > 1 || (header == 1 && offset + words * 4 > 0x18))
-            return false;
-        for (unsigned word = 0; word < words; ++word)
-            values[word] = pci.read32(offset + word * 4);
+        pci = {bus, slot, function, window.region.segment,
+               ecam + (unsigned(slot) << 15) + (unsigned(function) << 12)};
         return true;
     }
     return false;
+}
+
+static bool read_hidden_uart_bars(uint64_t address, uint32_t* values, size_t words) {
+    // The Comet Lake-H firmware can hide UART2 from the PCI bus and expose its
+    // configuration through a separate page. Check both PCI identities and
+    // read only the BAR pairs used by the motherboard resource methods.
+    constexpr uint64_t uart2 = 0xfe037000;
+    if ((address != uart2 + 0x10 && address != uart2 + 0x18) || words != 2)
+        return false;
+    const PciFunction lpc{0, 31, 0, 0, nullptr};
+    if (lpc.read32(0) != 0x068d8086 || lpc.read16(0x0a) != 0x0601)
+        return false;
+    auto* configuration = static_cast<volatile const uint32_t*>(map_mmio(uart2, 4096));
+    if (!configuration || configuration[0] != 0x06c78086)
+        return false;
+    const unsigned first = (address - uart2) / 4;
+    values[0] = configuration[first];
+    values[1] = configuration[first + 1];
+    return true;
+}
+
+static bool read_platform_bars(uint64_t address, uint32_t* values, size_t words) {
+    const unsigned offset = address & 0xfff;
+    PciFunction pci{};
+    if ((offset & 3) || offset < 0x10 || offset >= 0x28 || !words || words > (0x28 - offset) / 4)
+        return false;
+    if (!ecam_function(address, pci))
+        return read_hidden_uart_bars(address, values, words);
+    if (pci.read16(0) == UINT16_MAX)
+        return false;
+    const unsigned header = pci.read8(0x0e) & 0x7f;
+    if (header > 1 || (header == 1 && offset + words * 4 > 0x18))
+        return false;
+    for (unsigned word = 0; word < words; ++word)
+        values[word] = pci.read32(offset + word * 4);
+    return true;
+}
+
+static bool read_ecam_word(uint64_t address, uint16_t& value) {
+    const unsigned offset = address & 0xfff;
+    PciFunction pci{};
+    if ((offset & 1) || offset >= 0x100 || !ecam_function(address, pci))
+        return false;
+    value = pci.read16(0) == UINT16_MAX ? UINT16_MAX : pci.read16(offset);
+    return true;
 }
 
 Acpi::ReadRegions pci_firmware_read_regions() {
@@ -539,7 +574,8 @@ Acpi::ReadRegions pci_firmware_read_regions() {
     return {.memory = firmware_read_system_memory,
             .pci = read_pci_field<true>,
             .bridges = &bridges,
-            .pci_bars = read_ecam_bars};
+            .pci_bars = read_platform_bars,
+            .pci_words = read_ecam_word};
 }
 
 static bool extended_config_mirrors_header(const PciFunction& pci) {

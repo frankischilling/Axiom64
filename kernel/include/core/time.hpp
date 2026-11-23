@@ -43,7 +43,8 @@ struct ClockTimezone {
 };
 
 extern uint64_t ticks;
-void clock_init(uint64_t rsdp);
+void clock_init(uint64_t rsdp, bool prefer_pm_timer);
+bool clock_shared_counter_ready();
 void clock_realtime_init();
 uint64_t clock_realtime_ticks();
 ClockTimezone clock_timezone();

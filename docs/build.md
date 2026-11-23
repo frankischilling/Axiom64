@@ -93,6 +93,14 @@ the target page tables loaded. It replaces the backing page and checks that
 each secondary CPU sees the replacement after a directed interrupt. The
 scheduler still runs on the bootstrap processor.
 
+Add `--scheduler` to run the separate twelve-CPU userspace test under BIOS and
+UEFI, including with HPET disabled. It boots with `smp.scheduler`, forks
+workers, and checks execution on all twelve logical CPUs. It also starts and
+joins 320 concurrent threads. For a custom image, pass
+`--kernel-option smp.scheduler` to the image builder. The option requires the
+Limine processor list, a working shared ACPI PM timer or HPET counter, and
+successful secondary CPU checks. Ordinary boots continue to use the boot CPU.
+
 The same invalidation path serves ordinary userspace memory changes. Replaced
 and unmapped pages stay allocated until the CPUs using those page tables have
 responded. The address-space lock covers CR3 switches and target selection.

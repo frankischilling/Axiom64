@@ -30,6 +30,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 using ax::Clock::Counter;
 
@@ -419,6 +420,49 @@ static void platform_tables() {
     std::puts("ACPI_PLATFORM_TABLES_PASS malformed=9");
 }
 
+static void pm_timer_tables() {
+    using namespace ax::Acpi;
+    constexpr auto table = Firmware::hpet;
+    Firmware fixture;
+    std::memcpy(fixture.at(table), "FACP", 4);
+    fixture.put(table + 4, 220, 4);
+    fixture.at(table)[8] = 6;
+    fixture.put(table + 76, 0x408, 4);
+    fixture.at(table)[91] = 4;
+    fixture.sum(table, 220, 9);
+    PmTimer timer{};
+    auto find = [&] { return find_pm_timer(Firmware::base, Firmware::read, &fixture, timer); };
+    assert(find() && timer.port == 0x408 && timer.mask == 0xffffff);
+
+    fixture.at(table)[208] = 1;
+    fixture.at(table)[209] = 32;
+    fixture.at(table)[211] = 3;
+    fixture.put(table + 212, 0x1808, 8);
+    fixture.sum(table, 220, 9);
+    assert(find() && timer.port == 0x1808 && timer.mask == 0xffffff);
+
+    fixture.put(table + 112, 1u << 8, 4);
+    fixture.sum(table, 220, 9);
+    assert(find() && timer.port == 0x1808 && timer.mask == UINT32_MAX);
+    for (auto [offset, invalid] :
+         {std::pair{91u, 2u}, std::pair{114u, 16u}, std::pair{208u, 0u}, std::pair{209u, 24u},
+          std::pair{210u, 8u}, std::pair{211u, 2u}, std::pair{214u, 1u}}) {
+        uint8_t& field = fixture.at(table)[offset];
+        const uint8_t saved = field;
+        field = uint8_t(invalid);
+        fixture.sum(table, 220, 9);
+        assert(!find());
+        field = saved;
+    }
+    fixture.put(table + 4, 116, 4);
+    fixture.at(table)[8] = 1;
+    fixture.sum(table, 116, 9);
+    assert(find() && timer.port == 0x408 && timer.mask == UINT32_MAX);
+    fixture.at(table)[9]++;
+    assert(!find());
+    std::puts("ACPI_PM_TIMER_PASS legacy extended malformed");
+}
+
 static void ecam_tables() {
     constexpr uint64_t mcfg = Firmware::hpet + 128;
     Firmware fixture;
@@ -620,6 +664,7 @@ int main() {
     counter_tests();
     firmware_tests();
     platform_tables();
+    pm_timer_tables();
     ecam_tables();
     isa_routes();
     definition_blocks();

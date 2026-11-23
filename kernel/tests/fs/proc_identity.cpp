@@ -134,6 +134,14 @@ CpuTotals cpu_totals() {
     std::abort();
 }
 
+CpuTotals cpu_core_totals(unsigned) {
+    std::abort();
+}
+
+unsigned scheduler_cpu_count() {
+    return 1;
+}
+
 PhysicalMemoryStats physical_memory_stats() {
     std::abort();
 }

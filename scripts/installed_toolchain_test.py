@@ -75,6 +75,9 @@ def verify(disk, output, firmware, samples):
             run("ar rcs libnative.a /tmp/native-arithmetic.o && nm libnative.a | "
                 "grep -w native_asm_add && readelf -h /tmp/native-cpp | grep -q ELF64", 11)
             run("/bin/sh installed-build-tools.sh", 12, timeout=300)
+            run("test -r \"$HOME/auto-eduroam/LICENSE\" && "
+                "test -r \"$HOME/auto-eduroam/README.md\" && "
+                "\"$HOME/auto-eduroam/connect-eduroam.sh\" --help && connect-eduroam --help", 13)
             send("sudo /bin/busybox poweroff -f")
             wait(b"Password: ")
             send(password)

@@ -38,6 +38,9 @@ with software rendering on the Xorg seat. The desktop includes shortcuts for
 Kitty, Thunar, btop, and both Freedoom campaigns. Use `build/rootfs-desktop.cpio`
 for a smaller disk image with twm and xterm.
 
+The installed desktop skips the animated splash by default to free CPU time
+for sign-in. You can choose a splash screen in Plasma System Settings.
+
 After KWin starts, Plasma checks that Activities is ready before launching
 the shell. Look for the result in `plasma-activities.log` and session output
 in `plasma-session.log`. Both are in `~/.local/state/axiom64/`, or in the

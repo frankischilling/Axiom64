@@ -61,6 +61,12 @@ stale credentials, expired passwords, and unprivileged callers. It also checks
 account protection during a session, logout, and recovery after the helper
 exits.
 
+PolicyKit uses the same password and account checks for privileged desktop
+actions. Its installed helper keeps the caller's real UID and runs with
+effective root user and group IDs. The `polkit-1` PAM service checks the account
+without opening a login session. The NVMe test also checks these credentials
+and rejects them for the SDDM login service.
+
 The installed Plasma profile uses the `kde` PAM service to verify the account
 that owns the locked session. The verifier binds the requested account to the
 caller's real UID and reads the password through a pipe. The usual account

@@ -48,7 +48,7 @@ build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
-build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) | busybox
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) userspace/desktop/kde.pam | busybox
 	$(PYTHON) scripts/rootfs.py --profile installed-desktop
 
 image: build/axiom64.elf build/rootfs.cpio

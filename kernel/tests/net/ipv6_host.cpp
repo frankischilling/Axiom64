@@ -619,6 +619,57 @@ static void direct_neighbor_replies() {
     assert(last(0, 136).header.destination == address(0, 1));
 }
 
+static void scoped_multicast_output() {
+    reset();
+    auto local = address(1, 3, true);
+    assert(!change(2, local));
+    assert(!change(1, address(0, 2, true)));
+    ip6::Address group{};
+    group.bytes[0] = 0xff;
+    group.bytes[1] = 2;
+    group.bytes[15] = 2;
+    auto socket = inet6_allocate(3);
+    assert(socket);
+    const Inet6Address destination{10, 0, 0, group, 2};
+    const uint8_t solicitation[8] = {133};
+    const uint8_t multicast_mac[6] = {0x33, 0x33, 0, 0, 0, 2};
+    auto verify = [&](unsigned expected, const Inet6SendControl* selected) {
+        const auto count = emitted[1].size();
+        assert(inet6_send(socket, destination, solicitation, sizeof(solicitation), true,
+                          selected) == sizeof(solicitation));
+        ipv6_poll();
+        assert(emitted[0].empty() && emitted[1].size() == count + 1);
+        auto packet = last(1, 133);
+        assert(packet.header.source == local && packet.header.destination == group &&
+               packet.header.hop_limit == expected &&
+               !memcmp(emitted[1].back().data(), multicast_mac, sizeof(multicast_mac)) &&
+               !ip6::checksum(local, group, 58, packet.payload, packet.length));
+    };
+
+    socket->hops = 41;
+    verify(1, nullptr);
+    socket->multicast_hops = 255;
+    verify(255, nullptr);
+
+    struct {
+        uint64_t length;
+        uint32_t level, type;
+        int value;
+    } message{20, 41, 52, 37};
+
+    Inet6SendControl control;
+    assert(!inet6_parse_send_control(socket, destination,
+                                     reinterpret_cast<const uint8_t*>(&message), sizeof(message),
+                                     control, true));
+    verify(37, &control);
+    message.value = -1;
+    assert(!inet6_parse_send_control(socket, destination,
+                                     reinterpret_cast<const uint8_t*>(&message), sizeof(message),
+                                     control, true));
+    verify(255, &control);
+    inet6_close(socket);
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -658,6 +709,7 @@ int main() {
         assert(net_configure(n + 1, true, 1500) == 0);
     }
     ipv6_output_owner_tests(reset);
+    scoped_multicast_output();
     dad();
     echo_and_ownership();
     routed_reply_hops();

@@ -308,7 +308,14 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
         return -101;
     Ipv6Route inventory[ipv6_route_capacity + ipv6_address_capacity + 1];
     size_t count = ipv6_routes(inventory, sizeof(inventory) / sizeof(*inventory));
-    const Ipv6Route* best = nullptr;
+    // Link-local multicast uses an on-link Ethernet path before a router exists.
+    Ipv6Route multicast;
+    multicast.index = bound;
+    multicast.prefix = 8;
+    const Ipv6Route* best = destination.multicast() && address_scope(destination) == 2 && bound &&
+                                    bound != ipv6_loopback && ip6::usable(bound)
+                                ? &multicast
+                                : nullptr;
     for (size_t n = 0; n < count; n++) {
         const auto& candidate = inventory[n];
         if ((bound && candidate.index != bound) || !ip6::usable(candidate.index) ||

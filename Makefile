@@ -19,6 +19,7 @@ PYTHON = python3
 IPV4_WORKERS ?= 2
 IPV4_MULTICAST_CORE = $(wildcard kernel/net/ipv4/multicast/*.cpp)
 IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp kernel/tests/net/descriptor_notify.cpp
+SOCKET_FILTER_CORE = kernel/net/socket_filter.cpp kernel/net/socket_control.cpp
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -1297,7 +1298,7 @@ build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/te
 build/ipv4-routes-host: kernel/tests/net/ipv4_routes.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp kernel/tests/net/ipv4_address_lifecycle.cpp
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp kernel/tests/net/ipv4_address_lifecycle.cpp $(SOCKET_FILTER_CORE)
 
 test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host build/ipv4-routes-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host
@@ -1341,6 +1342,7 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
+build/tcp-socket-output-host: $(SOCKET_FILTER_CORE)
 build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@

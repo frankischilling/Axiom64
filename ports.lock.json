@@ -5412,6 +5412,19 @@
       "source_commit": "d3b558e1b8572decb53ac74fe4f3a5393fdb2eb9"
     },
     {
+      "name": "modemmanager-qt",
+      "version": "6.13.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/modemmanager-qt-6.13.0-r0.apk",
+      "archive": "modemmanager-qt-6.13.0-r0.apk",
+      "sha256": "8b5c934c79b41900ba4499663a43d8328093a04d5a4c626ec98f0d8591d161fe",
+      "license": "LGPL-2.1-only OR LGPL-3.0-only",
+      "upstream": "https://community.kde.org/Frameworks",
+      "origin": "modemmanager-qt",
+      "source_commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
+      "installed_only": true
+    },
+    {
       "name": "mpc1",
       "version": "1.3.1-r1",
       "repository": "main",
@@ -5946,6 +5959,19 @@
       "installed_only": true
     },
     {
+      "name": "plasma-nm",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/plasma-nm-6.3.6-r0.apk",
+      "archive": "plasma-nm-6.3.6-r0.apk",
+      "sha256": "28149d19a395f1426f3f7944a16dd1c4637226ae86d160ac649c99af79cbcb16",
+      "license": "(LGPL-2.1-only OR LGPL-3.0-only) AND LGPL-2.0-or-later",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "plasma-nm",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
       "name": "plasma-pa",
       "version": "6.3.6-r0",
       "repository": "community",
@@ -6138,6 +6164,19 @@
       "upstream": "https://www.python.org/",
       "origin": "python3",
       "source_commit": "712199df117586aee4a5a8138360636deafcae27",
+      "installed_only": true
+    },
+    {
+      "name": "qcoro",
+      "version": "0.12.0-r3",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/qcoro-0.12.0-r3.apk",
+      "archive": "qcoro-0.12.0-r3.apk",
+      "sha256": "0184ee931482b38657926e3842b01dd413113227d7a28c6fa23bf73a041421cf",
+      "license": "MIT",
+      "upstream": "https://qcoro.dvratil.cz",
+      "origin": "qcoro",
+      "source_commit": "d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c",
       "installed_only": true
     },
     {
@@ -6515,6 +6554,19 @@
       "upstream": "https://qt.io/",
       "origin": "qt6-qtwebengine",
       "source_commit": "74d00335e1163dbce8170812ffcdd09c80e7805f",
+      "installed_only": true
+    },
+    {
+      "name": "qt6-qtwebsockets-libs",
+      "version": "6.8.3-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/qt6-qtwebsockets-libs-6.8.3-r0.apk",
+      "archive": "qt6-qtwebsockets-libs-6.8.3-r0.apk",
+      "sha256": "129fcf42098e2d3df7b7d6e48a08a262a8e441a9d4397f05cde9d78e0c57f38e",
+      "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
+      "upstream": "https://qt.io/",
+      "origin": "qt6-qtwebsockets",
+      "source_commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
       "installed_only": true
     },
     {

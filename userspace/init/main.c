@@ -39,11 +39,17 @@
 
 static const char debug_network[] = "/etc/axiom64-debug-network";
 static const char debug_ssh_config[] = "/etc/ssh/sshd_config.debug";
+static const char desktop_network[] = "/usr/libexec/axiom64-networkmanager";
 static const char input_daemon[] = "/sbin/udevd";
 static const char input_coldplug[] = "/usr/libexec/axiom64-input-coldplug";
 static const char input_ready[] = "/run/axiom64-input-ready";
 
+static pid_t start_service(const char* path);
+
 static pid_t network(int debug) {
+    if (!debug && access(desktop_network, X_OK) == 0)
+        return start_service(desktop_network);
+
     pid_t child = fork();
     if (!child) {
         int input = open("/dev/null", O_RDONLY);

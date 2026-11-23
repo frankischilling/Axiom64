@@ -9098,6 +9098,23 @@
       ]
     },
     {
+      "origin": "modemmanager-qt",
+      "commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
+      "license": "LGPL-2.1-only OR LGPL-3.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/d27137ba98af5d9e9ec49e472477d2c5458f6fe3/community/modemmanager-qt/APKBUILD",
+      "recipe_sha256": "47ee4bd31b0b801774beb99d687d1f735beb641634fc668254c74d6eace6e32c",
+      "files": [
+        {
+          "name": "modemmanager-qt-6.13.0.tar.xz",
+          "sha512": "e5f20cf5cdb046a69773d161352f5cdcf6f6f80ecebabf484916b81cca8f88e6938a7da7239ea675f145e4f5d349fcfd26cf4bb5c40af38e13541c763ad9a1de",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/modemmanager-qt-6.13.0.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d27137ba98af5d9e9ec49e472477d2c5458f6fe3/community/modemmanager-qt/modemmanager-qt-6.13.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "mpc1",
       "commit": "84a227baf001b6e0208e3352b294e4d7a40e93de",
       "license": "LGPL-3.0-or-later",
@@ -10349,6 +10366,23 @@
       ]
     },
     {
+      "origin": "plasma-nm",
+      "commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "license": "(LGPL-2.1-only OR LGPL-3.0-only) AND LGPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/plasma-nm/APKBUILD",
+      "recipe_sha256": "4a674a0340630b4c18662fd0a6af110cb25be7b88a91aec3faeb24867e0774f7",
+      "files": [
+        {
+          "name": "plasma-nm-6.3.6.tar.xz",
+          "sha512": "c3c5ed93005c00e3dd405adcbf3248523a9ad7d3ce45addaab5783d406adf21fd14dc35ab757a98c224535431fa645780fd8161c2b179776d6e6e337ce2cd846",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/plasma-nm-6.3.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/plasma-nm/plasma-nm-6.3.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "plasma-pa",
       "commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
       "license": "LGPL-2.1-only OR LGPL-3.0-only AND GPL-2.0-only",
@@ -10734,6 +10768,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/qca-2.3.10.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/a693b2774aa9748fa962853e39d9fee923931185/community/qca/qca-2.3.10.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "qcoro",
+      "commit": "d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c/community/qcoro/APKBUILD",
+      "recipe_sha256": "c700c9253958f08414aa8cca7ebf493b10f59a0057fec5bf6ad50527b925628e",
+      "files": [
+        {
+          "name": "qcoro-v0.12.0.tar.gz",
+          "sha512": "f1da90c4a9bec5f52ec9f40caa30c8465658c6ff005c6c7e89aeb97acc4aefd5e34030493b7e51313a6d2b3fc59114f6ed6751f31f1c132ece173f0e22154c37",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/qcoro-v0.12.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c/community/qcoro/qcoro-v0.12.0.tar.gz"
           ]
         }
       ]
@@ -11495,6 +11546,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/x64-fixup-backport-CVE-2025-12441.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/74d00335e1163dbce8170812ffcdd09c80e7805f/community/qt6-qtwebengine/x64-fixup-backport-CVE-2025-12441.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "qt6-qtwebsockets",
+      "commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
+      "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/2a4d0d253cd2886bd694c45b5602c927676096b3/community/qt6-qtwebsockets/APKBUILD",
+      "recipe_sha256": "4f5cfd5ec689f97304f031b1c99b5fdcc863ede0b45f2c46e2ab42a36189de23",
+      "files": [
+        {
+          "name": "qtwebsockets-everywhere-src-6.8.3.tar.xz",
+          "sha512": "7453c6657e9885393d57df3ebaf9d3ad12237b5fb848ac3547cc6c6ed607562d58564667a7fd10133d4cdb94151aa5c21660e33c7f48f01a4061001a47f85b60",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/qtwebsockets-everywhere-src-6.8.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2a4d0d253cd2886bd694c45b5602c927676096b3/community/qt6-qtwebsockets/qtwebsockets-everywhere-src-6.8.3.tar.xz"
           ]
         }
       ]

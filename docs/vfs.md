@@ -19,7 +19,7 @@ newly allocated pages and empty page tables before returning `ENOMEM`.
 
 | Operation | Supported behavior |
 | --- | --- |
-| `mount` | `ramfs` and `ext2`, optional `MS_RDONLY`; `MS_REMOUNT` changes policy; the mount utility's `MS_SILENT` flag is accepted |
+| `mount` | `ramfs`, `ext2`, `proc`, `mqueue`, and `cgroup2`; optional `MS_RDONLY` and mount utility `MS_SILENT`; `MS_REMOUNT` where supported |
 | `umount2` | Flags zero; sync before detach and restore covered contents |
 | `openat`, `mkdirat`, `unlinkat`, `linkat`, `renameat`, `symlinkat`, `readlinkat` | Relative directory identity and filesystem dispatch |
 | `O_PATH` descriptors | Retained object identity, metadata, duplication, directory bases and empty-path symlink reads |
@@ -31,6 +31,28 @@ newly allocated pages and empty page tables before returning `ENOMEM`.
 | `flock` | [Advisory shared/exclusive locks](file-locks.md) owned by a canonical local file description |
 | `fcntl` record locks | POSIX and open-file-description byte ranges, foreign conflict queries, blocking acquisition and descriptor lifetime |
 | `proc` mounts | Process and thread status, caller-relative self links, descriptor links, and description-owned read buffers |
+
+## Control groups
+
+`mount -t cgroup2 cgroup2 /sys/fs/cgroup` mounts the unified process hierarchy.
+An administrator creates a group with `mkdir` and moves a process to it by
+writing a PID to `cgroup.procs`. A write of zero selects the caller. Forked
+processes inherit membership, and tasks in a thread group share it.
+`/proc/<pid>/cgroup` reports the hierarchy path. Watch `cgroup.events` with
+inotify to observe when a group and its descendants gain or lose their last
+process.
+
+This implements the membership and population interfaces from the
+[Linux cgroup v2 ABI](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+`cgroup.controllers` is empty. Resource controllers, delegation, threaded
+subtrees, and independent hierarchies require further support. Remove child
+groups before unmounting.
+
+`make test-cgroup-session` checks mounting, process migration, fork and exit,
+inotify notifications, and permission failures in disposable BIOS and UEFI
+guests.
+
+## Procfs
 
 Procfs lists descriptors under `/proc/<pid>/fd` and `/proc/<pid>/task/<tid>/fd`. The `self` and `thread-self` aliases use the calling process or thread. `/dev/fd` points to `/proc/self/fd`. Standard input, output, and error have aliases under `/dev`.
 

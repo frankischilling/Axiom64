@@ -147,6 +147,8 @@ struct FilesystemOps {
     int (*access_override)(Node*, unsigned mask) = nullptr;
     bool (*queue_reclaim)(Node*) = nullptr;
     void (*reclaim_queued)(Mount*) = nullptr;
+    // A directory can contain kernel-owned control files that do not block rmdir.
+    int (*directory_empty)(Node*) = nullptr;
 };
 
 struct Mount {
@@ -168,6 +170,7 @@ Node* ramfs_root(Mount*, uint32_t);
 
 // Release an unlinked, unreferenced kernel-created character device.
 void ramfs_reclaim_device(Node*);
+bool ramfs_reclaim_unlinked(Node*);
 
 struct SocketTimeout {
     uint64_t ticks = 0;

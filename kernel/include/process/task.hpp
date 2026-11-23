@@ -115,6 +115,7 @@ struct Process {
     unsigned live_threads = 1;
     unsigned running_cpu = ~0u;
     Task* leader = nullptr;
+    Node* cgroup = nullptr;
     Pty* controlling_pty = nullptr;
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;
     bool executed = false;

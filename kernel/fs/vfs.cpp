@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/vfs.hpp"
+#include "fs/cgroup.hpp"
 #include "fs/memfd.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/pipe.hpp"
@@ -496,6 +497,8 @@ static bool mount_root(Node* node) {
 }
 
 static int empty_directory(Node* node) {
+    if (auto check = node->mount->ops->directory_empty)
+        return check(node);
     DirectoryEntry entry;
     uint64_t cookie = 0;
     while (true) {
@@ -889,7 +892,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         return -16;
     bool ram = queues || (type && !strcmp(type, "ramfs"));
     bool proc = type && !strcmp(type, "proc");
-    if (!ram && !disk && !proc)
+    bool cgroup = type && !strcmp(type, "cgroup2");
+    if (!ram && !disk && !proc && !cgroup)
         return -19;
     Node* device = nullptr;
     if (disk) {
@@ -908,10 +912,11 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                      nullptr,
                      point,
                      point->mount,
-                     queues ? &posix_queue_filesystem()
-                     : ram  ? &ramfs_ops
-                     : proc ? &procfs_ops
-                            : &ext2_ops,
+                     queues   ? &posix_queue_filesystem()
+                     : ram    ? &ramfs_ops
+                     : proc   ? &procfs_ops
+                     : cgroup ? &cgroup2_ops
+                              : &ext2_ops,
                      nullptr,
                      false,
                      bool(flags & 1)};
@@ -922,16 +927,16 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                     return -28;
                 }
             } else {
-                error = ext2_mount(&mount, device, check_dirty);
+                error = cgroup ? cgroup2_mount(&mount) : ext2_mount(&mount, device, check_dirty);
                 if (error) {
                     mount = {};
                     return error;
                 }
             }
             mount.active = true;
-            mount.nosuid = proc || (flags & 2);
-            mount.nodev = proc || (flags & 4);
-            mount.noexec = proc || (flags & 8);
+            mount.nosuid = proc || cgroup || (flags & 2);
+            mount.nodev = proc || cgroup || (flags & 4);
+            mount.noexec = proc || cgroup || (flags & 8);
             if (queues)
                 posix_queue_mount(mount.root);
             return 0;
@@ -981,6 +986,8 @@ int unmount(const Path& path, uint64_t flags) {
             return -16;
     if (mount_busy(mount, false))
         return -16;
+    if (mount->ops == &cgroup2_ops && (error = cgroup2_unmount(mount)))
+        return error;
     error = mount->ops->sync(mount, nullptr, false);
     if (error)
         return error;

@@ -129,18 +129,25 @@ static int remove(Node* node) {
 
 void ramfs_reclaim_device(Node* node) {
     if (!node || !node->mount || node->mount->ops != &ramfs_ops || !node->removed || node->links ||
-        (node->mode & 0170000) != character || node->hardlink || node->owned ||
-        node_referenced(node))
+        (node->mode & 0170000) != character)
         return;
+    ramfs_reclaim_unlinked(node);
+}
+
+bool ramfs_reclaim_unlinked(Node* node) {
+    if (!node->parent || !node->removed || node->links || node->first_child || node->hardlink ||
+        node->owned || node_referenced(node))
+        return false;
     Node** slot = &node->parent->first_child;
     while (*slot && *slot != node)
         slot = &(*slot)->next_sibling;
     if (*slot != node)
-        return;
+        return false;
     *slot = node->next_sibling;
     inotify_retire_inode(node);
     xattr_store_destroy(node->xattrs);
     *node = {};
+    return true;
 }
 
 static int rename(Node* node, Node* parent, const char* name, Node* replaced) {

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/task.hpp"
+#include "fs/cgroup.hpp"
 #include "process/scheduler.hpp"
 #include "arch/x86_64/tlb.hpp"
 #include "arch/x86_64/interrupts.hpp"
@@ -350,6 +351,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->process->parent = current_task()->process->pid;
         child->process->pgid = current_task()->process->pgid;
         child->process->sid = current_task()->process->sid;
+        child->process->cgroup = current_task()->process->cgroup;
         child->process->controlling_pty = current_task()->process->controlling_pty;
         child->process->controlling_console = current_task()->process->controlling_console;
         memcpy(child->process->executable, current_task()->process->executable,
@@ -456,6 +458,7 @@ void exit_thread(Task* t, int status) {
     if (process->leader == t || process->live_threads == 1)
         process->exit_status = status;
     if (!--process->live_threads) {
+        cgroup_process_exit(*process);
         posix_queue_process_exit(*process);
         process->pending_signals.discard(UINT64_MAX);
         finish_process(t);

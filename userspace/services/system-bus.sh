@@ -44,6 +44,13 @@ prepare_policykit() {
 if test -x /usr/lib/polkit-1/polkitd && ! prepare_policykit; then
     printf '%s\n' 'PolicyKit requires its service account and private rules directories.' >&2
 fi
+if test -x /usr/libexec/elogind/elogind &&
+    ! grep -q '^cgroup2 /sys/fs/cgroup cgroup2 ' /proc/mounts; then
+    if ! mkdir -p /sys/fs/cgroup ||
+        ! mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /sys/fs/cgroup; then
+        printf '%s\n' 'Could not mount the unified hierarchy for elogind.' >&2
+    fi
+fi
 helper=/usr/libexec/dbus-daemon-launch-helper
 if test -e "$helper"; then
     if ! test -f "$helper" || test -L "$helper"; then

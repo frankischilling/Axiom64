@@ -64,6 +64,7 @@ inline size_t netlink_ack(const void* input, const NetlinkHeader& request, uint3
 
 struct NetlinkFrame {
     NetlinkAddress source;
+    uint32_t credentials[3]{};
     size_t length, reserved;
 };
 
@@ -107,18 +108,20 @@ bool netlink_ready(NetlinkSocket*, bool write);
 int netlink_error(NetlinkSocket*, bool consume = false);
 
 const NetlinkFrame* netlink_front(NetlinkSocket*);
-size_t netlink_receive_control(Task&, NetlinkSocket*, uint64_t address, uint64_t capacity,
-                               uint32_t& flags);
 
 void netlink_consume(NetlinkSocket*);
 
 size_t netlink_available(NetlinkSocket*);
 int netlink_reserve_delivery(NetlinkSocket*, size_t, NetlinkFrame*&);
 void netlink_publish_delivery(NetlinkSocket*, NetlinkFrame*);
+void netlink_broadcast_uevent(const void*, size_t);
+size_t netlink_receive_control(Task&, NetlinkSocket*, const NetlinkFrame&, uint64_t address,
+                               uint64_t capacity, uint32_t& flags);
 
-int netlink_target(const NetlinkAddress&);
+int netlink_target(Task&, NetlinkSocket*, const NetlinkAddress&);
 
-int64_t netlink_send(Task&, NetlinkSocket*, const void*, size_t);
+int64_t netlink_send(Task&, NetlinkSocket*, const void*, size_t,
+                     const NetlinkAddress* destination = nullptr);
 
 int64_t netlink_read(NetlinkSocket*, void*, size_t);
 

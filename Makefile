@@ -947,12 +947,26 @@ build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kern
 test-pci-interrupts: build/pci-interrupt-tests
 	./build/pci-interrupt-tests
 
+.PHONY: test-designware-i2c
+build/designware-i2c-tests: kernel/tests/drivers/platform/designware_i2c.cpp kernel/drivers/input/hid_touchpad.cpp kernel/drivers/input/touchpad.cpp kernel/include/drivers/platform/designware_i2c.hpp kernel/include/drivers/platform/poll.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+test-designware-i2c: build/designware-i2c-tests
+	./build/designware-i2c-tests
+
 .PHONY: test-acpi-routing
-build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_resources.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-acpi-routing: build/acpi-routing-tests
 	./build/acpi-routing-tests
+.PHONY: test-acpi-system-memory
+build/acpi-system-memory-tests: kernel/tests/firmware/system_memory.cpp kernel/firmware/platform.cpp kernel/firmware/acpi.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-acpi-system-memory: build/acpi-system-memory-tests
+	./build/acpi-system-memory-tests
+	./build/acpi-system-memory-tests --reserved-facs
 build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@

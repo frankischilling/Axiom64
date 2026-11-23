@@ -59,7 +59,9 @@ struct NetAdapter {
     void* data;
 };
 
-void net_init();
+using NetRegistrationObserver = void (*)(const NetInfo&, const PciFunction*);
+
+void net_init(NetRegistrationObserver = nullptr);
 
 void net_poll();
 

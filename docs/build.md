@@ -49,6 +49,11 @@ The installed desktop profile also uses `glib-compile-schemas` and
 `update-mime-database`. Install `libglib2.0-bin` and `shared-mime-info` on
 Ubuntu or Debian before building that profile.
 
+On the installed desktop, init starts udev and asks it to classify the input
+devices already present at boot. Xorg uses libinput when that database is
+ready. If the input service is unavailable at login, Xorg can start with the
+fixed keyboard and mouse configuration.
+
 ```sh
 python3 scripts/boot_media.py disk build/axiom64-boot.raw
 qemu-system-x86_64 -m 2G -serial stdio -boot order=c \
@@ -115,6 +120,91 @@ reconnects, and includes a boot without a controller. For descriptor
 and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.
+
+Use `hid.i2c.probe` to list HID-over-I²C resources from ACPI firmware. It
+reports the serial bus and, when available, the interrupt line or GPIO pin.
+The report keeps legacy ISA IRQs, global system interrupts, and
+controller-relative GPIO pins distinct. The probe reads the firmware
+description without enabling the interrupt.
+Use `lpss.i2c.probe` to check PCI power and the BAR0 aperture on Intel
+Comet Lake LPSS I²C controllers. It reports the BAR before and after a D0
+transition and reads the controller identity from a validated aperture.
+The probe restores the original power state and PCI command after the check.
+It also reports fixed PCI host bridge memory windows from ACPI. These windows
+describe forwarding ranges. The probe lists motherboard reservations that
+firmware describes through ACPI and flags an incomplete list. For an
+unassigned BAR0, it measures the requested size and looks for an aligned gap
+outside the boot memory map, PCI configuration windows, motherboard
+reservations, and existing PCI resources. The PCI inventory reads assigned
+BARs, ROMs, and bridge windows without probing other devices for their sizes.
+It uses the programmed alignment to bound each BAR, so it can exclude more
+space than a device actually occupies. The inventory follows PCIe capability
+links in their recorded order and rejects loops and broken links. It ignores
+extended configuration that mirrors the device's conventional header. The
+inventory also excludes the local and I/O APICs and the HPET register pages.
+If the inventory is incomplete, the probe reports no candidate.
+
+Use `lpss.i2c.bar-test` to try a candidate on an unassigned LPSS BAR0 during
+early boot. The test keeps bus mastering and interrupts disabled, checks BAR
+readback, and reads the DesignWare identity through the temporary mapping.
+It then restores the BAR, power state and PCI command. A failed readback or
+identity check rejects the trial address. The controller still needs a driver
+to enable it for use.
+
+Use `lpss.i2c.hid-test` to read the HID descriptor from a device whose
+ACPI serial-bus resource resolves to an Intel LPSS PCI function. The
+probe sends the descriptor register followed by a repeated-start read.
+It restores controller settings after the transfer and reports the device
+IDs and report sizes if the descriptor is valid. The probe then reads the
+report descriptor and logs the report IDs and finger slots it recognizes.
+It requires an idle controller and a firmware-provided descriptor register.
+Use `lpss.i2c.input` to enable live touchpad input on a supported Intel LPSS
+controller with an exclusive, level-triggered firmware interrupt. The driver
+retains the controller's BAR, powers and resets the HID device, and selects
+touchpad mode when the report descriptor declares it. After the reset
+interrupt, it publishes `/dev/input/event2` with contact slots, click state,
+and coordinate ranges. The interrupt is masked while the kernel device loop
+reads a pending packet and is rearmed when the read finishes.
+
+Input device discovery exposes relative links under `/sys/class/input` and
+`/sys/dev/char`. They resolve into `/sys/devices/virtual/input`, where the
+device names, event numbers, uevent files, and capability bitmaps are
+available to userspace. The bitmaps match the capabilities reported by the
+evdev ioctls. Desktop integration still needs userspace input rules.
+The [kernel uevent stream](netlink.md#input-device-events) announces those
+devices and supports coldplug through each event device's `uevent` file.
+
+If the resource scan finds no devices, the HID descriptor probe can replay
+supported ACPI initialization methods in a private namespace. The firmware
+memory provider still validates and locks each read. The replay also reads
+aligned words from conventional PCI configuration registers in a verified
+ECAM window. Writes to those fields, supported NVS fields and resource
+buffers affect only that replay. Bus Check and Device Wake notifications
+have no recipient in the private namespace. A candidate whose
+initialization needs an unsupported operation is skipped, and the probe
+reports how many candidates it rejected. On supported Intel GPIO
+controllers, the probe reads pad configuration from the communities named
+in ACPI. This lets firmware resolve an I²C device's interrupt without
+changing the pad settings. The interface query used to select those
+resources applies only inside this diagnostic.
+
+Both probes can evaluate selected firmware conditions that read ACPI NVS or
+reserved memory listed in the boot memory map. Fields that require the
+firmware global lock still need a valid FACS in ACPI NVS.
+The probes can follow conditional namespace references and hold firmware
+resource buffers in a private copy when AML declares writable fields.
+The HID initialization replay keeps named mutexes and events in that copy.
+It can consume its own event signals and perform zero-timeout polls. It
+rejects waits that would need another firmware thread to signal the event.
+`Sleep` and `Stall` advance the private AML clock read by `Timer`. They do
+not run another firmware thread or wait for a real device to change state.
+It reads aligned PCI configuration fields through the validated ECAM window
+and keeps changes to those fields in the private copy.
+They can compare integers in AML packages and assemble resource templates
+that firmware builds across several AML methods. The motherboard scan can
+also read aligned BAR words in a validated PCI configuration aperture. On
+the supported Comet Lake-H configuration, the probe checks the chipset and
+UART identities before reading the BAR pairs from the hidden UART page.
 
 Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
 On Limine x86-64 boots, this retains write-combining when the CPU supports it.

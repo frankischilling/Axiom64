@@ -32,12 +32,35 @@ namespace ax {
 namespace Acpi {
 struct Mcfg;
 struct DefinitionBlocks;
+struct ReadRegions;
+struct PciRootWindows;
+struct MotherboardResources;
 } // namespace Acpi
+
+enum class PciPowerState : uint8_t { d0, d1, d2, d3hot, unavailable };
 
 struct PciFunction {
     uint8_t bus, slot, function;
     uint16_t segment;
     volatile uint8_t* configuration;
+
+    void format_address(char (&address)[13]) const {
+        constexpr char digits[] = "0123456789abcdef";
+        const char value[]{digits[segment >> 12],
+                           digits[(segment >> 8) & 15],
+                           digits[(segment >> 4) & 15],
+                           digits[segment & 15],
+                           ':',
+                           digits[bus >> 4],
+                           digits[bus & 15],
+                           ':',
+                           digits[slot >> 4],
+                           digits[slot & 15],
+                           '.',
+                           digits[function & 15],
+                           0};
+        memcpy(address, value, sizeof(address));
+    }
 
     uint32_t read32(uint16_t offset) const;
 
@@ -50,9 +73,14 @@ struct PciFunction {
     void write32(uint16_t offset, uint32_t value) const;
 
     uint8_t find_capability(uint8_t id, unsigned* boundary = nullptr) const;
+    PciPowerState power_state() const;
+    // Use on an owned function with I/O, MMIO, and bus mastering disabled.
+    // After waking from D3hot, revalidate or restore the BAR assignment before use.
+    bool set_power_state(PciPowerState) const;
 
     // Probe only while the function is quiescent and no driver is using its BARs.
     PciBarStatus probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const;
+    PciBarStatus measure_unassigned_memory_bar(unsigned index, uint64_t& size) const;
 };
 
 class PciMsi {
@@ -109,5 +137,16 @@ class PciIntx {
 
 void pci_configure_ecam(const Acpi::Mcfg&);
 void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t link_gsis);
+Acpi::ReadRegions pci_firmware_read_regions();
 void pci_scan(void (*visit)(const PciFunction&));
+void pci_scan(void (*visit)(const PciFunction&, void*), void* context);
+
+bool pci_device_path(const PciFunction&, char*, size_t capacity);
+// Records occupied configuration-space ranges without writing to the device.
+void pci_record_memory(const PciFunction&, PciMemoryInventory&);
+void pci_memory_inventory(PciMemoryInventory&);
+// Preview an aligned root window gap with firmware and PCI exclusions.
+bool pci_preview_memory_bar(const PciFunction&, uint64_t size, const Acpi::PciRootWindows&,
+                            const Acpi::MotherboardResources&, const PciMemoryInventory&,
+                            uint64_t& base);
 } // namespace ax

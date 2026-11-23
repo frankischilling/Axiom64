@@ -40,27 +40,10 @@ void rtl8168g_attach(const PciFunction&);
 static NetAdapter* devices[max_net_devices];
 static unsigned count;
 static NetLinkObserver link_observer;
+static NetRegistrationObserver registration_observer;
 
 void net_observe_links(NetLinkObserver observer) {
     link_observer = observer;
-}
-
-static void bus_address(const PciFunction& pci, char (&address)[13]) {
-    constexpr char digits[] = "0123456789abcdef";
-    const char value[]{digits[pci.segment >> 12],
-                       digits[(pci.segment >> 8) & 15],
-                       digits[(pci.segment >> 4) & 15],
-                       digits[pci.segment & 15],
-                       ':',
-                       digits[pci.bus >> 4],
-                       digits[pci.bus & 15],
-                       ':',
-                       digits[pci.slot >> 4],
-                       digits[pci.slot & 15],
-                       '.',
-                       digits[pci.function & 15],
-                       0};
-    memcpy(address, value, sizeof(address));
 }
 
 void net_device_poll(NetAdapter& adapter) {
@@ -77,7 +60,8 @@ static void discover(const PciFunction& pci) {
     rtl8168g_attach(pci);
 }
 
-void net_init() {
+void net_init(NetRegistrationObserver observer) {
+    registration_observer = observer;
     pci_scan(discover);
 }
 
@@ -96,7 +80,7 @@ unsigned net_register(NetAdapter& adapter, const char* driver, const PciFunction
     info.mtu = min(info.maximum_mtu, uint32_t(1500));
     info.driver = driver;
     if (pci)
-        bus_address(*pci, info.bus_address);
+        pci->format_address(info.bus_address);
     devices[count++] = &adapter;
     log("NET_DEVICE index=%u name=%s mtu=%u carrier=%u mac=%x:%x:%x:%x:%x:%x\n",
         uint64_t(info.index), info.name, uint64_t(info.mtu), uint64_t(info.carrier),
@@ -104,6 +88,8 @@ unsigned net_register(NetAdapter& adapter, const char* driver, const PciFunction
         uint64_t(info.mac[4]), uint64_t(info.mac[5]));
     ip4::configuration_registered(info.index);
     ip6::configuration_registered(info.index);
+    if (registration_observer)
+        registration_observer(info, pci);
     return info.index;
 }
 

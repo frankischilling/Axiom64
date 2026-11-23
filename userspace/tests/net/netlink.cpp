@@ -801,6 +801,21 @@ static void ethtool_link(unsigned lane, bool carrier) {
               strlen(driver.bus_info) == 12 && driver.bus_info[4] == ':' &&
               driver.bus_info[7] == ':' && driver.bus_info[10] == '.',
           "ethtool reports the bound driver and PCI address");
+    char path[128], value_text[32]{}, target[256];
+    snprintf(path, sizeof(path), "/sys/class/net/%s", request.ifr_name);
+    ssize_t path_bytes = readlink(path, target, sizeof(target) - 1);
+    check(path_bytes > 0, "network class points to the PCI device inventory");
+    target[path_bytes] = 0;
+    char suffix[64];
+    snprintf(suffix, sizeof(suffix), "/%s/net/%s", driver.bus_info, request.ifr_name);
+    check(!strncmp(target, "../../devices/pci", 17) && size_t(path_bytes) > strlen(suffix) &&
+              !strcmp(target + path_bytes - strlen(suffix), suffix),
+          "network inventory has the same PCI location as ethtool");
+    snprintf(path, sizeof(path), "/sys/class/net/%s/ifindex", request.ifr_name);
+    int index_fd = open(path, O_RDONLY);
+    check(index_fd >= 0 && read(index_fd, value_text, sizeof(value_text) - 1) > 0 &&
+              close(index_fd) == 0 && strtoul(value_text, nullptr, 10) == indexes[lane],
+          "network inventory has the same interface index as routing netlink");
     ethtool_value value{ETHTOOL_GLINK, 99};
     request.ifr_data = reinterpret_cast<char*>(&value);
     check(ioctl(fd, SIOCETHTOOL, &request) == 0 && value.cmd == ETHTOOL_GLINK &&

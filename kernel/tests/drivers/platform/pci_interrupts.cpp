@@ -26,6 +26,7 @@
 #include <cassert>
 #include <cstdio>
 #include <sys/mman.h>
+#include "boot/boot.hpp"
 #include "drivers/platform/pci.hpp"
 #include "drivers/platform/pci_bridge.hpp"
 
@@ -36,6 +37,8 @@ constexpr uint8_t capability = 0x50;
 unsigned mappings, registrations, retirements;
 bool mapping_error, route_available = true;
 uint32_t table[4];
+unsigned delay_us;
+bool clock_ready = true;
 
 void handler(void*) {
 }
@@ -46,6 +49,37 @@ void reset(const ax::PciFunction& pci, uint8_t id, uint16_t control, uint8_t nex
     pci.write16(6, 16);
     pci.write32(0x34, capability);
     pci.write32(capability, id | uint32_t(next) << 8 | uint32_t(control) << 16);
+}
+
+void test_power_state(const ax::PciFunction& pci) {
+    using enum ax::PciPowerState;
+    constexpr auto pmcsr = capability + 4;
+    constexpr uint16_t pme_enable = 1 << 8, pme_status = 1 << 15;
+    reset(pci, 1, 3 | (1 << 10));
+    pci.write16(pmcsr, pme_status | pme_enable | 3);
+    assert(pci.power_state() == d3hot);
+    assert(!pci.set_power_state(d0) && delay_us == 0); // Function is decoding.
+    assert(pci.read16(pmcsr) == (pme_status | pme_enable | 3));
+    pci.write16(4, 0);
+    assert(!pci.set_power_state(d2) && delay_us == 0);
+    assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 10000);
+    assert(pci.read16(pmcsr) == pme_enable); // A zero write leaves hardware PME status alone.
+    assert(!pci.set_power_state(d1));
+    assert(pci.set_power_state(d2) && pci.power_state() == d2 && delay_us == 10200);
+    assert(pci.set_power_state(d0) && pci.power_state() == d0 && delay_us == 10400);
+    assert(pci.set_power_state(d3hot) && pci.power_state() == d3hot && delay_us == 20400);
+    clock_ready = false;
+    assert(!pci.set_power_state(d0));
+    clock_ready = true;
+
+    reset(pci, 1, 3, pmcsr); // Another capability overlaps the PMCSR.
+    assert(pci.power_state() == unavailable && !pci.set_power_state(d0));
+    reset(pci, 1, 0);
+    assert(pci.power_state() == unavailable && !pci.set_power_state(d0));
+    reset(pci, 1, 3);
+    pci.write16(pmcsr, UINT16_MAX);
+    assert(pci.power_state() == unavailable && !pci.set_power_state(d0));
+    std::puts("PCI_POWER_PASS d3hot d2 decode_guard truncated_capability");
 }
 
 void test_msi(const ax::PciFunction& pci) {
@@ -255,6 +289,218 @@ void test_apertures() {
     pci.refuse_enable = true;
     assert(probe(0, memory) == restore_failed && !(pci.flags & 7) && !pci.sizing[0]);
     std::puts("PCI_BAR_PASS mem32 mem64 ports aperture_end malformed_masks restore_readback");
+
+    auto measure = [&] {
+        return PciBarProbe::probe(pci, 0, memory, limit, resource,
+                                  PciBarProbe::Assignment::unassigned);
+    };
+    pci = {};
+    pci.bars[0] = 4;
+    pci.masks[0] = 0xfffff004;
+    pci.masks[1] = UINT32_MAX;
+    assert(probe(0, memory) == invalid && !pci.bar_writes);
+    assert(measure() == valid && resource.base == 0 && resource.size == 4096);
+    assert(pci.bars[0] == 4 && !pci.bars[1] && !pci.sizing[0] && !pci.sizing[1] &&
+           pci.flags == command && pci.bar_writes == 4);
+    pci.bars[1] = 1;
+    assert(measure() == invalid && pci.bar_writes == 4);
+    pci = {};
+    assert(measure() == invalid && pci.flags == command);
+    pci.masks[0] = UINT32_MAX;
+    assert(measure() == invalid && pci.flags == command);
+    pci.masks[0] = 0xfffff000;
+    pci.refuse_restore = true;
+    assert(measure() == restore_failed && !(pci.flags & 7));
+    std::puts("PCI_UNASSIGNED_BAR_PASS size absence readback restore");
+}
+
+void test_temporary_memory_bar() {
+    using namespace ax;
+    using enum PciBarStatus;
+    constexpr uint64_t address = 0x200001000, limit = 1ull << 36;
+    ConfigModel pci;
+    pci.flags = 0x400;
+    pci.bars[0] = 4;
+    unsigned accesses = 0;
+    auto check = [&](bool accepts) {
+        return PciBarProbe::test_unassigned_memory(pci, address, 4096, limit, [&](uint64_t base) {
+            assert(base == address && pci.flags == 0x402);
+            assert(pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+            ++accesses;
+            return accepts;
+        });
+    };
+    assert(check(true) == valid && accesses == 1);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    assert(check(false) == invalid && accesses == 2);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    pci.refuse_enable = true;
+    assert(check(true) == invalid && accesses == 2);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    pci.refuse_enable = false;
+    pci.refuse_restore = true; // Refuse the candidate write.
+    assert(check(true) == invalid && accesses == 2);
+    pci.refuse_restore = false;
+    assert(PciBarProbe::test_unassigned_memory(pci, address, 4096, limit, [&](uint64_t) {
+               pci.refuse_restore = true;
+               return true;
+           }) == restore_failed);
+    assert(pci.flags == 0x400 && pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+
+    pci = {};
+    pci.flags = 0x400;
+    pci.bars[0] = 4;
+    assert(PciBarProbe::test_unassigned_memory(pci, address, 4096, limit, [&](uint64_t) {
+               pci.refuse_quiet = true;
+               return true;
+           }) == restore_failed);
+    assert(pci.flags == 0x402 && pci.bar_writes == 2 && pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+
+    pci = {};
+    pci.flags = 0x400;
+    assert(check(true) == invalid && !pci.bar_writes); // A 32-bit BAR cannot hold this address.
+    constexpr uint64_t address32 = 0xf0001000;
+    assert(PciBarProbe::test_unassigned_memory(pci, address32, 4096, limit, [&](uint64_t base) {
+               return base == address32 && pci.flags == 0x402 && pci.bars[0] == address32;
+           }) == valid);
+    assert(pci.flags == 0x400 && !pci.bars[0] && pci.bar_writes == 2);
+    pci.flags |= 4;
+    assert(check(true) == invalid && pci.bar_writes == 2);
+    pci = {};
+    pci.flags = 0x400;
+    pci.bars[0] = 4;
+    assert(PciBarProbe::test_unassigned_memory(
+               pci, address, 4096, limit, [](uint64_t) { return false; }, true) == invalid);
+    assert(pci.flags == 0x400 && pci.bars[0] == 4 && !pci.bars[1]);
+    assert(PciBarProbe::test_unassigned_memory(
+               pci, address, 4096, limit, [](uint64_t) { return true; }, true) == valid);
+    assert(pci.flags == 0x402 && pci.bars[0] == 0x1004 && pci.bars[1] == 2);
+    std::puts("PCI_TEMPORARY_BAR_PASS width32 width64 command_guard reject restore_failure");
+}
+
+void test_firmware_gap(const ax::PciFunction& pci) {
+    using namespace ax;
+    constexpr uint64_t high = 0x4000000000, low = 0xd0000000;
+    const BootMemory blocked[]{{high, 0x1000, BootMemoryKind::reserved},
+                               {high + 0x3100, 0x1000, BootMemoryKind::usable}};
+    boot_info.memory_context = blocked;
+    boot_info.memory_count = 2;
+    boot_info.memory_at = [](const void* context, size_t i) {
+        return static_cast<const BootMemory*>(context)[i];
+    };
+    Acpi::MotherboardResources board{{{high + 0xff0, 0x2100}, {low, 0x2000}}, 2, false};
+    Acpi::PciRootWindows roots{
+        {{high, 0x50000, 7, 0, false}, {high, 0x10000, 0, 0, false}, {low, 0x10000, 0, 0, false}},
+        3};
+    PciMemoryInventory occupied{};
+    occupied.add(high + 0x5000, 0x2000);
+    occupied.add(low + 0x2000, 0x1000);
+    auto preview = [&](uint64_t size, uint64_t& address) {
+        return pci_preview_memory_bar(pci, size, roots, board, occupied, address);
+    };
+    uint64_t address = 0;
+    pci.write32(0x10, 4); // Unassigned 64-bit memory BAR.
+    assert(preview(0x1000, address) && address == high + 0x7000);
+    assert(pci.read32(0x10) == 4);
+    roots.entries[1].prefetchable = true;
+    assert(preview(0x1000, address) && address == low + 0x3000);
+    roots.entries[1].prefetchable = false;
+    pci.write32(0x10, 0);
+    assert(preview(0x1000, address) && address == low + 0x3000);
+    assert(!preview(0x900, address));
+    assert(!preview(0x10000, address));
+    board.incomplete = true;
+    assert(!preview(0x1000, address) && address == low + 0x3000);
+    board.incomplete = false;
+    occupied.incomplete = true;
+    assert(!preview(0x1000, address) && address == low + 0x3000);
+    boot_info = {};
+    std::puts(
+        "PCI_FIRMWARE_GAP_PASS alignment boot_map motherboard occupancy width prefetch incomplete");
+}
+
+void test_memory_inventory(const ax::PciFunction& pci) {
+    using namespace ax;
+    for (unsigned offset = 0; offset < 4096; offset += 4)
+        pci.write32(offset, 0);
+    pci.write32(0x10, 0xd0020008);
+    pci.write32(0x14, 0x00123004);
+    pci.write32(0x18, 7);
+    pci.write32(0x1c, 0xc001);
+    pci.write32(0x30, 0xcabc0801);
+    PciMemoryInventory inventory{};
+    pci_record_memory(pci, inventory);
+    const auto& ranges = inventory.ranges;
+    assert(inventory.count == 3 && !inventory.incomplete);
+    assert(ranges[0].base == 0xd0020000 && ranges[0].size == 0x20000);
+    assert(ranges[1].base == 0x700123000 && ranges[1].size == 0x1000);
+    assert(ranges[2].base == 0xcabc0800 && ranges[2].size == 0x800);
+    assert(pci.read32(0x10) == 0xd0020008 && pci.read32(0x18) == 7);
+
+    pci.write32(0x100, 0x00010010); // SR-IOV extended capability.
+    pci.write16(0x108, 1);
+    inventory.count = 0;
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 3 && inventory.incomplete);
+    pci.write32(0x100, 0x10010002); // A self-referential extended capability.
+    inventory.incomplete = false;
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+
+    // The chain may link back to a lower offset without forming a loop.
+    pci.write32(0x100, 0x25810001);
+    pci.write32(0x258, 0x12810002);
+    pci.write32(0x128, 0x00010002);
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 3 && !inventory.incomplete);
+    pci.write32(0x128, 0x25810002); // A loop across two capabilities.
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+    pci.write32(0x128, 0); // A link to an empty header.
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+
+    // A legacy function may repeat its identity beyond conventional config.
+    pci.write32(0, 0x6a38086);
+    for (uint16_t offset = 0x100; offset < 0x1000; offset += 0x100)
+        pci.write32(offset, pci.read32(0));
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 3 && !inventory.incomplete);
+    pci.write32(0xf00, 0); // One matching word does not establish aliasing.
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+    pci.write32(0x100, 0);
+
+    pci.write32(0x0c, 1u << 16); // Type 1 header.
+    pci.write32(0x10, 0);
+    pci.write32(0x14, 0);
+    pci.write32(0x18, 0x00010100);
+    pci.write32(0x20, 0xc010c010);
+    pci.write32(0x24, 0x00910081);
+    pci.write32(0x28, 2);
+    pci.write32(0x2c, 2);
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(inventory.count == 2 && !inventory.incomplete);
+    assert(ranges[0].base == 0xc0100000 && ranges[0].size == 0x100000);
+    assert(ranges[1].base == 0x200800000 && ranges[1].size == 0x200000);
+    pci.write32(0x20, 0x0010fff0);
+    pci.write32(0x24, 0x0000fff0);
+    inventory = {};
+    pci_record_memory(pci, inventory);
+    assert(!inventory.count && !inventory.incomplete);
+    pci.write32(0x24, 0x0000fff2);
+    pci_record_memory(pci, inventory);
+    assert(inventory.incomplete);
+    inventory.count = sizeof(inventory.ranges) / sizeof(*inventory.ranges);
+    inventory.incomplete = false;
+    assert(!inventory.add(0xa0000000, 4096) && inventory.incomplete);
+    std::puts("PCI_MEMORY_INVENTORY_PASS bar32 bar64 rom bridge malformed sriov capacity aliases");
 }
 
 uint32_t bridge_config[2][16];
@@ -342,7 +588,16 @@ void test_bridge_windows() {
 } // namespace
 
 namespace ax {
+BootInfo boot_info{};
+
 void log(const char*, ...) {
+}
+
+bool clock_delay_us(unsigned microseconds) {
+    if (!clock_ready || microseconds > 1000)
+        return false;
+    delay_us += microseconds;
+    return true;
 }
 
 void* map_mmio(uint64_t address, size_t bytes) {
@@ -371,9 +626,13 @@ int main() {
         mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
     assert(page != MAP_FAILED);
     ax::PciFunction pci{0, 1, 0, 0, page};
+    test_power_state(pci);
     test_msi(pci);
     test_msix(pci);
     test_apertures();
+    test_temporary_memory_bar();
+    test_firmware_gap(pci);
+    test_memory_inventory(pci);
     test_bridge_windows();
     assert(munmap(page, 4096) == 0);
 }

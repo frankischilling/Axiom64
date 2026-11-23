@@ -42,11 +42,67 @@ struct PciBar {
     }
 };
 
+struct PciMemoryInventory {
+    struct Range {
+        uint64_t base, size;
+    };
+
+    Range ranges[512];
+    unsigned count = 0;
+    bool incomplete = false;
+
+    bool add(uint64_t base, uint64_t size) {
+        if (!size)
+            return true;
+        if (size > UINT64_MAX - base || count == sizeof(ranges) / sizeof(*ranges)) {
+            incomplete = true;
+            return false;
+        }
+        ranges[count++] = {base, size};
+        return true;
+    }
+};
+
+namespace PciMemoryGap {
+inline uint64_t overlap_end(uint64_t start, uint64_t end, uint64_t base, uint64_t size) {
+    if (!size || base >= end)
+        return 0;
+    const uint64_t last = size > UINT64_MAX - base ? UINT64_MAX : base + size;
+    return last > start ? last : 0;
+}
+
+// The callback returns the exclusive end of an occupied range overlapping [base, end).
+template <class Exclusions>
+bool find(uint64_t begin, uint64_t limit, uint64_t size, const Exclusions& exclusions,
+          uint64_t& base) {
+    if (!size || (size & (size - 1)))
+        return false;
+    const uint64_t mask = size - 1;
+    while (begin < limit && begin <= UINT64_MAX - mask) {
+        const uint64_t candidate = (begin + mask) & ~mask;
+        if (candidate >= limit || size > limit - candidate)
+            return false;
+        const uint64_t end = candidate + size;
+        const uint64_t blocked = exclusions(candidate, end);
+        if (!blocked) {
+            base = candidate;
+            return true;
+        }
+        if (blocked <= candidate)
+            return false;
+        begin = blocked;
+    }
+    return false;
+}
+} // namespace PciMemoryGap
+
 namespace PciBarProbe {
+enum class Assignment { assigned, unassigned };
+
 // The caller owns the function and must quiesce it before probing its BARs.
 template <class Config>
 PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_t physical_limit,
-                   PciBar& out) {
+                   PciBar& out, Assignment assignment = Assignment::assigned) {
     using enum PciBarStatus;
     if (index >= 6 || (pci.read8(0x0e) & 0x7f))
         return invalid;
@@ -64,7 +120,7 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
     const uint32_t address_bits = ports ? ~3u : ~15u;
     const uint64_t base = uint64_t(high) << 32 | (low & address_bits);
     const uint64_t limit = ports ? (1ull << 16) : physical_limit;
-    if (!base || base >= limit)
+    if (base >= limit || (assignment == Assignment::unassigned ? base != 0 : base == 0))
         return invalid;
 
     const uint16_t command = pci.read16(4);
@@ -79,7 +135,8 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
     pci.write32(offset, UINT32_MAX);
     if (wide)
         pci.write32(offset + 4, UINT32_MAX);
-    uint64_t mask = pci.read32(offset) & address_bits;
+    const uint32_t mask_low = pci.read32(offset);
+    uint64_t mask = mask_low & address_bits;
     if (wide)
         mask |= uint64_t(pci.read32(offset + 4)) << 32;
     pci.write32(offset, low);
@@ -96,10 +153,57 @@ PciBarStatus probe(const Config& pci, unsigned index, PciBarSpace space, uint64_
 
     // The supported I/O space is 16 bits even if the device reports a 32-bit mask.
     const uint64_t size = ports ? uint16_t(-mask) : wide ? -mask : uint32_t(-mask);
+    if (assignment == Assignment::unassigned && ((low ^ mask_low) & ~address_bits))
+        return invalid;
     if (!size || (size & (size - 1)) || (base & (size - 1)) || size > limit - base)
         return invalid;
     out = {base, size, index};
     return valid;
+}
+
+// The caller owns a quiescent Type 0 function and measured BAR0 while unassigned.
+// The address must already have passed the platform ownership check.
+template <class Config, class Access>
+PciBarStatus test_unassigned_memory(const Config& pci, uint64_t base, uint64_t size,
+                                    uint64_t physical_limit, const Access& access,
+                                    bool keep_on_success = false) {
+    using enum PciBarStatus;
+    constexpr uint16_t command_register = 4, low_register = 0x10, high_register = 0x14;
+    constexpr uint16_t memory_enable = 2;
+    const uint32_t original = pci.read32(low_register);
+    const bool wide = original & 4;
+    const uint16_t quiet = pci.read16(command_register);
+    if ((pci.read8(0x0e) & 0x7f) || (quiet & 7) || (original & ~12u) ||
+        (wide && pci.read32(high_register)) || !base || size < 16 || (size & (size - 1)) ||
+        (base & (size - 1)) || base >= physical_limit || size > physical_limit - base ||
+        (!wide && (base >= (1ull << 32) || size > (1ull << 32) - base)))
+        return invalid;
+
+    const uint32_t low = uint32_t(base) | original;
+    const uint32_t high = base >> 32;
+    pci.write32(low_register, low);
+    if (wide)
+        pci.write32(high_register, high);
+    bool accepted = false;
+    if (pci.read32(low_register) == low && (!wide || pci.read32(high_register) == high)) {
+        const uint16_t memory = quiet | memory_enable;
+        pci.write16(command_register, memory);
+        accepted = pci.read16(command_register) == memory && access(base);
+    }
+    if (accepted && keep_on_success)
+        return valid;
+
+    // A half-written 64-bit BAR must never decode. Confirm the command before restoring it.
+    if (pci.read16(command_register) != quiet)
+        pci.write16(command_register, quiet);
+    if (pci.read16(command_register) != quiet)
+        return restore_failed;
+    pci.write32(low_register, original);
+    if (wide)
+        pci.write32(high_register, 0);
+    if (pci.read32(low_register) != original || (wide && pci.read32(high_register)))
+        return restore_failed;
+    return accepted ? valid : invalid;
 }
 } // namespace PciBarProbe
 } // namespace ax

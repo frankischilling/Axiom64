@@ -61,6 +61,11 @@ stale credentials, expired passwords, and unprivileged callers. It also checks
 account protection during a session, logout, and recovery after the helper
 exits.
 
+The installed Plasma profile uses the `kde` PAM service to verify the account
+that owns the locked session. The verifier binds the requested account to the
+caller's real UID and reads the password through a pipe. The usual account
+password and aging rules apply to unlock.
+
 Installing a nonroot profile sets all real/effective/saved and filesystem UID/GID values, installs supplementary groups, clears retained capabilities, and verifies the resulting credentials. Service mode additionally sets no-new-privileges. Login environment construction replaces inherited variables with the identity's HOME, USER, LOGNAME and SHELL, a fixed PATH and locale, and an optional validated terminal type. A failed credential transition must terminate the child; it must never continue an application after a partial drop.
 
 Real root administrators can select an existing locked service identity without a password. This operation is separate from password authentication. Ordinary session profiles permit later use of explicitly authorized set-ID tools; service profiles prevent privilege acquisition through exec.

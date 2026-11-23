@@ -42,6 +42,11 @@ for a smaller disk image with twm and xterm.
 The serial console remains available for recovery. Create the root-owned
 `/etc/axiom64/console-desktop` file and reboot to have console sign-in start
 the desktop directly. Remove the file to restore SDDM.
+The `console.text` kernel option starts a text-only login and skips SDDM.
+
+
+The installed desktop skips the animated splash by default to free CPU time
+for sign-in. You can choose a splash screen in Plasma System Settings.
 
 After KWin starts, Plasma checks that Activities is ready before launching
 the shell. Look for the result in `plasma-activities.log` and session output
@@ -58,10 +63,14 @@ accepts a PS/2 keyboard and keeps serial input and output available. Xorg
 takes over the screen in graphics mode. Console text and keyboard input
 return when the virtual terminal returns to text mode.
 
-Add `--kernel-option usb.xhci=keyboard` to use a USB boot-protocol keyboard
-attached to an xHCI root port. The kernel selects one keyboard at boot and
-shares its input with the text console and evdev. This path covers the boot
-keyboard protocol on a root port. USB hubs and hotplug are separate work.
+Add `--kernel-option usb.xhci=keyboard` to enable USB boot keyboards and mice.
+Plug them into xHCI root ports before powering on. Axiom64 reads up to eight
+devices on each of up to four controllers. Keyboards feed the text
+console and evdev. Mice send relative movement and three button events to
+evdev. For a composite device, the driver prefers the boot keyboard and can
+also read a report-mode keyboard interface with a modifier byte and a key
+array. Scroll wheels, USB hubs, and discovery after boot require additional
+driver support.
 
 Use `cat /proc/partitions` to see the block devices and partitions Axiom64 found.
 It reports device numbers and capacities in KiB. For an NVMe drive such as

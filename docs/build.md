@@ -81,17 +81,44 @@ boot products, and PXE packet captures under `build/boot-media-test/`. To run it
 again alongside existing results, use `python3 scripts/boot_media_test.py --output build/boot-media-next`.
 
 Add `--smp` to test the `smp.probe` boot option with one and twelve logical
-processors under BIOS and UEFI. Each application processor checks its local APIC
-ID and then parks with interrupts disabled. Userspace still runs on the bootstrap
-processor.
+processors under BIOS and UEFI. Each application processor switches to its own
+kernel stack, loads its processor tables, and checks its APIC ID. The boot
+processor then sends two directed wake interrupts to each application
+processor and checks both acknowledgements. Each secondary CPU then arms its
+local APIC timer twice and verifies that both interrupts arrived. It stops
+the timer and checks that its CPU-local task slot is empty. Before parking,
+the secondary CPUs load a shared scratch mapping and warm its translation.
+The boot CPU verifies that the invalidation code selects only CPUs that have
+the target page tables loaded. It replaces the backing page and checks that
+each secondary CPU sees the replacement after a directed interrupt. The
+scheduler still runs on the bootstrap processor.
+
+Add `--scheduler` to run the separate twelve-CPU userspace test under BIOS and
+UEFI, including with HPET disabled. It boots with `smp.scheduler`, forks
+workers, and checks execution on all twelve logical CPUs. It also starts and
+joins 320 concurrent threads. For a custom image, pass
+`--kernel-option smp.scheduler` to the image builder. The option requires the
+Limine processor list, a working shared ACPI PM timer or HPET counter, and
+successful secondary CPU checks. Ordinary boots continue to use the boot CPU.
+
+The same invalidation path serves ordinary userspace memory changes. Replaced
+and unmapped pages stay allocated until the CPUs using those page tables have
+responded. The address-space lock covers CR3 switches and target selection.
+Page-table writers still run serially. The implementation flushes non-global
+translations with PCID disabled.
 
 Add `--xhci` to the boot-media test to check xHCI firmware ownership, reset,
 ring wrap, and USB keyboard configuration under BIOS and UEFI. The test sends a
 key press through QEMU and checks the press and release from the keyboard's HID
-reports. It also boots without a controller to check that case. For descriptor
+reports. It also checks USB mouse clicks, motion, vertical scrolling, and
+reconnects, and includes a boot without a controller. For descriptor
 and configuration logs, use `usb.xhci=probe`. Use `usb.xhci=keyboard-probe` to
 also read key reports on a root-port boot keyboard. Both options halt the
 controller before userspace starts.
+
+Mappings of `/dev/fb0` inherit the firmware framebuffer's cache attributes.
+On Limine x86-64 boots, this retains write-combining when the CPU supports it.
+The boot-media test maps the framebuffer and writes and reads a pixel.
 
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 

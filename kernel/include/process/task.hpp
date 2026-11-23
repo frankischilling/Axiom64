@@ -24,13 +24,14 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #pragma once
+#include "arch/x86_64/cpu_local.hpp"
 #include "fs/vfs.hpp"
 #include "security/credentials.hpp"
 #include "process/limits.hpp"
 #include "process/pending_signals.hpp"
 
 namespace ax {
-constexpr unsigned max_tasks = 256, max_fds = 128;
+constexpr unsigned max_tasks = 512, max_fds = 1024;
 enum class State { empty, runnable, blocked, zombie, stopped };
 enum class Wait {
     none,
@@ -50,7 +51,8 @@ enum class Wait {
     posix_queue,
     fifo_open,
     epoll_wait,
-    pcm_drain
+    pcm_drain,
+    alsa_write
 };
 
 struct Descriptor {
@@ -85,8 +87,8 @@ struct FileTable {
     Descriptor entries[max_fds]{};
 
     void expand(unsigned fd) {
-        if (fd >= capacity)
-            capacity = max_fds;
+        while (fd >= capacity)
+            capacity *= 2;
     }
 };
 
@@ -111,6 +113,7 @@ struct Process {
     ProcessLimits limits{max_fds};
     int pid = 0, parent = 0, pgid = 0, sid = 0, exit_status = 0, stop_signal = 0;
     unsigned live_threads = 1;
+    unsigned running_cpu = ~0u;
     Task* leader = nullptr;
     Pty* controlling_pty = nullptr;
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;
@@ -188,7 +191,6 @@ struct Task {
 };
 
 extern Task tasks[max_tasks];
-extern Task* current;
 extern uint64_t ticks;
 extern bool trace_syscalls, test_mode;
 extern const char* test_suite;
@@ -222,7 +224,7 @@ int allocate_fd(Task*, Handle*, int start = 0, bool cloexec = false);
 Frame* schedule(Frame*, bool yield = false);
 
 int close_task_descriptors(Task&, unsigned first, unsigned last, unsigned flags);
-void start_init(const char*);
+void start_init(const char*, bool debug_ssh, bool text_console);
 
 constexpr int64_t would_block = -4096;
 } // namespace ax

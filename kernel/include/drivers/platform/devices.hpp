@@ -43,7 +43,9 @@ enum class Device {
     block,
     full,
     parallel,
-    dsp
+    dsp,
+    alsa_control,
+    alsa_playback
 };
 
 struct Terminal {
@@ -100,6 +102,7 @@ int64_t framebuffer_map(AddressSpace&, uint64_t, size_t, int, uint64_t);
 
 void devices_poll();
 void usb_keyboard_event(unsigned code, bool pressed);
+void usb_mouse_event(int dx, int dy, uint8_t buttons, int wheel);
 
 void terminal_exit(Task*);
 } // namespace ax

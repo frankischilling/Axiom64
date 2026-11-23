@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/usb/xhci.cpp
- * @brief   xHCI controller and root device probe.
+ * @brief   xHCI root device probing and HID boot input.
  * @author  frankischilling
  * @date    2026-11-21
  *
- * Claims a PCI controller, validates its DMA rings, and reads the descriptors
- * of devices attached to root ports before halting the controller.
+ * Claims a PCI controller, reads root device descriptors, and dispatches
+ * boot keyboard and mouse reports to the console and input devices.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -27,6 +27,8 @@
 #include "drivers/platform/devices.hpp"
 #include "drivers/platform/pci.hpp"
 #include "drivers/platform/poll.hpp"
+#include "drivers/usb/hid_keyboard.hpp"
+#include "drivers/usb/hid_mouse.hpp"
 #include "mm/dma.hpp"
 
 namespace ax {
@@ -45,13 +47,19 @@ constexpr unsigned legacy_preserved = (7 << 1) | (255 << 5) | (7 << 17);
 constexpr unsigned legacy_event_status = 7u << 29;
 constexpr unsigned ring_size = 64, max_scratchpads = 128, max_controllers = 4;
 constexpr unsigned timeout_ticks = 100, commands_to_check = 130;
+constexpr unsigned root_port_detection_ticks = 25;
+constexpr unsigned root_port_debounce_ticks = 10;
+constexpr unsigned intel_reset_delay_us = 1000;
 constexpr unsigned descriptor_size = 18, device_pages = 5, keyboard_report_size = 8;
+constexpr unsigned max_input_devices = 8, keyboard_codes = 128, mouse_report_size = 3;
 constexpr unsigned configuration_header_size = 9;
-constexpr unsigned enable_slot = 9, address_device = 11, configure_endpoint = 12,
+constexpr unsigned enable_slot = 9, disable_slot = 10, address_device = 11, configure_endpoint = 12,
                    evaluate_context = 13, no_op = 23, transfer_event = 32, command_event = 33,
                    port_event = 34;
 constexpr uint32_t port_connected = 1, port_enabled = 2, port_reset = 1 << 4;
+constexpr uint32_t port_connection_changed = 1 << 17;
 constexpr uint32_t port_configuration = (1 << 9) | (3 << 14) | (7 << 25);
+uint8_t held_keys[keyboard_codes], held_buttons[3];
 
 struct Trb {
     uint64_t parameter;
@@ -67,9 +75,28 @@ struct Segment {
 
 static_assert(sizeof(Trb) == 16 && sizeof(Segment) == 16);
 
-struct KeyboardEndpoint {
+enum class BootProtocol { none, keyboard, mouse };
+
+unsigned report_size(BootProtocol protocol) {
+    return protocol == BootProtocol::keyboard ? keyboard_report_size : mouse_report_size;
+}
+
+struct BootEndpoint {
     unsigned interface, address, packet, interval;
+    BootProtocol protocol;
 };
+
+struct BootEndpoints {
+    BootEndpoint keyboard, mouse;
+    unsigned mouse_report_bytes;
+};
+
+struct ReportEndpoint {
+    BootEndpoint endpoint;
+    unsigned descriptor_bytes;
+};
+
+constexpr HidKeyboardLayout boot_keyboard_layout{0, 0, 2, 6, keyboard_report_size};
 
 enum class ProbeMode { describe, check_keyboard, keyboard };
 
@@ -94,38 +121,47 @@ bool has_usage(const uint8_t* bytes, unsigned count, unsigned wanted) {
     return false;
 }
 
-void keyboard_report(uint8_t* previous, const uint8_t* next) {
+void keyboard_report(uint8_t& previous_modifiers, uint8_t* previous, uint8_t next_modifiers,
+                     const uint8_t* next, unsigned count) {
     constexpr uint8_t modifiers[] = {29, 42, 56, 125, 97, 54, 100, 126};
-    for (unsigned i = 2; i < keyboard_report_size; ++i)
+    for (unsigned i = 0; i < count; ++i)
         if (next[i] && next[i] < 4)
             return;
+    const auto dispatch_key = [](unsigned code, bool pressed) {
+        // Only a first press or the last release changes the shared input state.
+        if (pressed ? held_keys[code]++ == 0 : --held_keys[code] == 0)
+            usb_keyboard_event(code, pressed);
+    };
     for (unsigned i = 0; i < sizeof(modifiers); ++i)
-        if ((previous[0] ^ next[0]) & (1u << i))
-            usb_keyboard_event(modifiers[i], (next[0] >> i) & 1);
-    const auto dispatch = [](const uint8_t* source, const uint8_t* other, bool pressed) {
-        for (unsigned i = 2; i < keyboard_report_size; ++i) {
+        if ((previous_modifiers ^ next_modifiers) & (1u << i))
+            dispatch_key(modifiers[i], (next_modifiers >> i) & 1);
+    const auto dispatch = [&](const uint8_t* source, const uint8_t* other, bool pressed) {
+        for (unsigned i = 0; i < count; ++i) {
             const auto usage = source[i];
             const auto code = boot_key(usage);
-            if (code && !has_usage(other + 2, keyboard_report_size - 2, usage) &&
-                !has_usage(source + 2, i - 2, usage))
-                usb_keyboard_event(code, pressed);
+            if (code && !has_usage(other, count, usage) && !has_usage(source, i, usage))
+                dispatch_key(code, pressed);
         }
     };
     dispatch(previous, next, false);
     dispatch(next, previous, true);
-    memcpy(previous, next, keyboard_report_size);
+    previous_modifiers = next_modifiers;
+    memcpy(previous, next, count);
 }
 
 unsigned descriptor_word(const uint8_t* bytes) {
     return bytes[0] | (bytes[1] << 8);
 }
 
-bool parse_configuration(const uint8_t* bytes, unsigned length, KeyboardEndpoint& keyboard) {
+bool parse_configuration(const uint8_t* bytes, unsigned length, BootEndpoints& boot,
+                         ReportEndpoint& report) {
     if (bytes[0] != configuration_header_size || bytes[1] != 2 ||
         descriptor_word(bytes + 2) != length || !bytes[5])
         return false;
-    bool boot_keyboard = false;
+    BootProtocol protocol = BootProtocol::none;
     unsigned interface = 0;
+    bool report_interface = false;
+    unsigned report_bytes = 0;
     for (unsigned offset = configuration_header_size; offset < length;) {
         const auto item = bytes + offset;
         if (length - offset < 2 || item[0] < 2 || item[0] > length - offset)
@@ -134,18 +170,40 @@ bool parse_configuration(const uint8_t* bytes, unsigned length, KeyboardEndpoint
             if (item[0] < 9)
                 return false;
             interface = item[2];
-            boot_keyboard = !item[3] && item[4] && item[5] == 3 && item[6] == 1 && item[7] == 1;
+            report_interface = !item[3] && item[4] && item[5] == 3 && !item[6] && item[7] <= 1;
+            report_bytes = 0;
+            protocol = BootProtocol::none;
+            if (!item[3] && item[4] && item[5] == 3 && item[6] == 1) {
+                if (item[7] == 1)
+                    protocol = BootProtocol::keyboard;
+                else if (item[7] == 2)
+                    protocol = BootProtocol::mouse;
+            }
+        } else if (item[1] == 0x21 && (report_interface || protocol == BootProtocol::mouse) &&
+                   item[0] >= 9 && item[6] == 0x22) {
+            report_bytes = descriptor_word(item + 7);
         } else if (item[1] == 5) {
             if (item[0] < 7)
                 return false;
             const unsigned packet = descriptor_word(item + 4) & 0x7ff;
-            if (boot_keyboard && !keyboard.address && (item[2] & 0x80) && (item[2] & 15) &&
-                !(item[2] & 0x70) && (item[3] & 3) == 3 && packet >= 8 && item[6])
-                keyboard = {interface, item[2], packet, item[6]};
+            const bool interrupt_in = (item[2] & 0x80) && (item[2] & 15) && !(item[2] & 0x70) &&
+                                      (item[3] & 3) == 3 && item[6];
+            if (report_interface && report_bytes && report_bytes <= 512 &&
+                !report.descriptor_bytes && interrupt_in && packet && packet <= 1024)
+                report = {{interface, item[2], packet, item[6], BootProtocol::keyboard},
+                          report_bytes};
+            auto& input = protocol == BootProtocol::keyboard ? boot.keyboard : boot.mouse;
+            if (protocol != BootProtocol::none && !input.address && interrupt_in &&
+                packet >= report_size(protocol) && packet <= 1024) {
+                input = {interface, item[2], packet, item[6], protocol};
+                if (protocol == BootProtocol::mouse && report_bytes <= 512)
+                    boot.mouse_report_bytes = report_bytes;
+            }
         }
         offset += item[0];
     }
-    return true;
+    return !boot.keyboard.address || !boot.mouse.address ||
+           boot.keyboard.address != boot.mouse.address;
 }
 
 uint32_t read(Registers bank, unsigned offset) {
@@ -159,6 +217,12 @@ void write(Registers bank, unsigned offset, uint32_t value) {
 void write_address(Registers bank, unsigned offset, uint64_t address) {
     write(bank, offset, address);
     write(bank, offset + 4, address >> 32);
+}
+
+void wait_usb_recovery() {
+    clock_refresh();
+    const auto start = ticks;
+    DevicePoll::wait([&] { return ticks - start >= 2; }, 3);
 }
 
 bool claim_firmware(Registers base, unsigned span, uint32_t hcc) {
@@ -199,18 +263,47 @@ bool quiet_interrupts(const PciFunction& pci) {
 
 struct Controller {
     Registers operational, interrupter, doorbell;
-    unsigned slots, scratchpads, context_words;
+    unsigned slots, scratchpads, context_words, ports;
     unsigned command_index = 0, event_index = 0, command_cycle = 1, event_cycle = 1;
     uint64_t dma = 0;
     uint64_t devices[256]{};
+    uint64_t additional_input_pages[256][2]{};
+    unsigned control_next[256]{};
 
-    struct {
+    struct RootPort {
+        uint64_t ready_at = 0;
+        unsigned slot = 0;
+        bool connected = false, pending = false;
+    };
+
+    RootPort root_ports[255]{};
+
+    struct InputDevice {
         unsigned slot = 0, port = 0, endpoint = 0, index = 0, cycle = 1;
-        uint8_t report[keyboard_report_size]{};
-    } keyboard{};
+        BootProtocol protocol = BootProtocol::none;
+        uint64_t buffer = 0, ring = 0;
+        unsigned transfer_bytes = 0;
+        HidKeyboardLayout layout{};
+        HidMouseLayout mouse_layout{};
+        uint8_t previous_flags = 0, previous_keys[max_hid_keyboard_keys]{};
+    };
+
+    InputDevice inputs[max_input_devices]{};
+    unsigned input_count = 0;
 
     unsigned pages() const {
         return scratchpads ? 5 + scratchpads : 4;
+    }
+
+    void release_dma() const {
+        for (unsigned slot = 1; slot <= slots; ++slot) {
+            for (auto page : additional_input_pages[slot])
+                if (page)
+                    page_free(page, 2);
+            if (devices[slot])
+                page_free(devices[slot], device_pages);
+        }
+        page_free(dma, pages());
     }
 
     bool stop() const {
@@ -220,12 +313,15 @@ struct Controller {
                                 timeout_ticks);
     }
 
-    bool initialize() {
+    bool initialize(bool intel) {
         if (!DevicePoll::wait([&] { return !(read(operational, status_reg) & not_ready); },
                               timeout_ticks) ||
             !stop())
             return false;
         write(operational, command_reg, reset);
+        // Intel xHCI controllers need a quiet interval after asserting HCRST.
+        if (intel && !clock_delay_us(intel_reset_delay_us))
+            return false;
         if (!DevicePoll::wait(
                 [&] {
                     return !(read(operational, command_reg) & reset) &&
@@ -276,8 +372,8 @@ struct Controller {
         return true;
     }
 
-    bool completion(uint64_t expected, unsigned type, Trb& result,
-                    unsigned timeout = timeout_ticks) {
+    bool completion(uint64_t expected, unsigned type, Trb& result, unsigned slot = 0,
+                    unsigned endpoint = 1, unsigned timeout = timeout_ticks) {
         bool success = false;
         bool complete = DevicePoll::wait(
             [&] {
@@ -288,6 +384,12 @@ struct Controller {
                 const auto event_type = (result.control >> 10) & 63;
                 if (event_type == port_event) // Port status remains available in PORTSC.
                     return false;
+                if (event_type == transfer_event &&
+                    (type != transfer_event || (result.control >> 24) != slot ||
+                     ((result.control >> 16) & 31) != endpoint)) {
+                    handle_input_event(result);
+                    return false;
+                }
                 success = event_type == type && result.parameter == expected &&
                           (result.status >> 24) == 1;
                 return true;
@@ -330,7 +432,9 @@ struct Controller {
         return !slot || slot == completed_slot;
     }
 
-    bool control_transfer(unsigned slot, unsigned first, uint64_t request, unsigned length) {
+    bool control_transfer(unsigned slot, uint64_t request, unsigned length,
+                          unsigned* completion_code = nullptr) {
+        const unsigned first = control_next[slot];
         if (length > page_size || first > ring_size - 4)
             return false;
         const uint64_t transfer = devices[slot] + 2 * page_size;
@@ -350,27 +454,36 @@ struct Controller {
         ring[last].parameter = 0;
         ring[last].status = 0;
         ring[last].control = status | (length ? 0u : (1 << 16)) | 1;
+        control_next[slot] = last + 1;
         __atomic_thread_fence(__ATOMIC_RELEASE);
         ring[first].control = setup | (length ? (3 << 16) : 0u) | 1;
         __atomic_thread_fence(__ATOMIC_RELEASE);
         write(doorbell, slot * 4, 1); // Endpoint zero has device-context index 1.
         Trb event{};
-        return completion(transfer + last * sizeof(Trb), transfer_event, event) &&
-               (event.control >> 24) == slot && ((event.control >> 16) & 31) == 1;
+        const bool success = completion(transfer + last * sizeof(Trb), transfer_event, event, slot);
+        const bool same_endpoint =
+            (event.control >> 24) == slot && ((event.control >> 16) & 31) == 1;
+        if (completion_code && same_endpoint && ((event.control >> 10) & 63) == transfer_event &&
+            event.parameter >= transfer + first * sizeof(Trb) &&
+            event.parameter <= transfer + last * sizeof(Trb))
+            *completion_code = event.status >> 24;
+        return success && same_endpoint;
     }
 
-    bool read_descriptor(unsigned slot, unsigned first, unsigned type, unsigned length) {
-        return control_transfer(slot, first, (uint64_t(type) << 24) | 0x0680, length);
+    bool read_descriptor(unsigned slot, unsigned type, unsigned length) {
+        return control_transfer(slot, (uint64_t(type) << 24) | 0x0680, length);
     }
 
-    bool configure_keyboard_endpoint(unsigned slot, const KeyboardEndpoint& keyboard,
-                                     unsigned speed, unsigned dci, uint64_t ring) {
-        if (speed >= 3 && keyboard.interval > 16)
+    bool configure_input_endpoint(unsigned slot, const BootEndpoint& descriptor, unsigned speed,
+                                  unsigned dci, uint64_t ring, unsigned report_bytes,
+                                  bool boot_protocol) {
+        if (speed >= 3 && descriptor.interval > 16)
             return false;
         const unsigned interval =
-            speed >= 3 ? keyboard.interval - 1 : 31 - __builtin_clz(8u * keyboard.interval);
-        // HID SET_PROTOCOL selects the fixed eight-byte boot keyboard report.
-        if (!control_transfer(slot, 17, (uint64_t(keyboard.interface) << 32) | 0x0b21, 0))
+            speed >= 3 ? descriptor.interval - 1 : 31 - __builtin_clz(8u * descriptor.interval);
+        // HID SET_PROTOCOL selects the fixed boot report for the interface.
+        if (boot_protocol &&
+            !control_transfer(slot, (uint64_t(descriptor.interface) << 32) | 0x0b21, 0))
             return false;
         const uint64_t input = devices[slot];
         auto contexts = static_cast<uint32_t*>(physical(input));
@@ -379,24 +492,26 @@ struct Controller {
         memset(contexts, 0, page_size);
         memcpy(slot_context, output_slot, context_words * sizeof(uint32_t));
         contexts[1] = (1u << dci) | 1;
-        slot_context[0] = (slot_context[0] & ~(31u << 27)) | (dci << 27);
+        const unsigned last_endpoint = max(dci, slot_context[0] >> 27);
+        slot_context[0] = (slot_context[0] & ~(31u << 27)) | (last_endpoint << 27);
         slot_context[3] = 0;
         auto endpoint = contexts + (dci + 1) * context_words;
         endpoint[0] = interval << 16;
-        endpoint[1] = (keyboard.packet << 16) | (7 << 3) | (3 << 1);
+        endpoint[1] = (descriptor.packet << 16) | (7 << 3) | (3 << 1);
         endpoint[2] = uint32_t(ring) | 1;
         endpoint[3] = ring >> 32;
-        endpoint[4] = (keyboard.packet << 16) | keyboard_report_size;
+        endpoint[4] = (descriptor.packet << 16) | report_bytes;
         return command(configure_endpoint, input, slot);
     }
 
     bool probe_keyboard_reports(unsigned slot, unsigned port, unsigned speed,
-                                const KeyboardEndpoint& keyboard) {
+                                const BootEndpoint& keyboard) {
         constexpr unsigned reports_to_check = 16, report_timeout = 500;
         constexpr uint32_t normal_ioc = (1 << 10) | (1 << 5);
         const unsigned dci = 2 * (keyboard.address & 15) + 1;
         const uint64_t ring_address = devices[slot] + 4 * page_size;
-        if (!configure_keyboard_endpoint(slot, keyboard, speed, dci, ring_address))
+        if (!configure_input_endpoint(slot, keyboard, speed, dci, ring_address,
+                                      keyboard_report_size, true))
             return false;
         const uint64_t buffer = devices[slot] + 3 * page_size;
         auto bytes = static_cast<const uint8_t*>(physical(buffer));
@@ -412,7 +527,7 @@ struct Controller {
             if (!i)
                 log("xhci-keyboard-ready: port=%u\n", uint64_t(port));
             Trb event{};
-            if (!completion(ring_address + i * sizeof(Trb), transfer_event, event,
+            if (!completion(ring_address + i * sizeof(Trb), transfer_event, event, slot, dci,
                             report_timeout) ||
                 (event.control >> 24) != slot || ((event.control >> 16) & 31) != dci ||
                 (event.status & 0xffffff))
@@ -445,114 +560,335 @@ struct Controller {
         return false;
     }
 
-    uint64_t keyboard_ring() const {
-        return devices[keyboard.slot] + 4 * page_size;
-    }
-
-    void queue_keyboard() {
-        constexpr uint32_t normal_ioc = (1u << 10) | (1u << 5), link_toggle = (6u << 10) | 2;
-        const auto address = keyboard_ring();
+    void queue_input(const InputDevice& input) {
+        constexpr uint32_t normal_ioc = (1u << 10) | (1u << 5) | (1u << 2);
+        constexpr uint32_t link_toggle = (6u << 10) | 2;
+        const auto address = input.ring;
         auto ring = static_cast<volatile Trb*>(physical(address));
-        if (keyboard.index + 2 == ring_size) {
+        if (input.index + 2 == ring_size) {
             auto& tail = ring[ring_size - 1];
             tail.parameter = address;
             tail.status = 0;
             __atomic_thread_fence(__ATOMIC_RELEASE);
-            tail.control = link_toggle | keyboard.cycle;
+            tail.control = link_toggle | input.cycle;
         }
-        auto& trb = ring[keyboard.index];
-        trb.parameter = devices[keyboard.slot] + 3 * page_size;
-        trb.status = keyboard_report_size;
+        auto& trb = ring[input.index];
+        trb.parameter = input.buffer;
+        trb.status = input.transfer_bytes;
         __atomic_thread_fence(__ATOMIC_RELEASE);
-        trb.control = normal_ioc | keyboard.cycle;
+        trb.control = normal_ioc | input.cycle;
         __atomic_thread_fence(__ATOMIC_RELEASE);
-        write(doorbell, keyboard.slot * 4, keyboard.endpoint);
+        write(doorbell, input.slot * 4, input.endpoint);
     }
 
-    bool start_keyboard(unsigned slot, unsigned port, unsigned speed, KeyboardEndpoint descriptor) {
-        const unsigned endpoint = 2 * (descriptor.address & 15) + 1;
-        if (!configure_keyboard_endpoint(slot, descriptor, speed, endpoint,
-                                         devices[slot] + 4 * page_size))
+    HidMouseLayout mouse_layout(unsigned slot, const BootEndpoint& descriptor, unsigned length) {
+        HidMouseLayout layout{};
+        const uint64_t interface = uint64_t(descriptor.interface) << 32;
+        if (!length || !control_transfer(slot, interface | 0x22000681, length))
+            return {};
+        const auto* bytes = static_cast<const uint8_t*>(physical(devices[slot] + 3 * page_size));
+        if (!hid_mouse_layout(bytes, length, layout) || layout.bytes > descriptor.packet ||
+            !control_transfer(slot, interface | 0x010b21, 0))
+            return {};
+        return layout;
+    }
+
+    bool start_input(unsigned slot, unsigned port, unsigned speed, const BootEndpoint& descriptor,
+                     bool second_boot_endpoint, unsigned mouse_report_bytes) {
+        if (input_count == max_input_devices)
             return false;
-        keyboard.slot = slot;
-        keyboard.port = port;
-        keyboard.endpoint = endpoint;
-        queue_keyboard();
+        const unsigned endpoint = 2 * (descriptor.address & 15) + 1;
+        auto buffer = devices[slot] + 3 * page_size;
+        if (second_boot_endpoint) {
+            buffer = Dma::allocate(2, Dma::pci);
+            if (!buffer)
+                return false;
+            additional_input_pages[slot][0] = buffer;
+        }
+        const auto mouse = mouse_layout(slot, descriptor, mouse_report_bytes);
+        const unsigned wanted = mouse.bytes ? mouse.bytes : report_size(descriptor.protocol);
+        if (!configure_input_endpoint(slot, descriptor, speed, endpoint, buffer + page_size, wanted,
+                                      !mouse.bytes))
+            return false;
+        auto& input = inputs[input_count++];
+        input.slot = slot;
+        input.port = port;
+        input.endpoint = endpoint;
+        input.protocol = descriptor.protocol;
+        input.buffer = buffer;
+        input.ring = buffer + page_size;
+        input.transfer_bytes = descriptor.packet;
+        input.mouse_layout = mouse;
+        if (input.protocol == BootProtocol::keyboard)
+            input.layout = boot_keyboard_layout;
         return true;
     }
 
-    void disconnect_keyboard() {
-        uint8_t empty[keyboard_report_size]{};
-        keyboard_report(keyboard.report, empty);
-        log("xhci-keyboard-stopped: port=%u\n", uint64_t(keyboard.port));
-        keyboard.slot = 0;
+    void start_report_keyboard(unsigned slot, unsigned port, unsigned speed,
+                               const ReportEndpoint& report) {
+        const auto& descriptor = report.endpoint;
+        const unsigned endpoint = 2 * (descriptor.address & 15) + 1;
+        if (input_count == max_input_devices)
+            return;
+        for (unsigned i = 0; i < input_count; ++i)
+            if (inputs[i].slot == slot && inputs[i].endpoint == endpoint)
+                return;
+        const uint64_t request = (uint64_t(descriptor.interface) << 32) | 0x22000681;
+        if (!control_transfer(slot, request, report.descriptor_bytes))
+            return;
+        const auto bytes = static_cast<const uint8_t*>(physical(devices[slot] + 3 * page_size));
+        HidKeyboardLayout layout{};
+        if (!hid_keyboard_layout(bytes, report.descriptor_bytes, layout) ||
+            layout.bytes > descriptor.packet)
+            return;
+        // Report-mode keyboards can use event-driven idle reporting.
+        control_transfer(slot, (uint64_t(descriptor.interface) << 32) | 0x0a21, 0);
+        const auto buffer = Dma::allocate(2, Dma::pci);
+        additional_input_pages[slot][1] = buffer;
+        if (!buffer || !configure_input_endpoint(slot, descriptor, speed, endpoint,
+                                                 buffer + page_size, layout.bytes, false))
+            return;
+        auto& input = inputs[input_count++];
+        input.slot = slot;
+        input.port = port;
+        input.endpoint = endpoint;
+        input.protocol = BootProtocol::keyboard;
+        input.buffer = buffer;
+        input.ring = buffer + page_size;
+        input.transfer_bytes = descriptor.packet;
+        input.layout = layout;
+        log("xhci-report-keyboard: port=%u interface=%u report=%u keys=%u bytes=%u\n",
+            uint64_t(port), uint64_t(descriptor.interface), uint64_t(layout.report_id),
+            uint64_t(layout.key_count), uint64_t(layout.bytes));
     }
 
-    void poll_keyboard() {
-        if (!keyboard.slot)
-            return;
-        const auto port = port_base + (keyboard.port - 1) * port_stride;
-        if (!(read(operational, port) & port_connected) ||
-            (read(operational, status_reg) & (halted | host_error))) {
-            disconnect_keyboard();
+    void mouse_report(InputDevice& input, const HidMouseReport& report) {
+        uint8_t buttons = 0;
+        for (unsigned i = 0; i < sizeof(held_buttons); ++i) {
+            const uint8_t mask = 1u << i;
+            if ((input.previous_flags ^ report.buttons) & mask)
+                held_buttons[i] += report.buttons & mask ? 1 : -1;
+            if (held_buttons[i])
+                buttons |= mask;
+        }
+        input.previous_flags = report.buttons & 7;
+        usb_mouse_event(report.x, report.y, buttons, report.wheel);
+    }
+
+    void disconnect_input(InputDevice& input) {
+        if (input.protocol == BootProtocol::keyboard) {
+            uint8_t empty[max_hid_keyboard_keys]{};
+            keyboard_report(input.previous_flags, input.previous_keys, 0, empty,
+                            input.layout.key_count);
+        } else {
+            mouse_report(input, {});
+        }
+        log("xhci-%s-stopped: port=%u\n",
+            input.protocol == BootProtocol::keyboard ? "keyboard" : "mouse", uint64_t(input.port));
+        input.slot = 0;
+    }
+
+    void complete_input(InputDevice& input, const Trb& event) {
+        const unsigned code = event.status >> 24, remaining = event.status & 0xffffff;
+        if (event.parameter != input.ring + input.index * sizeof(Trb) ||
+            (code != 1 && code != 13) || remaining > input.transfer_bytes) {
+            disconnect_input(input);
             return;
         }
-        Trb event{};
-        for (unsigned count = 0; count < 8 && next_event(event); ++count) {
-            if (((event.control >> 10) & 63) != transfer_event ||
-                (event.control >> 24) != keyboard.slot ||
-                ((event.control >> 16) & 31) != keyboard.endpoint)
-                continue;
-            if (event.parameter != keyboard_ring() + keyboard.index * sizeof(Trb) ||
-                (event.status != (1u << 24) && (event.status >> 24) != 13)) {
-                disconnect_keyboard();
+        const unsigned actual = input.transfer_bytes - remaining;
+        const auto data = static_cast<const uint8_t*>(physical(input.buffer));
+        if (input.protocol == BootProtocol::keyboard) {
+            if (actual == input.layout.bytes &&
+                (!input.layout.report_id || data[0] == input.layout.report_id))
+                keyboard_report(input.previous_flags, input.previous_keys,
+                                data[input.layout.modifiers], data + input.layout.keys,
+                                input.layout.key_count);
+        } else if (input.mouse_layout.bytes) {
+            HidMouseReport report{};
+            if (hid_mouse_report(input.mouse_layout, data, actual, report))
+                mouse_report(input, report);
+        } else if (actual >= mouse_report_size) {
+            mouse_report(input, {int8_t(data[1]), int8_t(data[2]), 0, data[0]});
+        }
+        if (++input.index == ring_size - 1) {
+            input.index = 0;
+            input.cycle ^= 1;
+        }
+        queue_input(input);
+    }
+
+    void handle_input_event(const Trb& event) {
+        if (((event.control >> 10) & 63) != transfer_event)
+            return;
+        for (unsigned i = 0; i < input_count; ++i) {
+            auto& input = inputs[i];
+            if (input.slot && (event.control >> 24) == input.slot &&
+                ((event.control >> 16) & 31) == input.endpoint) {
+                complete_input(input, event);
                 return;
             }
-            if (event.status == (1u << 24)) {
-                const auto data =
-                    static_cast<const uint8_t*>(physical(devices[keyboard.slot] + 3 * page_size));
-                keyboard_report(keyboard.report, data);
-            }
-            if (++keyboard.index == ring_size - 1) {
-                keyboard.index = 0;
-                keyboard.cycle ^= 1;
-            }
-            queue_keyboard();
         }
     }
 
-    bool probe_configuration(unsigned slot, unsigned port, unsigned speed, ProbeMode mode) {
+    void remove_port_inputs(unsigned port) {
+        for (unsigned i = 0; i < input_count;) {
+            auto& input = inputs[i];
+            if (input.port != port) {
+                ++i;
+                continue;
+            }
+            if (input.slot)
+                disconnect_input(input);
+            input = inputs[--input_count];
+            inputs[input_count] = {};
+        }
+    }
+
+    bool retire_slot(unsigned port) {
+        auto& root = root_ports[port - 1];
+        const unsigned slot = root.slot;
+        if (!slot)
+            return true;
+        if (!command(disable_slot, 0, slot))
+            return false;
+        // The slot's successful completion ends all controller access to its rings.
+        static_cast<uint64_t*>(physical(dma))[slot] = 0;
+        for (auto& page : additional_input_pages[slot]) {
+            if (page)
+                page_free(page, 2);
+            page = 0;
+        }
+        if (devices[slot])
+            page_free(devices[slot], device_pages);
+        devices[slot] = 0;
+        control_next[slot] = 0;
+        root.slot = 0;
+        return true;
+    }
+
+    bool probe_runtime_port(unsigned port) {
+        const unsigned before = input_count;
+        const bool success = probe_device(port, ProbeMode::keyboard);
+        if (!success || input_count == before) {
+            remove_port_inputs(port);
+            retire_slot(port);
+        }
+        return success;
+    }
+
+    void arm_input(const InputDevice& input) {
+        queue_input(input);
+        log("xhci-%s-active: port=%u\n",
+            input.protocol == BootProtocol::keyboard ? "keyboard" : "mouse", uint64_t(input.port));
+    }
+
+    void poll_ports() {
+        unsigned pending_port = 0;
+        for (unsigned port = 1; port <= ports; ++port) {
+            auto& root = root_ports[port - 1];
+            const unsigned offset = port_base + (port - 1) * port_stride;
+            const uint32_t status = read(operational, offset);
+            const bool connected = status & port_connected;
+            if (connected != root.connected || (status & port_connection_changed)) {
+                if (status & port_connection_changed)
+                    write(operational, offset,
+                          (status & port_configuration) | port_connection_changed);
+                remove_port_inputs(port);
+                root.connected = connected;
+                root.pending = true;
+                root.ready_at = ticks + (connected ? root_port_debounce_ticks : 0);
+            }
+            if (!pending_port && root.pending && ticks >= root.ready_at)
+                pending_port = port;
+        }
+        if (!pending_port)
+            return;
+        auto& root = root_ports[pending_port - 1];
+        if (!retire_slot(pending_port)) {
+            root.ready_at = ticks + root_port_debounce_ticks;
+            return;
+        }
+        root.pending = false;
+        if (!root.connected)
+            return;
+        const unsigned before = input_count;
+        if (!probe_runtime_port(pending_port)) {
+            log("xhci: hotplug probe incomplete port=%u\n", uint64_t(pending_port));
+            return;
+        }
+        for (unsigned i = before; i < input_count; ++i)
+            arm_input(inputs[i]);
+    }
+
+    void poll_input() {
+        const bool failed = read(operational, status_reg) & (halted | host_error);
+        if (failed) {
+            for (unsigned i = 0; i < input_count; ++i)
+                if (inputs[i].slot)
+                    disconnect_input(inputs[i]);
+            return;
+        }
+        poll_ports();
+        Trb event{};
+        for (unsigned count = 0; count < 8 && next_event(event); ++count)
+            handle_input_event(event);
+    }
+
+    bool probe_configuration(unsigned slot, unsigned port, unsigned speed, ProbeMode mode,
+                             bool full_descriptor_read) {
         auto bytes = static_cast<const uint8_t*>(physical(devices[slot] + 3 * page_size));
-        if (!read_descriptor(slot, 6, 2, configuration_header_size))
+        // Some devices return a full packet even when only a descriptor header was requested.
+        if (!read_descriptor(slot, 2, full_descriptor_read ? page_size : configuration_header_size))
             return false;
         const unsigned length = descriptor_word(bytes + 2);
         if (bytes[0] != configuration_header_size || bytes[1] != 2 ||
             length < configuration_header_size || length > page_size ||
-            !read_descriptor(slot, 9, 2, length))
+            (!full_descriptor_read && !read_descriptor(slot, 2, length)))
             return false;
-        KeyboardEndpoint keyboard{};
-        if (!parse_configuration(bytes, length, keyboard))
+        BootEndpoints boot{};
+        ReportEndpoint report{};
+        if (!parse_configuration(bytes, length, boot, report))
             return false;
-        if (!keyboard.address)
+        const bool runtime = mode == ProbeMode::keyboard;
+        if ((!boot.keyboard.address && !boot.mouse.address &&
+             !(runtime && report.descriptor_bytes)) ||
+            (mode == ProbeMode::check_keyboard && !boot.keyboard.address))
             return true;
         const unsigned value = bytes[5];
-        if (!control_transfer(slot, 12, (uint64_t(value) << 16) | 0x0900, 0) ||
-            !control_transfer(slot, 14, 0x0880, 1) || bytes[0] != value)
+        if (!control_transfer(slot, (uint64_t(value) << 16) | 0x0900, 0) ||
+            !control_transfer(slot, 0x0880, 1) || bytes[0] != value)
             return false;
-        log("xhci-keyboard: port=%u configuration=%u interface=%u endpoint=%x packet=%u "
-            "interval=%u\n",
-            uint64_t(port), uint64_t(value), uint64_t(keyboard.interface),
-            uint64_t(keyboard.address), uint64_t(keyboard.packet), uint64_t(keyboard.interval));
-        if (mode == ProbeMode::keyboard)
-            return start_keyboard(slot, port, speed, keyboard);
+        bool second_boot_endpoint = false;
+        const BootEndpoint* endpoints[] = {&boot.keyboard, &boot.mouse};
+        for (const auto input : endpoints) {
+            if (!input->address)
+                continue;
+            log("xhci-%s: port=%u configuration=%u interface=%u endpoint=%x packet=%u "
+                "interval=%u\n",
+                input->protocol == BootProtocol::keyboard ? "keyboard" : "mouse", uint64_t(port),
+                uint64_t(value), uint64_t(input->interface), uint64_t(input->address),
+                uint64_t(input->packet), uint64_t(input->interval));
+            if (runtime) {
+                const unsigned mouse_bytes =
+                    input->protocol == BootProtocol::mouse ? boot.mouse_report_bytes : 0;
+                if (!start_input(slot, port, speed, *input, second_boot_endpoint, mouse_bytes))
+                    return false;
+                second_boot_endpoint = true;
+            }
+        }
+        if (runtime) {
+            if (report.descriptor_bytes)
+                start_report_keyboard(slot, port, speed, report);
+            return true;
+        }
         return mode != ProbeMode::check_keyboard ||
-               probe_keyboard_reports(slot, port, speed, keyboard);
+               probe_keyboard_reports(slot, port, speed, boot.keyboard);
     }
 
-    bool enable_port(unsigned port, unsigned& speed) {
+    bool enable_port(unsigned port, unsigned& speed, bool force_reset) {
         unsigned offset = port_base + (port - 1) * port_stride;
         uint32_t status = read(operational, offset);
-        if (!(status & port_enabled)) {
+        if (force_reset || !(status & port_enabled)) {
             write(operational, offset, (status & port_configuration) | port_reset);
             if (!DevicePoll::wait(
                     [&] {
@@ -563,16 +899,21 @@ struct Controller {
                     timeout_ticks))
                 return false;
         }
+        if (force_reset) {
+            wait_usb_recovery();
+            status = read(operational, offset);
+        }
         speed = (status >> 10) & 15;
         return (status & (port_enabled | port_connected)) == (port_enabled | port_connected) &&
                speed >= 1 && speed <= 5;
     }
 
-    bool probe_device(unsigned port, ProbeMode mode) {
+    bool probe_device(unsigned port, ProbeMode mode, bool retry = false) {
         unsigned speed, slot = 0;
-        if (!enable_port(port, speed) || !command(enable_slot, 0, 0, &slot) || !slot ||
-            slot > slots || devices[slot])
+        if (!enable_port(port, speed, retry) || (retry && speed != 1) ||
+            !command(enable_slot, 0, 0, &slot) || !slot || slot > slots || devices[slot])
             return false;
+        root_ports[port - 1].slot = slot;
         const uint64_t input = Dma::allocate(device_pages, Dma::pci);
         if (!input)
             return false;
@@ -581,7 +922,7 @@ struct Controller {
         auto slot_context = contexts + context_words;
         auto endpoint = slot_context + context_words;
         const uint64_t transfer = input + 2 * page_size;
-        const unsigned initial_packet = speed >= 4 ? 512 : speed == 3 ? 64 : 8;
+        const unsigned initial_packet = speed >= 4 ? 512 : (speed == 3 || retry) ? 64 : 8;
         contexts[1] = 3; // Add the slot and default control endpoint.
         slot_context[0] = (1u << 27) | (speed << 20);
         slot_context[1] = port << 16;
@@ -590,14 +931,25 @@ struct Controller {
         endpoint[3] = transfer >> 32;
         endpoint[4] = 8;
         static_cast<uint64_t*>(physical(dma))[slot] = input + page_size;
-        if (!command(address_device, input, slot) || !read_descriptor(slot, 0, 1, 8))
+        if (!command(address_device, input, slot))
             return false;
+        // Allow the device to settle after SET_ADDRESS before using endpoint zero.
+        wait_usb_recovery();
+        constexpr unsigned stall = 6;
+        unsigned completion_code = 0;
+        constexpr uint64_t get_device_descriptor = (1ull << 24) | 0x0680;
+        if (!control_transfer(slot, get_device_descriptor, retry ? 64 : 8, &completion_code)) {
+            if (retry || speed != 1 || completion_code != stall || !retire_slot(port))
+                return false;
+            log("xhci-enumeration: retry full-speed device on port=%u\n", uint64_t(port));
+            return probe_device(port, mode, true);
+        }
         auto descriptor = static_cast<const uint8_t*>(physical(input + 3 * page_size));
         if (descriptor[0] != descriptor_size || descriptor[1] != 1)
             return false;
         const unsigned packet = speed >= 4 && descriptor[7] == 9 ? 512 : descriptor[7];
         if (packet != initial_packet) {
-            if (speed != 1 || (packet != 16 && packet != 32 && packet != 64))
+            if (speed != 1 || (packet != 8 && packet != 16 && packet != 32 && packet != 64))
                 return false;
             auto output_endpoint =
                 static_cast<const uint32_t*>(physical(input + page_size)) + context_words;
@@ -608,25 +960,30 @@ struct Controller {
             if (!command(evaluate_context, input, slot))
                 return false;
         }
-        if (!read_descriptor(slot, 3, 1, descriptor_size) || descriptor[0] != descriptor_size ||
-            descriptor[1] != 1 || !descriptor[17])
+        if ((!retry && !read_descriptor(slot, 1, descriptor_size)) ||
+            descriptor[0] != descriptor_size || descriptor[1] != 1 || !descriptor[17])
             return false;
         log("xhci-device: port=%u speed=%u vendor=%x product=%x configurations=%u\n",
             uint64_t(port), uint64_t(speed), uint64_t(descriptor[8] | (descriptor[9] << 8)),
             uint64_t(descriptor[10] | (descriptor[11] << 8)), uint64_t(descriptor[17]));
-        return probe_configuration(slot, port, speed, mode);
+        return probe_configuration(slot, port, speed, mode, retry);
     }
 };
 
 unsigned visited;
 ProbeMode probe_mode;
-Controller active_controller;
-PciFunction runtime_pci;
-uint16_t runtime_command;
+
+struct RuntimeController {
+    Controller controller;
+    PciFunction pci;
+    uint16_t original;
+};
+
+RuntimeController active_controllers[max_controllers];
+unsigned active_count;
 
 void probe(const PciFunction& pci) {
-    if (active_controller.dma || visited == max_controllers || pci.read16(0x0a) != 0x0c03 ||
-        pci.read8(9) != 0x30)
+    if (visited == max_controllers || pci.read16(0x0a) != 0x0c03 || pci.read8(9) != 0x30)
         return;
     ++visited;
     PciBar bar;
@@ -664,40 +1021,57 @@ void probe(const PciFunction& pci) {
             uint64_t(pci.function));
         return;
     }
-    Controller controller{base + length / 4,   base + (runtime + interrupter_zero) / 4,
-                          base + doorbell / 4, slots,
-                          scratchpads,         hcc & 4 ? 16u : 8u};
+    Controller controller{base + length / 4,
+                          base + (runtime + interrupter_zero) / 4,
+                          base + doorbell / 4,
+                          slots,
+                          scratchpads,
+                          hcc & 4 ? 16u : 8u,
+                          ports};
     pci.write16(4, (original & ~7u) | pci_memory | pci_master | pci_intx_disable);
     unsigned completed = 0, connected = 0;
     if ((pci.read16(4) & (pci_memory | pci_master)) == (pci_memory | pci_master) &&
-        controller.initialize()) {
+        controller.initialize(pci.read16(0) == 0x8086)) {
+        // Powered ports can still be detecting connected devices after Run.
+        clock_refresh();
+        const uint64_t started = ticks;
+        DevicePoll::wait([&] { return ticks - started >= root_port_detection_ticks; },
+                         root_port_detection_ticks + 1);
         if (probe_mode != ProbeMode::keyboard)
             while (completed < commands_to_check && controller.command())
                 ++completed;
         for (unsigned i = 0; i < ports; ++i) {
-            if (!(read(controller.operational, port_base + i * port_stride) & port_connected))
+            const unsigned offset = port_base + i * port_stride;
+            const uint32_t status = read(controller.operational, offset);
+            auto& root = controller.root_ports[i];
+            root.connected = status & port_connected;
+            if (status & port_connection_changed)
+                write(controller.operational, offset,
+                      (status & port_configuration) | port_connection_changed);
+            if (!root.connected)
                 continue;
             ++connected;
-            if ((probe_mode == ProbeMode::keyboard || completed == commands_to_check) &&
-                !controller.probe_device(i + 1, probe_mode))
+            const bool success =
+                probe_mode == ProbeMode::keyboard
+                    ? controller.probe_runtime_port(i + 1)
+                    : completed != commands_to_check || controller.probe_device(i + 1, probe_mode);
+            if (!success)
                 log("xhci: root port %u probe incomplete\n", uint64_t(i + 1));
-            if (controller.keyboard.slot) {
-                active_controller = controller;
-                runtime_pci = pci;
-                runtime_command = original;
-                log("xhci-keyboard-active: port=%u\n", uint64_t(i + 1));
-                return;
-            }
+        }
+        if (probe_mode == ProbeMode::keyboard &&
+            !(read(controller.operational, status_reg) & (halted | host_error))) {
+            auto& active = active_controllers[active_count++];
+            active = {controller, pci, original};
+            // Finish command and control transfers before queuing input on any slot.
+            for (unsigned i = 0; i < active.controller.input_count; ++i)
+                active.controller.arm_input(active.controller.inputs[i]);
+            return;
         }
     }
     const bool stopped = controller.stop();
     pci.write16(4, (original & ~pci_master) | pci_intx_disable);
-    if (controller.dma && stopped) {
-        for (uint64_t device : controller.devices)
-            if (device)
-                page_free(device, device_pages);
-        page_free(controller.dma, controller.pages());
-    }
+    if (controller.dma && stopped)
+        controller.release_dma();
     log("xhci: pci=%x:%x.%x commands=%u ports=%u connected=%u stopped=%u\n", uint64_t(pci.bus),
         uint64_t(pci.slot), uint64_t(pci.function), uint64_t(completed), uint64_t(ports),
         uint64_t(connected), uint64_t(stopped));
@@ -717,21 +1091,22 @@ void xhci_keyboard_init() {
 }
 
 void xhci_keyboard_poll() {
-    active_controller.poll_keyboard();
+    for (unsigned i = 0; i < active_count; ++i)
+        active_controllers[i].controller.poll_input();
 }
 
 bool xhci_keyboard_shutdown() {
-    if (!active_controller.dma)
-        return true;
-    const bool stopped = active_controller.stop();
-    runtime_pci.write16(4, (runtime_command & ~pci_master) | pci_intx_disable);
-    if (stopped) {
-        for (const auto device : active_controller.devices)
-            if (device)
-                page_free(device, device_pages);
-        page_free(active_controller.dma, active_controller.pages());
+    bool success = true;
+    for (unsigned i = 0; i < active_count; ++i) {
+        auto& active = active_controllers[i];
+        auto& controller = active.controller;
+        const bool stopped = controller.stop();
+        active.pci.write16(4, (active.original & ~pci_master) | pci_intx_disable);
+        if (stopped)
+            controller.release_dma();
+        success &= stopped;
     }
-    active_controller = {};
-    return stopped;
+    active_count = 0;
+    return success;
 }
 } // namespace ax

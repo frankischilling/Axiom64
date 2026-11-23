@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -152,6 +153,12 @@ static uint64_t read_gs_word(void) {
     return value;
 }
 
+static volatile sig_atomic_t gs_trap_ok;
+
+static void gs_trap_handler(int signal) {
+    gs_trap_ok = signal == SIGTRAP && read_gs_word() == UINT64_C(0x123456789abcdef0);
+}
+
 static void user_gs_base(const char* executable) {
     uintptr_t saved = read_gs_base();
     uintptr_t fs_before, fs_after;
@@ -162,6 +169,12 @@ static void user_gs_base(const char* executable) {
     CHECK(syscall(SYS_arch_prctl, ARCH_SET_GS, UINTPTR_MAX) == -1 && errno == EPERM);
     CHECK(syscall(SYS_arch_prctl, ARCH_GET_GS, 1ul) == -1 && errno == EFAULT);
     CHECK(read_gs_word() == parent_value);
+    struct sigaction trap = {.sa_handler = gs_trap_handler}, previous;
+    CHECK(sigemptyset(&trap.sa_mask) == 0);
+    CHECK(sigaction(SIGTRAP, &trap, &previous) == 0);
+    __asm__ volatile("int3" ::: "memory");
+    CHECK(gs_trap_ok && read_gs_word() == parent_value);
+    CHECK(sigaction(SIGTRAP, &previous, NULL) == 0);
     pid_t child = fork();
     CHECK(child >= 0);
     if (!child) {
@@ -245,6 +258,55 @@ static void executable_link(void) {
     }
     child_status(child, 0);
     puts("ABI_PROC_EXE_PASS linkage=" ABI_LINKAGE);
+}
+
+static void check_root_link(const char* link, const char* expected) {
+    char path[256];
+    const ssize_t count = readlink(link, path, sizeof(path));
+    CHECK(count == (ssize_t)strlen(expected) && !memcmp(path, expected, (size_t)count));
+    const int fd = open(link, O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY);
+    struct stat actual, directory;
+    CHECK(fd >= 0 && fstat(fd, &actual) == 0 && stat(expected, &directory) == 0 &&
+          actual.st_dev == directory.st_dev && actual.st_ino == directory.st_ino && close(fd) == 0);
+}
+
+static void process_root_link(void) {
+    check_root_link("/proc/self/root", "/");
+    check_root_link("/proc/thread-self/root", "/");
+
+    char jail[] = "/tmp/abi-proc-root-XXXXXX";
+    CHECK(mkdtemp(jail) != NULL);
+    int pair[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+    const pid_t child = fork();
+    CHECK(child >= 0);
+    char signal;
+    if (!child) {
+        close(pair[0]);
+        CHECK(chroot(jail) == 0 && chdir("/") == 0);
+        CHECK(write(pair[1], "+", 1) == 1 && read(pair[1], &signal, 1) == 0);
+        _exit(0);
+    }
+    close(pair[1]);
+    CHECK(read(pair[0], &signal, 1) == 1 && signal == '+');
+    char link[64];
+    CHECK(snprintf(link, sizeof(link), "/proc/%d/root", child) > 0);
+    check_root_link(link, jail);
+    const pid_t reader = fork();
+    CHECK(reader >= 0);
+    if (!reader) {
+        CHECK(setgid(1000) == 0 && setuid(1000) == 0);
+        check_root_link("/proc/self/root", "/");
+        char target[256];
+        CHECK(readlink(link, target, sizeof(target)) == -1 && errno == EACCES);
+        CHECK(open(link, O_RDONLY | O_DIRECTORY) == -1 && errno == EACCES);
+        _exit(0);
+    }
+    child_status(reader, 0);
+    CHECK(close(pair[0]) == 0);
+    child_status(child, 0);
+    CHECK(rmdir(jail) == 0);
+    puts("ABI_PROC_ROOT_PASS linkage=" ABI_LINKAGE);
 }
 
 static void proc_cmdline_child(char** argv) {
@@ -557,13 +619,26 @@ static void proc_system_stats(void) {
           available <= total && fclose(file) == 0);
 
     file = fopen("/proc/stat", "r");
-    char aggregate[256], core[256];
-    CHECK(file && fgets(aggregate, sizeof(aggregate), file) && fgets(core, sizeof(core), file));
-    CHECK(!strncmp(aggregate, "cpu  ", 5) && !strncmp(core, "cpu0 ", 5) &&
-          !strcmp(aggregate + 5, core + 5) && fclose(file) == 0);
+    char line[256];
     unsigned long long user, nice, kernel, idle;
-    CHECK(sscanf(core + 5, "%llu %llu %llu %llu", &user, &nice, &kernel, &idle) == 4 &&
+    CHECK(file && fgets(line, sizeof(line), file) &&
+          sscanf(line, "cpu %llu %llu %llu %llu", &user, &nice, &kernel, &idle) == 4 &&
           user + kernel + idle > 0 && !nice);
+    unsigned cores = 0;
+    unsigned long long user_sum = 0, kernel_sum = 0, idle_sum = 0;
+    while (fgets(line, sizeof(line), file) && !strncmp(line, "cpu", 3)) {
+        unsigned index;
+        unsigned long long core_user, core_kernel, core_idle;
+        CHECK(sscanf(line, "cpu%u %llu %llu %llu %llu", &index, &core_user, &nice, &core_kernel,
+                     &core_idle) == 5 &&
+              index == cores && !nice);
+        ++cores;
+        user_sum += core_user;
+        kernel_sum += core_kernel;
+        idle_sum += core_idle;
+    }
+    CHECK(cores && user == user_sum && kernel == kernel_sum && idle == idle_sum &&
+          fclose(file) == 0);
 
     file = fopen("/proc/uptime", "r");
     unsigned long long seconds, idle_seconds;
@@ -572,14 +647,20 @@ static void proc_system_stats(void) {
           fscanf(file, "%llu.%2u %llu.%2u", &seconds, &centiseconds, &idle_seconds,
                  &idle_centiseconds) == 4 &&
           fclose(file) == 0);
-    CHECK(seconds * 100 + centiseconds >= idle_seconds * 100 + idle_centiseconds);
+    CHECK((seconds * 100 + centiseconds) * cores >= idle_seconds * 100 + idle_centiseconds);
     CHECK(idle_seconds * 100 + idle_centiseconds >= idle);
 
     file = fopen("/proc/cpuinfo", "r");
-    char label[64];
-    unsigned processor;
-    CHECK(file && fscanf(file, "%63s : %u", label, &processor) == 2 &&
-          !strcmp(label, "processor") && processor == 0 && fclose(file) == 0);
+    CHECK(file);
+    unsigned processors = 0;
+    while (fgets(line, sizeof(line), file)) {
+        unsigned processor;
+        if (sscanf(line, "processor : %u", &processor) == 1) {
+            CHECK(processor == processors);
+            ++processors;
+        }
+    }
+    CHECK(processors == cores && fclose(file) == 0);
     puts("ABI_PROC_SYSTEM_PASS linkage=" ABI_LINKAGE);
 }
 
@@ -675,6 +756,7 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0x7ffffffffffe, 8) == -1 && errno == EFAULT);
     relative_modes();
     executable_link();
+    process_root_link();
     proc_cmdline(argv[0]);
     proc_usage();
     seqpacket_pair();

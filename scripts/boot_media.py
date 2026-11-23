@@ -165,6 +165,7 @@ def main():
     parser.add_argument("--root-mib", type=int, help="capacity of the installed ext2 root in MiB")
     parser.add_argument("--root-partuuid", type=UUID, help="PXE boot to an existing ext2 root with this GPT ID")
     parser.add_argument("--init-path", type=init_path, default="/sbin/init", help="absolute guest PID 1 path")
+    parser.add_argument("--debug", action="store_true", help="enable configured key-only SSH at boot")
     parser.add_argument("--kernel-option", action="append", default=[], help="one additional boot argument")
     args = parser.parse_args()
     if any(not token or any(char.isspace() for char in token) for token in args.kernel_option):
@@ -175,7 +176,8 @@ def main():
         if source is not None and not source.is_file():
             parser.error(f"missing boot input {source}; run make image first")
     try:
-        options = "".join(f" {token}" for token in args.kernel_option)
+        options = (" debug.ssh" if args.debug else "") + "".join(
+            f" {token}" for token in args.kernel_option)
         build_medium(args.kind, args.output, args.kernel, args.initramfs, options,
                      init=args.init_path, installed=args.installed,
                      disk_bytes=args.disk_bytes, root_mib=args.root_mib, root_partuuid=args.root_partuuid)

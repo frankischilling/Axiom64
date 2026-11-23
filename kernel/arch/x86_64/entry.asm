@@ -24,14 +24,24 @@
 bits 64
 default rel
 section .text
-extern handle_syscall, handle_trap, kernel_stack_top
+; Byte offset of CS in ax::Frame, measured from the saved R15.
+%define FRAME_CS (18 * 8)
+extern handle_syscall, handle_trap
 extern multiboot_main
+extern ap_entry_on_stack
 
 global multiboot_entry
 multiboot_entry:
     lea rsp, [multiboot_stack_top]
     xor ebp, ebp
     call multiboot_main
+    ud2
+
+global ap_enter_stack
+ap_enter_stack:
+    mov rsp, rdi
+    mov rdi, rsi
+    call ap_entry_on_stack
     ud2
 
 %macro SAVE 0
@@ -54,10 +64,13 @@ multiboot_entry:
 
 global syscall_entry
 syscall_entry:
-    mov [saved_user_rsp], rsp
-    mov rsp, [kernel_stack_top]
+    ; Keep the CPU-local GS base active until returning to userspace.
+    swapgs
+    lfence
+    mov [gs:8], rsp
+    mov rsp, [gs:0]
     push qword 0x1b
-    push qword [saved_user_rsp]
+    push qword [gs:8]
     push r11
     push qword 0x23
     push rcx
@@ -75,6 +88,10 @@ global enter_user
 enter_user:
     mov rsp,rdi
 restore_frame:
+    test byte [rsp+FRAME_CS], 3
+    jz .restore_registers
+    swapgs
+.restore_registers:
     pop r15
     pop r14
     pop r13
@@ -105,6 +122,12 @@ interrupt_%+i:
 %endrep
 interrupt_common:
     SAVE
+    test byte [rsp+FRAME_CS], 3
+    jz .kernel_gs
+    swapgs
+.kernel_gs:
+    ; Order the privilege check and GS switch before CPU-local memory access.
+    lfence
     cld
     mov rdi,rsp
     and rsp,-16
@@ -140,7 +163,6 @@ interrupt_table:
 %assign i i+1
 %endrep
 section .bss
-saved_user_rsp: resq 1
 alignb 16
 multiboot_stack: resb 65536
 multiboot_stack_top:

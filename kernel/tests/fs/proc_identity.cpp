@@ -23,10 +23,14 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "drivers/block/block.hpp"
+#include "fs/ext2/ext2.hpp"
 #include "fs/memfd.hpp"
 #include "fs/pipe.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "fs/proc/ipv6.hpp"
+#include "ipc/posix_message_queues.hpp"
+#include "process/cpu.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
@@ -37,7 +41,12 @@
 
 namespace ax {
 Task tasks[max_tasks]{};
-Task* current = nullptr;
+static Task* current_for_test;
+
+Task* current_task() {
+    return current_for_test;
+}
+
 uint64_t ticks = 0;
 static bool ready = false;
 static int random_error = 0;
@@ -77,8 +86,96 @@ bool node_referenced(Node* node) {
     return false;
 }
 
+Task* task(int pid) {
+    for (auto& entry : tasks)
+        if (entry.state != State::empty && entry.process && entry.pid == pid)
+            return &entry;
+    return nullptr;
+}
+
+CpuUsage cpu_usage(const Task& task, bool thread) {
+    return thread ? CpuUsage{task.cpu_user_ticks, task.cpu_system_ticks}
+                  : CpuUsage{task.process->cpu_user_ticks, task.process->cpu_system_ticks};
+}
+
+// This fixture has no mapped memory. Guest tests read real VM counters.
+uint64_t AddressSpace::mapped_size(uint64_t, uint64_t) const {
+    assert(!root);
+    return 0;
+}
+
+uint64_t AddressSpace::resident_size() const {
+    assert(!root);
+    return 0;
+}
+
+// The filesystem objects provide distinct identities for procfs comparisons.
+const FilesystemOps ext2_ops{}, ramfs_ops{};
+
+const FilesystemOps& posix_queue_filesystem() {
+    static const FilesystemOps ops{};
+    return ops;
+}
+
+// Other procfs backends are exercised in the guest. Fail on unintended use here.
+void Task::set_name(const char*, size_t) {
+    std::abort();
+}
+
+uint64_t* AddressSpace::entry(uint64_t, bool) {
+    std::abort();
+}
+
+bool AddressSpace::copy_in(void*, uint64_t, size_t) const {
+    std::abort();
+}
+
+CpuTotals cpu_totals() {
+    std::abort();
+}
+
+CpuTotals cpu_core_totals(unsigned) {
+    std::abort();
+}
+
+unsigned scheduler_cpu_count() {
+    return 1;
+}
+
+PhysicalMemoryStats physical_memory_stats() {
+    std::abort();
+}
+
+uint64_t block_buffer_bytes() {
+    std::abort();
+}
+
+unsigned block_device_limit() {
+    std::abort();
+}
+
+const BlockInfo* block_info(unsigned) {
+    std::abort();
+}
+
+void block_device_name(unsigned, char (&)[block_name_size]) {
+    std::abort();
+}
+
+uint64_t block_device_number(unsigned) {
+    std::abort();
+}
+
+unsigned ext2_mount_device(const Mount&) {
+    std::abort();
+}
+
+const Mount* next_mount(unsigned&) {
+    std::abort();
+}
+
 // Named descriptor targets use the real VFS and memfd implementations in guest tests.
-void node_path(Node*, char*, size_t, bool) {
+void node_path(Node*, char*, size_t, bool, Node*) {
     std::abort();
 }
 
@@ -303,7 +400,7 @@ int main() {
     process.pgid = 41;
     process.sid = 2;
     memcpy(process.executable, "/bin/name ) space", 18);
-    ax::current = &task;
+    ax::current_for_test = &task;
     auto directory = child(mount.root, "41");
     auto metadata = child(directory, "stat");
     assert(metadata->mode == (ax::regular_file | 0444));

@@ -97,7 +97,7 @@ static const char* alias(const char* executable) {
 static void usage(void) {
     fputs("usage: account-access [--database PATH] [--records PATH] COMMAND\n"
           "  login [NAME] | su [NAME] [-c COMMAND] | sudo [-u NAME] COMMAND...\n"
-          "  passwd [NAME] | provision NAME HOME SHELL\n",
+          "  passwd [NAME] | provision NAME HOME SHELL [--audio]\n",
           stderr);
 }
 
@@ -205,6 +205,37 @@ static int actor_name(const char* database, uid_t uid, char name[ACCOUNT_NAME_MA
     return error ? failed(error) : 0;
 }
 
+static int verify_session(const char* database, uid_t caller, const char* requested) {
+    struct stat source;
+    char name[ACCOUNT_NAME_MAX + 1];
+    if (!*requested || fstat(STDIN_FILENO, &source) < 0 || !S_ISFIFO(source.st_mode) ||
+        actor_name(database, caller, name) < 0 || strcmp(requested, name))
+        return 1;
+
+    char secret[ACCOUNT_PASSWORD_MAX + 1] = {0};
+    size_t used = 0;
+    int verified = 0;
+    while (used < sizeof(secret)) {
+        const ssize_t count = read(STDIN_FILENO, secret + used, sizeof(secret) - used);
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count < 0)
+            break;
+        if (!count) {
+            if (used && !memchr(secret, '\0', used)) {
+                struct account_profile* profile = NULL;
+                int result = account_auth_password(database, name, secret, 0, &profile);
+                verified = result == ACCOUNT_AUTH_ACCEPTED && profile && profile->uid == caller;
+                account_profile_free(profile);
+            }
+            break;
+        }
+        used += (size_t)count;
+    }
+    account_password_clear(secret, sizeof(secret));
+    return verified ? 0 : 1;
+}
+
 static int streams(int terminal, unsigned* mask) {
     struct stat source;
     if (fstat(terminal, &source) < 0)
@@ -261,7 +292,9 @@ int main(int argc, char** argv) {
     int login = !strcmp(mode, "login") || graphical, su = !strcmp(mode, "su"),
         sudo = !strcmp(mode, "sudo");
     int passwd = !strcmp(mode, "passwd"), provision = !strcmp(mode, "provision");
-    if ((!login && !su && !sudo && !passwd && !provision) || (caller && (login || provision))) {
+    const int verify = !strcmp(mode, "verify-session");
+    if ((!login && !su && !sudo && !passwd && !provision && !verify) ||
+        (caller && (login || provision)) || (verify && argc != first)) {
         usage();
         return 2;
     }
@@ -269,12 +302,20 @@ int main(int argc, char** argv) {
     const char* inherited_term = getenv("TERM");
     if (inherited_term && strlen(inherited_term) <= 32)
         strcpy(term, inherited_term);
+    char requested[ACCOUNT_NAME_MAX + 1] = {0};
+    if (verify) {
+        const char* pam_user = getenv("PAM_USER");
+        if (pam_user && strnlen(pam_user, sizeof(requested)) < sizeof(requested))
+            strcpy(requested, pam_user);
+    }
     if (setgroups(0, NULL) < 0 || setresgid(0, 0, 0) < 0 || setresuid(0, 0, 0) < 0 ||
         prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) < 0 || clearenv() < 0) {
         perror("account-access: privilege setup");
         return 1;
     }
     umask(077);
+    if (verify)
+        return verify_session(database, caller, requested);
     char tty[64];
     int terminal = controlling_terminal(tty);
     int error = terminal < 0 ? errno : 0;
@@ -285,11 +326,12 @@ int main(int argc, char** argv) {
     if (!error && provision) {
         char secret[ACCOUNT_PASSWORD_MAX + 1] = {0};
         int published = 0;
-        if (argc - first != 3)
+        int playback = argc - first == 4 && !strcmp(argv[first + 3], "--audio");
+        if (argc - first != 3 && !playback)
             error = EINVAL;
         else if (new_password(terminal, secret) < 0 ||
                  account_bootstrap(database, records, argv[first], argv[first + 1], argv[first + 2],
-                                   secret, &published) < 0)
+                                   secret, playback, &published) < 0)
             error = errno;
         account_password_clear(secret, sizeof(secret));
         if (published)

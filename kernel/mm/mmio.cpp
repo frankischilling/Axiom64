@@ -60,6 +60,31 @@ bool matches(uint64_t entry, uint64_t physical, CacheLayout cache) {
            cache_is_uc(cache, cache_index(entry));
 }
 
+bool mapping_cache_flags(uint64_t address, uint64_t physical, uint64_t table,
+                         uint64_t physical_limit, const PageTables& ops, uint64_t& flags) {
+    for (int shift = 39; shift >= 12; shift -= 9) {
+        if (!table || table >= physical_limit)
+            return false;
+        const auto entry = ops.table(ops.context, table)[(address >> shift) & 511];
+        if (!(entry & present))
+            return false;
+        if (shift == 12) {
+            flags = entry & leaf_cache_mask;
+            return (entry & page_mask) == physical;
+        }
+        if (entry & pat_or_large) {
+            if (shift == 39)
+                return false;
+            const uint64_t offsets = (1ull << shift) - 1;
+            const uint64_t large_pat = 1ull << 12;
+            flags = (entry & (pwt | pcd)) | ((entry & large_pat) ? pat_or_large : 0);
+            return ((entry & page_mask & ~offsets) | (address & offsets)) == physical;
+        }
+        table = entry & page_mask;
+    }
+    return false;
+}
+
 struct NewTable {
     uint64_t* parent;
     uint64_t physical;
@@ -128,6 +153,26 @@ bool permits(const Range& span, const BootInfo& boot) {
             entry.kind == BootMemoryKind::mapped_reserved)
             continue;
         if (entry.base >= span.physical_page || entry.length > span.physical_page - entry.base)
+            return false;
+    }
+    return true;
+}
+
+bool alias_cache_flags(const Range& span, uint64_t root, uint64_t physical_limit,
+                       const PageTables& ops, uint64_t& flags) {
+    if (!span.pages || (span.virtual_page % page_size) || (span.physical_page % page_size) ||
+        span.physical_page >= physical_limit ||
+        span.pages > (physical_limit - span.physical_page) / page_size ||
+        span.pages - 1 > (UINT64_MAX - span.virtual_page) / page_size ||
+        !mapping_cache_flags(span.virtual_page, span.physical_page, root, physical_limit, ops,
+                             flags))
+        return false;
+    for (size_t i = 1; i < span.pages; ++i) {
+        const uint64_t offset = i * page_size;
+        uint64_t next;
+        if (!mapping_cache_flags(span.virtual_page + offset, span.physical_page + offset, root,
+                                 physical_limit, ops, next) ||
+            next != flags)
             return false;
     }
     return true;

@@ -41,8 +41,9 @@ int account_password_update(const char* database, const char* records,
                             int* published);
 
 // Explicit fresh-store provisioning creates locked root and a private-home
-// administrator in sudo. Existing or damaged stores never restart provisioning.
+// administrator in sudo. The installed desktop can also grant playback access.
+// Existing or damaged stores never restart provisioning.
 int account_bootstrap(const char* database, const char* records, const char* name, const char* home,
-                      const char* shell, const char* password, int* published);
+                      const char* shell, const char* password, int playback, int* published);
 
 #endif

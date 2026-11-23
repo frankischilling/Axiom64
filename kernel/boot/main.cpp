@@ -93,9 +93,12 @@ BootInfo boot_info;
     Acpi::InterruptTopology topology;
     Acpi::DefinitionBlocks definitions;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
-    clock_init(rsdp);
-    if (arguments.has("smp.probe"))
-        boot_probe_application_processors();
+    const bool schedule_peers = arguments.has("smp.scheduler");
+    clock_init(rsdp, schedule_peers);
+    if (schedule_peers && !clock_shared_counter_ready())
+        log("SMP: scheduler requires a shared platform counter\n");
+    if (schedule_peers || arguments.has("smp.probe"))
+        boot_probe_application_processors(schedule_peers && clock_shared_counter_ready());
     if (arguments.has("irq=pic"))
         log("Interrupts: PIC/PIT selected by boot option\n");
     else if (have_topology)
@@ -125,7 +128,7 @@ BootInfo boot_info;
         xhci_keyboard_init();
     net_init();
     log("Entering userspace in Ring 3\n");
-    start_init(init);
+    start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();
 }
 } // namespace ax

@@ -209,6 +209,35 @@ static int data(void) {
     return 0;
 }
 
+static int sparse_file(void) {
+    enum { block_size = 4096 };
+
+    const char* path = "/nvme-sparse";
+    const unsigned char left = 0x53, right = 0xb4;
+    unsigned char data[block_size], expected[block_size] = {0};
+    const int fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (fd < 0 || pwrite(fd, &left, 1, 0) != 1 || pwrite(fd, &right, 1, 2 * block_size + 3) != 1 ||
+        fsync(fd))
+        return -1;
+    expected[0] = left;
+    if (pread(fd, data, sizeof(data), 0) != sizeof(data) || memcmp(data, expected, sizeof(data)))
+        return -1;
+    expected[0] = 0;
+    if (pread(fd, data, sizeof(data), block_size) != sizeof(data) ||
+        memcmp(data, expected, sizeof(data)))
+        return -1;
+    expected[3] = right;
+    if (pread(fd, data, sizeof(data), 2 * block_size) != 4 || memcmp(data, expected, 4))
+        return -1;
+    expected[3] = 0;
+    if (ftruncate(fd, block_size + 19) || ftruncate(fd, 3 * block_size) || fsync(fd) ||
+        pread(fd, data, sizeof(data), 2 * block_size) != sizeof(data) ||
+        memcmp(data, expected, sizeof(data)) || close(fd) || unlink(path))
+        return -1;
+    puts("NVME_SPARSE_READ_PASS hole eof truncate");
+    return 0;
+}
+
 static int root(void) {
     const char* disk = access("/dev/nvme0n1", F_OK) == 0 ? "/dev/nvme0n1" : "/dev/nvme0n7";
     if (open(disk, O_RDONLY | O_EXCL) != -1 || errno != EBUSY)
@@ -216,6 +245,8 @@ static int root(void) {
     int fd = open("/nvme-written", O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd >= 0) {
         if (write(fd, payload, sizeof(payload)) != sizeof(payload) || fsync(fd) || close(fd))
+            return -1;
+        if (sparse_file())
             return -1;
         puts("NVME_ROOT_WRITE_PASS");
         return 0;

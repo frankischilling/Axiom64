@@ -43,7 +43,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F04 | [VFS, mounts, and pseudo filesystems](https://github.com/frankischilling/Axiom64/issues/4) | partial | M1 | F02 |
 | F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | partial | M2 | F04 |
 | F06 | [Demand paging, copy-on-write, and swap](https://github.com/frankischilling/Axiom64/issues/6) | partial | M2 | F03, F05 |
-| F07 | [SMP scheduling and kernel synchronization](https://github.com/frankischilling/Axiom64/issues/7) | planned | M2 | F01, F05, F06 |
+| F07 | [SMP scheduling and kernel synchronization](https://github.com/frankischilling/Axiom64/issues/7) | partial | M2 | F01, F05, F06 |
 | F08 | [Linux syscall and libc compatibility](https://github.com/frankischilling/Axiom64/issues/8) | partial | M4 | F05, F06, F13 |
 | F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | partial | M3 | F03, F04 |
 | F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | complete | M3 | F03, F09 |
@@ -216,7 +216,7 @@ Acceptance evidence:
 
 ### F07. SMP scheduling and kernel synchronization
 
-The scheduler runs one CPU with fixed process and descriptor limits.
+The [experimental scheduler](threads.md#experimental-multiprocessor-scheduling) runs independent process groups on multiple logical CPUs. It uses a shared kernel lock and the existing process and descriptor limits. The [SMP boot probe](build.md#raw-disk-and-network-boot) checks secondary CPU entry, directed wake interrupts, local APIC timers, and remote translation invalidation.
 
 Required work:
 

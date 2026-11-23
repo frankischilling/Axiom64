@@ -252,9 +252,9 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     Inode inode{};
     inode.number = number;
     set16(inode, mode);
-    uint32_t uid = current ? current->credentials.user.filesystem : 0;
+    uint32_t uid = current_task() ? current_task()->credentials.user.filesystem : 0;
     uint32_t gid = (parent->mode & 02000) ? parent->gid
-                   : current              ? current->credentials.group.filesystem
+                   : current_task()       ? current_task()->credentials.group.filesystem
                                           : 0;
     set16(inode + 2, uid);
     set16(inode + 24, gid);
@@ -386,6 +386,30 @@ static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
     return finish_removal(v, success, deferred ? replaced->inode : 0);
 }
 
+static bool read_file_block(Volume& v, Inode& inode, uint64_t logical, uint32_t block,
+                            uint64_t last, size_t limit, void* data) {
+    if (limit <= 1 || v.changes)
+        return v.read_block(block, data);
+    const size_t sectors = v.block_size / sector_size;
+    const uint64_t sector = uint64_t(block) * sectors;
+    if (block_read_from_cache(v.device, sector, data, sectors))
+        return true;
+    size_t blocks = 1;
+    while (blocks < limit && blocks <= last - logical) {
+        uint32_t next;
+        const int previous_error = v.error;
+        if (!v.map_block(inode, logical + blocks, false, next, 0)) {
+            v.error = previous_error;
+            break;
+        }
+        if (next != uint64_t(block) + blocks)
+            break;
+        ++blocks;
+    }
+    const int result = block_read_cached(v.device, sector, data, sectors, blocks);
+    return result ? v.fail(result) : true;
+}
+
 static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
     auto& v = volume(node);
     v.error = 0;
@@ -396,6 +420,12 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
     uint8_t data[max_block_size];
     if (!v.load_inode(node->inode, inode))
         return v.error;
+    auto& entry = *static_cast<Entry*>(node->filesystem_data);
+    const bool sequential = (node->mode & 0170000) == regular_file && offset % v.block_size == 0 &&
+                            uint16_t(offset / v.block_size) == entry.next_read_block;
+    const size_t read_ahead =
+        sequential ? block_read_ahead_limit(v.device, v.block_size / sector_size) : 1;
+    const uint64_t last = (node->size - 1) / v.block_size;
     auto out = static_cast<uint8_t*>(buffer);
     if (v.fast_symlink(inode)) {
         if (node->size > inode_block_bytes)
@@ -407,8 +437,9 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
             uint32_t block;
             size_t start = (offset + done) % v.block_size,
                    bytes = min(count - done, v.block_size - start);
-            if (!v.map_block(inode, (offset + done) / v.block_size, false, block, 0) ||
-                (block && !v.read_block(block, data))) {
+            const uint64_t logical = (offset + done) / v.block_size;
+            if (!v.map_block(inode, logical, false, block, 0) ||
+                (block && !read_file_block(v, inode, logical, block, last, read_ahead, data))) {
                 if (done)
                     overlay_disk_pages(*node, offset, out, done);
                 return done ? int64_t(done) : v.error;
@@ -419,9 +450,13 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
                 memset(out + done, 0, bytes);
             done += bytes;
         }
+    if (done) {
+        const uint64_t end = offset + done;
+        entry.next_read_block = uint16_t(end / v.block_size + (end % v.block_size != 0));
+    }
     if (!node->mount->readonly) {
         node->atime = node_now();
-        static_cast<Entry*>(node->filesystem_data)->atime_dirty = true;
+        entry.atime_dirty = true;
     }
     overlay_disk_pages(*node, offset, out, done);
     return done;

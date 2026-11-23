@@ -31,6 +31,7 @@
 #include "drivers/platform/power.hpp"
 #include "fs/vfs.hpp"
 #include "net/ethernet.hpp"
+#include "process/scheduler.hpp"
 #include <stdarg.h>
 
 extern "C" void* memcpy(void* d, const void* s, size_t n) {
@@ -154,6 +155,7 @@ void log(const char* s, ...) {
 }
 
 [[noreturn]] void poweroff(int status) {
+    scheduler_park_peers();
     net_shutdown();
     Pcm::shutdown();
     if (!xhci_keyboard_shutdown()) {

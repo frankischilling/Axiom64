@@ -150,7 +150,7 @@ firmware's current settings.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 
-Each memory context has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Clone can share the address space, file table, working directory/umask, and signal dispositions; fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.
+Each memory context has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Clone can share the address space, file table, working directory/umask, and signal dispositions; fork copies private pages and retains shared page references. The scheduler uses bounded task slots and timer preemption. Syscalls execute with interrupts masked and take the shared kernel lock when [multiprocessor scheduling](threads.md#experimental-multiprocessor-scheduling) is active.
 
 The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, and supplies argv, environment, and the auxiliary vector. Failed exec preserves the old address space. Successful exec ends other group members and unshares the descriptor/disposition tables. File descriptions share offsets across fork and dup; close-on-exec belongs to descriptors. Each thread preserves FS base and FPU state. [Thread ownership and futexes](threads.md) describe exit/reaping, clear-TID, supported clone flags, and synchronization limits.
 
@@ -164,11 +164,21 @@ Executable `#!` scripts use the same exec path. The kernel passes the interprete
 
 Axiom64 provides `kernel/fs/proc.cpp` behind the VFS filesystem interface. Both RAM-root and ext2-root boots mount actual process/thread metadata at `/proc`. Numeric process directories and per-process task directories expose live kernel identities, groups, state, signal masks and capabilities. `self` and `thread-self` resolve relative to the caller. Status and stat reads retain a description-owned buffer; an exited task can finish already buffered bytes, while a previously unread description reports ESRCH. Cached nodes keep PID/TID identity across task-slot reuse and retire only after descriptions and directory references end. Stat field 22 records process/thread birth in actual 100 Hz clock ticks and remains stable across exec. CPU accounting, address/TTY statistics and broader procfs fields remain incomplete. The shared boot UUID uses initialized randomness and returns EAGAIN before initialization. Complete procfs, namespaces and process diagnostics remain roadmap work.
 
+Process and thread directories expose a `root` link to the task's filesystem
+root, including roots selected with `chroot`. Reading or following this link
+uses the same process access check as the executable link.
+
 [Advisory file locks](file-locks.md) use that retained lifetime for blocking flock calls. Independent descriptions conflict on canonical local nodes; dup/fork ownership and final-close release follow the description's references.
 
 Signals use the Linux x86-64 frame layout and a userspace return trampoline. Supported behavior includes caught faults, masks, alternate stacks, restartable I/O, alarms, SIGCHLD, and stop/continue reporting. PTYs track controlling sessions and foreground process groups, translate terminal input, and deliver terminal interrupt and resize signals.
 
 The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbdev driver uses `/dev/fb0` and platform-device metadata; evdev reads PS/2 events from `/dev/input/event0` and `event1`. Unix sockets carry X11 traffic. The desktop uses software drawing with GLX disabled. Xorg's input thread remains disabled pending dedicated coverage of that path.
+
+With `usb.xhci=keyboard`, xHCI root-port keyboards and mice also feed
+those input devices. The controller stays active on empty ports, detects
+connections after boot, and releases held keys and buttons on unplug.
+Successful slot retirement returns the controller's buffers for reuse.
+USB hubs and storage devices need their own enumeration and removal paths.
 
 The Intel HD Audio driver discovers direct PCM converter and pin routes through
 the codec command rings. It uses one polled DMA stream per direction. The
@@ -180,14 +190,26 @@ Blocking reads, writes, and explicit playback drain allow other tasks to run.
 The last blocking-mode close starts a background drain. A new writer can
 open the device after that drain finishes.
 Capture reports an overrun as an I/O error and restarts after an explicit reset.
-Physical codecs beyond direct pin routes, ALSA PCM, mixing, and a desktop
-audio service remain open.
+
+On systems with a playback route, ALSA applications can discover card 0
+through `/dev/snd/controlC0` and write to `/dev/snd/pcmC0D0p`. This endpoint
+supports interleaved signed 16-bit stereo at 48 kHz, with 1,024-frame periods
+and a 14-period buffer. ALSA and OSS compete for the same playback engine.
+Both endpoints use the audio group. The ALSA interface still needs mapped
+buffers, mixer controls, capture, and automatic desktop audio discovery.
+Physical codecs beyond direct pin routes remain open.
+
+Authorized Linux applications can set the realtime clock through
+`clock_settime` or `settimeofday` with `CAP_SYS_TIME`. The change takes effect
+at the clock's 10 ms resolution. Elapsed clocks and relative timers keep their
+existing deadlines. Writing the hardware RTC and running an NTP service are
+separate from setting the running clock.
 
 ## Current limits
 
 This is a development OS with a tested compatibility surface. Unsupported syscalls return `ENOSYS`; these working programs do not imply complete Linux compatibility.
 
-- The scheduler uses one CPU and has 256 task slots. Each file table supports 128 descriptors. SMP and complete POSIX threading remain planned. [Threading tests and limits](threads.md)
+- The scheduler has 512 task slots. Each file table supports 1,024 descriptors. Parallel execution of threads in a single process and complete POSIX threading remain open. [Threading tests and limits](threads.md)
 - [Task credentials and permissions](credentials.md) support ordinary numeric identities, capability transitions, filesystem access and privilege-dropped exec. [Account tools](accounts.md) provide persistent databases and local authentication; authenticated graphical access and complete isolation remain unfinished. [Kernel randomness](random.md) shares a BLAKE2s/ChaCha20 generator across the Linux interfaces. Axiom64 provides validated virtio input, administration, persisted seeds and generation-change handling. See [randomness](random.md) for lifecycle and cryptographic-client acceptance.
 - A RAM or [ext-family disk root](disk-root.md), independent RAM mounts, virtio disks and partitions, and [writable ext-family data volumes](ext2.md). Supported ext3 and ext4 layouts recover committed journal records on boot. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), [IPv4 UDP sockets](udp.md) and ordinary [IPv4 TCP streams](tcp.md), with static addresses, routes, ARP, loopback and ping on virtio-net and QEMU e1000. [Netlink sockets](netlink.md) add bounded IPv4 route dumps, tagged route control and complete address updates. [DHCP/configuration and resolver metadata modules](network-configuration.md), the [normal manager](network-manager.md) and [DNS queries with TCP fallback](dns.md) have guest checks. [Quoted TCP ICMP errors](tcp-icmp-acceptance.md) validate emitted ownership and Linux hard/soft diagnostics. Bounded IPv4 fragment reassembly has host policy and wire tests. IPv6, IP options/multicast, shared PMTU policy, full ancillary data coverage and the complete socket contract remain required. Unix datagrams carry owned scalar/vector records through socketpairs and named filesystem or abstract endpoints. Sender budgets, retained binding owners and generation-checked destinations preserve queued data across waits and close/reuse. Native comparisons and local root/ordinary BIOS/UEFI runs cover routing, reconnect policy, filesystem permissions and retained sends. Datagram credentials preserve sender identity through queue waits and partial ancillary output. Local checks cover both musl providers, both linkages and BIOS/UEFI as root and UID 65534. Datagram SCM_RIGHTS retains file descriptions through sender close, peeks, truncation and copy faults; bounded graph collection releases unreachable socket cycles. Streams retain sender credentials and SCM_RIGHTS ownership across queue waits and partial reads. Their retained blocking sends, MSG_WAITALL receives and listener shutdown paths have native and guest checks. Stream bindings and receive-source names follow the [Unix stream name contract](io.md#unix-stream-names). Broader stream options and lifecycle coverage remain required.

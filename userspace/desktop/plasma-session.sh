@@ -28,9 +28,12 @@ state=${XDG_STATE_HOME:-$HOME/.local/state}/axiom64
 mkdir -p "$state"
 XDG_RUNTIME_DIR=$(mktemp -d /tmp/axiom64-plasma-XXXXXX)
 export XDG_RUNTIME_DIR
+export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
 trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
 trap 'exit 0' HUP INT TERM
 
 export QT_QUICK_BACKEND=software LIBGL_ALWAYS_SOFTWARE=1
+# Each Qt process can create its own llvmpipe worker pool.
+export LP_NUM_THREADS="${LP_NUM_THREADS:-2}"
 export QT_QPA_PLATFORMTHEME=kde XCURSOR_THEME=breeze_cursors
 /usr/bin/startplasma-wayland > "$state/plasma-session.log" 2>&1

@@ -39,22 +39,22 @@ int permission(Node* node, const XattrName& name, bool write) {
     if (write && node_readonly(node))
         return -30;
     if (name.index == 6) {
-        if (write && current &&
-            !capable(current->credentials,
+        if (write && current_task() &&
+            !capable(current_task()->credentials,
                      file_caps(name) ? Capability::setfcap : Capability::sys_admin))
             return -1;
         return 0;
     }
     if (name.index == 4)
-        return !current || capable(current->credentials, Capability::sys_admin) ? 0
-               : write                                                          ? -1
-                                                                                : -61;
+        return !current_task() || capable(current_task()->credentials, Capability::sys_admin) ? 0
+               : write                                                                        ? -1
+                                                                                              : -61;
     uint32_t type = node->mode & 0170000;
     if (type != regular_file && type != directory && type != 0140000)
         return write ? -1 : -61;
-    if (write && type == directory && (node->mode & 01000) && current &&
-        current->credentials.user.filesystem != node->uid &&
-        !capable(current->credentials, Capability::fowner))
+    if (write && type == directory && (node->mode & 01000) && current_task() &&
+        current_task()->credentials.user.filesystem != node->uid &&
+        !capable(current_task()->credentials, Capability::fowner))
         return -1;
     return node_access(node, write ? 2 : 4);
 }
@@ -88,7 +88,8 @@ int64_t node_listxattr(Node* node, void* buffer, size_t size) {
     if (!node || !node->mount->ops->listxattr)
         return -95;
     return node->mount->ops->listxattr(
-        node, buffer, size, !current || capable(current->credentials, Capability::sys_admin));
+        node, buffer, size,
+        !current_task() || capable(current_task()->credentials, Capability::sys_admin));
 }
 
 int node_setxattr(Node* node, const char* key, const void* value, size_t size, unsigned flags) {

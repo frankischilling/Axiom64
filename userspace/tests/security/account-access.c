@@ -169,6 +169,27 @@ static void verify(const char* name, const char* secret, int result) {
     account_profile_free(profile);
 }
 
+static void verify_session(uid_t uid, const char* name, const char* secret, size_t size,
+                           int expected) {
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    CHECK(write(fds[1], secret, size) == (ssize_t)size && close(fds[1]) == 0);
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (!pid) {
+        CHECK(setsid() == getpid() && dup2(fds[0], STDIN_FILENO) == STDIN_FILENO);
+        close(fds[0]);
+        CHECK(setenv("PAM_USER", name, 1) == 0);
+        CHECK(setgroups(0, NULL) == 0 && setresgid(uid, uid, uid) == 0 &&
+              setresuid(uid, uid, uid) == 0);
+        execl(frontend, "account-access", "verify-session", (char*)NULL);
+        _exit(126);
+    }
+    CHECK(close(fds[0]) == 0);
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == expected);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 5 && !getuid() && !geteuid());
     frontend = argv[2];
@@ -367,6 +388,15 @@ int main(int argc, char** argv) {
     verify("admin", changed, ACCOUNT_AUTH_ACCEPTED);
     observed("installed_passwd_alias_privately_authenticates_confirms_and_publishes_own_password");
     frontend = actual;
+    verify_session(1000, "admin", changed, strlen(changed), 0);
+    verify_session(1000, "admin", password, strlen(password), 1);
+    verify_session(1001, "admin", changed, strlen(changed), 1);
+    verify_session(1000, "root", changed, strlen(changed), 1);
+    verify_session(1000, "admin", changed, strlen(changed) + 1, 1);
+    char oversized[ACCOUNT_PASSWORD_MAX + 1];
+    memset(oversized, 'a', sizeof(oversized));
+    verify_session(1000, "admin", oversized, sizeof(oversized), 1);
+    observed("session_unlock_uses_private_pipe_current_password_and_real_uid");
     printf("ACCOUNT_ACCESS_PASS observations=%u\n", observations);
     return 0;
 }

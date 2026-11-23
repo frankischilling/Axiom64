@@ -62,18 +62,75 @@ def inspect_disk(directory, image, kernel, initramfs):
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
-def run_keyboard_guest(command, log, output):
+def send_wheel(monitor, button):
+    monitor.command("input-send-event", {"events": [
+        {"type": "btn", "data": {"button": button, "down": down}} for down in (True, False)
+    ]})
+
+
+def send_usb_input(monitor, guest, log, empty_controller):
+    mouse_bus = "xhci-second" if empty_controller else "xhci"
+    if empty_controller:
+        monitor.command("device_add", {"driver": "usb-mouse", "bus": mouse_bus + ".0",
+                                       "port": "3", "id": "boot-mouse"})
+        # On qemu-xhci the USB 2 root ports follow the four SuperSpeed ports.
+        await_serial(guest, log, (b"xhci-mouse-active: port=7",), 8)
+    for display, key in (("usb-video-a", "a"), ("usb-video-b", "b")):
+        for down in (True, False):
+            monitor.command("input-send-event", {"device": display, "events": [
+                {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": key}}}
+            ]})
+    monitor.command("input-send-event", {"events": [
+        {"type": "rel", "data": {"axis": "x", "value": 31}},
+        {"type": "rel", "data": {"axis": "y", "value": -19}},
+        {"type": "btn", "data": {"button": "left", "down": True}}
+    ]})
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_PRESSED",), 8)
+    send_wheel(monitor, "wheel-up")
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_SCROLL_UP",), 8)
+    monitor.command("device_del", {"id": "boot-mouse"})
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_RELEASED",), 8)
+    monitor.command("device_add", {"driver": "usb-mouse", "bus": mouse_bus + ".0",
+                                   "port": "4", "id": "hotplug-mouse"})
+    await_serial(guest, log, (b"xhci-mouse-active: port=8",), 8)
+    monitor.command("input-send-event", {"events": [
+        {"type": "rel", "data": {"axis": "x", "value": -12}},
+        {"type": "rel", "data": {"axis": "y", "value": 7}},
+        {"type": "btn", "data": {"button": "left", "down": True}},
+    ]})
+    await_serial(guest, log, (b"BOOT_USB_HOTPLUG_MOUSE_PRESSED",), 8)
+    send_wheel(monitor, "wheel-down")
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_SCROLL_DOWN",), 8)
+    monitor.command("input-send-event", {"events": [
+        {"type": "btn", "data": {"button": "left", "down": False}},
+    ]})
+    monitor.command("device_del", {"id": "boot-kbd-b"})
+    await_serial(guest, log, (b"xhci-keyboard-stopped: port=6",), 8)
+    monitor.command("device_add", {"driver": "usb-kbd", "bus": "xhci.0", "port": "3",
+                                   "display": "usb-video-b", "id": "hotplug-kbd"})
+    await_serial(guest, log, (b"xhci-keyboard-active: port=7",), 8)
+    for down in (True, False):
+        monitor.command("input-send-event", {"device": "usb-video-b", "events": [
+            {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": "c"}}}
+        ]})
+
+
+def run_keyboard_guest(command, log, output, runtime_input, empty_controller=False):
     with tempfile.TemporaryDirectory(prefix="axiom64-xhci-qmp-", dir="/tmp") as temporary:
         socket = Path(temporary) / "monitor"
         with subprocess.Popen(command + ["-qmp", f"unix:{socket},server=on,wait=off"],
                               stdin=subprocess.DEVNULL, stdout=output,
                               stderr=subprocess.STDOUT) as guest:
             try:
-                await_serial(guest, log, (b"xhci-keyboard-ready:",), 60)
+                ready = b"BOOT_USB_INPUT_READY" if runtime_input else b"xhci-keyboard-ready:"
+                await_serial(guest, log, (ready,), 60)
                 monitor = Qmp(socket)
                 try:
-                    monitor.command("send-key", {"keys": [{"type": "qcode", "data": "a"}],
-                                                 "hold-time": 350})
+                    if runtime_input:
+                        send_usb_input(monitor, guest, log, empty_controller)
+                    else:
+                        monitor.command("send-key", {"keys": [{"type": "qcode", "data": "a"}],
+                                                     "hold-time": 350})
                 finally:
                     monitor.close()
                 return guest.wait(timeout=15)
@@ -83,8 +140,12 @@ def run_keyboard_guest(command, log, output):
 
 
 def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invalid=False, xhci=None,
-              smp=None):
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
+              smp=None, no_hpet=False):
+    runtime_input = xhci in ("input", "input-two-controllers")
+    machine = "pc,i8042=off" if runtime_input else "pc"
+    if no_hpet:
+        machine += ",hpet=off"
+    command = ["qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
                "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot",
                "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
     if firmware == "uefi":
@@ -104,13 +165,23 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         command += ["-nic", "none", "-boot", "order=d,strict=on", "-cdrom", medium]
     if xhci == "keyboard":
         command += ["-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0"]
+    if runtime_input:
+        command += ["-vga", "none", "-device", "VGA,id=usb-video-a",
+                    "-device", "secondary-vga,id=usb-video-b", "-device", "qemu-xhci,id=xhci",
+                    "-device", "usb-kbd,bus=xhci.0,port=1,display=usb-video-a",
+                    "-device", "usb-kbd,bus=xhci.0,port=2,display=usb-video-b,id=boot-kbd-b"]
+        if xhci == "input-two-controllers":
+            command += ["-device", "qemu-xhci,id=xhci-second"]
+        else:
+            command += ["-device", "usb-mouse,bus=xhci.0,port=3,id=boot-mouse"]
     if smp is not None:
         threads = 2 if smp > 1 else 1
         command += ["-smp", f"cpus={smp},sockets=1,cores={smp // threads},threads={threads}"]
     log = directory / "serial.log"
     with log.open("wb") as output:
-        if xhci == "keyboard":
-            returncode = run_keyboard_guest(command, log, output)
+        if xhci == "keyboard" or runtime_input:
+            returncode = run_keyboard_guest(command, log, output, runtime_input,
+                                             xhci == "input-two-controllers")
         else:
             returncode = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
                                         stderr=subprocess.STDOUT, timeout=90).returncode
@@ -122,6 +193,8 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
     if (returncode != (3 if invalid else 1) or not expected <= lines or entered == invalid or
             any(token in text for token in ("PANIC:", "FAULT pid=", "FILESYSTEM_SHUTDOWN_FAIL"))):
         raise RuntimeError(f"unexpected guest result in {log}: " + "\n".join(text.splitlines()[-15:]))
+    if no_hpet and "Clock: ACPI PM timer, 24-bit counter, 100 Hz accounting" not in lines:
+        raise RuntimeError(f"scheduler did not select the ACPI PM timer in {log}")
     probes = [line for line in text.splitlines() if line.startswith("xhci:")]
     devices = [line for line in text.splitlines() if line.startswith("xhci-device:")]
     keyboards = [line for line in text.splitlines() if line.startswith("xhci-keyboard:")]
@@ -144,13 +217,48 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
             raise RuntimeError(f"xHCI did not read the key press and release in {log}: {keys}")
     if xhci == "none" and (probes or devices or keyboards or keys):
         raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
+    if runtime_input:
+        if (sum(line.startswith("xhci-keyboard-active:") for line in lines) != 3 or
+                sum(line.startswith("xhci-keyboard-stopped:") for line in lines) != 1 or
+                sum(line.startswith("xhci-mouse-active:") for line in lines) != 2 or
+                sum(line.startswith("xhci-mouse-stopped:") for line in lines) != 1 or
+                "BOOT_USB_HOTPLUG_MOUSE_PRESSED" not in lines or
+                "BOOT_USB_INPUT_PASS" not in lines):
+            raise RuntimeError(f"xHCI did not deliver input from all devices in {log}")
     if smp is not None:
         summaries = re.findall(r"^SMP: present=(\d+) bsp=(\d+) application_processors=(\d+)$",
                                text, re.MULTILINE)
         entered = re.findall(r"^SMP: application processor apic=(\d+) entered$", text, re.MULTILINE)
+        tables = re.findall(
+            r"^SMP: application processor apic=(\d+) stack, TSS, IDT and syscall entry ready$",
+            text, re.MULTILINE)
+        wakeups = re.findall(
+            r"^SMP: application processor apic=(\d+) wake interrupts=(\d+)$",
+            text, re.MULTILINE)
+        timers = re.findall(
+            r"^SMP: application processor apic=(\d+) local timer interrupts=(\d+)$",
+            text, re.MULTILINE)
+        task_slots = re.findall(r"^SMP: application processor apic=(\d+) idle task slot ready$",
+                                text, re.MULTILINE)
+        shootdowns = re.findall(
+            r"^SMP: application processor apic=(\d+) remote page invalidation verified$",
+            text, re.MULTILINE)
+        translation_targets = re.findall(r"^SMP: translation targets=(\d+) other=(\d+)$",
+                                         text, re.MULTILINE)
         if (len(summaries) != 1 or summaries[0][0] != str(smp) or summaries[0][2] != str(smp - 1) or
-                len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered):
-            raise RuntimeError(f"SMP processor entry failed in {log}: {summaries} {entered}")
+                len(entered) != smp - 1 or len(set(entered)) != len(entered) or summaries[0][1] in entered or
+                sorted(entered) != sorted(tables)):
+            raise RuntimeError(f"SMP processor entry failed in {log}: {summaries} {entered} {tables}")
+        if sorted(wakeups) != sorted((apic_id, "2") for apic_id in entered):
+            raise RuntimeError(f"SMP targeted wake interrupts failed in {log}: {wakeups}")
+        if sorted(timers) != sorted((apic_id, "2") for apic_id in entered):
+            raise RuntimeError(f"SMP local timer interrupts failed in {log}: {timers}")
+        if sorted(task_slots) != sorted(entered):
+            raise RuntimeError(f"SMP CPU-local task slots failed in {log}: {task_slots}")
+        if sorted(shootdowns) != sorted(entered):
+            raise RuntimeError(f"SMP remote page invalidation failed in {log}: {shootdowns}")
+        if translation_targets != ([(str(smp - 1), "0")] if smp > 1 else []):
+            raise RuntimeError(f"SMP translation target selection failed in {log}: {translation_targets}")
     return {"medium": kind, "firmware": firmware, "invalid": invalid, "xhci": xhci,
             "smp": smp, "serial_sha256": digest(log)}
 
@@ -159,7 +267,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/boot-media-test")
     parser.add_argument("--xhci", action="store_true", help="include xHCI and USB keyboard checks")
-    parser.add_argument("--smp", action="store_true", help="check entry on every logical processor")
+    parser.add_argument("--smp", action="store_true", help="check processor entry, IPIs and local timers")
+    parser.add_argument("--scheduler", action="store_true", help="run userspace on twelve logical CPUs")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -218,6 +327,21 @@ def main():
                                          f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
                                          xhci=device))
                 print(f"{case.name}: passed", flush=True)
+        input_ramfs = output / "usb-input.cpio"
+        write_cpio(input_ramfs, {
+            "dev": (0o40755, b""), "proc": (0o40755, b""), "sbin": (0o40755, b""),
+            "sbin/init": (0o100755, init_payload), "boot-proof": (0o100444, token.encode()),
+            "boot-usb-input": (0o100444, b""),
+        })
+        target = output / "xhci-input.raw"
+        build_medium("disk", target, kernel, input_ramfs, " test usb.xhci=keyboard")
+        for firmware in ("bios", "uefi"):
+            for device in ("input", "input-two-controllers"):
+                case = output / f"{firmware}-xhci-{device}"
+                case.mkdir()
+                results.append(run_guest(case, "disk", firmware, target, f"BOOT_MEDIA_PASS /sbin/init {token}",
+                                         input_ramfs.stat().st_size, xhci=device))
+                print(f"{case.name}: passed", flush=True)
     if args.smp:
         target = output / "smp-probe.raw"
         build_medium("disk", target, kernel, initramfs, " test smp.probe", init=alternate)
@@ -228,6 +352,25 @@ def main():
                 results.append(run_guest(case, "disk", firmware, target,
                                          f"BOOT_MEDIA_PASS {alternate} {token}", initramfs.stat().st_size,
                                          smp=count))
+                print(f"{case.name}: passed", flush=True)
+    if args.scheduler:
+        worker = output / "scheduler-init"
+        subprocess.run(["musl-gcc", "-O2", "-static", "-Wall", "-Wextra", "-Werror",
+                        "-pthread", ROOT / "userspace/tests/process/smp-scheduler.c",
+                        "-o", worker], check=True)
+        worker_ramfs = output / "scheduler.cpio"
+        write_cpio(worker_ramfs, {"dev": (0o40755, b""), "proc": (0o40755, b""),
+                                 "sbin": (0o40755, b""),
+                                 "sbin/init": (0o100755, worker.read_bytes())})
+        target = output / "scheduler.raw"
+        build_medium("disk", target, kernel, worker_ramfs, " test smp.scheduler")
+        for firmware in ("bios", "uefi"):
+            for no_hpet in (False, True):
+                suffix = "-without-hpet" if no_hpet else ""
+                case = output / f"{firmware}-scheduler{suffix}"
+                case.mkdir()
+                results.append(run_guest(case, "disk", firmware, target, "SMP_SCHED_RUNTIME_PASS",
+                                         worker_ramfs.stat().st_size, smp=12, no_hpet=no_hpet))
                 print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps({"kernel_sha256": digest(kernel),
         "initramfs_sha256": digest(initramfs), "boots": results}, indent=2) + "\n")

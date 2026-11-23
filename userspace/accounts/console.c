@@ -274,6 +274,8 @@ int main(int argc, char** argv) {
                 break;
             }
         }
+        int playback = fresh && (graphical || prepare_greeter) &&
+                       access("/usr/libexec/axiom64-pipewire-launcher", X_OK) == 0;
         char* arguments[] = {(char*)executable,
                              "--database",
                              (char*)database,
@@ -285,6 +287,7 @@ int main(int argc, char** argv) {
                              fresh ? name : NULL,
                              fresh ? home : NULL,
                              fresh ? (char*)shell : NULL,
+                             playback ? "--audio" : NULL,
                              NULL};
         int result = run(arguments, 04755, terminal, &original);
         if (result < 0) {

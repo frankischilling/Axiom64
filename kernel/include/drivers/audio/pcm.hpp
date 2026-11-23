@@ -27,9 +27,25 @@
 
 namespace ax::Pcm {
 inline constexpr uint32_t sync_request = 0x5001;
+inline constexpr unsigned output_period_bytes = page_size, output_periods = 14;
+
+struct OutputState {
+    unsigned queued, space;
+    bool running, fault;
+};
+
 bool initialize();
 int open(const Handle&);
 void close(const Handle&);
+bool output_available();
+bool output_busy();
+int open_output();
+void close_output();
+int reset_output();
+int start_output();
+int drain_output();
+OutputState output_state();
+int64_t queue_output(const void*, size_t);
 bool ready(const Handle&, bool write);
 int64_t read(void*, size_t);
 int64_t write(const void*, size_t);

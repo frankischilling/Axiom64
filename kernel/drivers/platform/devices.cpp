@@ -30,6 +30,7 @@
 #include "drivers/block/nvme.hpp"
 #include "drivers/platform/fb_console.hpp"
 #include "drivers/usb/xhci.hpp"
+#include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
@@ -40,8 +41,9 @@
 namespace ax {
 static const BootFramebuffer* framebuffer;
 static Pty ptys[32];
-static Terminal console_terminal{0x500,  5, 0xbf,
-                                 0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
+static constexpr Terminal default_terminal{0x500,  5, 0xbf,
+                                           0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
+static Terminal console_terminal = default_terminal;
 static ByteQueue console_input;
 static int console_pgid = 1, console_sid = 1, vt_mode = 0, keyboard_mode = 1;
 
@@ -59,7 +61,7 @@ struct InputQueue {
 static InputQueue keyboard_events, mouse_events;
 static uint8_t keys[96], ps2_keys[96], usb_keys[96];
 static bool extended, console_keyboard, console_caps_lock;
-static uint8_t mouse_packet[3], mouse_offset, mouse_buttons;
+static uint8_t mouse_packet[3], mouse_offset, ps2_mouse_buttons, usb_mouse_buttons;
 static bool ps2_present;
 static bool mouse_ack_pending;
 
@@ -124,17 +126,17 @@ static void detach_console(bool hangup) {
 }
 
 static int64_t attach_console(Handle* h, bool force) {
-    auto process = current->process;
+    auto process = current_task()->process;
     if (process->pid == process->sid && process->controlling_console && process->sid == console_sid)
         return 0;
     if (process->pid != process->sid || process->controlling_pty || process->controlling_console)
         return -1;
     if (console_sid && console_sid != process->sid) {
-        if (!force || !capable(current->credentials, Capability::sys_admin))
+        if (!force || !capable(current_task()->credentials, Capability::sys_admin))
             return -1;
         detach_console(false);
     }
-    if ((h->flags & 3) == 1 && !capable(current->credentials, Capability::sys_admin))
+    if ((h->flags & 3) == 1 && !capable(current_task()->credentials, Capability::sys_admin))
         return -1;
     console_sid = process->sid;
     console_pgid = process->pgid;
@@ -154,21 +156,22 @@ void terminal_exit(Task* task) {
 
 static int64_t attach_pty(Handle* h, bool force) {
     auto p = h->pty;
-    if (current->process->pid == current->process->sid && current->process->controlling_pty == p)
+    if (current_task()->process->pid == current_task()->process->sid &&
+        current_task()->process->controlling_pty == p)
         return 0;
-    if (current->process->pid != current->process->sid || current->process->controlling_pty ||
-        current->process->controlling_console)
+    if (current_task()->process->pid != current_task()->process->sid ||
+        current_task()->process->controlling_pty || current_task()->process->controlling_console)
         return -1;
-    if (p->sid && p->sid != current->process->sid) {
-        if (!force || !capable(current->credentials, Capability::sys_admin))
+    if (p->sid && p->sid != current_task()->process->sid) {
+        if (!force || !capable(current_task()->credentials, Capability::sys_admin))
             return -1;
         detach_pty(p, false);
     }
-    if ((h->flags & 3) == 1 && !capable(current->credentials, Capability::sys_admin))
+    if ((h->flags & 3) == 1 && !capable(current_task()->credentials, Capability::sys_admin))
         return -1;
-    p->sid = current->process->sid;
-    p->pgid = current->process->pgid;
-    current->process->controlling_pty = p;
+    p->sid = current_task()->process->sid;
+    p->pgid = current_task()->process->pgid;
+    current_task()->process->controlling_pty = p;
     return 0;
 }
 
@@ -273,6 +276,14 @@ static void tag(const char* path, Device type, unsigned id = 0) {
         n->mode = character | 0600;
         n->uid = n->gid = 0;
     }
+}
+
+static void tag_audio(const char* path, Device type) {
+    tag(path, type);
+    auto* node = lookup(path);
+    node->mode = character | 0660;
+    node->uid = 0;
+    node->gid = 29; // audio
 }
 
 static void number_path(char* out, const char* prefix, unsigned number) {
@@ -392,11 +403,13 @@ void devices_init(bool display_console) {
     tag("/dev/random", Device::random, 8);
     tag("/dev/urandom", Device::random, 9);
     if (Pcm::initialize()) {
-        tag("/dev/dsp", Device::dsp);
-        auto* dsp = lookup("/dev/dsp");
-        dsp->mode = character | 0660;
-        dsp->uid = 0;
-        dsp->gid = 29; // audio
+        tag_audio("/dev/dsp", Device::dsp);
+        if (Pcm::output_available()) {
+            if (!lookup("/dev/snd") && !make_node("/dev/snd", directory | 0755))
+                panic("sound device directory");
+            tag_audio("/dev/snd/controlC0", Device::alsa_control);
+            tag_audio("/dev/snd/pcmC0D0p", Device::alsa_playback);
+        }
     }
     tag("/dev/tty0", Device::vt);
     tag("/dev/tty1", Device::vt, 1);
@@ -464,6 +477,10 @@ uint64_t device_number(Node* node) {
         return 0x600;
     case Device::dsp:
         return 0xe03;
+    case Device::alsa_control:
+        return 0x7400;
+    case Device::alsa_playback:
+        return 0x7410;
     case Device::tty:
         return 0x500;
     case Device::vt:
@@ -499,21 +516,24 @@ int device_open(Handle* h) {
         return block_claim(h->node->device_id, h);
     if (kind == Device::dsp)
         return Pcm::open(*h);
+    if (kind == Device::alsa_playback)
+        return (h->flags & 3) == 0 || (h->flags & 3) == 3 ? -22 : Alsa::open();
     if (kind == Device::tty) {
-        if (!current ||
-            (!current->process->controlling_pty && !current->process->controlling_console))
+        if (!current_task() || (!current_task()->process->controlling_pty &&
+                                !current_task()->process->controlling_console))
             return -6;
-        if (current->process->controlling_pty) {
-            h->pty = current->process->controlling_pty;
+        if (current_task()->process->controlling_pty) {
+            h->pty = current_task()->process->controlling_pty;
             h->pty->slaves++;
         }
         return 0;
     }
     if (kind == Device::keyboard || kind == Device::mouse)
         h->offset = (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
-    if ((kind == Device::serial || kind == Device::vt) && current && !(h->flags & 0400) &&
-        (h->flags & 3) != 1 && !console_sid && !current->process->controlling_pty &&
-        !current->process->controlling_console && current->process->pid == current->process->sid)
+    if ((kind == Device::serial || kind == Device::vt) && current_task() && !(h->flags & 0400) &&
+        (h->flags & 3) != 1 && !console_sid && !current_task()->process->controlling_pty &&
+        !current_task()->process->controlling_console &&
+        current_task()->process->pid == current_task()->process->sid)
         attach_console(h, false);
     if (kind == Device::ptmx) {
         for (auto& p : ptys)
@@ -522,7 +542,7 @@ int device_open(Handle* h) {
                 p.used = true;
                 p.id = &p - ptys;
                 p.locked = true;
-                p.terminal = console_terminal;
+                p.terminal = default_terminal;
                 p.rows = 24;
                 p.columns = 80;
                 char name[16];
@@ -548,8 +568,8 @@ int device_open(Handle* h) {
                     p.used = false;
                     return error;
                 }
-                p.slave->uid = current ? current->credentials.user.filesystem : 0;
-                p.slave->gid = current ? current->credentials.group.filesystem : 0;
+                p.slave->uid = current_task() ? current_task()->credentials.user.filesystem : 0;
+                p.slave->gid = current_task() ? current_task()->credentials.group.filesystem : 0;
                 p.slave->device = Device::pty_slave;
                 p.slave->device_id = p.id;
                 p.masters = 1;
@@ -571,9 +591,9 @@ int device_open(Handle* h) {
         h->pty = &ptys[id];
         h->pty->slaves++;
         h->writer = false;
-        if (current && !(h->flags & 0400) && !current->process->controlling_pty &&
-            !current->process->controlling_console &&
-            current->process->pid == current->process->sid && !h->pty->sid)
+        if (current_task() && !(h->flags & 0400) && !current_task()->process->controlling_pty &&
+            !current_task()->process->controlling_console &&
+            current_task()->process->pid == current_task()->process->sid && !h->pty->sid)
             attach_pty(h, false);
     }
     return 0;
@@ -586,6 +606,10 @@ void device_close(Handle* h) {
     }
     if (h->node && h->node->device == Device::dsp) {
         Pcm::close(*h);
+        return;
+    }
+    if (h->node && h->node->device == Device::alsa_playback) {
+        Alsa::close();
         return;
     }
     if (!h->pty)
@@ -616,6 +640,8 @@ bool device_has_poll(const Handle& handle) {
     case Device::keyboard:
     case Device::mouse:
     case Device::dsp:
+    case Device::alsa_control:
+    case Device::alsa_playback:
         return true;
     case Device::random:
         return handle.node->device_id == 8;
@@ -627,6 +653,10 @@ bool device_has_poll(const Handle& handle) {
 bool device_ready(Handle* h, bool write) {
     if (h->node->device == Device::dsp)
         return Pcm::ready(*h, write);
+    if (h->node->device == Device::alsa_playback)
+        return write && Alsa::ready();
+    if (h->node->device == Device::alsa_control)
+        return false;
     if (h->pty) {
         auto p = h->pty;
         if (!h->writer && p->io_error)
@@ -769,6 +799,8 @@ int64_t device_read(Handle* h, void* data, size_t len) {
 int64_t device_write(Handle* h, const void* data, size_t len) {
     if (h->node->device == Device::dsp)
         return Pcm::write(data, len);
+    if (h->node->device == Device::alsa_playback)
+        return Alsa::write(data, len);
     if (h->node->device == Device::block)
         return block_bytes(h, const_cast<void*>(data), len, true);
     if (h->node->device == Device::parallel)
@@ -837,13 +869,17 @@ struct FbFix {
 static_assert(sizeof(FbVar) == 160 && sizeof(FbFix) == 80);
 
 static int64_t output(uint64_t dst, const void* data, size_t len) {
-    return current->memory->space.copy_out(dst, data, len) ? 0 : -14;
+    return current_task()->memory->space.copy_out(dst, data, len) ? 0 : -14;
 }
 
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
     if (kind == Device::dsp)
         return Pcm::ioctl(*h, request, arg);
+    if (kind == Device::alsa_control)
+        return Alsa::control_ioctl(request, arg);
+    if (kind == Device::alsa_playback)
+        return Alsa::playback_ioctl(*current_task(), request, arg);
     if (kind == Device::random) {
         if (request == 0x80045200) { // RNDGETENTCNT reports partial initialization credit.
             int count = random_entropy_count();
@@ -855,7 +891,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         case 0x5204:     // RNDZAPENTCNT
         case 0x5206:     // RNDCLEARPOOL
         case 0x5207:     // RNDRESEEDCRNG
-            if (!capable(current->credentials, Capability::sys_admin))
+            if (!capable(current_task()->credentials, Capability::sys_admin))
                 return -1;
             break;
         default:
@@ -867,13 +903,13 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         if (request == 0x5207)
             return random_reseed();
         int count;
-        if (!current->memory->space.copy_in(&count, arg, sizeof(count)))
+        if (!current_task()->memory->space.copy_in(&count, arg, sizeof(count)))
             return -14;
         if (count < 0)
             return -22;
         if (request == 0x40085203) {
             int length;
-            if (!current->memory->space.copy_in(&length, arg + 4, sizeof(length)))
+            if (!current_task()->memory->space.copy_in(&length, arg + 4, sizeof(length)))
                 return -14;
             // import_ubuf clamps MAX_RW_COUNT, then the ioctl requires the full signed length.
             size_t size = min(size_t(int64_t(length)), size_t(0x7ffff000));
@@ -885,7 +921,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
             while (done < size) {
                 size_t amount = min(sizeof(buffer), size - done);
                 amount = min(amount, page_size - (address + done) % page_size);
-                if (!current->memory->space.copy_in(buffer, address + done, amount)) {
+                if (!current_task()->memory->space.copy_in(buffer, address + done, amount)) {
                     random::erase(buffer, sizeof(buffer));
                     return -14;
                 }
@@ -946,7 +982,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         }
         if (request == 0x4601) {
             FbVar var;
-            if (!current->memory->space.copy_in(&var, arg, sizeof(var)))
+            if (!current_task()->memory->space.copy_in(&var, arg, sizeof(var)))
                 return -14;
             return var.xres == fb->width && var.yres == fb->height && var.bpp == fb->bpp ? 0 : -22;
         }
@@ -980,8 +1016,10 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
                 for (unsigned key = 272; key < 275; key++)
                     buffer[key / 8] |= 1 << (key % 8);
         } else if (number == 0x22) {
-            if (kind == Device::mouse)
-                buffer[0] = 3;
+            if (kind == Device::mouse) {
+                buffer[0] = 3; // REL_X and REL_Y.
+                buffer[1] = 1; // REL_WHEEL.
+            }
         } else if (number == 0x18)
             memcpy(buffer, keys, min(sizeof(keys), size_t(size)));
         else if (number == 0x90)
@@ -1001,7 +1039,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x5403:
     case 0x5404: {
         Terminal next{};
-        if (!current->memory->space.copy_in(&next, arg, sizeof(next)))
+        if (!current_task()->memory->space.copy_in(&next, arg, sizeof(next)))
             return -14;
         if (request == 0x5404) {
             // Termios on either PTY endpoint configures the slave. Discard
@@ -1026,25 +1064,25 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         return 0;
     }
     case 0x540f:
-        if (!h->writer && (h->pty ? current->process->controlling_pty != h->pty
-                                  : !current->process->controlling_console))
+        if (!h->writer && (h->pty ? current_task()->process->controlling_pty != h->pty
+                                  : !current_task()->process->controlling_console))
             return -25;
         return output(arg, group, 4);
     case 0x5410: {
-        if (h->pty
-                ? (current->process->controlling_pty != h->pty ||
-                   current->process->sid != h->pty->sid)
-                : (!current->process->controlling_console || current->process->sid != console_sid))
+        if (h->pty ? (current_task()->process->controlling_pty != h->pty ||
+                      current_task()->process->sid != h->pty->sid)
+                   : (!current_task()->process->controlling_console ||
+                      current_task()->process->sid != console_sid))
             return -25;
         int next_group;
-        if (!current->memory->space.copy_in(&next_group, arg, 4))
+        if (!current_task()->memory->space.copy_in(&next_group, arg, 4))
             return -14;
         if (next_group <= 0)
             return -22;
         bool member = false;
         for (auto& task : tasks)
             if (task.state != State::empty && task.process->pgid == next_group &&
-                task.process->sid == current->process->sid)
+                task.process->sid == current_task()->process->sid)
                 member = true;
         if (!member)
             return -1;
@@ -1056,22 +1094,23 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
             return attach_pty(h, arg == 1);
         return attach_console(h, arg == 1);
     case 0x5422:
-        if (h->pty && current->process->controlling_pty != h->pty)
+        if (h->pty && current_task()->process->controlling_pty != h->pty)
             return -25;
-        if (h->pty && current->process->controlling_pty == h->pty) {
-            if (current->process->pid == current->process->sid)
+        if (h->pty && current_task()->process->controlling_pty == h->pty) {
+            if (current_task()->process->pid == current_task()->process->sid)
                 detach_pty(h->pty);
-            current->process->controlling_pty = nullptr;
-        } else if (current->process->controlling_console && current->process->sid == console_sid) {
-            if (current->process->pid == current->process->sid)
+            current_task()->process->controlling_pty = nullptr;
+        } else if (current_task()->process->controlling_console &&
+                   current_task()->process->sid == console_sid) {
+            if (current_task()->process->pid == current_task()->process->sid)
                 detach_console(true);
-            current->process->controlling_console = false;
+            current_task()->process->controlling_console = false;
         } else
             return -25;
         return 0;
     case 0x5429: {
-        if (!h->writer && (h->pty ? current->process->controlling_pty != h->pty
-                                  : !current->process->controlling_console))
+        if (!h->writer && (h->pty ? current_task()->process->controlling_pty != h->pty
+                                  : !current_task()->process->controlling_console))
             return -25;
         int sid = h->pty ? h->pty->sid : console_sid;
         if (!sid)
@@ -1085,7 +1124,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     }
     case 0x5414: {
         uint16_t size[4];
-        if (!current->memory->space.copy_in(size, arg, sizeof(size)))
+        if (!current_task()->memory->space.copy_in(size, arg, sizeof(size)))
             return -14;
         if (h->pty) {
             bool changed = h->pty->rows != size[0] || h->pty->columns != size[1];
@@ -1110,7 +1149,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
             return -25;
         {
             int locked;
-            if (!current->memory->space.copy_in(&locked, arg, sizeof(locked)))
+            if (!current_task()->memory->space.copy_in(&locked, arg, sizeof(locked)))
                 return -14;
             h->pty->locked = locked != 0;
             return 0;
@@ -1130,7 +1169,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         return output(arg, mode, sizeof(mode));
     }
     case 0x5602:
-        return current->memory->space.valid(arg, 8) ? 0 : -14;
+        return current_task()->memory->space.valid(arg, 8) ? 0 : -14;
     case 0x5603: {
         uint16_t state[] = {1, 0, 2};
         return output(arg, state, sizeof(state));
@@ -1201,6 +1240,26 @@ void usb_keyboard_event(unsigned code, bool pressed) {
     keyboard_event(usb_keys, code, pressed);
 }
 
+static void mouse_event(uint8_t& source, int dx, int dy, uint8_t buttons, int wheel) {
+    const auto before = ps2_mouse_buttons | usb_mouse_buttons;
+    source = buttons & 7;
+    const auto after = ps2_mouse_buttons | usb_mouse_buttons;
+    if (dx)
+        event(mouse_events, 2, 0, dx);
+    if (dy)
+        event(mouse_events, 2, 1, dy);
+    if (wheel)
+        event(mouse_events, 2, 8, wheel);
+    for (unsigned k = 0; k < 3; ++k)
+        if ((before ^ after) & (1 << k))
+            event(mouse_events, 1, 272 + k, (after >> k) & 1);
+    event(mouse_events, 0, 0, 0);
+}
+
+void usb_mouse_event(int dx, int dy, uint8_t buttons, int wheel) {
+    mouse_event(usb_mouse_buttons, dx, dy, buttons, wheel);
+}
+
 void devices_poll() {
     floppy_poll();
     Pcm::poll();
@@ -1230,15 +1289,7 @@ void devices_poll() {
             uint8_t buttons = mouse_packet[0] & 7;
             int dx = mouse_packet[1] - (mouse_packet[0] & 0x10 ? 256 : 0),
                 dy = mouse_packet[2] - (mouse_packet[0] & 0x20 ? 256 : 0);
-            if (dx)
-                event(mouse_events, 2, 0, dx);
-            if (dy)
-                event(mouse_events, 2, 1, -dy);
-            for (unsigned k = 0; k < 3; k++)
-                if ((buttons ^ mouse_buttons) & (1 << k))
-                    event(mouse_events, 1, 272 + k, (buttons >> k) & 1);
-            mouse_buttons = buttons;
-            event(mouse_events, 0, 0, 0);
+            mouse_event(ps2_mouse_buttons, dx, -dy, buttons, 0);
         } else {
             if (byte == 0xfa)
                 continue;

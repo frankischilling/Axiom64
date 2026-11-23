@@ -69,8 +69,8 @@ bool grow_page(AddressSpace& space, uint64_t address, bool write, bool execute) 
             break;
         top += page_size;
     }
-    if (top - address > current->process->limits.soft(Resource::stack) ||
-        !memory_growth_allowed(*current, address, bottom - address))
+    if (top - address > current_task()->process->limits.soft(Resource::stack) ||
+        !memory_growth_allowed(*current_task(), address, bottom - address))
         return false;
     uint64_t previous = neighbour(space.root, 4, 0, 0, address, true);
     if (previous != user_limit) {
@@ -142,7 +142,7 @@ int memory_protection_range(const AddressSpace& memory, uint64_t& address, uint6
 
 bool grow_user_stack(const AddressSpace& memory, uint64_t address, size_t length, bool write,
                      bool execute) {
-    if (!current || !current->memory || &current->memory->space != &memory ||
+    if (!current_task() || !current_task()->memory || &current_task()->memory->space != &memory ||
         address >= user_limit || length > user_limit - address || !memory.root)
         return false;
     auto& space = const_cast<AddressSpace&>(memory);

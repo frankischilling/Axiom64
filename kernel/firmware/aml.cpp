@@ -281,6 +281,7 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
             if (opcode == 0x14) {
                 if (!block.read(1, info) || !add(path, Kind::Method, block, info & 7))
                     return false;
+                objects[count - 1].integer = info;
                 break;
             }
             if (opcode == 0x10) {
@@ -299,15 +300,20 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
                 return false;
             break;
         case 0x06: // Alias
-            if (!read_name(stream, other) || !other.path.count)
+            if (!read_name(stream, other) || !other.path.count || !read_name(stream, name) ||
+                !append(scope, name, path) || !add(path, Kind::Opaque))
                 return false;
-            [[fallthrough]];
+            break;
         case 0x5b01: // Mutex
         case 0x5b02: // Event
-            if (!read_name(stream, name) || !append(scope, name, path) || !add(path, Kind::Opaque))
+            if (!read_name(stream, name) || !append(scope, name, path))
                 return false;
-            if (opcode == 0x5b01 && !stream.skip(1))
+            if (opcode == 0x5b01) {
+                if (!stream.read(1, info) || info > 15 || !add(path, Kind::Mutex, {}, info))
+                    return false;
+            } else if (!add(path, Kind::Event)) {
                 return false;
+            }
             break;
         case 0x5b80: { // OperationRegion
             if (!read_name(stream, name) || !append(scope, name, path))
@@ -616,6 +622,63 @@ static bool integer_match(unsigned op, uint64_t element, uint64_t operand) {
     return false;
 }
 
+bool Namespace::synchronize(unsigned opcode, Cursor& stream, const Path& scope, Frame& frame,
+                            Value& result, unsigned depth) {
+    Name name;
+    if (!replay_initialization || !read_name(stream, name) || !name.path.count || frame.find(name))
+        return false;
+    auto* object = lookup(scope, name);
+    const bool mutex = opcode == 0x23 || opcode == 0x27;
+    if (!object || object->kind != (mutex ? Kind::Mutex : Kind::Event))
+        return false;
+
+    switch (opcode) {
+    case 0x23: { // Acquire: the timeout is a literal WordData.
+        uint64_t timeout;
+        if (!stream.read(2, timeout) || object->arguments < sync_level())
+            return false;
+        if (!object->integer) {
+            if (held_mutex_count == sizeof(held_mutexes) / sizeof(*held_mutexes))
+                return false;
+            held_mutexes[held_mutex_count++] = object;
+        }
+        ++object->integer;
+        result = {Type::Integer, 0, {}, nullptr};
+        return true;
+    }
+    case 0x24: // Signal
+        ++object->integer;
+        return true;
+    case 0x25: { // Wait
+        Value timeout{};
+        if (!evaluate(stream, scope, &frame, timeout, depth + 1) || timeout.type != Type::Integer)
+            return false;
+        // No other AML thread can signal a private event while replay is running.
+        if (!object->integer && timeout.number)
+            return false;
+        result = {Type::Integer, object->integer ? 0 : integer_mask, {}, nullptr};
+        if (object->integer)
+            --object->integer;
+        return true;
+    }
+    case 0x26: // Reset
+        object->integer = 0;
+        return true;
+    case 0x27: // Release
+        if (!object->integer || object->arguments != sync_level())
+            return false;
+        if (!--object->integer) {
+            unsigned slot = held_mutex_count - 1;
+            while (held_mutexes[slot] != object)
+                --slot;
+            // Remaining acquisitions above this one have the same level.
+            held_mutexes[slot] = held_mutexes[--held_mutex_count];
+        }
+        return true;
+    }
+    return false;
+}
+
 bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value& result,
                          unsigned depth) {
     if (depth >= max_evaluation_depth || !steps)
@@ -637,11 +700,15 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         return result.type != Type::None && stream.skip(1);
     }
     switch (opcode) {
-    case 0x5b: { // CondRefOf
+    case 0x5b: {
         uint64_t extended;
+        if (!stream.skip(1) || !stream.read(1, extended))
+            return false;
+        if (extended >= 0x23 && extended <= 0x27)
+            return frame && synchronize(extended, stream, scope, *frame, result, depth);
+        // CondRefOf
         Name source;
-        if (!stream.skip(1) || !stream.read(1, extended) || extended != 0x12 ||
-            !read_name(stream, source) || !source.path.count)
+        if (extended != 0x12 || !read_name(stream, source) || !source.path.count)
             return false;
         auto* local = frame ? frame->find(source) : nullptr;
         const auto* object = local ? nullptr : lookup(scope, source);
@@ -1057,7 +1124,7 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
                     return false;
                 break;
             }
-            [[fallthrough]]; // CondRefOf is evaluated as an expression.
+            [[fallthrough]]; // Other supported operations are evaluated as expressions.
         case 0x70:           // Store
         case 0x84:           // ConcatenateResTemplate
         case 0x99:           // ToInteger
@@ -1422,6 +1489,9 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->change_emitted = false;
     space->link_evaluation = false;
     space->replay_initialization = false;
+    space->held_mutex_count = 0;
+    space->active_methods = 0;
+    space->method_sync_level = 0;
     space->memory_overlay_count = 0;
     auto load = [&](const DefinitionBlock& block) {
         return block.table && block.length >= 36 &&

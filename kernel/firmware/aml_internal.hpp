@@ -116,6 +116,8 @@ enum class Kind : uint8_t {
     Data,
     Method,
     Opaque,
+    Mutex,
+    Event,
     Region,
     PciField,
     DiagnosticPciField,
@@ -247,6 +249,11 @@ struct Namespace {
     bool change_emitted;
     bool link_evaluation;
     bool replay_initialization;
+    // The replay runs one AML thread in a private namespace.
+    Object* held_mutexes[32];
+    unsigned held_mutex_count = 0;
+    unsigned active_methods = 0;
+    unsigned method_sync_level = 0;
     unsigned memory_overlay_count;
     MemoryOverlayByte memory_overlay[128];
 
@@ -322,6 +329,13 @@ struct Namespace {
     bool stage_memory_field(const Object&, Value, unsigned depth);
     bool stage_field(const Object&, Value, unsigned depth);
 
+    unsigned sync_level() const {
+        return held_mutex_count
+                   ? max(method_sync_level, held_mutexes[held_mutex_count - 1]->arguments)
+                   : method_sync_level;
+    }
+
+    bool synchronize(unsigned opcode, Cursor&, const Path&, Frame&, Value&, unsigned depth);
     bool evaluate(Cursor&, const Path&, Frame*, Value&, unsigned depth);
     bool execute(Cursor, const Path&, Frame&, Value&, unsigned depth);
     bool store(Cursor&, const Path&, Frame*, Value, unsigned depth);
@@ -374,10 +388,25 @@ struct Namespace {
         }
         if (object.kind != Kind::Method)
             return false;
+        const unsigned previous_level = method_sync_level;
+        if (replay_initialization && (object.integer & 8)) {
+            const unsigned level = object.integer >> 4;
+            if (level < sync_level())
+                return false;
+            method_sync_level = level;
+        }
+        ++active_methods;
         const unsigned first = used_method_names;
         Frame frame{args, count, method_names, used_method_names, first};
-        const bool ok = execute(object.content, object.path, frame, result, depth);
+        bool ok = execute(object.content, object.path, frame, result, depth);
         used_method_names = first;
+        method_sync_level = previous_level;
+        if (!--active_methods && held_mutex_count) {
+            // Reject a leaked acquisition and clear it before the next invocation.
+            while (held_mutex_count)
+                held_mutexes[--held_mutex_count]->integer = 0;
+            ok = false;
+        }
         return ok;
     }
 

@@ -1152,6 +1152,56 @@ void aml_pci_word_replay_cases() {
     std::puts("ACPI_AML_PCI_WORD_PASS alignment bounds notify shadow_writes");
 }
 
+void aml_sync_replay_cases() {
+    using namespace ax::Acpi;
+    const Bytes serial{0x8e, 19,   0, 2, 0,    1, 2,   0,   0,   1, 6,    0,
+                       0x80, 0x1a, 6, 0, 0x15, 0, 'I', '2', 'C', 0, 0x79, 0};
+    auto sync = [](uint8_t opcode, const char* target, const Bytes& operand = {}) {
+        return sequence({{0x5b, opcode}, name(target), operand});
+    };
+    const auto acquire = sync(0x23, "MTXA", {0xff, 0xff});
+    const auto release = sync(0x27, "MTXA");
+    const auto signal = sync(0x24, "EVNT");
+    const auto poll = sync(0x25, "EVNT", {0});
+    const auto reset = sync(0x26, "EVNT");
+    const auto enable_if = [](const Bytes& condition) {
+        return block({0xa0}, sequence({condition, {0x70, 1}, name("LIVE")}));
+    };
+    const auto helper = block({0x14}, sequence({name("HELP"), {0}, release, signal}));
+    auto inspect = [&](const Bytes& body, uint8_t flags = 0, uint8_t level = 1) {
+        const auto init = block({0x14}, sequence({name("_INI"), {flags}, body}));
+        const auto sta =
+            block({0x14}, sequence({name("_STA"), {0, 0xa4, 0x7d}, name("LIVE"), {0x0a, 8, 0}}));
+        const auto pad = block({0x5b, 0x82},
+                               sequence({name("TPAD"), data("_HID", {0x0c, 0x41, 0xd0, 0x0c, 0x50}),
+                                         sta, buffer("_CRS", serial)}));
+        const auto table = definition(block(
+            {0x5b, 0x82}, sequence({name("PCI0"), data("LIVE", {0}), sync(1, "MTXA", {level}),
+                                    sync(1, "MTXB", {1}), sync(2, "EVNT"), helper, init, pad})));
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        I2cHidDevices devices{};
+        const bool loaded =
+            decode_i2c_hid_devices(blocks, devices, {}, HidDiscovery::replay_initialization);
+        return loaded ? (devices.initialization_failures ? -1 : int(devices.count)) : -2;
+    };
+    assert(inspect(sequence(
+               {acquire, acquire, sync(0x23, "MTXB", {0, 0}), name("HELP"), release,
+                sync(0x27, "MTXB"), signal,
+                enable_if(sequence({{0x90, 0x92}, poll, {0x90, 0x92}, poll, poll}))})) == 1);
+    assert(inspect(sequence({signal, signal, reset, enable_if(poll)})) == 1);
+    assert(inspect(sequence({acquire, release, enable_if({1})}), 0x18) == 1);
+    assert(inspect(sequence({acquire, release, enable_if({1})}), 0x28) == -1);
+    assert(inspect(sequence({acquire, release, enable_if({1})}), 0, 16) == -2);
+    assert(inspect(sequence({acquire, enable_if({1})})) == -1);
+    assert(inspect(release) == -1);
+    assert(inspect(sync(0x23, "MTXA", {0xff})) == -1);
+    assert(inspect(sync(0x24, "MTXA")) == -1);
+    assert(inspect(sync(0x25, "EVNT", {1})) == -1);
+    assert(inspect(sync(0x23, "\\_GL", {0xff, 0xff})) == -1);
+    std::puts("ACPI_AML_SYNC_PASS recursive acquire release levels event_count reset timeout");
+}
+
 void intel_gpio_replay_cases() {
     using namespace ax::Acpi;
     using Model = IntelGpioResources::Model;
@@ -1438,5 +1488,6 @@ int main() {
     hid_initialization_cases();
     aml_integer_match_cases();
     aml_pci_word_replay_cases();
+    aml_sync_replay_cases();
     intel_gpio_replay_cases();
 }

@@ -7,6 +7,7 @@ Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `
 | Operation | Supported contract |
 | --- | --- |
 | `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, IPv6, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
+| `RTM_NEWLINK`, `RTM_SETLINK` | Change administrative state and MTU on an existing Ethernet adapter with `CAP_NET_ADMIN`. A link change may set both fields in one request. IPv6 address-generation mode uses a separate request. |
 | `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family, including flags and cache information; IPv4 labels, local/peer address and optional broadcast; IPv6 prefix and scope |
 | `RTM_NEWROUTE` | `NLM_F_REQUEST` and `NLM_F_CREATE`; optional `NLM_F_EXCL` and `NLM_F_ACK`; IPv4 main-table unicast with a canonical destination/prefix; direct routes require an explicit physical interface and gateway routes can infer it from a configured subnet |
 | `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters; optional acknowledgment |
@@ -59,15 +60,24 @@ Both protocols support `SO_PASSCRED` for kernel sender credentials and
 bounded `SO_SNDBUF` and `SO_RCVBUF` settings. Requests are capped at 512 KiB
 before doubling. The receive queue still holds at most 32 datagrams. Group
 membership can be set at bind time or changed with
-`NETLINK_ADD_MEMBERSHIP` and `NETLINK_DROP_MEMBERSHIP`. Delivery of
-link, address and route change notifications remains open. Wireless
-families, Ethernet activation through NetworkManager, and its Plasma
-integration also remain open.
+`NETLINK_ADD_MEMBERSHIP` and `NETLINK_DROP_MEMBERSHIP`. Route sockets
+subscribed to `RTNLGRP_LINK` receive kernel `RTM_NEWLINK` messages when
+administrative state, MTU or physical carrier changes. A full queue
+reports `ENOBUFS` so the listener can refresh its inventory. Address
+and route change notifications remain open. `SIOCETHTOOL` returns the
+bound Ethernet driver and PCI address with `ETHTOOL_GDRVINFO` and
+reports link state with `ETHTOOL_GLINK`.
+
+Wireless families, Ethernet activation through NetworkManager, and its
+Plasma integration remain open.
 
 The route test also checks discovery, the missing-family error, multipart
 completion, port reuse across protocols, and kernel credentials. Run the
 discovery checks on Linux with `make build/netlink-native` followed by
-`build/netlink-native --generic-only`.
+`build/netlink-native --generic-only`. In QEMU it also checks link
+changes, rejection of an invalid MTU, orderly multicast delivery after
+overflow, driver identity and carrier state before and after QMP
+restores both links.
 
 ## Verification
 

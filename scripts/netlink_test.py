@@ -133,7 +133,7 @@ def run(firmware, transport, timeout, directory=None):
                 monitor.close()
             temporary.cleanup()
     text = log.read_text(errors='replace')
-    names = ['GENERIC_DISCOVERY', 'CARRIER_DOWN', 'EARLY_ROUTES', 'CARRIER_UP', 'LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY', 'ROUTE_OWNERSHIP',
+    names = ['GENERIC_DISCOVERY', 'LINK_CONTROL', 'LINK_CARRIER_EVENTS', 'CARRIER_DOWN', 'EARLY_ROUTES', 'CARRIER_UP', 'LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY', 'ROUTE_OWNERSHIP',
              'CONFIGURATION_ADAPTER', 'AUTOMATIC_PREFIXES', 'MALFORMED', 'ROUTE_LIMITS', 'BYTE_QUOTA', 'PRESSURE_LIFETIME',
              'SOCKET_LIMITS', 'ROUTED_PACKETS', 'TESTS']
     missing = [f'NETLINK_{name}_PASS' for name in names if f'NETLINK_{name}_PASS' not in text]

@@ -186,7 +186,7 @@ static void interrupt(void* context) {
     auto& device = *static_cast<Controller*>(context);
     const auto& info = device.adapter.info;
     uint64_t rx_before = info.stats.rx_packets, tx_before = info.stats.tx_packets;
-    poll(device.adapter);
+    net_device_poll(device.adapter);
     if (info.stats.rx_packets != rx_before && !device.irq_rx_reported) {
         device.irq_rx_reported = true;
         log("virtio-net: MSI-X RX completion index=%u\n", uint64_t(info.index));
@@ -232,7 +232,7 @@ static bool initialize(Controller& device, const PciFunction& pci) {
         return false;
     device.adapter.info.live = true;
     poll(device.adapter);
-    if (!device.adapter.info.live || !net_register(device.adapter))
+    if (!device.adapter.info.live || !net_register(device.adapter, "virtio_net", &pci))
         return false;
     uint64_t index = device.adapter.info.index;
     log("virtio-net: index=%u transport=%s rx=%u tx=%u features=%x\n", index,

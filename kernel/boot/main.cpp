@@ -32,6 +32,7 @@
 #include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
+#include "net/netlink.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
 #include "firmware/acpi.hpp"
@@ -127,6 +128,7 @@ BootInfo boot_info;
     if (usb_keyboard)
         xhci_keyboard_init();
     net_init();
+    net_observe_links(netlink_link_event);
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

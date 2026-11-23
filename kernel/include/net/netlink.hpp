@@ -47,6 +47,7 @@ constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4176,
                  netlink_address_reply = 4412, netlink_ipv6_route_reply = 6144,
                  netlink_max_reply = 12288;
 constexpr size_t netlink_ack_size = 36;
+constexpr uint32_t netlink_link_group = 1;
 
 inline size_t netlink_ack(const void* input, const NetlinkHeader& request, uint32_t port, int error,
                           bool capped, void* reply) {
@@ -95,9 +96,15 @@ int netlink_ipv6_address_change(const void*, const NetlinkHeader&);
 int netlink_ipv6_route(const void*, const NetlinkHeader&, uint32_t port, void*, size_t capacity,
                        size_t& size, bool strict);
 
+void netlink_link_event(const NetInfo&, uint32_t changed_flags);
+
+size_t netlink_format_link_event(const NetInfo&, uint32_t changed_flags, void*, size_t);
+
 void netlink_close(NetlinkSocket*);
 
 bool netlink_ready(NetlinkSocket*, bool write);
+
+int netlink_error(NetlinkSocket*, bool consume = false);
 
 const NetlinkFrame* netlink_front(NetlinkSocket*);
 size_t netlink_receive_control(Task&, NetlinkSocket*, uint64_t address, uint64_t capacity,

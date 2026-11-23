@@ -206,10 +206,10 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
         error = netlink_inventory_reply(packet, request, port, reply, strict, size);
         if (!error)
             return size;
-    } else if (!privileged && (request.type == 16 || request.type == 20 || request.type == 21 ||
-                               request.type == 24 || request.type == 25))
+    } else if (!privileged && (request.type == 16 || request.type == 19 || request.type == 20 ||
+                               request.type == 21 || request.type == 24 || request.type == 25))
         error = -1;
-    else if (request.type == 16)
+    else if (request.type == 16 || request.type == 19)
         error = netlink_link_change(packet, request);
     else if ((request.type == 20 || request.type == 21) &&
              !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x700u : 0u))))

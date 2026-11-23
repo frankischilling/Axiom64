@@ -293,6 +293,9 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     if (request.handle->inet6)
         if (int error = inet6_error(request.handle->inet6, true))
             return -error;
+    if (request.handle->netlink)
+        if (int error = netlink_error(request.handle->netlink, true))
+            return -error;
     auto frame = request.handle->packet ? packet_front(request.handle->packet) : nullptr;
     auto ip = request.handle->inet ? inet_front(request.handle->inet) : nullptr;
     auto ip6 = request.handle->inet6 ? inet6_front(request.handle->inet6) : nullptr;

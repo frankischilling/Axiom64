@@ -25,6 +25,7 @@
  */
 #include "net/netlink.hpp"
 #include "net/socket_control.hpp"
+#include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
 namespace ax {
@@ -48,6 +49,8 @@ struct NetlinkSocket {
     uint32_t port = 0;
     uint64_t groups = 0;
     size_t bytes = 0, receive_limit = queue_bytes, send_limit = queue_bytes;
+    int error = 0;
+    Handle* handle = nullptr;
     NetlinkFrame* queue[queue_count]{};
 };
 
@@ -137,13 +140,17 @@ size_t netlink_available(NetlinkSocket* socket) {
 bool netlink_ready(NetlinkSocket* socket, bool write) {
     return write ? socket->count + socket->deliveries < queue_count &&
                        socket->bytes + netlink_ack_size <= socket->receive_limit
-                 : socket->count != 0;
+                 : socket->count != 0 || socket->error != 0;
 }
 
-int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
-    // POSIX message queues use route sockets for completion cookies.
-    if (socket->protocol != route_protocol)
-        return -95;
+int netlink_error(NetlinkSocket* socket, bool consume) {
+    const int error = socket->error;
+    if (consume)
+        socket->error = 0;
+    return error;
+}
+
+static int reserve_frame(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
     if (socket->count + socket->deliveries >= queue_count ||
         socket->bytes + length > socket->receive_limit)
         return -11;
@@ -157,12 +164,50 @@ int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*
     return 0;
 }
 
+static void discard_frame(NetlinkSocket* socket, NetlinkFrame* frame) {
+    --socket->deliveries;
+    socket->bytes -= frame->reserved;
+    release(frame);
+}
+
+int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
+    // POSIX message queues use route sockets for completion cookies.
+    return socket->protocol == route_protocol ? reserve_frame(socket, length, frame) : -95;
+}
+
 void netlink_publish_delivery(NetlinkSocket* socket, NetlinkFrame* frame) {
     --socket->deliveries;
     socket->queue[(socket->head + socket->count++) % queue_count] = frame;
 }
 
+void netlink_link_event(const NetInfo& info, uint32_t changed_flags) {
+    uint8_t bytes[128];
+    size_t length = 0;
+    for (auto& socket : sockets) {
+        if (!socket.used || socket.protocol != route_protocol ||
+            !(socket.groups & netlink_link_group))
+            continue;
+        if (!length) {
+            length = netlink_format_link_event(info, changed_flags, bytes, sizeof(bytes));
+            if (!length)
+                return;
+        }
+        NetlinkFrame* frame;
+        if (reserve_frame(&socket, length, frame)) {
+            socket.error = 105; // ENOBUFS: at least one notification was lost.
+            epoll_notify(socket.handle, 8);
+            continue;
+        }
+        frame->source.groups = netlink_link_group;
+        memcpy(frame + 1, bytes, length);
+        netlink_publish_delivery(&socket, frame);
+        epoll_notify(socket.handle, 1);
+    }
+}
+
 int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
+    if (int error = netlink_error(socket, true))
+        return -error;
     auto frame = netlink_front(socket);
     if (!frame)
         return -11;
@@ -229,27 +274,26 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         return error;
     for (size_t i = 0; i < count; i++) {
         auto& reply = replies[i];
-        reply.data = static_cast<NetlinkFrame*>(alloc(sizeof(NetlinkFrame) + reply.capacity));
-        if (reply.data && reply.followup)
-            reply.end = static_cast<NetlinkFrame*>(alloc(sizeof(NetlinkFrame) + netlink_ack_size));
-        if (reply.data && (!reply.followup || reply.end))
+        error = reserve_frame(socket, reply.capacity, reply.data);
+        if (!error && reply.followup)
+            error = reserve_frame(socket, netlink_ack_size, reply.end);
+        if (!error)
             continue;
         for (size_t j = 0; j <= i; j++) {
-            release(replies[j].data);
-            release(replies[j].end);
+            if (replies[j].data)
+                discard_frame(socket, replies[j].data);
+            if (replies[j].end)
+                discard_frame(socket, replies[j].end);
         }
-        return -12;
+        return error;
     }
-    const auto publish = [socket](NetlinkFrame* frame, size_t reserved, size_t size) {
+    const auto publish = [socket](NetlinkFrame* frame, size_t size) {
         if (!size) {
-            release(frame);
+            discard_frame(socket, frame);
             return;
         }
-        frame->source = {};
-        frame->reserved = reserved;
         frame->length = size;
-        socket->queue[(socket->head + socket->count++) % queue_count] = frame;
-        socket->bytes += reserved;
+        netlink_publish_delivery(socket, frame);
     };
     for (size_t i = 0; i < count; i++) {
         const auto& reply = replies[i];
@@ -260,9 +304,9 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
                               : routing_reply(input, socket->port, socket->capped, reply.data + 1,
                                               capable(task.credentials, Capability::net_admin),
                                               socket->strict);
-        publish(reply.data, reply.capacity, size);
+        publish(reply.data, size);
         if (reply.end)
-            publish(reply.end, netlink_ack_size, tail);
+            publish(reply.end, tail);
     }
     return length;
 }
@@ -296,6 +340,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             return -23;
         }
         opened->netlink = socket;
+        socket->handle = opened;
         int fd = allocate_fd(&task, opened, 0, b & 0x80000);
         if (fd < 0)
             close_handle(opened);
@@ -368,7 +413,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         else if (b == 1 && c == 3)
             value = socket->type;
         else if (b == 1 && c == 4)
-            value = 0;
+            value = netlink_error(socket);
         else if (b == 1 && c == 38)
             value = socket->protocol;
         else if (b == 1 && c == 39)
@@ -388,6 +433,8 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         if (!task.memory->space.copy_out(d, &value, min(capacity, actual)) ||
             !task.memory->space.copy_out(frame.r8, &actual, 4))
             return -14;
+        if (b == 1 && c == 4)
+            netlink_error(socket, true);
         return 0;
     }
     return -95;

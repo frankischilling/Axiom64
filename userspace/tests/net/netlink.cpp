@@ -28,9 +28,11 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/ethtool.h>
 #include <linux/genetlink.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/sockios.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <poll.h>
@@ -722,6 +724,148 @@ static void await_carrier(bool up) {
     check(false, "both actual interface carrier flags reach the requested state");
 }
 
+static void link_subscription(int fd, bool subscribe) {
+    const int group = RTNLGRP_LINK;
+    int option = subscribe ? NETLINK_ADD_MEMBERSHIP : NETLINK_DROP_MEMBERSHIP;
+    check(setsockopt(fd, SOL_NETLINK, option, &group, sizeof(group)) == 0,
+          "change link notification subscription");
+}
+
+static Packet link_request(unsigned type, bool up, uint32_t mtu) {
+    Packet request(type, NLM_F_ACK);
+    ifinfomsg link{};
+    link.ifi_index = indexes[0];
+    link.ifi_flags = up ? IFF_UP : 0;
+    link.ifi_change = IFF_UP;
+    memcpy(request.bytes + request.size, &link, sizeof(link));
+    request.size += sizeof(link);
+    request.attribute(IFLA_MTU, mtu);
+    return request;
+}
+
+static void link_update(int fd, unsigned type, bool up, uint32_t mtu, int expected = 0) {
+    auto request = link_request(type, up, mtu);
+    send_packet(fd, request);
+    acknowledgment(fd, request, expected);
+}
+
+struct LinkEvent {
+    ifinfomsg link;
+    uint32_t mtu = 0;
+    uint8_t carrier = 0xff;
+};
+
+static LinkEvent link_event(int fd) {
+    uint8_t data[512];
+    sockaddr_nl source{};
+    socklen_t length = sizeof(source);
+    pollfd ready{fd, POLLIN, 0};
+    check(poll(&ready, 1, 3000) == 1 && (ready.revents & POLLIN), "link notification readable");
+    ssize_t count =
+        recvfrom(fd, data, sizeof(data), 0, reinterpret_cast<sockaddr*>(&source), &length);
+    check(count >= ssize_t(NLMSG_LENGTH(sizeof(ifinfomsg))) && length == sizeof(source) &&
+              source.nl_family == AF_NETLINK && !source.nl_pid && source.nl_groups == RTMGRP_LINK,
+          "link notification from kernel multicast");
+    nlmsghdr header{};
+    LinkEvent event{};
+    memcpy(&header, data, sizeof(header));
+    memcpy(&event.link, data + NLMSG_HDRLEN, sizeof(event.link));
+    check(header.nlmsg_len == unsigned(count) && header.nlmsg_type == RTM_NEWLINK &&
+              !header.nlmsg_seq && !header.nlmsg_pid,
+          "link notification has unsolicited new-link header");
+    for (size_t offset = NLMSG_LENGTH(sizeof(event.link)); offset < size_t(count);) {
+        rtattr field{};
+        check(size_t(count) - offset >= sizeof(field), "complete link notification attribute");
+        memcpy(&field, data + offset, sizeof(field));
+        check(field.rta_len >= RTA_LENGTH(0) &&
+                  size_t(RTA_ALIGN(field.rta_len)) <= size_t(count) - offset,
+              "aligned link notification attribute");
+        if (field.rta_type == IFLA_MTU && field.rta_len == RTA_LENGTH(sizeof(event.mtu)))
+            memcpy(&event.mtu, data + offset + RTA_LENGTH(0), sizeof(event.mtu));
+        if (field.rta_type == IFLA_CARRIER && field.rta_len == RTA_LENGTH(sizeof(event.carrier)))
+            event.carrier = data[offset + RTA_LENGTH(0)];
+        offset += RTA_ALIGN(field.rta_len);
+    }
+    return event;
+}
+
+static void ethtool_link(unsigned lane, bool carrier) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    ifreq request{};
+    check(fd >= 0 && if_indextoname(indexes[lane], request.ifr_name), "ethtool interface");
+    ethtool_drvinfo driver{};
+    driver.cmd = ETHTOOL_GDRVINFO;
+    request.ifr_data = reinterpret_cast<char*>(&driver);
+    check(ioctl(fd, SIOCETHTOOL, &request) == 0 && driver.cmd == ETHTOOL_GDRVINFO &&
+              !strcmp(driver.driver, lane == 0 ? "virtio_net" : "e1000") &&
+              strlen(driver.bus_info) == 12 && driver.bus_info[4] == ':' &&
+              driver.bus_info[7] == ':' && driver.bus_info[10] == '.',
+          "ethtool reports the bound driver and PCI address");
+    ethtool_value value{ETHTOOL_GLINK, 99};
+    request.ifr_data = reinterpret_cast<char*>(&value);
+    check(ioctl(fd, SIOCETHTOOL, &request) == 0 && value.cmd == ETHTOOL_GLINK &&
+              value.data == unsigned(carrier),
+          "ethtool reports actual carrier");
+    check(close(fd) == 0, "close ethtool socket");
+}
+
+static void link_controls(int writer, int listener) {
+    link_update(writer, RTM_NEWLINK, false, 1400);
+    auto event = link_event(listener);
+    check(unsigned(event.link.ifi_index) == indexes[0] && !(event.link.ifi_flags & IFF_UP) &&
+              (event.link.ifi_change & IFF_UP) && event.mtu == 1400 && !event.carrier &&
+              !(interface_flags(0) & IFF_UP),
+          "new-link request lowers the interface and publishes its MTU");
+    link_update(writer, RTM_SETLINK, true, 1500);
+    event = link_event(listener);
+    check(unsigned(event.link.ifi_index) == indexes[0] && (event.link.ifi_flags & IFF_UP) &&
+              (event.link.ifi_change & IFF_UP) && event.mtu == 1500 && !event.carrier &&
+              (interface_flags(0) & IFF_UP),
+          "set-link request restores the interface and MTU");
+    link_update(writer, RTM_SETLINK, false, 1, EINVAL);
+    pollfd quiet{listener, POLLIN, 0};
+    check(poll(&quiet, 1, 0) == 0 && (interface_flags(0) & IFF_UP),
+          "invalid MTU preserves the link and emits no event");
+
+    for (unsigned i = 0; i < 31; i++)
+        link_update(writer, RTM_NEWLINK, true, i % 2 ? 1500 : 1400);
+    // The last queue slot belongs to the caller's acknowledgment. Its own
+    // multicast notification must not consume that reservation.
+    auto restore = link_request(RTM_SETLINK, true, 1500);
+    send_packet(listener, restore);
+    check(poll(&quiet, 1, 0) == 1 && (quiet.revents & POLLERR),
+          "dropped multicast reports a readable socket error");
+    int error = 0;
+    socklen_t length = sizeof(error);
+    check(getsockopt(listener, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == ENOBUFS,
+          "socket reports lost link notifications");
+    for (unsigned i = 0; i < 31; i++) {
+        event = link_event(listener);
+        check(event.mtu == (i % 2 ? 1500u : 1400u), "queued notifications retain their order");
+    }
+    link_subscription(listener, false);
+    acknowledgment(listener, restore, 0);
+    check(poll(&quiet, 1, 0) == 0, "queue and error are both drained");
+    link_subscription(listener, true);
+    for (unsigned lane = 0; lane < 2; lane++)
+        ethtool_link(lane, false);
+    puts("NETLINK_LINK_CONTROL_PASS");
+}
+
+static void restored_link_events(int listener) {
+    unsigned seen = 0;
+    for (unsigned i = 0; i < 2; i++) {
+        auto event = link_event(listener);
+        unsigned lane = unsigned(event.link.ifi_index) == indexes[0] ? 0 : 1;
+        check(unsigned(event.link.ifi_index) == indexes[lane] && !(seen & (1u << lane)) &&
+                  (event.link.ifi_flags & IFF_RUNNING) && event.mtu == 1500 && event.carrier == 1,
+              "both physical carrier transitions arrive on the link group");
+        seen |= 1u << lane;
+        ethtool_link(lane, true);
+    }
+    puts("NETLINK_LINK_CARRIER_EVENTS_PASS");
+}
+
 static void ownership(int fd) {
     Route own = onlink(0, 0xac140000, 16, 1000);
     change(fd, own, false);
@@ -1276,10 +1420,19 @@ int main(int argc, char** argv) {
         configuration(lane, SIOCSIFFLAGS, 0);
     await_carrier(false);
     int early = open_socket();
+    int listener = -1;
+    if (!native) {
+        listener = open_socket();
+        link_subscription(listener, true);
+        link_controls(early, listener);
+    }
     early_routes(early);
     check(close(early) == 0, "close early-route socket before existing lifetime tests");
-    if (!native)
+    if (!native) {
         await_carrier(true);
+        restored_link_events(listener);
+        check(close(listener) == 0, "close link multicast listener");
+    }
     for (unsigned lane = 0; lane < 2; lane++) {
         configuration(lane, SIOCSIFFLAGS, 0);
         configuration(lane, SIOCSIFADDR, 0x0a170128 + (lane << 8));

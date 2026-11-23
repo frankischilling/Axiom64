@@ -52,11 +52,12 @@ static_assert((ipv4_address_capacity + 1) * 96 + (ipv6_address_capacity + 1) * 7
 
 class Writer {
   public:
-    explicit Writer(void* output) : bytes(static_cast<uint8_t*>(output)) {
+    explicit Writer(void* output, size_t limit = netlink_address_reply)
+        : bytes(static_cast<uint8_t*>(output)), capacity(limit) {
     }
 
     bool append(const void* data, size_t length) {
-        if (length > netlink_address_reply - size)
+        if (length > capacity - size)
             return false;
         memcpy(bytes + size, data, length);
         size += length;
@@ -79,6 +80,7 @@ class Writer {
 
   private:
     uint8_t* bytes;
+    size_t capacity;
 };
 
 unsigned prefix(uint32_t mask) {
@@ -91,7 +93,7 @@ unsigned prefix(uint32_t mask) {
 }
 
 bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const NetInfo& info,
-          bool loopback, bool dump, bool inet6) {
+          bool loopback, bool dump, bool inet6, uint32_t change = 0) {
     int32_t mode = 0;
     int status = ip6::configuration_read(info.index, ip6::ConfigurationKey::generation_mode, mode);
     if (status && status != -19)
@@ -108,16 +110,18 @@ bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const Net
                                (info.administrative && info.carrier && info.live ? 0x10040 : 0);
     uint32_t queue_length = 0; // There is no separate software transmit queue.
     LinkHeader header{uint8_t(inet6 ? 10 : 0), 0,     uint16_t(loopback ? 772 : 1),
-                      int32_t(info.index),     flags, 0};
+                      int32_t(info.index),     flags, change};
     uint8_t broadcast[6];
     memset(broadcast, loopback ? 0 : 0xff, sizeof(broadcast));
     uint8_t state = loopback ? 0 : info.administrative && info.carrier && info.live ? 6 : 2;
+    const uint8_t carrier = loopback || (info.carrier && info.live);
     if (!output.append(&message, sizeof(message)) || !output.append(&header, sizeof(header)) ||
         !output.attribute(3, info.name, strlen(info.name) + 1) ||
         !output.attribute(4, &info.mtu, sizeof(info.mtu)) ||
         !output.attribute(1, info.mac, sizeof(info.mac)) ||
         !output.attribute(2, broadcast, sizeof(broadcast)) ||
-        !output.attribute(13, &queue_length, 4) || !output.attribute(16, &state, 1))
+        !output.attribute(13, &queue_length, 4) || !output.attribute(16, &state, 1) ||
+        !output.attribute(33, &carrier, sizeof(carrier))) // IFLA_CARRIER
         return false;
     // AF_UNSPEC replies nest the IPv6 family inside IFLA_AF_SPEC. An IPv6
     // dump carries the same family attributes directly in IFLA_PROTINFO.
@@ -170,6 +174,13 @@ bool address6(Writer& output, const NetlinkHeader& request, uint32_t port,
     return true;
 }
 } // namespace
+
+size_t netlink_format_link_event(const NetInfo& info, uint32_t changed_flags, void* bytes,
+                                 size_t capacity) {
+    Writer output(bytes, capacity);
+    const NetlinkHeader event{};
+    return link(output, event, 0, info, false, false, false, changed_flags) ? output.size : 0;
+}
 
 int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint32_t port,
                             void* reply, bool strict, size_t& size) {

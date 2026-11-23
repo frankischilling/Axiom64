@@ -62,7 +62,13 @@ def inspect_disk(directory, image, kernel, initramfs):
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
-def send_usb_input(monitor, guest, log):
+def send_usb_input(monitor, guest, log, empty_controller):
+    mouse_bus = "xhci-second" if empty_controller else "xhci"
+    if empty_controller:
+        monitor.command("device_add", {"driver": "usb-mouse", "bus": mouse_bus + ".0",
+                                       "port": "3", "id": "boot-mouse"})
+        # On qemu-xhci the USB 2 root ports follow the four SuperSpeed ports.
+        await_serial(guest, log, (b"xhci-mouse-active: port=7",), 8)
     for display, key in (("usb-video-a", "a"), ("usb-video-b", "b")):
         for down in (True, False):
             monitor.command("input-send-event", {"device": display, "events": [
@@ -75,9 +81,31 @@ def send_usb_input(monitor, guest, log):
     ]})
     await_serial(guest, log, (b"BOOT_USB_MOUSE_PRESSED",), 8)
     monitor.command("device_del", {"id": "boot-mouse"})
+    await_serial(guest, log, (b"BOOT_USB_MOUSE_RELEASED",), 8)
+    monitor.command("device_add", {"driver": "usb-mouse", "bus": mouse_bus + ".0",
+                                   "port": "4", "id": "hotplug-mouse"})
+    await_serial(guest, log, (b"xhci-mouse-active: port=8",), 8)
+    monitor.command("input-send-event", {"events": [
+        {"type": "rel", "data": {"axis": "x", "value": -12}},
+        {"type": "rel", "data": {"axis": "y", "value": 7}},
+        {"type": "btn", "data": {"button": "left", "down": True}},
+    ]})
+    await_serial(guest, log, (b"BOOT_USB_HOTPLUG_MOUSE_PRESSED",), 8)
+    monitor.command("input-send-event", {"events": [
+        {"type": "btn", "data": {"button": "left", "down": False}},
+    ]})
+    monitor.command("device_del", {"id": "boot-kbd-b"})
+    await_serial(guest, log, (b"xhci-keyboard-stopped: port=6",), 8)
+    monitor.command("device_add", {"driver": "usb-kbd", "bus": "xhci.0", "port": "3",
+                                   "display": "usb-video-b", "id": "hotplug-kbd"})
+    await_serial(guest, log, (b"xhci-keyboard-active: port=7",), 8)
+    for down in (True, False):
+        monitor.command("input-send-event", {"device": "usb-video-b", "events": [
+            {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": "c"}}}
+        ]})
 
 
-def run_keyboard_guest(command, log, output, runtime_input):
+def run_keyboard_guest(command, log, output, runtime_input, empty_controller=False):
     with tempfile.TemporaryDirectory(prefix="axiom64-xhci-qmp-", dir="/tmp") as temporary:
         socket = Path(temporary) / "monitor"
         with subprocess.Popen(command + ["-qmp", f"unix:{socket},server=on,wait=off"],
@@ -89,7 +117,7 @@ def run_keyboard_guest(command, log, output, runtime_input):
                 monitor = Qmp(socket)
                 try:
                     if runtime_input:
-                        send_usb_input(monitor, guest, log)
+                        send_usb_input(monitor, guest, log, empty_controller)
                     else:
                         monitor.command("send-key", {"keys": [{"type": "qcode", "data": "a"}],
                                                      "hold-time": 350})
@@ -129,19 +157,19 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
         command += ["-vga", "none", "-device", "VGA,id=usb-video-a",
                     "-device", "secondary-vga,id=usb-video-b", "-device", "qemu-xhci,id=xhci",
                     "-device", "usb-kbd,bus=xhci.0,port=1,display=usb-video-a",
-                    "-device", "usb-kbd,bus=xhci.0,port=2,display=usb-video-b"]
-        mouse_bus = "xhci"
+                    "-device", "usb-kbd,bus=xhci.0,port=2,display=usb-video-b,id=boot-kbd-b"]
         if xhci == "input-two-controllers":
-            mouse_bus = "xhci-second"
             command += ["-device", "qemu-xhci,id=xhci-second"]
-        command += ["-device", f"usb-mouse,bus={mouse_bus}.0,port=3,id=boot-mouse"]
+        else:
+            command += ["-device", "usb-mouse,bus=xhci.0,port=3,id=boot-mouse"]
     if smp is not None:
         threads = 2 if smp > 1 else 1
         command += ["-smp", f"cpus={smp},sockets=1,cores={smp // threads},threads={threads}"]
     log = directory / "serial.log"
     with log.open("wb") as output:
         if xhci == "keyboard" or runtime_input:
-            returncode = run_keyboard_guest(command, log, output, runtime_input)
+            returncode = run_keyboard_guest(command, log, output, runtime_input,
+                                             xhci == "input-two-controllers")
         else:
             returncode = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
                                         stderr=subprocess.STDOUT, timeout=90).returncode
@@ -176,9 +204,11 @@ def run_guest(directory, kind, firmware, medium, marker, module_bytes, *, invali
     if xhci == "none" and (probes or devices or keyboards or keys):
         raise RuntimeError(f"xHCI reported a controller in the absent-device case: {probes}")
     if runtime_input:
-        if (sum(line.startswith("xhci-keyboard-active:") for line in lines) != 2 or
-                sum(line.startswith("xhci-mouse-active:") for line in lines) != 1 or
+        if (sum(line.startswith("xhci-keyboard-active:") for line in lines) != 3 or
+                sum(line.startswith("xhci-keyboard-stopped:") for line in lines) != 1 or
+                sum(line.startswith("xhci-mouse-active:") for line in lines) != 2 or
                 sum(line.startswith("xhci-mouse-stopped:") for line in lines) != 1 or
+                "BOOT_USB_HOTPLUG_MOUSE_PRESSED" not in lines or
                 "BOOT_USB_INPUT_PASS" not in lines):
             raise RuntimeError(f"xHCI did not deliver input from all devices in {log}")
     if smp is not None:

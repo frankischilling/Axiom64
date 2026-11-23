@@ -195,7 +195,37 @@ static int evaluate(const uint8_t* packet, bool strict, unsigned* records = null
     return 0;
 }
 
+static void named_links() {
+    uint8_t packet[48]{}, output[netlink_family_reply]{};
+    NetlinkHeader request{sizeof(packet), 18, 1, 123, 0};
+    memcpy(packet, &request, sizeof(request));
+    const uint8_t attributes[]{7, 0, 3, 0, 'l', 'o', 0, 0, 8, 0, 29, 0, 1, 0, 0, 0};
+    memcpy(packet + 32, attributes, sizeof(attributes));
+    size_t size = 0;
+    require(!netlink_inventory_reply(packet, request, 123, output, true, size) && size,
+            "named link query can include an extended mask");
+    int32_t index = 0;
+    memcpy(&index, output + 20, sizeof(index));
+    require(index == int32_t(ipv4_loopback), "named lookup reports only loopback");
+    packet[36] = 'n';
+    size = 0;
+    require(netlink_inventory_reply(packet, request, 123, output, true, size) == -19 && !size,
+            "unknown named link fails");
+    packet[38] = 'x';
+    require(netlink_inventory_reply(packet, request, 123, output, true, size) == -22 && !size,
+            "unterminated interface name fails");
+    packet[38] = 0;
+    packet[40] = 7;
+    require(netlink_inventory_reply(packet, request, 123, output, true, size) == -22 && !size,
+            "short extended mask fails");
+    request = {40, 18, 0x301, 123, 0};
+    memcpy(packet, &request, sizeof(request));
+    memcpy(packet + 32, attributes + 8, 8);
+    require(!evaluate(packet, true), "link dump accepts a sized extended mask");
+}
+
 int main() {
+    named_links();
     uint8_t packet[128]{};
     unsigned cases = 0;
     for (uint16_t type : {uint16_t(18), uint16_t(22)}) {

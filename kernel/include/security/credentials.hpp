@@ -48,6 +48,7 @@ enum class Capability : unsigned {
     sys_boot = 22,
     sys_nice = 23,
     sys_resource = 24,
+    sys_time = 25,
     sys_chroot = 18
 };
 constexpr uint64_t all_capabilities = (1ull << 41) - 1;

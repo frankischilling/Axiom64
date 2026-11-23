@@ -199,6 +199,12 @@ Both endpoints use the audio group. The ALSA interface still needs mapped
 buffers, mixer controls, capture, and automatic desktop audio discovery.
 Physical codecs beyond direct pin routes remain open.
 
+Authorized Linux applications can set the realtime clock through
+`clock_settime` or `settimeofday` with `CAP_SYS_TIME`. The change takes effect
+at the clock's 10 ms resolution. Elapsed clocks and relative timers keep their
+existing deadlines. Writing the hardware RTC and running an NTP service are
+separate from setting the running clock.
+
 ## Current limits
 
 This is a development OS with a tested compatibility surface. Unsupported syscalls return `ENOSYS`; these working programs do not imply complete Linux compatibility.

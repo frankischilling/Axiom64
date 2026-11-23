@@ -513,6 +513,19 @@
       "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac"
     },
     {
+      "name": "dbus-daemon-launch-helper",
+      "version": "1.16.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/dbus-daemon-launch-helper-1.16.2-r1.apk",
+      "archive": "dbus-daemon-launch-helper-1.16.2-r1.apk",
+      "sha256": "8845aa8f7eb24b39cc91b9053bbb81c762f512a5ee4320a13f0c2e2bf06f4267",
+      "license": "AFL-2.1 OR GPL-2.0-or-later",
+      "upstream": "https://www.freedesktop.org/Software/dbus",
+      "origin": "dbus",
+      "source_commit": "a4670f2536a19d8d2dec70c884de496cfc6a89ac",
+      "installed_only": true
+    },
+    {
       "name": "dbus-dev",
       "version": "1.16.2-r1",
       "repository": "main",

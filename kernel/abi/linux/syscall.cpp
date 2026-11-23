@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "abi/linux/wall_clock.hpp"
 #include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "drivers/block/block.hpp"
@@ -1563,8 +1564,8 @@ static int64_t dispatch(Frame* f, Task* running) {
         uint64_t time[] = {now / 100, (now % 100) * 10000};
         if (a && copy_result(a, time, sizeof(time)))
             return -14;
-        const uint32_t timezone[2]{};
-        return b ? copy_result(b, timezone, sizeof(timezone)) : 0;
+        const auto timezone = clock_timezone();
+        return b ? copy_result(b, &timezone, sizeof(timezone)) : 0;
     }
     case 97:
     case 160:
@@ -1722,6 +1723,10 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 218:
         running->tid_address = a;
         return running->pid;
+    case 164:
+        return linux_settimeofday(*running, a, b);
+    case 227:
+        return linux_clock_settime(*running, int32_t(a), b);
     case 228: {
         if (a > 7)
             return -22;

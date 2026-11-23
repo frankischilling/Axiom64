@@ -28,6 +28,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/genetlink.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
@@ -151,6 +152,66 @@ static size_t receive(int fd, uint8_t* bytes, size_t capacity) {
     return count;
 }
 
+static bool control_description(const uint8_t* bytes, size_t count) {
+    bool name = false, id = false;
+    for (size_t offset = NLMSG_HDRLEN + GENL_HDRLEN; offset < count;) {
+        nlattr field{};
+        check(count - offset >= sizeof(field), "complete generic attribute header");
+        memcpy(&field, bytes + offset, sizeof(field));
+        check(field.nla_len >= NLA_HDRLEN && size_t(NLA_ALIGN(field.nla_len)) <= count - offset,
+              "aligned generic attribute length");
+        const auto* payload = bytes + offset + NLA_HDRLEN;
+        if (field.nla_type == CTRL_ATTR_FAMILY_NAME)
+            name = field.nla_len == NLA_HDRLEN + 7 && !memcmp(payload, "nlctrl", 7);
+        if (field.nla_type == CTRL_ATTR_FAMILY_ID) {
+            uint16_t family = 0;
+            check(field.nla_len == NLA_HDRLEN + sizeof(family), "two-byte generic family ID");
+            memcpy(&family, payload, sizeof(family));
+            id = family == GENL_ID_CTRL;
+        }
+        offset += NLA_ALIGN(field.nla_len);
+    }
+    return name && id;
+}
+
+static void receive_control_family(int fd, unsigned expected_sequence) {
+    alignas(nlmsghdr) uint8_t bytes[512];
+    alignas(cmsghdr) char control[CMSG_SPACE(sizeof(ucred))]{};
+    sockaddr_nl sender{};
+    iovec vector{bytes, sizeof(bytes)};
+    msghdr message{};
+    message.msg_name = &sender;
+    message.msg_namelen = sizeof(sender);
+    message.msg_iov = &vector;
+    message.msg_iovlen = 1;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+    pollfd ready{fd, POLLIN, 0};
+    check(poll(&ready, 1, 4000) == 1 && (ready.revents & POLLIN), "control reply readable");
+    ssize_t count = recvmsg(fd, &message, 0);
+    check(count >= ssize_t(NLMSG_LENGTH(GENL_HDRLEN)) && message.msg_flags == 0 &&
+              message.msg_namelen == sizeof(sender) && sender.nl_family == AF_NETLINK &&
+              !sender.nl_pid && !sender.nl_groups,
+          "generic reply from kernel");
+    const auto* ancillary = CMSG_FIRSTHDR(&message);
+    check(ancillary && ancillary->cmsg_level == SOL_SOCKET &&
+              ancillary->cmsg_type == SCM_CREDENTIALS &&
+              ancillary->cmsg_len == CMSG_LEN(sizeof(ucred)),
+          "generic reply carries SCM_CREDENTIALS");
+    ucred credentials{};
+    memcpy(&credentials, CMSG_DATA(ancillary), sizeof(credentials));
+    check(!credentials.pid && !credentials.uid && !credentials.gid, "kernel sender credentials");
+    nlmsghdr header{};
+    genlmsghdr generic{};
+    memcpy(&header, bytes, sizeof(header));
+    memcpy(&generic, bytes + NLMSG_HDRLEN, sizeof(generic));
+    check(header.nlmsg_len == unsigned(count) && header.nlmsg_type == GENL_ID_CTRL &&
+              header.nlmsg_pid == port(fd) && header.nlmsg_seq == expected_sequence &&
+              !header.nlmsg_flags && generic.cmd == CTRL_CMD_NEWFAMILY && generic.version == 2,
+          "reply type, length, port, sequence and version");
+    check(control_description(bytes, count), "nlctrl name and family ID");
+}
+
 static void acknowledgment(int fd, const Packet& request, int expected) {
     uint8_t bytes[8192];
     size_t size = receive(fd, bytes, sizeof(bytes));
@@ -167,6 +228,97 @@ static void acknowledgment(int fd, const Packet& request, int expected) {
               header.nlmsg_pid == port(fd) && error == -expected &&
               !memcmp(&echoed, &request.header, sizeof(echoed)),
           "capped ACK preserves sequence, authoritative port, errno, and original header");
+}
+
+static void generic_discovery() {
+    int route = open_socket();
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_GENERIC);
+    check(fd >= 0, "open generic netlink socket");
+    sockaddr_nl address{};
+    address.nl_family = AF_NETLINK;
+    address.nl_pid = port(route);
+    check(bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+              port(fd) == port(route),
+          "port identity is scoped by netlink protocol");
+    int one = 1, requested = 16384, value = 0;
+    socklen_t length = sizeof(value);
+    check(setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &one, sizeof(one)) == 0 &&
+              setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &one, sizeof(one)) == 0 &&
+              setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &requested, sizeof(requested)) == 0 &&
+              getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &value, &length) == 0 &&
+              value == 2 * requested && length == sizeof(value),
+          "configure generic credentials and receive space");
+    check(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &requested, sizeof(requested)) == 0 &&
+              getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &value, &length) == 0 &&
+              value == 2 * requested &&
+              getsockopt(fd, SOL_SOCKET, SO_PROTOCOL, &value, &length) == 0 &&
+              value == NETLINK_GENERIC,
+          "configure send space and report generic protocol");
+    int group = GENL_ID_CTRL;
+    check(setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
+          "join control notification group");
+    length = sizeof(address);
+    check(getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0 &&
+              address.nl_groups == (1u << (group - 1)),
+          "control group stored in local name");
+    check(setsockopt(fd, SOL_NETLINK, NETLINK_DROP_MEMBERSHIP, &group, sizeof(group)) == 0 &&
+              port(fd) == port(route),
+          "drop control group without changing port identity");
+
+    const char* names[]{"nlctrl", "ax-no-family"};
+    for (const char* name : names) {
+        Packet request(GENL_ID_CTRL, NLM_F_ACK);
+        const genlmsghdr command{CTRL_CMD_GETFAMILY, 1, 0};
+        memcpy(request.bytes + request.size, &command, sizeof(command));
+        request.size += sizeof(command);
+        size_t size = strlen(name) + 1;
+        const nlattr field{uint16_t(NLA_HDRLEN + size), CTRL_ATTR_FAMILY_NAME};
+        memcpy(request.bytes + request.size, &field, sizeof(field));
+        memcpy(request.bytes + request.size + NLA_HDRLEN, name, size);
+        request.size += NLA_ALIGN(field.nla_len);
+        send_packet(fd, request);
+        bool present = !strcmp(name, "nlctrl");
+        if (present)
+            receive_control_family(fd, request.header.nlmsg_seq);
+        acknowledgment(fd, request, present ? 0 : ENOENT);
+    }
+
+    Packet dump(GENL_ID_CTRL, NLM_F_DUMP);
+    const genlmsghdr command{CTRL_CMD_GETFAMILY, 1, 0};
+    memcpy(dump.bytes + dump.size, &command, sizeof(command));
+    dump.size += sizeof(command);
+    send_packet(fd, dump);
+    bool saw_control = false, done = false;
+    for (unsigned datagram = 0; datagram < 256 && !done; ++datagram) {
+        uint8_t reply[32768];
+        size_t size = receive(fd, reply, sizeof(reply));
+        for (size_t offset = 0; offset < size;) {
+            nlmsghdr header{};
+            check(size - offset >= NLMSG_HDRLEN, "complete multipart header");
+            memcpy(&header, reply + offset, sizeof(header));
+            check(header.nlmsg_len >= NLMSG_HDRLEN &&
+                      NLMSG_ALIGN(header.nlmsg_len) <= size - offset &&
+                      header.nlmsg_seq == dump.header.nlmsg_seq && header.nlmsg_pid == port(fd) &&
+                      (header.nlmsg_flags & NLM_F_MULTI),
+                  "generic multipart framing and sequence");
+            if (header.nlmsg_type == NLMSG_DONE) {
+                int status;
+                check(header.nlmsg_len >= NLMSG_LENGTH(sizeof(status)), "complete dump status");
+                memcpy(&status, reply + offset + NLMSG_HDRLEN, sizeof(status));
+                check(!status, "successful generic dump");
+                done = true;
+                break;
+            }
+            check(header.nlmsg_type == GENL_ID_CTRL &&
+                      header.nlmsg_len >= NLMSG_LENGTH(GENL_HDRLEN),
+                  "family description in control dump");
+            saw_control |= control_description(reply + offset, header.nlmsg_len);
+            offset += NLMSG_ALIGN(header.nlmsg_len);
+        }
+    }
+    check(done && saw_control, "generic dump includes nlctrl and ends");
+    check(close(fd) == 0 && close(route) == 0, "release independently bound netlink sockets");
+    puts("NETLINK_GENERIC_DISCOVERY_PASS");
 }
 
 static void change(int fd, const Route& route, bool remove, int error = 0) {
@@ -1114,6 +1266,9 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
     puts("NETLINK_READY");
     native = argc == 2 && !strcmp(argv[1], "--native");
+    generic_discovery();
+    if (argc == 2 && !strcmp(argv[1], "--generic-only"))
+        return 0;
     indexes[0] = if_nametoindex("eth0");
     indexes[1] = if_nametoindex("eth1");
     check(indexes[0] && indexes[1] && indexes[0] != indexes[1], "two isolated Ethernet interfaces");

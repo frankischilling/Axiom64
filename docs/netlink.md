@@ -46,6 +46,29 @@ Poll and epoll report read availability and capacity for a minimum acknowledgmen
 
 `list` returns at most 65 route records and can filter by interface/protocol. It verifies kernel sender, sequence, port identity, record bounds, and multipart completion. Failure leaves the caller's records and count unchanged. It drains an undersized result before returning `ENOSPC`; malformed, timed-out, or interrupted exchanges discard the private socket. The caller can reopen it for later work. The [Configuration module](network-configuration.md) uses this adapter for DHCP/static tuple and route ownership. Normal startup supervises the [network manager](network-manager.md) as a Ring 3 child.
 
+## Generic netlink discovery
+
+`NETLINK_GENERIC` and `NETLINK_ROUTE` have separate port namespaces. The
+generic control family `nlctrl` answers `CTRL_CMD_GETFAMILY` by name or ID
+and supports a multipart family dump. It publishes its version, discovery
+operation and notification group. A lookup for an absent family returns
+`ENOENT`. Unicast replies carry the kernel source address. A requested
+acknowledgment follows the family reply as a separate datagram.
+
+Both protocols support `SO_PASSCRED` for kernel sender credentials and
+bounded `SO_SNDBUF` and `SO_RCVBUF` settings. Requests are capped at 512 KiB
+before doubling. The receive queue still holds at most 32 datagrams. Group
+membership can be set at bind time or changed with
+`NETLINK_ADD_MEMBERSHIP` and `NETLINK_DROP_MEMBERSHIP`. Delivery of
+link, address and route change notifications remains open. Wireless
+families, Ethernet activation through NetworkManager, and its Plasma
+integration also remain open.
+
+The route test also checks discovery, the missing-family error, multipart
+completion, port reuse across protocols, and kernel credentials. Run the
+discovery checks on Linux with `make build/netlink-native` followed by
+`build/netlink-native --generic-only`.
+
 ## Verification
 
 ```sh

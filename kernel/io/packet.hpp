@@ -359,7 +359,11 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     uint32_t message_flags = length > request.packet_length ? 0x20 : 0;
     uint64_t control_length = 0;
     if (f.rax == 47) {
-        if (ip)
+        if (nl)
+            control_length =
+                netlink_receive_control(task, request.handle->netlink, request.control_pointer,
+                                        request.control_capacity, message_flags);
+        else if (ip)
             control_length =
                 inet_receive_control(task, request.handle->inet, *ip, request.control_pointer,
                                      request.control_capacity, message_flags);

@@ -46,6 +46,20 @@ static_assert(sizeof(NetlinkAddress) == 12 && sizeof(NetlinkHeader) == 16);
 constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4176,
                  netlink_address_reply = 4412, netlink_ipv6_route_reply = 6144,
                  netlink_max_reply = 12288;
+constexpr size_t netlink_ack_size = 36;
+
+inline size_t netlink_ack(const void* input, const NetlinkHeader& request, uint32_t port, int error,
+                          bool capped, void* reply) {
+    size_t echo = capped || !error ? sizeof(request) : request.length;
+    auto output = static_cast<uint8_t*>(reply);
+    NetlinkHeader header{uint32_t(20 + ((echo + 3) & ~size_t(3))), 2,
+                         uint16_t(echo == sizeof(request) ? 0x100 : 0), request.sequence, port};
+    memcpy(output, &header, sizeof(header));
+    memcpy(output + sizeof(header), &error, 4);
+    memcpy(output + 20, input, echo);
+    memset(output + 20 + echo, 0, header.length - 20 - echo);
+    return header.length;
+}
 
 struct NetlinkFrame {
     NetlinkAddress source;
@@ -61,6 +75,9 @@ size_t routing_capacity(const NetlinkHeader&, const void* request = nullptr);
 
 size_t routing_reply(const void*, uint32_t port, bool capped, void* output, bool privileged,
                      bool strict = false);
+constexpr size_t generic_family_reply_size = 128;
+size_t generic_reply(const void*, uint32_t port, bool capped, void* reply, void* followup,
+                     size_t& followup_length);
 
 constexpr bool routing_dump(uint16_t type) {
     return type == 18 || type == 22 || type == 26;
@@ -83,6 +100,8 @@ void netlink_close(NetlinkSocket*);
 bool netlink_ready(NetlinkSocket*, bool write);
 
 const NetlinkFrame* netlink_front(NetlinkSocket*);
+size_t netlink_receive_control(Task&, NetlinkSocket*, uint64_t address, uint64_t capacity,
+                               uint32_t& flags);
 
 void netlink_consume(NetlinkSocket*);
 

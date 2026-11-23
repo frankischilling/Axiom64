@@ -22,15 +22,51 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
+
+static int check_input_inventory(void) {
+    for (unsigned i = 0; i < 2; ++i) {
+        char dev[64], link[64], target[64], attr[96], received[32];
+        struct stat dev_stat, class_stat, char_stat;
+        snprintf(dev, sizeof(dev), "/dev/input/event%u", i);
+        if (stat(dev, &dev_stat) || !S_ISCHR(dev_stat.st_mode) || major(dev_stat.st_rdev) != 13 ||
+            minor(dev_stat.st_rdev) != 64 + i)
+            return -1;
+        snprintf(link, sizeof(link), "/sys/dev/char/13:%u", minor(dev_stat.st_rdev));
+        ssize_t length = readlink(link, target, sizeof(target) - 1);
+        if (length <= 0)
+            return -1;
+        target[length] = 0;
+        snprintf(attr, sizeof(attr), "../../devices/virtual/input/input%u/event%u", i, i);
+        if (strcmp(target, attr) || stat(link, &char_stat))
+            return -1;
+        snprintf(link, sizeof(link), "/sys/class/input/event%u", i);
+        if (stat(link, &class_stat) || class_stat.st_ino != char_stat.st_ino)
+            return -1;
+        snprintf(attr, sizeof(attr), "%s/device/capabilities/rel", link);
+        int fd = open(attr, O_RDONLY);
+        if (fd < 0)
+            return -1;
+        const char* expected = i ? "103\n" : "0\n";
+        length = read(fd, received, sizeof(received));
+        if (close(fd) || length != (ssize_t)strlen(expected) || memcmp(received, expected, length))
+            return -1;
+    }
+    puts("BOOT_INPUT_INVENTORY_PASS");
+    return 0;
+}
 
 static int check_usb_input(void) {
     enum { key_a = 30, key_b = 48, key_c = 46, button_left = 272 };
@@ -130,7 +166,7 @@ int main(int argc, char** argv) {
     int fd = open("/boot-proof", O_RDONLY);
     if (argc != 1 || getpid() != 1 || fd < 0 ||
         read(fd, token, sizeof(token)) != sizeof(token) - 1 || close(fd) || check_framebuffer() ||
-        (!access("/boot-usb-input", F_OK) && check_usb_input()))
+        check_input_inventory() || (!access("/boot-usb-input", F_OK) && check_usb_input()))
         return 1;
     printf("BOOT_MEDIA_PASS %s %s\n", argv[0], token);
     fflush(stdout);

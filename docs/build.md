@@ -161,6 +161,12 @@ interrupt, it publishes `/dev/input/event2` with contact slots, click state,
 and coordinate ranges. The interrupt is masked while the kernel device loop
 reads a pending packet and is rearmed when the read finishes.
 
+Input device discovery exposes relative links under `/sys/class/input` and
+`/sys/dev/char`. They resolve into `/sys/devices/virtual/input`, where the
+device names, event numbers, uevent files, and capability bitmaps are
+available to userspace. The bitmaps match the capabilities reported by the
+evdev ioctls. Desktop integration still needs userspace input rules.
+
 If the resource scan finds no devices, the HID descriptor probe can replay
 supported ACPI initialization methods in a private namespace. The firmware
 memory provider still validates and locks each read. The replay also reads

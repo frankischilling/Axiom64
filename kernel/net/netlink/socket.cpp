@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "net/netlink.hpp"
+#include "net/netlink_wireless.hpp"
 #include "net/socket_control.hpp"
 #include "ipc/ipc.hpp"
 #include "process/task.hpp"
@@ -53,6 +54,7 @@ struct NetlinkSocket {
     NetlinkAddress peer{};
     int error = 0;
     Handle* handle = nullptr;
+    WirelessDump wireless_dump;
     NetlinkFrame* queue[queue_count]{};
 };
 
@@ -109,6 +111,8 @@ int netlink_target(Task& task, NetlinkSocket* socket, const NetlinkAddress& addr
     return address.port ? -111 : 0;
 }
 
+static void pump_wireless_dump(NetlinkSocket* socket);
+
 void netlink_consume(NetlinkSocket* socket) {
     if (!socket->count)
         return;
@@ -118,9 +122,11 @@ void netlink_consume(NetlinkSocket* socket) {
     frame = nullptr;
     socket->head = (socket->head + 1) % queue_count;
     socket->count--;
+    pump_wireless_dump(socket);
 }
 
 void netlink_close(NetlinkSocket* socket) {
+    socket->wireless_dump = {};
     while (socket->count)
         netlink_consume(socket);
     *socket = {};
@@ -186,6 +192,25 @@ int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*
 void netlink_publish_delivery(NetlinkSocket* socket, NetlinkFrame* frame) {
     --socket->deliveries;
     socket->queue[(socket->head + socket->count++) % queue_count] = frame;
+}
+
+static void pump_wireless_dump(NetlinkSocket* socket) {
+    auto& cursor = socket->wireless_dump;
+    // Keep one record queued. A complete scan can exceed the socket's receive quota.
+    if (!cursor.active || socket->count)
+        return;
+    const size_t length = wireless_dump_record(cursor, socket->port, nullptr);
+    NetlinkFrame* frame;
+    if (int error = reserve_frame(socket, length, frame)) {
+        socket->error = error == -11 ? 90 : -error;
+        cursor.active = false;
+        epoll_notify(socket->handle, 8);
+        return;
+    }
+    wireless_dump_record(cursor, socket->port, frame + 1);
+    wireless_dump_advance(cursor);
+    netlink_publish_delivery(socket, frame);
+    epoll_notify(socket->handle, 1);
 }
 
 static int deliver_notification(NetlinkSocket& socket, const void* data, size_t length,
@@ -389,15 +414,17 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         const auto& reply = replies[i];
         const auto* input = bytes + reply.position;
         size_t tail = 0;
-        size_t size = generic ? generic_reply(input, socket->port, socket->capped, reply.data + 1,
-                                              reply.end ? reply.end + 1 : nullptr, tail)
-                              : routing_reply(input, socket->port, socket->capped, reply.data + 1,
-                                              capable(task.credentials, Capability::net_admin),
-                                              socket->strict);
+        size_t size =
+            generic
+                ? generic_reply(input, socket->port, socket->capped, reply.data + 1,
+                                reply.end ? reply.end + 1 : nullptr, tail, socket->wireless_dump)
+                : routing_reply(input, socket->port, socket->capped, reply.data + 1,
+                                capable(task.credentials, Capability::net_admin), socket->strict);
         publish(reply.data, size);
         if (reply.end)
             publish(reply.end, tail);
     }
+    pump_wireless_dump(socket);
     return length;
 }
 

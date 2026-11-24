@@ -2331,5 +2331,13 @@ escapes non-printing bytes in network names.
 After a successful scan and adapter shutdown, the kernel keeps the completed
 snapshot and the original beacon and probe-response information elements.
 The snapshot retains up to 32 access points for the current boot.
-Run the check from the PXE RAM image for a physical test. Wi-Fi association
-and NetworkManager integration still require implementation.
+After the radio stops, the kernel exposes the snapshot through Linux's
+`nl80211` interface. The diagnostic publishes `wlan0` and supports reading
+its radio, interface, and scan results. `GET_SCAN` streams results as
+multipart records, including original beacon and probe-response data when
+available. The interface stays down and rejects requests to bring it up.
+Boot without the passive scan option for the normal device inventory.
+
+Run the userspace scan check from the PXE RAM image on the Blade. The output
+includes the number of access points read through `nl80211`. Association,
+live scan requests, and NetworkManager connection controls remain open.

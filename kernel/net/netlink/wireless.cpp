@@ -1,0 +1,237 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/netlink/wireless.cpp
+ * @brief   Linux nl80211 queries for the AX201 passive scan.
+ * @author  frankischilling
+ * @date    2026-11-23
+ *
+ * Copyright (C) 2026 frankischilling
+ */
+#include "drivers/net/intel_wifi_scan.hpp"
+#include "net/netlink.hpp"
+#include "net/netlink_wireless.hpp"
+
+namespace ax {
+namespace {
+enum Attribute : uint16_t {
+    wiphy = 1,
+    wiphy_name = 2,
+    ifindex = 3,
+    ifname = 4,
+    iftype = 5,
+    mac = 6,
+    supported_iftypes = 32,
+    generation = 46,
+    bss = 47,
+    wdev = 153,
+};
+
+enum BssAttribute : uint16_t {
+    bssid = 1,
+    frequency = 2,
+    beacon_interval = 4,
+    capability = 5,
+    information_elements = 6,
+    signal_mbm = 7,
+    beacon_elements = 11,
+    probe_response_data = 14,
+};
+
+constexpr uint32_t station = 2;
+constexpr uint64_t device_id = 1;
+constexpr uint16_t multipart = 2, dump_flags = 0x300;
+constexpr uint8_t new_wiphy = 3, new_interface = 7, new_scan_results = 34;
+
+struct AttributeHeader {
+    uint16_t length, type;
+};
+
+class Message {
+    uint8_t* output;
+    size_t used = sizeof(NetlinkHeader) + 4;
+
+    void put(size_t offset, const void* data, size_t length) const {
+        if (output && length)
+            memcpy(output + offset, data, length);
+    }
+
+  public:
+    explicit Message(void* destination) : output(static_cast<uint8_t*>(destination)) {
+    }
+
+    void attr(uint16_t type, const void* data, size_t length) {
+        const AttributeHeader header{uint16_t(sizeof(header) + length), type};
+        put(used, &header, sizeof(header));
+        put(used + sizeof(header), data, length);
+        constexpr uint8_t zeros[3]{};
+        const size_t padding = -length & 3;
+        put(used + header.length, zeros, padding);
+        used += header.length + padding;
+    }
+
+    template <typename T> void value(uint16_t type, const T& data) {
+        attr(type, &data, sizeof(data));
+    }
+
+    size_t begin_nested(uint16_t type) {
+        const size_t offset = used;
+        attr(type | 0x8000, nullptr, 0);
+        return offset;
+    }
+
+    void end_nested(size_t offset) {
+        const uint16_t length = uint16_t(used - offset);
+        put(offset, &length, sizeof(length));
+    }
+
+    size_t finish(uint8_t command, uint32_t seq, uint32_t port, bool dump) const {
+        const NetlinkHeader header{uint32_t(used), nl80211_family, uint16_t(dump ? multipart : 0),
+                                   seq, port};
+        const uint8_t generic[4]{command, 1, 0, 0};
+        put(0, &header, sizeof(header));
+        put(sizeof(header), generic, sizeof(generic));
+        return used;
+    }
+};
+
+int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsigned index) {
+    bool selected_phy = false, selected_device = false;
+    while (length) {
+        if (length < sizeof(AttributeHeader))
+            return -22;
+        AttributeHeader field;
+        memcpy(&field, bytes, sizeof(field));
+        const size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
+        if (field.length < sizeof(field) || aligned > length)
+            return -22;
+        const auto* value = bytes + sizeof(field);
+        const size_t size = field.length - sizeof(field);
+        switch (field.type & 0x3fff) {
+        case wiphy:
+        case ifindex: {
+            uint32_t id;
+            if (size != sizeof(id))
+                return -22;
+            memcpy(&id, value, sizeof(id));
+            const bool phy = (field.type & 0x3fff) == wiphy;
+            if (id != (phy ? 0u : index))
+                return -19;
+            (phy ? selected_phy : selected_device) = true;
+            break;
+        }
+        case wdev: {
+            uint64_t id;
+            if (size != sizeof(id))
+                return -22;
+            memcpy(&id, value, sizeof(id));
+            if (id != device_id)
+                return -19;
+            selected_device = true;
+            break;
+        }
+        }
+        length -= aligned;
+        bytes += aligned;
+    }
+    if (command == nl80211_get_wiphy)
+        return dump || selected_device || selected_phy ? 0 : -22;
+    return selected_device || (dump && command == nl80211_get_interface) ? 0 : -22;
+}
+
+size_t dump_done(void* output, uint32_t sequence, uint32_t port) {
+    const NetlinkHeader done{20, 3, multipart, sequence, port};
+    constexpr int status = 0;
+    if (output) {
+        memcpy(output, &done, sizeof(done));
+        memcpy(static_cast<uint8_t*>(output) + sizeof(done), &status, sizeof(status));
+    }
+    return done.length;
+}
+} // namespace
+
+bool wireless_scan_available() {
+    const auto* scan = IntelWifi::passive_scan_snapshot();
+    return scan && scan->elements && IntelWifi::passive_scan_interface();
+}
+
+size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t port, bool capped,
+                      void* reply, void* followup, size_t& followup_length, WirelessDump& cursor) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    const auto* info = net_info(IntelWifi::passive_scan_interface());
+    if (!info || !wireless_scan_available())
+        return netlink_ack(data, request, port, -2, capped, reply);
+    constexpr size_t header = sizeof(request) + 4;
+    if (request.length < header)
+        return netlink_ack(data, request, port, -22, capped, reply);
+    const uint8_t command = bytes[sizeof(request)];
+    const bool dump = (request.flags & dump_flags) == dump_flags;
+    if ((command != nl80211_get_wiphy && command != nl80211_get_interface &&
+         command != nl80211_get_scan) ||
+        (command == nl80211_get_scan && !dump))
+        return netlink_ack(data, request, port, -95, capped, reply);
+    if (int error = select(bytes + header, request.length - header, command, dump, info->index))
+        return netlink_ack(data, request, port, error, capped, reply);
+    if (command == nl80211_get_scan) {
+        if (cursor.active)
+            return netlink_ack(data, request, port, -16, capped, reply);
+        cursor = {request.sequence, 0, true};
+        return 0;
+    }
+
+    if (dump)
+        followup_length = dump_done(followup, request.sequence, port);
+    else if (request.flags & 4)
+        followup_length = netlink_ack(data, request, port, 0, capped, followup);
+    Message message(reply);
+    message.value(wiphy, uint32_t(0));
+    message.value(generation, uint32_t(1));
+    if (command == nl80211_get_wiphy) {
+        message.value(wiphy_name, "phy0");
+        const size_t types = message.begin_nested(supported_iftypes);
+        message.attr(station, nullptr, 0);
+        message.end_nested(types);
+        return message.finish(new_wiphy, request.sequence, port, dump);
+    }
+    message.value(ifindex, uint32_t(info->index));
+    message.attr(ifname, info->name, strlen(info->name) + 1);
+    message.value(iftype, station);
+    message.value(wdev, device_id);
+    message.value(mac, info->mac);
+    return message.finish(new_interface, request.sequence, port, dump);
+}
+
+size_t wireless_dump_record(const WirelessDump& cursor, uint32_t port, void* output) {
+    const auto& scan = *IntelWifi::passive_scan_snapshot();
+    if (cursor.next >= scan.access_point_count)
+        return dump_done(output, cursor.sequence, port);
+    const auto& point = scan.access_points[cursor.next];
+    const auto& elements = scan.elements->records[cursor.next];
+    Message message(output);
+    message.value(ifindex, uint32_t(IntelWifi::passive_scan_interface()));
+    message.value(wdev, device_id);
+    message.value(generation, uint32_t(1));
+    const size_t record = message.begin_nested(bss);
+    message.value(bssid, point.bssid);
+    message.value(frequency, uint32_t(point.frequency_mhz));
+    message.value(beacon_interval, point.beacon_interval_tu);
+    message.value(capability, point.capability);
+    if (point.signal_dbm != IntelWifi::scan_signal_unavailable)
+        message.value(signal_mbm, int32_t(point.signal_dbm) * 100);
+    if (point.probe_ie_bytes) {
+        message.attr(probe_response_data, nullptr, 0);
+        message.attr(information_elements, elements.probe, point.probe_ie_bytes);
+    } else if (point.beacon_ie_bytes)
+        message.attr(information_elements, elements.beacon, point.beacon_ie_bytes);
+    if (point.beacon_ie_bytes)
+        message.attr(beacon_elements, elements.beacon, point.beacon_ie_bytes);
+    message.end_nested(record);
+    return message.finish(new_scan_results, cursor.sequence, port, true);
+}
+
+void wireless_dump_advance(WirelessDump& cursor) {
+    if (cursor.next == IntelWifi::passive_scan_snapshot()->access_point_count)
+        cursor.active = false;
+    else
+        ++cursor.next;
+}
+} // namespace ax

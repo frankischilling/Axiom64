@@ -46,6 +46,7 @@ struct NetInfo {
     const char* driver = nullptr;
     char bus_address[13]{};
     NetStats stats;
+    bool wireless = false;
 };
 
 // One CPU, serialized with interrupts masked. send copies the complete frame;
@@ -57,6 +58,7 @@ struct NetAdapter {
     int (*send)(NetAdapter&, const void*, size_t);
     void (*stop)(NetAdapter&);
     void* data;
+    bool receive_only_diagnostic = false;
 };
 
 using NetRegistrationObserver = void (*)(const NetInfo&, const PciFunction*);

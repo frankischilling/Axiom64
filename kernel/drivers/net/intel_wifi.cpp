@@ -13,6 +13,7 @@
 #include "drivers/platform/pci.hpp"
 #include "fs/vfs.hpp"
 #include "mm/dma.hpp"
+#include "net/ethernet.hpp"
 
 namespace ax::IntelWifi {
 namespace {
@@ -28,6 +29,14 @@ PciFunction adapter{};
 volatile uint32_t* adapter_registers;
 bool start_requested;
 PassiveScan completed_scan{};
+NetAdapter scanned_adapter{
+    .info{.live = true, .stats{}, .wireless = true},
+    .poll = [](NetAdapter&) {},
+    .send = [](NetAdapter&, const void*, size_t) { return -95; },
+    .stop = [](NetAdapter&) {},
+    .data = nullptr,
+    .receive_only_diagnostic = true,
+};
 
 void report(const char* status) {
     constexpr char prefix[] = "Intel AX201: ";
@@ -340,6 +349,11 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         completed_scan = result.passive;
         elements = nullptr;
         const auto& passive = *passive_scan_snapshot();
+        if (!scanned_adapter.info.index) {
+            memcpy(scanned_adapter.info.mac, passive.station_address,
+                   sizeof(passive.station_address));
+            net_register(scanned_adapter, "iwlwifi", &adapter);
+        }
         log("iwlwifi: passive scan channels=%u access points=%u truncated=%u\n",
             uint64_t(passive.channel_count), uint64_t(passive.access_point_count),
             uint64_t(passive.access_points_truncated));
@@ -426,6 +440,10 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
 
 const PassiveScan* passive_scan_snapshot() {
     return completed_scan.status == PassiveScan::Status::complete ? &completed_scan : nullptr;
+}
+
+unsigned passive_scan_interface() {
+    return scanned_adapter.info.index;
 }
 
 void check_firmware(bool probe_pci, FirmwareCheck check) {

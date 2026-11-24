@@ -380,7 +380,7 @@ const char* run_passive_scan(CommandSession& commands, const NvmInfo& nvm,
         return "no permitted 2.4 or 5 GHz channels";
 
     // The 22000-family CSR holds optional OEM straps followed by an OTP fallback.
-    uint8_t address[6];
+    auto& address = scan.station_address;
     const auto& reg = commands.reg;
     if (!decode_station_address(reg.read(0x388), reg.read(0x38c), address) &&
         !decode_station_address(reg.read(0x380), reg.read(0x384), address))

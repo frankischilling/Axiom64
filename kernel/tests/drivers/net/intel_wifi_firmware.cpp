@@ -475,6 +475,60 @@ void check_startup() {
     }
     std::puts("AX201_PASSIVE_SCAN_MODEL_PASS");
 }
+
+void check_access_points() {
+    PassiveScan scan{};
+    scan.channels[0] = 1;
+    scan.channels[1] = 6;
+    scan.channels[2] = 36;
+    scan.channel_count = 3;
+    auto observe = [&](bool probe, uint8_t channel, uint8_t advertised, uint8_t bssid_tail,
+                       uint8_t energy, const Bytes& name, bool truncated = false) {
+        constexpr unsigned descriptor = 48, fixed_frame = 36;
+        const auto frame_bytes = fixed_frame + 2 + name.size() + 3;
+        uint8_t packet[128]{};
+        packet[0] = uint8_t(frame_bytes);
+        packet[12] = 3;
+        packet[32] = energy;
+        packet[33] = 85;
+        packet[34] = channel;
+        auto* frame = packet + descriptor;
+        frame[0] = probe ? 0x50 : 0x80;
+        frame[16] = 2;
+        frame[21] = bssid_tail;
+        frame[32] = 100;
+        frame[34] = 0x31;
+        frame[35] = 0x04;
+        frame[37] = uint8_t(name.size());
+        for (unsigned i = 0; i < name.size(); ++i)
+            frame[38 + i] = name[i];
+        const auto ds = 38 + name.size();
+        frame[ds] = 3;
+        frame[ds + 1] = truncated ? 2 : 1;
+        frame[ds + 2] = advertised;
+        observe_passive_scan(scan, {0xc1, 0, 0x8000, packet, descriptor + frame_bytes});
+    };
+    observe(false, 1, 12, 1, 48, {'X'}); // Channel outside the selected profile.
+    observe(false, 1, 1, 1, 48, {'X'}, true);
+    assert(scan.access_point_count == 0);
+    observe(false, 1, 6, 1, 35, {});
+    assert(scan.access_point_count == 1);
+    auto& point = scan.access_points[0];
+    assert(point.frequency_mhz == 2437 && point.signal_dbm == scan_signal_unavailable);
+    observe(true, 6, 6, 1, 62, {'A', 0, 0xff});
+    assert(scan.access_point_count == 1 && point.probe_response && point.ssid_length == 3);
+    assert(point.ssid[0] == 'A' && point.ssid[1] == 0 && point.ssid[2] == 0xff);
+    assert(point.signal_dbm == -62 && point.beacon_interval_tu == 100 && point.capability == 0x431);
+    observe(false, 6, 6, 1, 41, {0, 0, 0});
+    assert(scan.access_point_count == 1 && point.probe_response && point.ssid_length == 3 &&
+           point.signal_dbm == -41);
+    observe(false, 36, 36, 1, 60, {'B'});
+    assert(scan.access_point_count == 2 && scan.access_points[1].frequency_mhz == 5180);
+    for (uint8_t address = 2; address <= 32; ++address)
+        observe(false, 6, 6, address, 80, {'Z'});
+    assert(scan.access_point_count == 32 && scan.access_points_truncated);
+    std::puts("AX201_ACCESS_POINT_MODEL_PASS");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -522,6 +576,7 @@ int main(int argc, char** argv) {
            image.regions[paging].sections[1].data[4095] == 11);
     check_boot_queues(image);
     check_startup();
+    check_access_points();
 
     auto reject = [&](const Bytes& invalid) {
         FirmwareImage prior{};

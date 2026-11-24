@@ -18,10 +18,23 @@ inline constexpr uint32_t passive_scan_id = 0;
 bool decode_station_address(uint32_t high, uint32_t low, uint8_t (&address)[6]);
 void prepare_scan_station(const uint8_t (&address)[6], uint8_t (&command)[mac_context_bytes]);
 
+inline constexpr int16_t scan_signal_unavailable = -128;
+
+struct AccessPoint {
+    uint8_t bssid[6]{};
+    uint8_t ssid[32]{};
+    uint8_t ssid_length = 0;
+    uint16_t frequency_mhz = 0;
+    uint16_t beacon_interval_tu = 0;
+    uint16_t capability = 0;
+    int16_t signal_dbm = scan_signal_unavailable;
+    bool probe_response = false;
+};
+
 struct PassiveScan {
     uint8_t channels[51]{};
     uint8_t channel_count = 0;
-    uint8_t access_points[32][6]{};
+    AccessPoint access_points[32]{};
     uint8_t access_point_count = 0;
     bool access_points_truncated = false;
     enum class Status { pending, complete, aborted, malformed } status{};

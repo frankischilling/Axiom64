@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/net/intel_wifi_scan.cpp
- * @brief   Encode an AX201 passive scan and count access points from RX frames.
+ * @brief   Encode an AX201 passive scan and collect access points from RX frames.
  * @author  frankischilling
  * @date    2026-11-23
  *
@@ -43,9 +43,11 @@ bool station_address_valid(const uint8_t* address) {
     return nonzero && !(address[0] & 1);
 }
 
-bool beacon_has_ssid(const uint8_t* frame, unsigned length) {
-    constexpr unsigned beacon_header = 36;
+bool parse_beacon_elements(const uint8_t* frame, unsigned length, AccessPoint& point,
+                           uint8_t& advertised_channel) {
+    constexpr unsigned beacon_header = 36, ht_operation_bytes = 22;
     bool seen_ssid = false;
+    uint8_t ds_channel = 0, ht_channel = 0;
     for (unsigned offset = beacon_header; offset < length;) {
         if (length - offset < 2)
             return false;
@@ -54,18 +56,70 @@ bool beacon_has_ssid(const uint8_t* frame, unsigned length) {
         if (bytes > length - offset)
             return false;
         if (!id) {
-            if (seen_ssid || bytes > 32)
+            if (seen_ssid || bytes > sizeof(point.ssid))
                 return false;
             seen_ssid = true;
+            uint8_t nonzero = 0;
+            for (unsigned i = 0; i < bytes; ++i)
+                nonzero |= frame[offset + i];
+            if (nonzero) {
+                memcpy(point.ssid, frame + offset, bytes);
+                point.ssid_length = bytes;
+            }
+        } else if (id == 3 && bytes == 1 && !ds_channel) {
+            ds_channel = frame[offset];
+        } else if (id == 61 && bytes >= ht_operation_bytes && !ht_channel) {
+            ht_channel = frame[offset];
         }
         offset += bytes;
     }
+    advertised_channel = ds_channel ? ds_channel : ht_channel;
     return seen_ssid;
+}
+
+bool scan_selected_channel(const PassiveScan& scan, uint8_t channel) {
+    for (unsigned i = 0; i < scan.channel_count; ++i)
+        if (scan.channels[i] == channel)
+            return true;
+    return false;
+}
+
+uint16_t channel_frequency(uint8_t channel) {
+    if (channel < 14)
+        return uint16_t(2407 + 5 * channel);
+    if (channel == 14)
+        return 2484;
+    return uint16_t(5000 + 5 * channel);
+}
+
+void store_access_point(PassiveScan& scan, const AccessPoint& point) {
+    for (unsigned i = 0; i < scan.access_point_count; ++i) {
+        auto& seen = scan.access_points[i];
+        if (seen.frequency_mhz != point.frequency_mhz || memcmp(seen.bssid, point.bssid, 6))
+            continue;
+        if (seen.ssid_length && point.ssid_length &&
+            (seen.ssid_length != point.ssid_length ||
+             memcmp(seen.ssid, point.ssid, seen.ssid_length)))
+            continue;
+        const auto best_signal = max(seen.signal_dbm, point.signal_dbm);
+        // Keep the name when a hidden beacon follows a named probe response.
+        if ((!seen.ssid_length || point.ssid_length) &&
+            (!seen.probe_response || point.probe_response || !seen.ssid_length))
+            seen = point;
+        seen.signal_dbm = best_signal;
+        return;
+    }
+    if (scan.access_point_count == sizeof(scan.access_points) / sizeof(scan.access_points[0])) {
+        scan.access_points_truncated = true;
+        return;
+    }
+    scan.access_points[scan.access_point_count++] = point;
 }
 
 void observe_beacon(PassiveScan& scan, const FirmwarePacket& packet) {
     constexpr unsigned descriptor_bytes = 48, status_offset = 12, channel_offset = 34;
-    constexpr unsigned bssid_offset = 16;
+    constexpr unsigned energy_offset = 32, bssid_offset = 16, interval_offset = 32,
+                       capability_offset = 34;
     if (packet.length < descriptor_bytes || !packet.payload)
         return;
     const auto* data = packet.payload;
@@ -74,22 +128,38 @@ void observe_beacon(PassiveScan& scan, const FirmwarePacket& packet) {
     if ((data[status_offset] & 3) != 3 || (data[3] & 0x20) || frame_bytes < 38 ||
         frame_bytes > packet.length - descriptor_bytes)
         return;
-    const uint8_t channel = data[channel_offset];
-    bool selected = false;
-    for (unsigned i = 0; i < scan.channel_count; ++i)
-        selected |= scan.channels[i] == channel;
+    const uint8_t receive_channel = data[channel_offset];
     const auto* frame = data + descriptor_bytes;
-    if (!selected || (frame[0] != 0x80 && frame[0] != 0x50) ||
-        !station_address_valid(frame + bssid_offset) || !beacon_has_ssid(frame, frame_bytes))
+    if (!scan_selected_channel(scan, receive_channel) || (frame[0] != 0x80 && frame[0] != 0x50) ||
+        !station_address_valid(frame + bssid_offset))
         return;
-    for (unsigned i = 0; i < scan.access_point_count; ++i)
-        if (!memcmp(scan.access_points[i], frame + bssid_offset, 6))
+
+    AccessPoint point;
+    uint8_t advertised_channel = 0;
+    if (!parse_beacon_elements(frame, frame_bytes, point, advertised_channel))
+        return;
+    uint8_t channel = receive_channel;
+    if (advertised_channel && advertised_channel != channel) {
+        const bool low_band_rx = channel <= low_band_channels;
+        if ((advertised_channel <= low_band_channels) == low_band_rx &&
+            scan_selected_channel(scan, advertised_channel))
+            channel = advertised_channel;
+        else if (low_band_rx)
             return;
-    if (scan.access_point_count == sizeof(scan.access_points) / sizeof(scan.access_points[0])) {
-        scan.access_points_truncated = true;
-        return;
     }
-    memcpy(scan.access_points[scan.access_point_count++], frame + bssid_offset, 6);
+    memcpy(point.bssid, frame + bssid_offset, sizeof(point.bssid));
+    point.frequency_mhz = channel_frequency(channel);
+    point.beacon_interval_tu = read16(frame + interval_offset);
+    point.capability = read16(frame + capability_offset);
+    point.probe_response = frame[0] == 0x50;
+    if (channel == receive_channel) {
+        for (unsigned i = 0; i < 2; ++i) {
+            const uint8_t attenuation = data[energy_offset + i];
+            if (attenuation && attenuation < 128)
+                point.signal_dbm = max(point.signal_dbm, int16_t(-attenuation));
+        }
+    }
+    store_access_point(scan, point);
 }
 } // namespace
 
@@ -115,7 +185,7 @@ void prepare_scan_station(const uint8_t (&address)[6], uint8_t (&command)[mac_co
 bool prepare_passive_scan(const NvmInfo& nvm, const RegulatoryProfile& profile, PassiveScan& scan,
                           uint8_t (&request)[passive_request_bytes]) {
     memset(request, 0, sizeof(request));
-    scan = {};
+    scan = PassiveScan{};
     for (unsigned i = 0; i < profile.channel_slots && i < sizeof(channel_order); ++i) {
         const bool low = i < low_band_channels;
         if (!(profile.flags[i] & 1) || !(nvm.bands & (low ? 1 : 2)))

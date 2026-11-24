@@ -37,6 +37,36 @@ void report(const char* status) {
     fb_console_put('\n');
 }
 
+void log_access_point(const AccessPoint& point) {
+    constexpr char hex[] = "0123456789abcdef";
+    char ssid[sizeof(point.ssid) * 4 + 1];
+    unsigned length = 0;
+    for (unsigned i = 0; i < point.ssid_length; ++i) {
+        const auto byte = point.ssid[i];
+        if (byte >= ' ' && byte <= '~' && byte != '"' && byte != '\\') {
+            ssid[length++] = char(byte);
+        } else {
+            ssid[length++] = '\\';
+            ssid[length++] = 'x';
+            ssid[length++] = hex[byte >> 4];
+            ssid[length++] = hex[byte & 0xf];
+        }
+    }
+    ssid[length] = '\0';
+    char bssid[18];
+    for (unsigned i = 0; i < sizeof(point.bssid); ++i) {
+        const auto byte = point.bssid[i];
+        bssid[i * 3] = hex[byte >> 4];
+        bssid[i * 3 + 1] = hex[byte & 0xf];
+        bssid[i * 3 + 2] = i == 5 ? '\0' : ':';
+    }
+    log("iwlwifi: BSS %s at %u MHz signal_dbm=%d interval_tu=%u capability=%x source=%s "
+        "ssid=\"%s\"\n",
+        bssid, uint64_t(point.frequency_mhz), int64_t(point.signal_dbm),
+        uint64_t(point.beacon_interval_tu), uint64_t(point.capability),
+        point.probe_response ? "probe" : "beacon", ssid);
+}
+
 bool device_powered(const PciFunction& pci) {
     unsigned end = 0;
     const unsigned pm = pci.find_capability(1, &end);
@@ -297,6 +327,8 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         log("iwlwifi: passive scan channels=%u access points=%u truncated=%u\n",
             uint64_t(result.passive.channel_count), uint64_t(result.passive.access_point_count),
             uint64_t(result.passive.access_points_truncated));
+        for (unsigned i = 0; i < result.passive.access_point_count; ++i)
+            log_access_point(result.passive.access_points[i]);
         if (result.passive.access_points_truncated) {
             report("at least 32 access points seen");
         } else {

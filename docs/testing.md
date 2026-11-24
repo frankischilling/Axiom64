@@ -2320,5 +2320,8 @@ invalid, or has no permitted channels.
 allowed by both the firmware's current regulatory profile and the adapter's
 band support. The screen reports completion and a bounded count of access
 points from valid beacons and probe responses. The adapter resets afterwards.
+The serial log lists each recorded BSSID, SSID, frequency, and signal. A
+signal of `-128` means the driver had no on-channel measurement. The log
+escapes non-printing bytes in network names.
 Run the check from the PXE RAM image for a physical test. Wi-Fi association
 and NetworkManager integration still require implementation.

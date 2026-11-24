@@ -388,11 +388,10 @@ const char* configure_scan_station(CommandSession& commands, uint8_t (&address)[
     return nullptr;
 }
 
-const char* run_passive_scan(CommandSession& commands, const NvmInfo& nvm,
-                             const RegulatoryProfile& regulatory, const uint8_t (&address)[6],
-                             PassiveScan& scan, uint32_t id) {
+const char* run_passive_scan(CommandSession& commands, const ScanChannelList& channels,
+                             const uint8_t (&address)[6], PassiveScan& scan, uint32_t id) {
     uint8_t request[passive_request_bytes];
-    if (!prepare_passive_scan(nvm, regulatory, scan, request, id))
+    if (!prepare_passive_scan(channels, scan, request, id, all_scan_channels))
         return "no permitted 2.4 or 5 GHz channels";
     memcpy(scan.station_address, address, sizeof(address));
 
@@ -507,17 +506,17 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                 if (!error && passive_check) {
                     uint8_t address[6];
                     error = configure_scan_station(commands, address);
+                    const auto channels = scan_channel_list(info, regulatory);
                     if (!error && live) {
-                        live->nvm = info;
-                        live->regulatory = regulatory;
+                        live->channels = channels;
                         memcpy(live->station_address, address, sizeof(address));
                         live->running = true;
                         return {"live passive scan ready", alive, false, true, info, regulatory};
                     }
                     const unsigned scans = scan->check == FirmwareCheck::rescan ? 2 : 1;
                     while (!error && completed_scans < scans) {
-                        error = run_passive_scan(commands, info, regulatory, address, passive,
-                                                 completed_scans);
+                        error =
+                            run_passive_scan(commands, channels, address, passive, completed_scans);
                         if (!error)
                             ++completed_scans;
                     }
@@ -560,7 +559,8 @@ bool stop_live_quz(LiveScanSession& session) {
     return stop_adapter(Registers{session.io}, true);
 }
 
-int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uint64_t now_ms) {
+int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uint64_t now_ms,
+                     uint64_t channels) {
     if (!session.running)
         return -95;
     if (session.active)
@@ -568,8 +568,8 @@ int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uin
 
     uint8_t request[passive_request_bytes];
     session.scan.elements = &elements;
-    if (!prepare_passive_scan(session.nvm, session.regulatory, session.scan, request,
-                              session.next_scan_id))
+    if (!prepare_passive_scan(session.channels, session.scan, request, session.next_scan_id,
+                              channels))
         return -22;
     memcpy(session.scan.station_address, session.station_address, sizeof(session.station_address));
     session.exchange.restart(session.next_command, now_ms);

@@ -22,6 +22,7 @@ constexpr uint8_t channel_order[]{
 
 constexpr unsigned low_band_channels = 14, channel_capacity = 67;
 constexpr uint8_t low_band = 1, high_band = 0;
+constexpr uint16_t channel_valid = 1, channel_radar = 1u << 4, channel_indoor = 1u << 5;
 constexpr uint16_t force_passive = 1u << 11, report_beacons = 1u << 1;
 constexpr unsigned request_header = 8, general_bytes = 36, channel_header = 4;
 constexpr unsigned channel_bytes = 8, schedule_bytes = 12, probe_bytes = 1344;
@@ -31,7 +32,7 @@ constexpr unsigned schedule = first_channel + channel_bytes * channel_capacity;
 constexpr unsigned beacon_header = 36;
 static_assert(schedule + schedule_bytes + probe_bytes == passive_request_bytes);
 static_assert(passive_request_bytes + 8 <= command_slot_bytes);
-static_assert(sizeof(channel_order) == sizeof(PassiveScan::channels));
+static_assert(sizeof(channel_order) == scan_channel_limit);
 
 uint16_t read16(const uint8_t* data) {
     return uint16_t(data[0] | (uint16_t(data[1]) << 8));
@@ -209,8 +210,25 @@ void prepare_scan_station(const uint8_t (&address)[6], uint8_t (&command)[mac_co
     command[52] = (1u << 2) | (1u << 6); // Receive group frames and beacons.
 }
 
-bool prepare_passive_scan(const NvmInfo& nvm, const RegulatoryProfile& profile, PassiveScan& scan,
-                          uint8_t (&request)[passive_request_bytes], uint32_t id) {
+ScanChannelList scan_channel_list(const NvmInfo& nvm, const RegulatoryProfile& profile) {
+    ScanChannelList list;
+    for (unsigned i = 0; i < profile.channel_slots && i < sizeof(channel_order); ++i) {
+        if (!(nvm.bands & (i < low_band_channels ? 1 : 2)))
+            continue;
+        const uint8_t channel = channel_order[i];
+        const uint16_t flags = profile.flags[i];
+        list.entries[list.count++] = {
+            channel_frequency(channel),   channel,
+            bool(flags & channel_valid),  bool(flags & channel_radar),
+            bool(flags & channel_indoor),
+        };
+    }
+    return list;
+}
+
+bool prepare_passive_scan(const ScanChannelList& list, PassiveScan& scan,
+                          uint8_t (&request)[passive_request_bytes], uint32_t id,
+                          uint64_t channels) {
     memset(request, 0, sizeof(request));
     auto* const elements = scan.elements;
     scan = PassiveScan{};
@@ -218,14 +236,13 @@ bool prepare_passive_scan(const NvmInfo& nvm, const RegulatoryProfile& profile, 
     scan.id = id;
     for (unsigned i = 0; i < 4; ++i)
         request[i] = uint8_t(id >> (8 * i));
-    for (unsigned i = 0; i < profile.channel_slots && i < sizeof(channel_order); ++i) {
-        const bool low = i < low_band_channels;
-        if (!(profile.flags[i] & 1) || !(nvm.bands & (low ? 1 : 2)))
+    for (unsigned i = 0; i < list.count; ++i) {
+        if (!list.entries[i].allowed || !(channels & (uint64_t(1) << i)))
             continue;
-        const uint8_t channel = channel_order[i];
+        const uint8_t channel = list.entries[i].number;
         auto* descriptor = request + first_channel + channel_bytes * scan.channel_count;
         descriptor[4] = channel;
-        descriptor[5] = low ? low_band : high_band;
+        descriptor[5] = channel <= low_band_channels ? low_band : high_band;
         descriptor[6] = 1; // One pass on each channel.
         scan.channels[scan.channel_count++] = channel;
     }

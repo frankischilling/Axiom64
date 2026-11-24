@@ -265,6 +265,7 @@ struct StartupFixture {
     CommandDescriptor commands[command_ring_entries]{};
     CommandPayloads payloads{};
     unsigned commands_sent = 0;
+    uint8_t scan_only_channel = 0;
     unsigned scan_delays = 0;
     bool malformed_nvm = false;
     bool wrong_sequence = false;
@@ -382,10 +383,17 @@ struct StartupFixture {
             expected[17] = 8;
             expected[44] = 6;
             expected[48] = expected[49] = 110;
-            expected[53] = 2;
-            expected[60] = expected[61] = expected[62] = 1;
-            expected[68] = 36;
-            expected[70] = 1;
+            if (scan_only_channel) {
+                expected[53] = 1;
+                expected[60] = scan_only_channel;
+                expected[61] = scan_only_channel <= 14;
+                expected[62] = 1;
+            } else {
+                expected[53] = 2;
+                expected[60] = expected[61] = expected[62] = 1;
+                expected[68] = 36;
+                expected[70] = 1;
+            }
             expected[594] = 1;
         }
         expected[4] = uint8_t(payload_bytes);
@@ -738,6 +746,19 @@ void check_live_scans() {
         assert(!model.scan_delays && session.running && model.master);
     }
     assert(model.commands_sent == 267 && session.next_command == 11);
+    assert(session.channels.entries[1].frequency_mhz == 2417 &&
+           !session.channels.entries[1].allowed);
+    assert(submit_live_scan(session, elements, 5500000, uint64_t(1) << 1) == -22);
+    assert(model.commands_sent == 267 && !session.active);
+    assert(session.channels.entries[14].frequency_mhz == 5180 &&
+           session.channels.entries[14].allowed);
+    model.scan_only_channel = 36;
+    assert(submit_live_scan(session, elements, 5500001, uint64_t(1) << 14) == 0);
+    assert(poll_live_scan(session, 5500051) == ScanOutcome::complete && !session.active);
+    assert(session.scan.channel_count == 1 && session.scan.channels[0] == 36);
+    assert(!session.scan.access_point_count);
+    model.scan_only_channel = 0;
+    std::puts("AX201_FILTERED_SCAN_MODEL_PASS");
     model.passive = ScanCase::timeout;
     assert(submit_live_scan(session, elements, 6000000) == 0);
     assert(poll_live_scan(session, 6000001) == ScanOutcome::pending);
@@ -745,6 +766,28 @@ void check_live_scans() {
     assert(stop_live_quz(session) && !session.running && model.reset_after_dma && !model.master);
     assert(submit_live_scan(session, elements, 6012002) == -95);
     std::puts("AX201_LIVE_SCAN_MODEL_PASS scans=260");
+}
+
+void check_scan_channels() {
+    NvmInfo nvm{};
+    nvm.bands = 3;
+    RegulatoryProfile profile{};
+    profile.channel_slots = regulatory_channel_limit;
+    profile.flags[13] = 1;
+    profile.flags[18] = 0x31;
+    const auto mixed = scan_channel_list(nvm, profile);
+    assert(mixed.count == scan_channel_limit);
+    assert(mixed.entries[13].number == 14 && mixed.entries[13].frequency_mhz == 2484 &&
+           mixed.entries[13].allowed);
+    assert(mixed.entries[18].number == 52 && mixed.entries[18].frequency_mhz == 5260 &&
+           mixed.entries[18].allowed && mixed.entries[18].radar && mixed.entries[18].indoor);
+    assert(!mixed.entries[19].allowed);
+    nvm.bands = 2;
+    const auto high_only = scan_channel_list(nvm, profile);
+    assert(high_only.count == scan_channel_limit - 14 &&
+           high_only.entries[0].frequency_mhz == 5180 && !high_only.entries[0].allowed);
+    assert(high_only.entries[4].frequency_mhz == 5260 && high_only.entries[4].allowed);
+    std::puts("AX201_SCAN_CHANNEL_MODEL_PASS");
 }
 
 void check_access_points() {
@@ -862,6 +905,7 @@ int main(int argc, char** argv) {
     check_boot_queues(image);
     check_startup();
     check_live_scans();
+    check_scan_channels();
     check_receive_recycling();
     check_access_points();
 

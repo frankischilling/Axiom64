@@ -369,7 +369,8 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         if (generic) {
             const size_t error_size =
                 socket->capped ? netlink_ack_size : 20 + aligned(header.length);
-            reply.capacity = max(generic_family_reply_size, error_size);
+            reply.capacity = max(max(generic_family_reply_size, error_size),
+                                 wireless_reply_capacity(header, bytes + at));
             reply.followup = (header.flags & 4) || (header.flags & 0x300) == 0x300;
         } else {
             reply.capacity = socket->capped && !routing_dump(header.type)

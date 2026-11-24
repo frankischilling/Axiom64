@@ -31,6 +31,7 @@ PciFunction adapter{};
 volatile uint32_t* adapter_registers;
 bool start_requested;
 PassiveScan completed_scan{};
+ScanChannelList radio_channels{};
 uint32_t completed_generation = 1;
 void poll_runtime(NetAdapter&);
 void stop_runtime(NetAdapter&);
@@ -389,6 +390,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         result.passive.status == PassiveScan::Status::complete) {
         release(completed_scan.elements);
         completed_scan = result.passive;
+        radio_channels = scan_channel_list(result.nvm, result.regulatory);
         elements = nullptr;
         const auto& passive = *passive_scan_snapshot();
         if (!scanned_adapter.info.index) {
@@ -518,6 +520,7 @@ void launch_live_firmware(const FirmwareImage& image) {
                    sizeof(device->session.station_address));
             if (net_register(scanned_adapter, "iwlwifi", &adapter)) {
                 scanned_adapter.receive_only_diagnostic = false;
+                radio_channels = device->session.channels;
                 completed_scan.status = PassiveScan::Status::complete;
             } else {
                 report("cannot register the live scan interface");
@@ -580,6 +583,10 @@ unsigned passive_scan_interface() {
     return scanned_adapter.info.index;
 }
 
+const ScanChannelList& scan_channel_inventory() {
+    return radio_channels;
+}
+
 uint32_t passive_scan_generation() {
     return completed_generation;
 }
@@ -588,7 +595,7 @@ bool live_scan_available() {
     return radio != nullptr;
 }
 
-int trigger_live_scan() {
+int trigger_live_scan(uint64_t channels) {
     if (!radio)
         return -95;
     if (!scanned_adapter.info.administrative)
@@ -598,7 +605,8 @@ int trigger_live_scan() {
     auto* elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
     if (!elements)
         return -12;
-    const int error = submit_live_scan(radio->session, *elements, clock_monotonic_ns() / 1000000);
+    const int error =
+        submit_live_scan(radio->session, *elements, clock_monotonic_ns() / 1000000, channels);
     if (error) {
         radio->session.scan.elements = nullptr;
         release(elements);

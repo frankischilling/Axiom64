@@ -13,8 +13,7 @@
 namespace ax::IntelWifi {
 struct LiveScanSession {
     ReceiveReader receive;
-    NvmInfo nvm{};
-    RegulatoryProfile regulatory{};
+    ScanChannelList channels{};
     uint8_t station_address[6]{};
     uint16_t next_command = 0;
     uint32_t next_scan_id = 0;
@@ -33,6 +32,7 @@ struct LiveScanSession {
 
 FirmwareBootResult start_live_quz(LiveScanSession&, const AntennaMasks&);
 bool stop_live_quz(LiveScanSession&);
-int submit_live_scan(LiveScanSession&, ScanElementStorage&, uint64_t now_ms);
+int submit_live_scan(LiveScanSession&, ScanElementStorage&, uint64_t now_ms,
+                     uint64_t channels = all_scan_channels);
 ScanOutcome poll_live_scan(LiveScanSession&, uint64_t now_ms);
 } // namespace ax::IntelWifi

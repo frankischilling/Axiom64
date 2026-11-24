@@ -2342,9 +2342,12 @@ the driver still owns.
 
 After the radio stops, the kernel exposes the snapshot through Linux's
 `nl80211` interface. The diagnostic publishes `wlan0` and supports reading
-its radio, interface, and scan results. `GET_SCAN` streams results as
-multipart records, including original beacon and probe-response data when
-available. The interface stays down and rejects requests to bring it up.
+its radio, interface, and scan results. Radio queries list both supported
+bands and the channels currently permitted by firmware. Disabled channels
+are marked, and the diagnostic reports passive-only operation. `GET_SCAN`
+streams multipart results with the original beacon and probe-response
+data when available. The interface stays down and rejects requests to
+bring it up.
 Boot without the passive scan option for the normal device inventory.
 
 Run the userspace scan check from the PXE RAM image on the Blade. The output
@@ -2357,4 +2360,6 @@ scans after login. Bring `wlan0` up and run the userspace scan check with
 scan across the permitted channels, and prints the number of access
 points after receiving the completion event. A second request while a
 scan is running returns `EBUSY`. If a scan aborts, readers can still
-query the last successful snapshot.
+query the last successful snapshot. A request can also select frequencies
+in MHz. It skips disabled channels and rejects empty lists, unknown or
+duplicate frequencies, and selections with no permitted channels.

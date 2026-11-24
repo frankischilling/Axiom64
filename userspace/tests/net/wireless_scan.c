@@ -24,7 +24,7 @@
 struct packet {
     struct nlmsghdr header;
     struct genlmsghdr generic;
-    uint8_t attrs[24];
+    uint8_t attrs[32];
 };
 
 static void require(int condition, const char* message) {
@@ -34,23 +34,39 @@ static void require(int condition, const char* message) {
     }
 }
 
-static void send_request(int fd, uint16_t family, uint8_t command, uint16_t flags,
-                         uint32_t sequence, uint16_t type, const void* value, size_t size) {
+static struct packet make_request(uint16_t family, uint8_t command, uint16_t flags,
+                                  uint32_t sequence) {
     struct packet request = {0};
     request.header.nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
     request.header.nlmsg_type = family;
     request.header.nlmsg_flags = NLM_F_REQUEST | flags;
     request.header.nlmsg_seq = sequence;
     request.generic.cmd = command;
-    if (type) {
-        struct nlattr attr = {.nla_len = (uint16_t)(NLA_HDRLEN + size), .nla_type = type};
-        require(NLA_ALIGN(size + NLA_HDRLEN) <= sizeof(request.attrs), "request attribute fits");
-        memcpy(request.attrs, &attr, sizeof(attr));
-        memcpy(request.attrs + NLA_HDRLEN, value, size);
-        request.header.nlmsg_len += NLA_ALIGN(attr.nla_len);
-    }
-    require(send(fd, &request, request.header.nlmsg_len, 0) == (ssize_t)request.header.nlmsg_len,
-            "send request");
+    return request;
+}
+
+static void append_attribute(struct packet* request, uint16_t type, const void* value,
+                             size_t size) {
+    const size_t offset = request->header.nlmsg_len - NLMSG_LENGTH(GENL_HDRLEN);
+    const struct nlattr attr = {.nla_len = (uint16_t)(NLA_HDRLEN + size), .nla_type = type};
+    require(offset + NLA_ALIGN(attr.nla_len) <= sizeof(request->attrs), "request attribute fits");
+    memcpy(request->attrs + offset, &attr, sizeof(attr));
+    if (size)
+        memcpy(request->attrs + offset + NLA_HDRLEN, value, size);
+    request->header.nlmsg_len += NLA_ALIGN(attr.nla_len);
+}
+
+static void send_packet(int fd, const struct packet* request) {
+    const size_t size = request->header.nlmsg_len;
+    require(send(fd, request, size, 0) == (ssize_t)size, "send request");
+}
+
+static void send_request(int fd, uint16_t family, uint8_t command, uint16_t flags,
+                         uint32_t sequence, uint16_t type, const void* value, size_t size) {
+    struct packet request = make_request(family, command, flags, sequence);
+    if (type)
+        append_attribute(&request, type, value, size);
+    send_packet(fd, &request);
 }
 
 static const struct nlattr* attribute(const void* bytes, size_t size, uint16_t type) {
@@ -70,6 +86,17 @@ static const struct nlattr* attribute(const void* bytes, size_t size, uint16_t t
 static const void* payload(const struct nlattr* attr, size_t size) {
     require(attr && (size_t)attr->nla_len == size + NLA_HDRLEN, "attribute payload size");
     return (const uint8_t*)attr + NLA_HDRLEN;
+}
+
+static const struct nlattr* nested(const struct nlattr* parent, uint16_t type) {
+    require(parent && parent->nla_len >= NLA_HDRLEN, "nested parent");
+    return attribute((const uint8_t*)parent + NLA_HDRLEN, parent->nla_len - NLA_HDRLEN, type);
+}
+
+static uint32_t read_u32(const struct nlattr* field) {
+    uint32_t value;
+    memcpy(&value, payload(field, sizeof(value)), sizeof(value));
+    return value;
 }
 
 static const struct nlattr* message_attribute(const struct nlmsghdr* message, uint16_t type) {
@@ -151,8 +178,56 @@ static void check_family_dump(int fd, unsigned family) {
     require(controller == 1 && wireless == 1, "both families appear once");
 }
 
-static void check_interface(int fd, unsigned family, unsigned index) {
-    alignas(struct nlmsghdr) uint8_t bytes[1024];
+static void check_radio(const struct nlmsghdr* message, int live, int fixture) {
+    const struct nlattr* bands = message_attribute(message, NL80211_ATTR_WIPHY_BANDS);
+    const uint8_t* max_ssids =
+        payload(message_attribute(message, NL80211_ATTR_MAX_NUM_SCAN_SSIDS), 1);
+    require(*max_ssids == 0, "radio advertises passive scanning");
+    const struct nlattr* commands = message_attribute(message, NL80211_ATTR_SUPPORTED_COMMANDS);
+    if (live)
+        require(read_u32(nested(commands, 1)) == NL80211_CMD_TRIGGER_SCAN,
+                "radio advertises live scan requests");
+    else
+        require(!commands, "cached radio lacks live scan commands");
+
+    unsigned total = 0;
+    for (unsigned i = 0; i <= NL80211_BAND_5GHZ; ++i) {
+        const struct nlattr* band = nested(bands, i);
+        if (!band) {
+            require(!fixture, "fixture has both bands");
+            continue;
+        }
+        const struct nlattr* rates = nested(band, NL80211_BAND_ATTR_RATES);
+        const struct nlattr* frequencies = nested(band, NL80211_BAND_ATTR_FREQS);
+        require(read_u32(nested(nested(rates, 1), NL80211_BITRATE_ATTR_RATE)) == (i ? 60u : 10u),
+                "band has appropriate legacy rates");
+        unsigned count = 0;
+        const struct nlattr* entry;
+        while ((entry = nested(frequencies, count + 1))) {
+            ++count;
+            const uint32_t mhz = read_u32(nested(entry, NL80211_FREQUENCY_ATTR_FREQ));
+            require((mhz >= 5000) == (i == NL80211_BAND_5GHZ), "frequency matches its band");
+            const int disabled = nested(entry, NL80211_FREQUENCY_ATTR_DISABLED) != NULL;
+            const int no_ir = nested(entry, NL80211_FREQUENCY_ATTR_NO_IR) != NULL;
+            require(disabled || no_ir, "driver does not permit transmission");
+            if (fixture) {
+                require(disabled == (mhz == 2417), "firmware disabled channel preserved");
+                require((nested(entry, NL80211_FREQUENCY_ATTR_RADAR) != NULL) == (mhz == 5260) &&
+                            (nested(entry, NL80211_FREQUENCY_ATTR_INDOOR_ONLY) != NULL) ==
+                                (mhz == 5260),
+                        "firmware radar and indoor constraints preserved");
+            }
+        }
+        if (fixture)
+            require(count == (i ? 37u : 14u), "full band channel list fits");
+        total += count;
+    }
+    require(total, "radio reports channels");
+    puts("WIRELESS_RADIO_CHANNELS_PASS");
+}
+
+static void check_interface(int fd, unsigned family, unsigned index, int live, int fixture) {
+    alignas(struct nlmsghdr) uint8_t bytes[8192];
     uint32_t reported;
     send_request(fd, family, NL80211_CMD_GET_INTERFACE, 0, 2, NL80211_ATTR_IFINDEX, &index,
                  sizeof(index));
@@ -171,6 +246,7 @@ static void check_interface(int fd, unsigned family, unsigned index) {
                 generic->cmd == NL80211_CMD_NEW_WIPHY &&
                 !memcmp(payload(message_attribute(message, NL80211_ATTR_WIPHY_NAME), 5), "phy0", 5),
             "read associated radio");
+    check_radio(message, live, fixture);
 }
 
 static void check_bss(const struct nlmsghdr* message, unsigned number, int fixture) {
@@ -262,25 +338,38 @@ static void trigger(int fd, unsigned family, unsigned index, unsigned sequence, 
 }
 
 static void reject_active_scan(int fd, unsigned family, unsigned index) {
-    struct packet request = {
-        .header = {.nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN + 16),
-                   .nlmsg_type = family,
-                   .nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK,
-                   .nlmsg_seq = 15},
-        .generic = {.cmd = NL80211_CMD_TRIGGER_SCAN},
-    };
-    const struct nlattr interface = {.nla_len = 8, .nla_type = NL80211_ATTR_IFINDEX};
-    const struct nlattr list = {.nla_len = 8, .nla_type = NL80211_ATTR_SCAN_SSIDS | NLA_F_NESTED};
+    struct packet request = make_request(family, NL80211_CMD_TRIGGER_SCAN, NLM_F_ACK, 15);
     const struct nlattr wildcard = {.nla_len = 4, .nla_type = 1};
-    memcpy(request.attrs, &interface, sizeof(interface));
-    memcpy(request.attrs + 4, &index, sizeof(index));
-    memcpy(request.attrs + 8, &list, sizeof(list));
-    memcpy(request.attrs + 12, &wildcard, sizeof(wildcard));
-    require(send(fd, &request, request.header.nlmsg_len, 0) == (ssize_t)request.header.nlmsg_len,
-            "send active scan request");
+    append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&request, NL80211_ATTR_SCAN_SSIDS | NLA_F_NESTED, &wildcard, sizeof(wildcard));
+    send_packet(fd, &request);
     alignas(struct nlmsghdr) uint8_t bytes[1024];
     receive(fd, bytes, sizeof(bytes), 0);
     check_error((const struct nlmsghdr*)bytes, EOPNOTSUPP);
+}
+
+static void trigger_filtered(int fd, unsigned family, unsigned index, unsigned sequence,
+                             unsigned count, uint32_t first, uint32_t second, int malformed,
+                             int error) {
+    struct packet request = make_request(family, NL80211_CMD_TRIGGER_SCAN, NLM_F_ACK, sequence);
+
+    const struct {
+        struct nlattr field;
+        uint32_t frequency;
+    } entries[] = {
+        {{.nla_len = malformed ? 7 : 8, .nla_type = 1}, first},
+        {{.nla_len = 8, .nla_type = 2}, second},
+    };
+
+    append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&request, NL80211_ATTR_SCAN_FREQUENCIES | NLA_F_NESTED, entries,
+                     count * sizeof(entries[0]));
+    send_packet(fd, &request);
+    alignas(struct nlmsghdr) uint8_t bytes[1024];
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    require(message->nlmsg_seq == sequence, "filtered scan acknowledgment sequence");
+    check_error(message, error);
 }
 
 static void scan_event(int fd, unsigned family, unsigned index, unsigned command) {
@@ -307,12 +396,18 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
     int dump = -1;
     if (fixture) {
         reject_active_scan(fd, family, index);
+        trigger_filtered(fd, family, index, 31, 0, 0, 0, 0, EINVAL);
+        trigger_filtered(fd, family, index, 32, 1, 5260, 0, 1, EINVAL);
+        trigger_filtered(fd, family, index, 33, 1, 1234, 0, 0, EINVAL);
+        trigger_filtered(fd, family, index, 34, 1, 2417, 0, 0, EINVAL);
+        trigger_filtered(fd, family, index, 35, 2, 5260, 5260, 0, EINVAL);
         dump = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
         require(dump >= 0, "open concurrent dump socket");
         send_request(dump, family, NL80211_CMD_GET_SCAN, NLM_F_DUMP, 20, NL80211_ATTR_IFINDEX,
                      &index, sizeof(index));
-    }
-    trigger(fd, family, index, 11, 0);
+        trigger_filtered(fd, family, index, 11, 2, 2417, 5260, 0, 0);
+    } else
+        trigger(fd, family, index, 11, 0);
     if (fixture)
         trigger(fd, family, index, 12, EBUSY);
     scan_event(fd, family, index, NL80211_CMD_NEW_SCAN_RESULTS);
@@ -352,7 +447,8 @@ int main(int argc, char** argv) {
         const unsigned index = if_nametoindex("wlan0");
         require(index, "wireless interface detected");
         check_family_dump(fd, family);
-        check_interface(fd, family, index);
+        check_interface(fd, family, index, live || live_fixture,
+                        live_fixture || (!observed && !live));
         if (live || live_fixture)
             check_live(fd, family, index, group, live_fixture);
         else

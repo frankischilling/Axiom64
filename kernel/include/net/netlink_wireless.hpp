@@ -26,6 +26,7 @@ struct WirelessDump {
 
 bool wireless_scan_available();
 bool wireless_trigger_available();
+size_t wireless_reply_capacity(const NetlinkHeader&, const uint8_t* request);
 size_t wireless_reply(const void*, const NetlinkHeader&, uint32_t port, bool capped,
                       bool privileged, void*, void* followup, size_t& followup_length,
                       WirelessDump&);

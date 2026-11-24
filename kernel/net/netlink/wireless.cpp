@@ -20,9 +20,14 @@ enum Attribute : uint16_t {
     ifname = 4,
     iftype = 5,
     mac = 6,
+    wiphy_bands = 22,
     supported_iftypes = 32,
+    max_num_scan_ssids = 43,
+    scan_frequencies = 44,
+    scan_ssids = 45,
     generation = 46,
     bss = 47,
+    supported_commands = 50,
     wdev = 153,
     scan_flags = 158,
 };
@@ -42,6 +47,21 @@ constexpr uint32_t station = 2;
 constexpr uint64_t device_id = 1;
 constexpr uint16_t multipart = 2, dump_flags = 0x300;
 constexpr uint8_t new_wiphy = 3, new_interface = 7, new_scan_results = 34, scan_aborted = 35;
+constexpr size_t radio_reply_size = 2048;
+// Each channel needs at most 24 bytes, and band headers and rates fit in 512.
+static_assert(radio_reply_size >= 24 * IntelWifi::scan_channel_limit + 512);
+
+enum BandAttribute : uint16_t { band_frequencies = 1, band_rates = 2 };
+
+enum RateAttribute : uint16_t { rate_tenths_mbps = 1, rate_short_preamble = 2 };
+
+enum FrequencyAttribute : uint16_t {
+    center_frequency = 1,
+    frequency_disabled = 2,
+    frequency_no_ir = 3,
+    frequency_radar = 5,
+    frequency_indoor = 14,
+};
 
 struct AttributeHeader {
     uint16_t length, type;
@@ -95,8 +115,37 @@ class Message {
     }
 };
 
-int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsigned index) {
+int select_frequencies(const uint8_t* bytes, size_t length, uint64_t& channels) {
+    constexpr size_t entry_bytes = sizeof(AttributeHeader) + sizeof(uint32_t);
+    if (!length || length % entry_bytes)
+        return -22;
+    const auto& list = IntelWifi::scan_channel_inventory();
+    uint64_t seen = 0;
+    channels = 0;
+    for (size_t offset = 0; offset < length; offset += entry_bytes) {
+        AttributeHeader field;
+        uint32_t mhz;
+        memcpy(&field, bytes + offset, sizeof(field));
+        memcpy(&mhz, bytes + offset + sizeof(field), sizeof(mhz));
+        if (field.length != entry_bytes || (field.type & 0xc000))
+            return -22;
+        unsigned i = 0;
+        while (i < list.count && list.entries[i].frequency_mhz != mhz)
+            ++i;
+        const uint64_t bit = uint64_t(1) << i;
+        if (i == list.count || (seen & bit))
+            return -22;
+        seen |= bit;
+        if (list.entries[i].allowed)
+            channels |= bit;
+    }
+    return channels ? 0 : -22;
+}
+
+int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsigned index,
+           uint64_t& channels) {
     bool selected_phy = false, selected_device = false;
+    bool frequencies_seen = false;
     while (length) {
         if (length < sizeof(AttributeHeader))
             return -22;
@@ -140,8 +189,20 @@ int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsi
                     return -95;
             }
             break;
+        case scan_frequencies:
+            if (command == nl80211_trigger_scan) {
+                if (frequencies_seen)
+                    return -22;
+                if (const int error = select_frequencies(value, size, channels))
+                    return error;
+                frequencies_seen = true;
+            }
+            break;
+        case scan_ssids:
+            if (command == nl80211_trigger_scan && size)
+                return -95;
+            break;
         default:
-            // This driver accepts a passive scan of all permitted channels.
             if (command == nl80211_trigger_scan)
                 return -95;
             break;
@@ -152,6 +213,48 @@ int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsi
     if (command == nl80211_get_wiphy)
         return dump || selected_device || selected_phy ? 0 : -22;
     return selected_device || (dump && command == nl80211_get_interface) ? 0 : -22;
+}
+
+void radio_band(Message& message, const IntelWifi::ScanChannelList& list, uint16_t band) {
+    unsigned first = 0;
+    const auto band_of = [](const IntelWifi::ScanChannel& channel) {
+        return uint16_t(channel.frequency_mhz >= 5000);
+    };
+    while (first < list.count && band_of(list.entries[first]) != band)
+        ++first;
+    if (first == list.count)
+        return;
+    const size_t band_start = message.begin_nested(band);
+    const size_t frequencies = message.begin_nested(band_frequencies);
+    for (unsigned i = first; i < list.count && band_of(list.entries[i]) == band; ++i) {
+        const auto& channel = list.entries[i];
+        const size_t entry = message.begin_nested(uint16_t(i - first + 1));
+        message.value(center_frequency, uint32_t(channel.frequency_mhz));
+        if (!channel.allowed) {
+            message.attr(frequency_disabled, nullptr, 0);
+        } else {
+            message.attr(frequency_no_ir, nullptr, 0);
+            if (channel.radar)
+                message.attr(frequency_radar, nullptr, 0);
+            if (channel.indoor)
+                message.attr(frequency_indoor, nullptr, 0);
+        }
+        message.end_nested(entry);
+    }
+    message.end_nested(frequencies);
+
+    constexpr uint32_t rates[]{10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540};
+    const size_t rates_start = message.begin_nested(band_rates);
+    const unsigned first_rate = band ? 4 : 0;
+    for (unsigned i = first_rate; i < sizeof(rates) / sizeof(rates[0]); ++i) {
+        const size_t entry = message.begin_nested(uint16_t(i - first_rate + 1));
+        message.value(rate_tenths_mbps, rates[i]);
+        if (i && i < 4)
+            message.attr(rate_short_preamble, nullptr, 0);
+        message.end_nested(entry);
+    }
+    message.end_nested(rates_start);
+    message.end_nested(band_start);
 }
 
 size_t dump_done(void* output, uint32_t sequence, uint32_t port, bool interrupted = false) {
@@ -173,6 +276,13 @@ bool wireless_trigger_available() {
     return IntelWifi::live_scan_available();
 }
 
+size_t wireless_reply_capacity(const NetlinkHeader& header, const uint8_t* request) {
+    return header.type == nl80211_family && header.length >= sizeof(header) + 4 &&
+                   request[sizeof(header)] == nl80211_get_wiphy
+               ? radio_reply_size
+               : 0;
+}
+
 size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t port, bool capped,
                       bool privileged, void* reply, void* followup, size_t& followup_length,
                       WirelessDump& cursor) {
@@ -192,7 +302,9 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         return netlink_ack(data, request, port, -95, capped, reply);
     if (trigger && !privileged)
         return netlink_ack(data, request, port, -1, capped, reply);
-    if (int error = select(bytes + header, request.length - header, command, dump, info->index))
+    uint64_t channels = IntelWifi::all_scan_channels;
+    if (int error =
+            select(bytes + header, request.length - header, command, dump, info->index, channels))
         return netlink_ack(data, request, port, error, capped, reply);
     if (command == nl80211_get_scan) {
         if (cursor.active)
@@ -201,7 +313,7 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         return 0;
     }
     if (trigger) {
-        const int status = IntelWifi::trigger_live_scan();
+        const int status = IntelWifi::trigger_live_scan(channels);
         if (status || (request.flags & 4))
             return netlink_ack(data, request, port, status, capped, reply);
         return 0;
@@ -219,6 +331,17 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         const size_t types = message.begin_nested(supported_iftypes);
         message.attr(station, nullptr, 0);
         message.end_nested(types);
+        message.value(max_num_scan_ssids, uint8_t(0));
+        const size_t bands = message.begin_nested(wiphy_bands);
+        const auto& list = IntelWifi::scan_channel_inventory();
+        radio_band(message, list, 0);
+        radio_band(message, list, 1);
+        message.end_nested(bands);
+        if (wireless_trigger_available()) {
+            const size_t commands = message.begin_nested(supported_commands);
+            message.value(1, uint32_t(nl80211_trigger_scan));
+            message.end_nested(commands);
+        }
         return message.finish(new_wiphy, request.sequence, port, dump);
     }
     message.value(ifindex, uint32_t(info->index));

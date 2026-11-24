@@ -211,7 +211,7 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
         const bool device = field.type == ifindex || field.type == wdev;
         if (command == nl80211_disconnect && !device && field.type != reason_code)
             return -95;
-        if (command == nl80211_get_station && !device && field.type != mac)
+        if (command == nl80211_get_station && !device && field.type != mac && field.type != wiphy)
             return -95;
         if (command == nl80211_set_station && !device && field.type != mac &&
             field.type != station_flags)
@@ -221,6 +221,17 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
             return -22;
         seen[field.type] = true;
         switch (field.type) {
+        case wiphy: {
+            if (command != nl80211_get_station)
+                return -95;
+            uint32_t phy;
+            if (size != sizeof(phy))
+                return -22;
+            memcpy(&phy, value, sizeof(phy));
+            if (phy != 0)
+                return -19;
+            break;
+        }
         case ifindex:
         case frequency_mhz:
         case frequency_hint:

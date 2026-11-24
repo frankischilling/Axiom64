@@ -664,8 +664,12 @@ static void check_station_query(int fd, unsigned family, unsigned index, const u
         struct packet request = make_request(family, NL80211_CMD_GET_STATION,
                                              dump ? NLM_F_DUMP : NLM_F_ACK, 118 + dump);
         append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
-        if (!dump)
+        if (dump) {
+            const uint32_t phy = 0;
+            append_attribute(&request, NL80211_ATTR_WIPHY, &phy, sizeof(phy));
+        } else {
             append_attribute(&request, NL80211_ATTR_MAC, peer, 6);
+        }
         send_packet(fd, &request);
         alignas(struct nlmsghdr) uint8_t bytes[1024];
         receive(fd, bytes, sizeof(bytes), 0);
@@ -715,6 +719,10 @@ static void check_station_query_empty(int fd, unsigned family, unsigned index,
     request.header.nlmsg_seq++;
     append_attribute(&request, NL80211_ATTR_MAC, peer, 6);
     check_station_ack(fd, &request, ENOENT);
+    request.header.nlmsg_seq++;
+    const uint32_t wrong_phy = 1;
+    append_attribute(&request, NL80211_ATTR_WIPHY, &wrong_phy, sizeof(wrong_phy));
+    check_station_ack(fd, &request, ENODEV);
 }
 
 static void check_connection(int fd, unsigned family, unsigned index, int verify_station) {

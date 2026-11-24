@@ -1576,9 +1576,11 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
     CommandSession commands{reg, session.receive, session.next_command};
     if (!commands.acknowledge_pending())
         return LeaveOutcome::failed;
+    const auto after_drain =
+        leave.send_deauthentication ? LeavePhase::deauthenticate : LeavePhase::clear_mac;
     if (leave.phase == LeavePhase::drain) {
         if (!station.pending_bytes)
-            leave.phase = LeavePhase::deauthenticate;
+            leave.phase = after_drain;
         else
             leave.deadline = station.transmit_deadline;
     }
@@ -1609,6 +1611,8 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
             const auto bytes = station.pending_bytes;
             station.pending_bytes = 0;
             complete(context, bytes, event == AuthEvent::denied);
+            leave.phase = after_drain;
+            return LeaveOutcome::pending;
         }
         if (leave.phase == LeavePhase::remove_phy) {
             erase_key_bytes(&station.keys, sizeof(station.keys));
@@ -1676,11 +1680,15 @@ uint64_t station_beacon_timeout(const LiveStation& station) {
     return max(3000u, 8u * station.peer.beacon_interval_tu * 1024 / 1000);
 }
 
+void leave_after_link_loss(LiveScanSession& session, uint16_t reason, bool from_ap) {
+    session.leave = {LeavePhase::drain, reason};
+    session.leave.send_deauthentication = false;
+    session.leave.from_ap = from_ap;
+}
+
 bool observe_station_packet(LiveScanSession& session, const FirmwarePacket& packet, uint64_t now_ms,
                             const StationEvents& events) {
     auto& station = session.station;
-    if (observe_station_disconnect(packet, session.station_address, station.peer, station.channel))
-        return false;
     if (station.pending_bytes) {
         const auto tx = observe_authentication_tx(packet, station.queue);
         if (tx == AuthEvent::malformed)
@@ -1691,6 +1699,14 @@ bool observe_station_packet(LiveScanSession& session, const FirmwarePacket& pack
             ++station.queue.write_pointer;
             events.complete(events.context, bytes, tx == AuthEvent::denied);
         }
+    }
+    if (session.leave.phase != LeavePhase::idle)
+        return true;
+    uint16_t reason;
+    if (observe_station_disconnect(packet, session.station_address, station.peer, station.channel,
+                                   reason)) {
+        leave_after_link_loss(session, reason, true);
+        return true;
     }
     AssociationTiming timing;
     if (observe_association_beacon(packet, station.peer, station.channel, timing))
@@ -1726,9 +1742,14 @@ bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
             break;
         if (!observe_station_packet(session, packet, now_ms, {context, receive, complete}))
             return false;
+        if (session.leave.phase != LeavePhase::idle)
+            return true;
     }
-    return now_ms < station.beacon_deadline &&
-           (!station.pending_bytes || now_ms < station.transmit_deadline);
+    if (station.pending_bytes && now_ms >= station.transmit_deadline)
+        return false;
+    if (now_ms >= station.beacon_deadline)
+        leave_after_link_loss(session, 0, false);
+    return true;
 }
 
 StationKeyResult change_station_key(LiveScanSession& session, const StationKeyRequest& request,
@@ -1772,6 +1793,8 @@ StationKeyResult change_station_key(LiveScanSession& session, const StationKeyRe
     for (unsigned elapsed = 0; elapsed < 200; ++elapsed) {
         if (!commands.acknowledge_pending())
             return {-5, true};
+        if (!submitted && session.leave.phase != LeavePhase::idle)
+            return {-107};
         if (!submitted && !station.pending_bytes) {
             uint8_t wire[key_command_bytes];
             const bool prepared = install
@@ -1811,7 +1834,7 @@ StationKeyResult change_station_key(LiveScanSession& session, const StationKeyRe
                     } else if (!request.group) {
                         station.port_authorized = false;
                     }
-                    return {0};
+                    return {session.leave.phase == LeavePhase::idle ? 0 : -107};
                 }
             }
             if (!observe_station_packet(session, packet, now_ms + elapsed,

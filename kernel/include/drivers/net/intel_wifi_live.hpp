@@ -96,6 +96,8 @@ struct StationLeave {
     bool submitted = false;
     unsigned key_slot = 0;
     uint64_t deadline = 0;
+    bool send_deauthentication = true;
+    bool from_ap = false;
 };
 
 struct LiveScanSession {

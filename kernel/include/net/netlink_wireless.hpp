@@ -47,7 +47,7 @@ struct WirelessElements {
 void wireless_connection_finished(unsigned ifindex, const uint8_t (&bssid)[6], uint16_t status,
                                   bool timeout, WirelessElements request,
                                   WirelessElements response);
-void wireless_disconnected(unsigned ifindex, uint16_t reason = 1);
+void wireless_disconnected(unsigned ifindex, uint16_t reason = 1, bool from_ap = false);
 void wireless_socket_closed(unsigned port);
 void netlink_broadcast_wireless(unsigned group, const void*, size_t);
 } // namespace ax

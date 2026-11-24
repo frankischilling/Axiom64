@@ -552,10 +552,13 @@ AuthEvent management_reply(const FirmwarePacket& packet, const uint8_t (&station
 } // namespace
 
 bool observe_station_disconnect(const FirmwarePacket& packet, const uint8_t (&station)[6],
-                                const AccessPoint& peer, uint8_t channel) {
+                                const AccessPoint& peer, uint8_t channel, uint16_t& reason) {
     const uint8_t* body = nullptr;
-    return management_reply(packet, station, peer, channel, 0xc0, body, 2) == AuthEvent::accepted ||
-           management_reply(packet, station, peer, channel, 0xa0, body, 2) == AuthEvent::accepted;
+    if (management_reply(packet, station, peer, channel, 0xc0, body, 2) != AuthEvent::accepted &&
+        management_reply(packet, station, peer, channel, 0xa0, body, 2) != AuthEvent::accepted)
+        return false;
+    reason = read16(body);
+    return true;
 }
 
 AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],

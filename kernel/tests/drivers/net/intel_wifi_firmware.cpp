@@ -1546,7 +1546,7 @@ void check_open_station() {
                 auto* packet = model.reply_buffer(index - 1);
                 const uint8_t disconnect[]{0xc0, 0, 0, 0,    2, 0x11, 0x22, 0x33, 0x44,
                                            0x55, 2, 0, 0,    0, 0,    0x11, 2,    0,
-                                           0,    0, 0, 0x11, 0, 0,    3,    0};
+                                           0,    0, 0, 0x11, 0, 0,    8,    0};
                 packet[0] = 4 + 48 + sizeof(disconnect);
                 packet[4] = 0xc1;
                 packet[7] = 0x80;
@@ -1556,9 +1556,14 @@ void check_open_station() {
                 memcpy(packet + 8 + 48, disconnect, sizeof(disconnect));
                 model.used[index] = index + 1;
                 model.receive_status.closed_buffer = uint16_t(index + 1);
-                assert(!poll(25));
+                assert(poll(25));
+                assert(session.leave.phase == LeavePhase::drain && session.leave.from_ap);
+                assert(session.leave.reason == 8 && !session.leave.send_deauthentication);
             } else {
-                assert(poll(3000) && !poll(3022));
+                assert(poll(3000) && session.leave.phase == LeavePhase::idle);
+                assert(poll(3022) && session.leave.phase == LeavePhase::drain);
+                assert(!session.leave.reason && !session.leave.from_ap &&
+                       !session.leave.send_deauthentication);
             }
         }
         assert(stop_live_quz(session) && !session.running && !model.master &&
@@ -1569,7 +1574,7 @@ void check_open_station() {
 }
 
 void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanElementStorage& scan,
-                          const StationRequest& request, ArpCase pending) {
+                          const StationRequest& request, ArpCase pending, bool missed_beacons) {
     const uint8_t arp[]{
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0x11, 0x22, 0x33, 0x44, 0x55, 8,    6,
         0,    1,    8,    0,    6,    4,    0, 1,    2,    0x11, 0x22, 0x33, 0x44, 0x55,
@@ -1579,7 +1584,17 @@ void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanE
         assert(submit_live_data(session, arp, sizeof(arp), 25) == 0);
     model.disconnect_reason = 8;
     assert(submit_live_leave(session, 0) == -22);
-    assert(submit_live_leave(session, model.disconnect_reason) == 0);
+    const auto transmissions = model.authentication_rx_buffers;
+    uint64_t now = 27;
+    if (missed_beacons) {
+        assert(pending == ArpCase::unused);
+        assert(poll_live_station(session, now, nullptr, nullptr, nullptr));
+        now += 3000;
+        assert(poll_live_station(session, now, nullptr, nullptr, nullptr));
+        assert(session.leave.phase == LeavePhase::drain && !session.leave.send_deauthentication);
+    } else {
+        assert(submit_live_leave(session, model.disconnect_reason) == 0);
+    }
     assert(submit_live_leave(session, model.disconnect_reason) == -16);
     assert(submit_live_join(session, session.scan, request) == -16);
     assert(submit_live_scan(session, scan, 26) == -16);
@@ -1591,7 +1606,7 @@ void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanE
         assert(length == 42 && failed);
         ++*static_cast<unsigned*>(context);
     };
-    auto result = poll_live_leave(session, 27, &completions, complete);
+    auto result = poll_live_leave(session, now, &completions, complete);
     if (pending == ArpCase::missing_completion) {
         assert(result == LeaveOutcome::pending);
         assert(poll_live_leave(session, 1025, &completions, complete) == LeaveOutcome::failed);
@@ -1599,21 +1614,22 @@ void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanE
         assert(model.commands_sent == 19 && model.authentication_rx_buffers == 3);
         return;
     }
-    for (uint64_t now = 28; now < 100 && result == LeaveOutcome::pending; ++now)
-        result = poll_live_leave(session, now, &completions, complete);
+    for (const auto deadline = now + 72; now < deadline && result == LeaveOutcome::pending;)
+        result = poll_live_leave(session, ++now, &completions, complete);
     assert(result == LeaveOutcome::disconnected && completions == (pending != ArpCase::unused));
     assert(!session.station.queue.id && !session.station.management.id && !model.requested_stop);
     assert(model.commands_sent == 25 && submit_live_leave(session, 3) == 0);
+    assert(model.authentication_rx_buffers == transmissions + !missed_beacons);
 
     model.rejoin_command_offset = model.commands_sent - 7;
     model.rejoin_rx_offset = model.authentication_rx_buffers;
     model.authentication_rx_buffers = model.data_rx_buffers = 0;
-    assert(submit_live_scan(session, scan, 100) == 0);
-    assert(poll_live_scan(session, 101) == ScanOutcome::complete);
+    assert(submit_live_scan(session, scan, ++now) == 0);
+    assert(poll_live_scan(session, ++now) == ScanOutcome::complete);
     assert(submit_live_join(session, session.scan, request) == 0);
     auto joined = JoinOutcome::pending;
-    for (uint64_t now = 102; now < 200 && joined == JoinOutcome::pending; ++now)
-        joined = poll_live_join(session, now);
+    for (const auto deadline = now + 98; now < deadline && joined == JoinOutcome::pending;)
+        joined = poll_live_join(session, ++now);
     assert(joined == JoinOutcome::connected && model.commands_sent == 37);
     assert(session.station.queue.id == 0x102 && session.station.next_sequence == 2);
 }
@@ -1624,6 +1640,7 @@ void check_live_connection() {
         AssocCase association;
         ArpCase pending;
         bool secured = false;
+        bool missed_beacons = false;
     } cases[]{
         {AuthCase::accepted, AssocCase::accepted, ArpCase::rejected_tx},
         {AuthCase::accepted, AssocCase::accepted, ArpCase::missing_completion},
@@ -1632,9 +1649,10 @@ void check_live_connection() {
         {AuthCase::denied_ap, AssocCase::accepted, ArpCase::unused},
         {AuthCase::reply_timeout, AssocCase::accepted, ArpCase::unused},
         {AuthCase::accepted, AssocCase::accepted, ArpCase::unused, true},
+        {AuthCase::accepted, AssocCase::accepted, ArpCase::unused, false, true},
     };
 
-    for (const auto& [authentication, association, pending, secured] : cases) {
+    for (const auto& [authentication, association, pending, secured, missed_beacons] : cases) {
         StartupFixture model(StartupCase::good);
         model.regulatory = RegulatoryCase::valid;
         model.passive = ScanCase::complete;
@@ -1716,7 +1734,7 @@ void check_live_connection() {
             assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
             session.station.ccmp = false;
             assert(submit_live_join(session, session.scan, request) == -106);
-            check_live_departure(model, session, scan, request, pending);
+            check_live_departure(model, session, scan, request, pending, missed_beacons);
         } else {
             assert(!session.station.queue.id && model.commands_sent == 16);
             assert(outcome == (authentication == AuthCase::reply_timeout ? JoinOutcome::timeout

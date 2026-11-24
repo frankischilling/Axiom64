@@ -45,6 +45,7 @@ enum Attribute : uint16_t {
     station_flags = 67,
     control_port = 68,
     privacy = 70,
+    disconnected_by_ap = 71,
     status_code = 72,
     pairwise_cipher = 73,
     group_cipher = 74,
@@ -917,12 +918,15 @@ void wireless_connection_finished(unsigned index, const uint8_t (&bssid)[6], uin
     netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
 }
 
-void wireless_disconnected(unsigned index, uint16_t reason) {
+void wireless_disconnected(unsigned index, uint16_t reason, bool from_ap) {
     uint8_t bytes[64];
     Message event(bytes);
     event.value(wiphy, uint32_t(0));
     event.value(ifindex, uint32_t(index));
-    event.value(reason_code, reason);
+    if (reason)
+        event.value(reason_code, reason);
+    if (from_ap)
+        event.attr(disconnected_by_ap, nullptr, 0);
     const size_t size = event.finish(nl80211_disconnect, 0, 0, false);
     netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
 }

@@ -95,7 +95,7 @@ size_t receive_station_data(const FirmwarePacket&, const uint8_t (&station)[6],
                             const uint8_t (&bssid)[6], uint8_t channel,
                             uint8_t (&frame)[station_frame_bytes], StationCcmpKeys* keys = nullptr);
 bool observe_station_disconnect(const FirmwarePacket&, const uint8_t (&station)[6],
-                                const AccessPoint&, uint8_t channel);
+                                const AccessPoint&, uint8_t channel, uint16_t& reason);
 AuthEvent observe_authentication_tx(const FirmwarePacket&, PeerQueue);
 AuthEvent observe_authentication_reply(const FirmwarePacket&, const uint8_t (&station)[6],
                                        const AccessPoint&, uint8_t channel);

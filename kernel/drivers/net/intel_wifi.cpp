@@ -569,6 +569,7 @@ void poll_runtime(NetAdapter& device) {
             ++completed_generation;
         device.info.carrier = device.info.writable = false;
         const auto reason = radio->session.leave.reason;
+        const auto from_ap = radio->session.leave.from_ap;
         radio->polling = true;
         const auto result =
             poll_live_leave(radio->session, clock_monotonic_ns() / 1000000, &device,
@@ -583,7 +584,7 @@ void poll_runtime(NetAdapter& device) {
             stop_runtime(device);
         } else
             radio->owner_port = 0;
-        wireless_disconnected(device.info.index, reason);
+        wireless_disconnected(device.info.index, reason, from_ap);
         return;
     }
     if (radio->session.join.phase != JoinPhase::idle) {
@@ -619,7 +620,7 @@ void poll_runtime(NetAdapter& device) {
     }
     if (radio->session.station.queue.id) {
         radio->polling = true;
-        const bool connected = poll_live_station(
+        const bool healthy = poll_live_station(
             radio->session, clock_monotonic_ns() / 1000000, &device,
             [](void* target, const uint8_t* bytes, size_t length) {
                 net_receive(*static_cast<NetAdapter*>(target), bytes, length);
@@ -630,8 +631,8 @@ void poll_runtime(NetAdapter& device) {
                 net_tx_complete(adapter, length, failed);
             });
         radio->polling = false;
-        if (!connected) {
-            log("iwlwifi: open station link lost\n");
+        if (!healthy) {
+            log("iwlwifi: stopping radio after station firmware failure\n");
             stop_runtime(device);
             ++completed_generation;
             wireless_disconnected(device.info.index);

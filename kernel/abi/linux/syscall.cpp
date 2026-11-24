@@ -1040,7 +1040,7 @@ static int64_t scheduler_parameter(unsigned request, int pid, int policy, uint64
     return policy ? -95 : 0;
 }
 
-static int64_t dispatch(Frame* f, Task* running) {
+int64_t dispatch_linux_syscall(Frame* f, Task* running) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
     case 188:
@@ -1967,26 +1967,4 @@ static int64_t dispatch(Frame* f, Task* running) {
     }
 }
 
-extern "C" Frame* handle_syscall(Frame* f) {
-    KernelGuard guard;
-    cpu_account(current_task());
-    asm volatile("fxsave64 %0" : "=m"(current_task()->fpu));
-    clock_refresh();
-    uint64_t number = f->rax;
-    if (trace_syscalls)
-        log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(current_task()->pid), number, f->rdi,
-            f->rsi, f->rdx);
-    int64_t result = dispatch(f, current_task());
-    cpu_refresh();
-    epoll_notify();
-    if (trace_syscalls)
-        log("sys result=%d\n", result);
-    if (result == would_block) {
-        f->rip -= 2;
-        f->rax = number;
-    } else if (number != 15)
-        f->rax = result;
-    return schedule(f, number == 24 || result == would_block ||
-                           current_task()->state != State::runnable);
-}
 } // namespace ax

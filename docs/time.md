@@ -193,3 +193,22 @@ The calendar checks follow the [Linux RTC reader](https://github.com/torvalds/li
 [QEMU RTC registers](https://github.com/qemu/qemu/blob/v8.2.2/hw/rtc/mc146818rtc.c),
 and [QEMU date offsets](https://github.com/qemu/qemu/blob/v8.2.2/system/rtc.c).
 The firmware era behavior is in the [EDK II RTC conversion and initialization](https://github.com/tianocore/edk2/blob/edk2-stable202402/PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcRtc.c).
+
+## Battery and AC adapter status
+
+Boot with `acpi.power` to expose ACPI batteries and adapters under
+`/sys/class/power_supply`. UPower reads charging state, capacity, and AC
+status from this class. The kernel publishes add events at discovery and
+change events when readings change. Firmware reads have bounded wait
+times. A failed refresh retains the last successful readings.
+
+Boot with `acpi.power.probe fbconsole` to print one firmware sample on
+screen and serial. Both modes can read the firmware-declared embedded
+controller at ports `0x62` and `0x66`. The probe prints
+`4294967295` for an unknown firmware value. Unavailable readings are
+excluded from power-supply events.
+
+After building the kernel and BusyBox, run
+`python3 scripts/acpi_power_test.py` with `iasl` installed. The test checks
+battery and charger files in BIOS and UEFI guests, plus the disabled
+boot option and a guest without battery hardware.

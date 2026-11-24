@@ -33,7 +33,7 @@ constexpr const char* pci_actions[] = {"add",    "remove",  "change", "move",
                                        "online", "offline", "bind",   "unbind"};
 
 struct Message {
-    char data[768];
+    char data[2048];
     size_t size = 0;
 
     void text(const char* value) {
@@ -83,13 +83,13 @@ int emit(Node*, const char* action, bool synthetic);
 
 int64_t write(Handle* handle, const void* data, size_t length) {
     auto* node = handle->node;
+    const auto* bytes = static_cast<const char*>(data);
+    const size_t size = length && bytes[length - 1] == '\n' ? length - 1 : length;
     if (node->device == Device::pci_uevent) {
         if (!capable(current_task()->credentials, Capability::sys_admin))
             return -1;
         if (!length)
             return 0;
-        auto bytes = static_cast<const char*>(data);
-        const size_t size = length - (bytes[length - 1] == '\n');
         for (auto action : pci_actions) {
             if (strlen(action) == size && !memcmp(bytes, action, size)) {
                 int error = emit(node, action, true);
@@ -98,9 +98,13 @@ int64_t write(Handle* handle, const void* data, size_t length) {
         }
         return -22;
     }
-    if (!((length == 3 && !memcmp(data, "add", 3)) || (length == 4 && !memcmp(data, "add\n", 4))))
+    if (size == 3 && !memcmp(bytes, "add", 3))
+        emit(node, "add", true);
+    else if (node->device == Device::power_supply_uevent && size == 6 &&
+             !memcmp(bytes, "change", 6))
+        emit(node, "change", true);
+    else
         return -22;
-    inventory_device_added(node, true);
     return length;
 }
 
@@ -132,7 +136,9 @@ int emit(Node* node, const char* action, bool synthetic) {
     event.field(action);
     event.text("DEVPATH=");
     event.field(relative);
-    if (node->device != Device::pci_uevent)
+    if (node->device == Device::power_supply_uevent)
+        event.field("SUBSYSTEM=power_supply");
+    else if (node->device != Device::pci_uevent)
         event.field(node->device == Device::network_uevent ? "SUBSYSTEM=net" : "SUBSYSTEM=input");
     event.properties(node->data, node->size);
     if (synthetic)
@@ -149,9 +155,13 @@ void inventory_device_added(Node* node, bool synthetic) {
     emit(node, "add", synthetic);
 }
 
+void inventory_device_changed(Node* node) {
+    emit(node, "change", false);
+}
+
 const ControlFileOps* inventory_uevent_control(Node* node) {
     if (node->device == Device::input_uevent || node->device == Device::network_uevent ||
-        node->device == Device::pci_uevent)
+        node->device == Device::power_supply_uevent || node->device == Device::pci_uevent)
         return &control;
     return nullptr;
 }

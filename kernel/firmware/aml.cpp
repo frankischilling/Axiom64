@@ -356,13 +356,19 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
     const unsigned space = region->content.peek();
     const bool system_memory = space == 0 && read_system_memory;
     const bool diagnostic_pci = space == 2 && read_system_memory;
-    if (!system_memory && space != 2)
+    const bool embedded_controller = space == 3 && power_registers.read_ec;
+    const bool cmos = space == 5 && power_registers.read_cmos;
+    const bool power = embedded_controller || cmos;
+    if (!system_memory && !power && space != 2)
         return true;
     const unsigned flags = field.peek();
     unsigned access = flags & 15;
     field.skip(1);
     uint64_t offset = 0;
-    const uint64_t limit = system_memory ? UINT64_MAX : 4096 * 8;
+    const uint64_t limit = system_memory         ? UINT64_MAX
+                           : embedded_controller ? 256 * 8
+                           : cmos                ? 128 * 8
+                                                 : 4096 * 8;
     const unsigned integer_bits = integer_mask == UINT32_MAX ? 32 : 64;
     while (field.left) {
         auto term = field.peek();
@@ -370,7 +376,8 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
             uint64_t operands;
             if (!field.skip(1) || !field.read(2, operands))
                 return false;
-            access = (system_memory || diagnostic_pci) && operands >> 8 ? 15 : operands & 15;
+            access =
+                (system_memory || diagnostic_pci || power) && operands >> 8 ? 15 : operands & 15;
             continue;
         }
         if (term == 2 || term == 3)
@@ -382,9 +389,10 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
             return false;
         const unsigned access_bits = access && access <= 3 ? 8u << (access - 1) : bits;
         const bool supported =
-            system_memory    ? bits && bits <= integer_bits && access <= 1 && !(flags & 0x80)
-            : diagnostic_pci ? bits && bits <= 32 && access <= 3 && !(flags & 0x90)
-                             : !(offset & 7) && (bits == 8 || bits == 16 || bits == 32) &&
+            system_memory || cmos ? bits && bits <= integer_bits && access <= 1 && !(flags & 0x80)
+            : embedded_controller ? bits && access <= 1 && !(flags & 0x90)
+            : diagnostic_pci      ? bits && bits <= 32 && access <= 3 && !(flags & 0x90)
+                                  : !(offset & 7) && (bits == 8 || bits == 16 || bits == 32) &&
                                    (!access || (access <= 3 && access_bits == bits));
         if (term && supported) {
             Path path = scope;
@@ -394,18 +402,22 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
                 if (!name_character(uint8_t(segment >> (8 * i)), !i))
                     return false;
             path.segments[path.count++] = segment;
-            const auto kind = system_memory    ? Kind::MemoryField
-                              : diagnostic_pci ? Kind::DiagnosticPciField
-                                               : Kind::PciField;
+            const auto kind = system_memory         ? Kind::MemoryField
+                              : embedded_controller ? Kind::EmbeddedControllerField
+                              : cmos                ? Kind::CmosField
+                              : diagnostic_pci      ? Kind::DiagnosticPciField
+                                                    : Kind::PciField;
             const bool bit_field = kind != Kind::PciField;
             if (!add(path, kind, {}, bit_field ? bits : bits / 8))
                 return false;
             auto& entry = objects[count - 1];
             entry.integer = bit_field ? offset : offset / 8;
             entry.region = region;
-            entry.firmware_lock = system_memory && (flags & 0x10);
-            entry.preserves_field_neighbors = system_memory && !(flags & 0x60);
-            entry.access_bytes = system_memory || (diagnostic_pci && !access) ? 1 : access_bits / 8;
+            entry.firmware_lock = (system_memory || cmos) && (flags & 0x10);
+            entry.preserves_field_neighbors =
+                (system_memory || embedded_controller) && !(flags & 0x60);
+            entry.access_bytes =
+                system_memory || power || (diagnostic_pci && !access) ? 1 : access_bits / 8;
         }
         offset += bits;
     }
@@ -476,8 +488,7 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
         if (link_evaluation || !evaluate(stream, scope, frame, reference, depth + 1) ||
             reference.type != Type::Reference || input.is_reference())
             return false;
-        *reference.entries = input;
-        return true;
+        return replace_package_element(*reference.entries, input);
     }
     Name name;
     if (!read_name(stream, name))
@@ -507,6 +518,8 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
         return stage_field(*object, input, depth + 1);
     if (object && object->kind == Kind::MemoryField && replay_initialization)
         return stage_memory_field(*object, input, depth + 1);
+    if (object && object->kind == Kind::EmbeddedControllerField && !link_evaluation)
+        return write_embedded_controller_field(*object, input, depth + 1);
     if (object && object->kind == Kind::BufferField && !link_evaluation &&
         input.type == Type::Integer) {
         auto* bytes = const_cast<uint8_t*>(object->region->content.next);
@@ -762,7 +775,7 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     }
     case 0x12: {
         if (!stream.skip(1) || !stream.block(block) || !block.read(1, number) ||
-            number > sizeof(values) / sizeof(*values) - used_values)
+            number > sizeof(values) / sizeof(*values) - used_values - persistent_values)
             return false;
         auto* entries = values + used_values;
         used_values += unsigned(number);
@@ -883,6 +896,35 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
             return false;
         result = {Type::Integer, number & integer_mask, {}, nullptr};
         return store(stream, scope, frame, result, depth + 1);
+    }
+    case 0x9c: { // ToString
+        Value buffer{}, limit{};
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, buffer, depth + 1) ||
+            buffer.type != Type::Buffer || !evaluate(stream, scope, frame, limit, depth + 1) ||
+            limit.type != Type::Integer)
+            return false;
+        const size_t maximum = min(uint64_t(buffer.content.left), limit.number);
+        size_t length = 0;
+        while (length < maximum && buffer.content.next[length])
+            ++length;
+        auto* text = scratch_buffer(length);
+        if (!text)
+            return false;
+        if (length)
+            memcpy(text, buffer.content.next, length);
+        result = {Type::String, 0, {text, length}, nullptr};
+        return store(stream, scope, frame, result, depth + 1);
+    }
+    case 0x78: { // Divide
+        Value dividend{}, divisor{};
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, dividend, depth + 1) ||
+            dividend.type != Type::Integer || !evaluate(stream, scope, frame, divisor, depth + 1) ||
+            divisor.type != Type::Integer || !divisor.number)
+            return false;
+        Value remainder{Type::Integer, dividend.number % divisor.number, {}, nullptr};
+        result = {Type::Integer, dividend.number / divisor.number, {}, nullptr};
+        return store(stream, scope, frame, remainder, depth + 1) &&
+               store(stream, scope, frame, result, depth + 1);
     }
     case 0x72:   // Add
     case 0x74:   // Subtract
@@ -1151,9 +1193,11 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
         case 0x70:   // Store
         case 0x84:   // ConcatenateResTemplate
         case 0x99:   // ToInteger
+        case 0x9c:   // ToString
         case 0x72:   // Add
         case 0x74:   // Subtract
         case 0x77:   // Multiply
+        case 0x78:   // Divide
         case 0x75:   // Increment
         case 0x76:   // Decrement
         case 0x79:   // ShiftLeft
@@ -1389,6 +1433,77 @@ bool Namespace::read_memory_field(const Object& field, Value& result, unsigned d
     return true;
 }
 
+bool Namespace::power_field_span(const Object& field, uint8_t& address, unsigned& bytes,
+                                 unsigned depth) {
+    Cursor operands = field.region->content;
+    operands.skip(1);
+    const Path scope = parent(field.region->path);
+    Value base{}, length{};
+    const unsigned limit = field.kind == Kind::CmosField ? 128 : 256;
+    if (power_controller) {
+        const auto& path = power_controller->path;
+        if (scope.count < path.count ||
+            memcmp(path.segments, scope.segments, path.count * sizeof(*path.segments)))
+            return false;
+    }
+    if (!evaluate(operands, scope, nullptr, base, depth + 1) ||
+        !evaluate(operands, scope, nullptr, length, depth + 1) || operands.left ||
+        base.type != Type::Integer || length.type != Type::Integer || base.number >= limit ||
+        length.number > limit - base.number)
+        return false;
+    const unsigned offset = unsigned(field.integer / 8);
+    const unsigned shift = unsigned(field.integer % 8);
+    bytes = (shift + field.arguments + 7) / 8;
+    if (offset >= length.number || bytes > length.number - offset)
+        return false;
+
+    address = uint8_t(base.number + offset);
+    return true;
+}
+
+bool Namespace::read_power_field(const Object& field, Value& result, unsigned depth) {
+    unsigned bytes;
+    uint8_t address, data[256]{};
+    if (!power_field_span(field, address, bytes, depth))
+        return false;
+    const auto& io = power_registers;
+    const bool success = field.kind == Kind::CmosField
+                             ? io.read_cmos(io.context, address, data, bytes, field.firmware_lock)
+                             : io.read_ec(io.context, address, data, bytes);
+    if (!success)
+        return false;
+    const unsigned shift = unsigned(field.integer % 8);
+    if (field.arguments <= (integer_mask == UINT32_MAX ? 32u : 64u)) {
+        result = {Type::Integer, read_buffer_bits(data, shift, field.arguments), {}, nullptr};
+        return true;
+    }
+
+    const unsigned size = (field.arguments + 7) / 8;
+    auto* buffer = scratch_buffer(size);
+    if (!buffer)
+        return false;
+    for (unsigned i = 0; i < size; ++i) {
+        const unsigned bits = min(8u, field.arguments - i * 8);
+        buffer[i] = uint8_t(read_buffer_bits(data, shift + i * 8, bits));
+    }
+    result = {Type::Buffer, 0, {buffer, size}, nullptr, nullptr, buffer};
+    return true;
+}
+
+bool Namespace::write_embedded_controller_field(const Object& field, Value input, unsigned depth) {
+    const auto& io = power_registers;
+    const unsigned shift = unsigned(field.integer % 8);
+    uint8_t address, data[9]{};
+    unsigned bytes;
+    if (!io.write_ec || input.type != Type::Integer || field.arguments > 64 ||
+        !field.preserves_field_neighbors || !power_field_span(field, address, bytes, depth))
+        return false;
+    if ((shift || field.arguments % 8) && !io.read_ec(io.context, address, data, bytes))
+        return false;
+    write_buffer_bits(data, shift, field.arguments, input.number);
+    return io.write_ec(io.context, address, data, bytes);
+}
+
 bool Namespace::read_local_memory(const Value& field, Value& result) {
     const unsigned bits = field.content.left;
     if (field.access_bytes == 4 && !replay_initialization) {
@@ -1479,11 +1594,13 @@ bool Namespace::stage_field(const Object& field, Value input, unsigned depth) {
 
 Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* bridges,
                           PciConfigRead read_pci, PciLinkProgram program,
-                          SystemMemoryRead read_system_memory) {
+                          SystemMemoryRead read_system_memory, PowerRegisters power_registers) {
     if (blocks.ssdt_count > max_root_entries)
         return nullptr;
-    const unsigned capacity = read_system_memory ? 8192 : 768;
-    const unsigned slots = read_system_memory ? 16384 : 2048;
+    const bool extended =
+        read_system_memory || power_registers.read_ec || power_registers.read_cmos;
+    const unsigned capacity = extended ? 8192 : 768;
+    const unsigned slots = extended ? 16384 : 2048;
     auto* space = static_cast<Namespace*>(
         alloc(sizeof(Namespace) + capacity * sizeof(Object) + slots * sizeof(uint16_t)));
     if (!space)
@@ -1496,6 +1613,7 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->count = 0;
     space->steps = 32768;
     space->used_values = 0;
+    space->persistent_values = 0;
     space->used_bytes = 0;
     space->used_method_names = 0;
     space->persistent_bytes = 0;
@@ -1505,6 +1623,8 @@ Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* brid
     space->bridges = bridges;
     space->read_pci = read_pci;
     space->read_system_memory = read_system_memory;
+    space->power_registers = power_registers;
+    space->power_controller = nullptr;
     space->read_registers = nullptr;
     space->read_pci_bars = nullptr;
     space->read_pci_ecam = nullptr;

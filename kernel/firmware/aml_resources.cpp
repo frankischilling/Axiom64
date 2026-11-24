@@ -24,6 +24,16 @@
  */
 #include "aml_internal.hpp"
 
+namespace ax::Acpi {
+struct PowerSupplyReader {
+    Aml::Namespace* space;
+    const Aml::Object* batteries[8];
+    const Aml::Object* adapters[8];
+    BatteryReading information[8];
+    unsigned battery_count, adapter_count;
+};
+} // namespace ax::Acpi
+
 namespace ax::Acpi::Aml {
 
 bool resource_payload(Cursor resources, size_t& length) {
@@ -814,6 +824,147 @@ bool collect_motherboard_device(Namespace& space, const Object& device,
            motherboard_ranges(current.content, result);
 }
 
+bool embedded_controller_ports(Cursor resources, EmbeddedControllerPorts& result) {
+    size_t payload;
+    if (!resource_payload(resources, payload))
+        return false;
+    resources.left = payload;
+    uint16_t ports[2]{};
+    unsigned count = 0;
+    while (resources.left) {
+        const unsigned tag = resources.peek();
+        resources.skip(1);
+        uint64_t length = tag & 7;
+        Cursor item;
+        if (((tag & 0x80) && !resources.read(2, length)) || !resources.take(length, item))
+            return false;
+        if (tag != 0x47 && tag != 0x4b)
+            continue;
+        uint64_t port = 0, maximum = 0, size = 0;
+        if (tag == 0x47) {
+            const bool decode16 = item.peek() & 1;
+            if (!item.skip(1) || !item.read(2, port) || !item.read(2, maximum) || port != maximum ||
+                !item.skip(1) || (!decode16 && port > 0x3ff))
+                return false;
+        } else if (!item.read(2, port) || port > 0x3ff)
+            return false;
+        if (!item.read(1, size) || item.left || size != 1 || !port || count == 2)
+            return false;
+        ports[count++] = uint16_t(port);
+    }
+    if (count != 2 || ports[0] == ports[1])
+        return false;
+    result = {ports[0], ports[1]};
+    return true;
+}
+
+bool hardware_id(Value id, const char* text, uint32_t eisa = 0) {
+    if (id.type == Type::Integer)
+        return eisa && id.number == eisa;
+    const size_t length = strlen(text);
+    return id.type == Type::String && id.content.left == length &&
+           !memcmp(id.content.next, text, length);
+}
+
+const Object* embedded_controller_device(Namespace& space, EmbeddedControllerPorts& result) {
+    const Object* found = nullptr;
+    for (unsigned i = 0; i < space.count; ++i) {
+        const auto& device = space.objects[i];
+        const auto& path = device.path;
+        if (device.kind != Kind::Device || !space.child(path, name_segment("_CRS")))
+            continue;
+        space.used_values = space.used_bytes = 0;
+        Value id{};
+        if (!space.config(path, name_segment("_HID"), id) ||
+            !hardware_id(id, "PNP0C09", 0x090cd041))
+            continue;
+        uint64_t status;
+        if (!device_status(space, path, status))
+            return nullptr;
+        if ((status & 3) != 3)
+            continue;
+        Value current{};
+        if (found || !space.config(path, name_segment("_CRS"), current) ||
+            current.type != Type::Buffer || !embedded_controller_ports(current.content, result))
+            return nullptr;
+        if (space.child(path, name_segment("_GLK"))) {
+            Value lock{};
+            if (!space.config(path, name_segment("_GLK"), lock) || lock.type != Type::Integer)
+                return nullptr;
+            result.global_lock = lock.number != 0;
+        }
+        found = &device;
+    }
+    return found;
+}
+
+bool battery_word(const Value& value, uint32_t& word) {
+    if (value.type != Type::Integer || (value.number > UINT32_MAX && value.number != UINT64_MAX))
+        return false;
+    word = uint32_t(value.number);
+    return true;
+}
+
+template <size_t Size> bool battery_text(const Value& value, char (&output)[Size]) {
+    if (value.type != Type::String && value.type != Type::Buffer)
+        return false;
+    for (size_t i = 0; i + 1 < Size && i < value.content.left && value.content.next[i]; ++i) {
+        const auto byte = value.content.next[i];
+        output[i] = byte >= 0x20 && byte <= 0x7e ? char(byte) : '?';
+    }
+    return true;
+}
+
+bool battery_information(Namespace& space, const Object& object, BatteryReading& battery) {
+    const bool extended = space.child(object.path, name_segment("_BIX"));
+    Value info{};
+    if (!space.config(object.path, extended ? name_segment("_BIX") : name_segment("_BIF"), info) ||
+        info.type != Type::Package || info.number < (extended ? 20u : 13u))
+        return false;
+    const auto* fields = info.entries + (extended ? 1 : 0);
+    const auto* strings = info.entries + (extended ? 16 : 9);
+    return battery_word(fields[0], battery.unit) && battery.unit <= 1 &&
+           battery_word(fields[1], battery.design_capacity) &&
+           battery_word(fields[2], battery.full_capacity) &&
+           battery_word(fields[4], battery.design_voltage) &&
+           battery_text(strings[0], battery.model) && battery_text(strings[1], battery.serial) &&
+           battery_text(strings[2], battery.technology) &&
+           battery_text(strings[3], battery.manufacturer);
+}
+
+bool battery_status(Namespace& space, const Object& object, BatteryReading& battery) {
+    Value status{};
+    return space.config(object.path, name_segment("_BST"), status) &&
+           status.type == Type::Package && status.number == 4 &&
+           battery_word(status.entries[0], battery.state) && battery.state <= 0x0f &&
+           battery_word(status.entries[1], battery.rate) &&
+           battery_word(status.entries[2], battery.remaining_capacity) &&
+           battery_word(status.entries[3], battery.voltage);
+}
+
+bool inventory_power_supplies(PowerSupplyReader& reader) {
+    auto& space = *reader.space;
+    for (unsigned i = 0; i < space.count; ++i) {
+        const auto& object = space.objects[i];
+        if (object.kind != Kind::Device)
+            continue;
+        space.used_values = space.used_bytes = 0;
+        Value id{};
+        if (!space.config(object.path, name_segment("_HID"), id))
+            continue;
+        if (hardware_id(id, "PNP0C0A", 0x0a0cd041)) {
+            if (reader.battery_count == sizeof(reader.batteries) / sizeof(*reader.batteries))
+                return false;
+            reader.batteries[reader.battery_count++] = &object;
+        } else if (hardware_id(id, "ACPI0003")) {
+            if (reader.adapter_count == sizeof(reader.adapters) / sizeof(*reader.adapters))
+                return false;
+            reader.adapters[reader.adapter_count++] = &object;
+        }
+    }
+    return true;
+}
+
 const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
                              uint8_t slot, uint8_t function, uint8_t pin, bool& ambiguous) {
     const PciPinRoute* exact = nullptr;
@@ -882,6 +1033,139 @@ bool decode_motherboard_resources(const DefinitionBlocks& blocks, MotherboardRes
     }
     release(space);
     return true;
+}
+
+bool decode_embedded_controller_ports(const DefinitionBlocks& blocks,
+                                      EmbeddedControllerPorts& result, ReadRegions regions) {
+    result = {};
+    auto* space = load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory);
+    if (!space)
+        return false;
+
+    const bool valid = embedded_controller_device(*space, result);
+    release(space);
+    if (!valid)
+        result = {};
+    return valid;
+}
+
+PowerSupplyReader* open_power_supply_reader(const DefinitionBlocks& blocks, ReadRegions regions,
+                                            PowerRegisters registers, const char** failure) {
+    auto report = [&](const char* text) {
+        if (failure)
+            *failure = text;
+    };
+    report("cannot load ACPI namespace");
+    auto* space =
+        load_namespace(blocks, regions.bridges, regions.pci, {}, regions.memory, registers);
+    if (!space)
+        return nullptr;
+
+    space->replay_initialization = true;
+    bool ready = true;
+    if (registers.read_ec || registers.write_ec || registers.read_cmos) {
+        report("embedded controller identity changed");
+        EmbeddedControllerPorts ports{};
+        space->power_controller = embedded_controller_device(*space, ports);
+        ready = space->power_controller && registers.read_ec &&
+                ports.data == registers.ports.data && ports.command == registers.ports.command &&
+                ports.global_lock == registers.ports.global_lock;
+        if (ready) {
+            const auto& path = space->power_controller->path;
+            if (const auto* reg = space->child(path, name_segment("_REG"))) {
+                report("embedded controller _REG failed");
+                const Value arguments[]{{Type::Integer, 3, {}, nullptr},
+                                        {Type::Integer, 1, {}, nullptr}};
+                Value ignored{};
+                ready = space->method(*reg, arguments, 2, ignored);
+            }
+        }
+    }
+    if (ready)
+        report("cannot allocate a power reader");
+    auto* reader =
+        ready ? static_cast<PowerSupplyReader*>(alloc(sizeof(PowerSupplyReader))) : nullptr;
+    if (!reader) {
+        release(space);
+        return nullptr;
+    }
+    *reader = {};
+    reader->space = space;
+    if (!inventory_power_supplies(*reader)) {
+        report("too many ACPI power-supply devices");
+        close_power_supply_reader(reader);
+        return nullptr;
+    }
+    report(nullptr);
+    return reader;
+}
+
+bool sample_power_supplies(PowerSupplyReader& reader, PowerSupplySnapshot& result) {
+    auto& space = *reader.space;
+    space.steps = 32768;
+    result = {};
+    PowerSupplySnapshot next{};
+    BatteryReading information[8]{};
+    for (unsigned i = 0; i < reader.battery_count; ++i) {
+        space.used_values = space.used_bytes = 0;
+        const auto& object = *reader.batteries[i];
+        uint64_t flags;
+        if (!device_status(space, object.path, flags))
+            return false;
+        if (!(flags & 1))
+            continue;
+        const bool present = !space.child(object.path, name_segment("_STA")) || (flags & 0x10);
+        auto& battery = information[i];
+        if (present && reader.information[i].present) {
+            battery = reader.information[i];
+        } else {
+            memcpy(battery.name, &object.path.segments[object.path.count - 1], 4);
+            if (present && !battery_information(space, object, battery))
+                return false;
+        }
+        battery.present = present;
+        auto& reading = next.batteries[next.battery_count++];
+        reading = battery;
+        if (present && !battery_status(space, object, reading))
+            return false;
+    }
+    for (unsigned i = 0; i < reader.adapter_count; ++i) {
+        space.used_values = space.used_bytes = 0;
+        const auto& object = *reader.adapters[i];
+        uint64_t flags;
+        if (!device_status(space, object.path, flags))
+            return false;
+        if (!(flags & 1))
+            continue;
+        Value online{};
+        if (!space.config(object.path, name_segment("_PSR"), online) ||
+            online.type != Type::Integer || online.number > 1)
+            return false;
+        auto& adapter = next.adapters[next.adapter_count++];
+        memcpy(adapter.name, &object.path.segments[object.path.count - 1], 4);
+        adapter.online = online.number != 0;
+    }
+    memcpy(reader.information, information, sizeof(information));
+    result = next;
+    return true;
+}
+
+void close_power_supply_reader(PowerSupplyReader* reader) {
+    if (reader) {
+        release(reader->space);
+        release(reader);
+    }
+}
+
+bool read_power_supplies(const DefinitionBlocks& blocks, PowerSupplySnapshot& result,
+                         ReadRegions regions, PowerRegisters registers) {
+    result = {};
+    auto* reader = open_power_supply_reader(blocks, regions, registers);
+    if (!reader)
+        return false;
+    const bool success = sample_power_supplies(*reader, result);
+    close_power_supply_reader(reader);
+    return success;
 }
 
 bool decode_intel_gpio_resources(const DefinitionBlocks& blocks, IntelGpioResources& result,

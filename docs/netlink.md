@@ -53,7 +53,13 @@ send processed events to group 2 and pass work to another event socket
 by port ID. With `SO_PASSCRED` enabled, `recvmsg` returns the credentials
 captured by the kernel when the datagram was sent. Listeners can adjust
 their receive buffer and independently join or leave either group. If a
-listener loses a multicast event because its queue is full, it receives
+listener attaches a classic BPF program with `SO_ATTACH_FILTER`, the
+kernel applies it before queueing events, including relays from a device
+manager. A zero result discards the event and a shorter result limits
+how many bytes the listener receives. `SO_DETACH_FILTER` removes the
+program.
+
+A listener whose queue fills and loses a multicast event receives
 `ENOBUFS`. Route sockets and their port IDs remain independent.
 
 Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`

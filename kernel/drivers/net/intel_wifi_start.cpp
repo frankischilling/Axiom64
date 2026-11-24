@@ -21,6 +21,7 @@ constexpr unsigned mailbox_set = 0x88, shadow_control = 0xa8, gio_chicken = 0x10
 constexpr unsigned hpet_debug = 0x240, link_power = 0x250;
 constexpr unsigned prph_write_address = 0x444, prph_read_address = 0x448;
 constexpr unsigned prph_write_data = 0x44c, prph_read_data = 0x450, receive_write_pointer = 0x1c80;
+constexpr unsigned command_write_pointer = 0x460;
 constexpr unsigned hpm_debug = 0xa03440, hpm_power = 0xa03458, hpm_ltr_control = 0xa0348c;
 constexpr unsigned hpm_ltr = 0xa03480, peripheral_write_protect = 0xa04d00, cpu_start = 0xa05c44;
 constexpr uint32_t pci_owned = 1u << 22, wake_me = 1u << 27, hap_wake = 1u << 19;
@@ -169,29 +170,52 @@ const char* prepare_adapter(const Registers& reg, bool& owned) {
     return nullptr;
 }
 
-AlivePacket poll_receive(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
-                         unsigned& read) {
-    const unsigned closed = memory.receive_status->closed_buffer & rx_buffer_id_mask;
-    if (closed >= rx_ring_entries)
-        return AlivePacket::malformed;
-    // The device completes each buffer before advancing its coherent status pointer.
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
-    while (read != closed) {
-        const unsigned id = memory.used_ring[read] & rx_buffer_id_mask;
-        const uint8_t* buffer = io.receive_buffer(io.context, id);
-        if (!buffer)
-            return AlivePacket::malformed;
-        const auto result = read_alive_notification(buffer, page_size);
-        if (result != AlivePacket::missing)
-            return result;
-        read = (read + 1) % rx_ring_entries;
+constexpr unsigned posted_buffers = (rx_ring_entries - 1) & ~7u;
+
+struct ReceiveReader {
+    const FirmwareBootIo& io;
+    const FirmwareBootMemory& memory;
+    unsigned read = 0;
+    size_t offset = 0;
+    const uint8_t* buffer = nullptr;
+
+    PacketRead next(FirmwarePacket& packet) {
+        const unsigned closed = memory.receive_status->closed_buffer & rx_buffer_id_mask;
+        if (closed < read || closed > posted_buffers)
+            return PacketRead::malformed;
+        // The device completes DMA before publishing the closed-buffer index.
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        for (;;) {
+            if (buffer) {
+                const auto result = next_firmware_packet(buffer, page_size, offset, packet);
+                if (result != PacketRead::end)
+                    return result;
+                buffer = nullptr;
+            }
+            if (read == closed)
+                return PacketRead::end;
+            const unsigned id = memory.used_ring[read++] & rx_buffer_id_mask;
+            if (!id || id > posted_buffers)
+                return PacketRead::malformed;
+            buffer = io.receive_buffer(io.context, id);
+            if (!buffer)
+                return PacketRead::malformed;
+            offset = 0;
+        }
     }
-    return AlivePacket::missing;
+};
+
+AlivePacket decode_alive(const FirmwarePacket& packet) {
+    if (packet.opcode != 1 || packet.group != 0)
+        return AlivePacket::missing;
+    if (packet.length < 144)
+        return AlivePacket::malformed;
+    return packet.payload[0] == 0xfe && packet.payload[1] == 0xca ? AlivePacket::success
+                                                                  : AlivePacket::rejected;
 }
 
-const char* wait_for_alive(const Registers& reg, const FirmwareBootMemory& memory) {
+const char* wait_for_alive(const Registers& reg, ReceiveReader& rx) {
     bool posted = false;
-    unsigned read = 0;
     for (unsigned i = 0; i < 2000; ++i) {
         const auto cause = reg.read(interrupts);
         if (cause == UINT32_MAX || (cause & error_interrupts))
@@ -200,56 +224,113 @@ const char* wait_for_alive(const Registers& reg, const FirmwareBootMemory& memor
             // Firmware programs the RX engine before it raises ALIVE. Publish whole blocks of
             // eight.
             __atomic_thread_fence(__ATOMIC_RELEASE);
-            reg.write(receive_write_pointer, (rx_ring_entries - 1) & ~7u);
+            reg.write(receive_write_pointer, posted_buffers);
             posted = true;
         }
         if (cause)
             reg.write(interrupts, cause);
         if (posted) {
-            switch (poll_receive(reg.io, memory, read)) {
-            case AlivePacket::success:
-                return nullptr;
-            case AlivePacket::rejected:
-                return "firmware rejected startup";
-            case AlivePacket::malformed:
-                return "invalid firmware notification";
-            case AlivePacket::missing:
-                break;
+            FirmwarePacket packet{};
+            PacketRead received;
+            while ((received = rx.next(packet)) == PacketRead::packet) {
+                const auto alive = decode_alive(packet);
+                if (alive == AlivePacket::success)
+                    return nullptr;
+                if (alive == AlivePacket::rejected)
+                    return "firmware rejected startup";
+                if (alive == AlivePacket::malformed)
+                    return "invalid firmware notification";
             }
+            if (received == PacketRead::malformed)
+                return "invalid firmware notification";
         }
         if (!reg.delay(1000))
             return "firmware startup timer unavailable";
     }
     return posted ? "firmware ALIVE message timed out" : "firmware ALIVE interrupt timed out";
 }
+
+enum class Reply { matched, rejected, broken, timeout };
+
+struct CommandSession {
+    const Registers& reg;
+    ReceiveReader& rx;
+    uint16_t index = 0;
+    bool init_complete = false;
+
+    Reply wait(uint8_t group, uint8_t opcode, uint16_t sequence, FirmwarePacket& packet,
+               bool notification = false) {
+        for (unsigned attempt = 0; attempt < 2000; ++attempt) {
+            const auto cause = reg.read(interrupts);
+            const auto control = reg.read(gp);
+            if (cause == UINT32_MAX || (cause & error_interrupts) || control == UINT32_MAX ||
+                !(control & rf_enabled))
+                return Reply::broken;
+            if (cause)
+                reg.write(interrupts, cause);
+            PacketRead received;
+            while ((received = rx.next(packet)) == PacketRead::packet) {
+                if (packet.group == 0 && packet.opcode == 4)
+                    init_complete = true;
+                if (notification) {
+                    if (init_complete)
+                        return Reply::matched;
+                    continue;
+                }
+                if (packet.sequence != sequence)
+                    continue;
+                if (packet.group == group && packet.opcode == opcode)
+                    return Reply::matched;
+                if (packet.group == 0 && packet.opcode == 2)
+                    return Reply::rejected;
+            }
+            if (received == PacketRead::malformed || !reg.delay(1000))
+                return Reply::broken;
+        }
+        return Reply::timeout;
+    }
+
+    Reply send(uint8_t group, uint8_t opcode, uint32_t word, FirmwarePacket& packet) {
+        const auto& memory = rx.memory;
+        const unsigned slot = index;
+        if (slot >= command_ring_entries ||
+            !prepare_host_command((*memory.command_payloads)[slot],
+                                  memory.command_dma + slot * command_slot_bytes,
+                                  memory.commands[slot], index, group, opcode, word))
+            return Reply::broken;
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        reg.write(command_write_pointer, ++index);
+        return wait(group, opcode, uint16_t(slot), packet);
+    }
+};
+
+const char* request_nvm(const Registers& reg, ReceiveReader& rx, NvmInfo& info) {
+    CommandSession commands{reg, rx};
+    FirmwarePacket response{};
+    if (commands.send(2, 3, 1u << 1, response) != Reply::matched)
+        return "firmware init configuration failed";
+    if (commands.send(12, 0, 0, response) != Reply::matched)
+        return "firmware NVM access completion failed";
+    if (!commands.init_complete && commands.wait(0, 4, 0, response, true) != Reply::matched)
+        return "firmware initialization did not complete";
+    if (commands.send(12, 2, 0, response) != Reply::matched)
+        return "firmware NVM query failed";
+    if (!read_nvm_v4(response, info))
+        return "firmware returned invalid NVM data";
+    return nullptr;
+}
 } // namespace
 
 AlivePacket read_alive_notification(const uint8_t* data, size_t length) {
-    constexpr unsigned descriptor_header = 4, command_header = 4, frame_align = 64;
-    constexpr unsigned v6_payload = 144;
-    if (!data)
-        return AlivePacket::malformed;
-    for (size_t offset = 0; length - offset >= descriptor_header + command_header;) {
-        const auto* p = data + offset;
-        const uint32_t flags = uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) |
-                               (uint32_t(p[3]) << 24);
-        if (!flags || flags == 0x55550000)
-            return AlivePacket::missing;
-        const auto bytes = (flags & 0x3fff) + descriptor_header;
-        if (bytes < descriptor_header + command_header || bytes > length - offset ||
-            (flags & 0x3f0000))
-            return AlivePacket::malformed;
-        if (p[4] == 1 && p[5] == 0) {
-            if (bytes < descriptor_header + command_header + v6_payload)
-                return AlivePacket::malformed;
-            return p[8] == 0xfe && p[9] == 0xca ? AlivePacket::success : AlivePacket::rejected;
-        }
-        const auto stride = (bytes + frame_align - 1) & ~(frame_align - 1);
-        if (stride > length - offset)
-            return AlivePacket::malformed;
-        offset += stride;
+    FirmwarePacket packet{};
+    size_t offset = 0;
+    PacketRead received;
+    while ((received = next_firmware_packet(data, length, offset, packet)) == PacketRead::packet) {
+        const auto alive = decode_alive(packet);
+        if (alive != AlivePacket::missing)
+            return alive;
     }
-    return AlivePacket::missing;
+    return received == PacketRead::end ? AlivePacket::missing : AlivePacket::malformed;
 }
 
 FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory) {
@@ -257,6 +338,9 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
         return {"invalid startup DMA addresses", false, true};
+    if (memory.commands && (!memory.command_payloads || !memory.command_dma ||
+                            !Dma::fits(memory.command_dma, sizeof(CommandPayloads), Dma::pci)))
+        return {"invalid command DMA addresses", false, true};
     const Registers reg{io};
     if (!claim_with_wake(reg))
         return {"PCI ownership unavailable", false, true};
@@ -266,6 +350,8 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     if (!owned)
         return {error, false, true};
     const bool request_dma = error == nullptr;
+    bool alive = false;
+    NvmInfo info{};
     if (request_dma) {
         if (!io.bus_master(io.context, true)) {
             error = "PCI bus master did not enable";
@@ -275,7 +361,11 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             reg.write(context_base + 4, 0);
             reg.write(interrupt_mask, alive_interrupt | rx_interrupt | error_interrupts);
             reg.write_peripheral(cpu_start, 1);
-            error = wait_for_alive(reg, memory);
+            ReceiveReader rx{io, memory};
+            error = wait_for_alive(reg, rx);
+            alive = !error;
+            if (alive && memory.commands)
+                error = request_nvm(reg, rx, info);
         }
     }
 
@@ -288,7 +378,7 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         idle = stopped && disabled;
     }
     const bool reset_done = reset_adapter(reg);
-    return {error ? error : "firmware ALIVE received", !error,
-            !request_dma || (idle && reset_done)};
+    const char* success = memory.commands ? "firmware NVM read passed" : "firmware ALIVE received";
+    return {error ? error : success, alive, !request_dma || (idle && reset_done), info};
 }
 } // namespace ax::IntelWifi

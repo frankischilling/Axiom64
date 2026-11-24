@@ -60,6 +60,7 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     FirmwareImage image{};
     auto region = lmac;
     bool seen_version = false, seen_cpu_count = false, seen_paging_size = false, seen_alive = false;
+    bool seen_nvm = false;
     for (size_t cursor = tlv_file_header; cursor < size;) {
         if (size - cursor < tlv_header)
             return "truncated TLV header";
@@ -98,6 +99,11 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
                         return "duplicate firmware ALIVE version";
                     seen_alive = true;
                     image.alive_version = payload[i + 3];
+                } else if (payload[i] == 2 && payload[i + 1] == 12) {
+                    if (seen_nvm)
+                        return "duplicate firmware NVM version";
+                    seen_nvm = true;
+                    image.nvm_version = payload[i + 3];
                 }
             }
             break;

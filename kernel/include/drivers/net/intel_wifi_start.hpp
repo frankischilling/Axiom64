@@ -8,7 +8,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #pragma once
-#include "drivers/net/intel_wifi_context.hpp"
+#include "drivers/net/intel_wifi_command.hpp"
 
 namespace ax::IntelWifi {
 struct FirmwareBootIo {
@@ -24,6 +24,9 @@ struct FirmwareBootMemory {
     uint64_t context_address;
     volatile const ReceiveStatus* receive_status;
     volatile const uint32_t* used_ring;
+    CommandDescriptor* commands = nullptr;
+    CommandPayloads* command_payloads = nullptr;
+    uint64_t command_dma = 0;
 };
 
 enum class AlivePacket { missing, success, rejected, malformed };
@@ -33,6 +36,7 @@ struct FirmwareBootResult {
     const char* status;
     bool alive;
     bool dma_idle;
+    NvmInfo nvm{};
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.

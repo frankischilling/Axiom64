@@ -2299,6 +2299,10 @@ passed adapter identification and firmware staging over PXE.
 the firmware advertises ALIVE version 6, starts the MAC, and waits for the
 firmware's ALIVE message. The trial stops and resets the adapter afterwards.
 If DMA shutdown cannot be verified, the kernel keeps its buffers reserved until
-reboot. The sanitizer test exercises startup and shutdown with a register model.
-Firmware startup on the Blade, a wireless interface, and association remain
-to be verified or implemented.
+reboot. The Blade has returned ALIVE and passed shutdown over PXE.
+
+`iwlwifi.nvm-check` continues after ALIVE. It sends the initialization and
+NVM access commands, waits for the initialization notification, and reads the
+device's NVM information before stopping the adapter. The register model
+checks reply matching and rejects invalid NVM data. A physical NVM response,
+a wireless interface, and association still need verification.

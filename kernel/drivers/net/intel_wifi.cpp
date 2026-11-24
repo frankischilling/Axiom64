@@ -168,11 +168,12 @@ struct BootQueues {
     using UsedRing = uint32_t[rx_ring_entries];
 
     DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
+    DmaBuffer command_payloads;
     unsigned receive_count = 0;
 
     void pin_until_reboot() {
-        DmaBuffer* buffers[] = {&free_ring, &used_ring,       &status,
-                                &commands,  &invalid_command, &context};
+        DmaBuffer* buffers[] = {&free_ring,       &used_ring, &status,          &commands,
+                                &invalid_command, &context,   &command_payloads};
         for (auto* buffer : buffers)
             buffer->retain = true;
     }
@@ -227,7 +228,11 @@ struct AdapterBoot {
     const BootQueues& queues;
 };
 
-void launch_firmware(BootQueues& queues, StagedImage& staged) {
+void launch_firmware(BootQueues& queues, StagedImage& staged, bool nvm) {
+    if (nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
+        report("command buffer allocation failed");
+        return;
+    }
     const auto original = adapter.read16(pci_command);
     if ((original & bus_master) || !device_powered(adapter) || !interrupts_inactive(adapter)) {
         report("PCI function is not idle for startup");
@@ -262,15 +267,25 @@ void launch_firmware(BootQueues& queues, StagedImage& staged) {
                 physical(align_down(queues.free_ring.data<BootQueues::FreeRing>()[id - 1])));
         },
     };
-    const auto result =
-        start_and_stop_quz(io, {queues.context.address, &queues.status.data<ReceiveStatus>(),
-                                queues.used_ring.data<BootQueues::UsedRing>()});
+    FirmwareBootMemory memory{queues.context.address, &queues.status.data<ReceiveStatus>(),
+                              queues.used_ring.data<BootQueues::UsedRing>()};
+    if (nvm) {
+        memory.commands = queues.commands.data<BootQueues::Commands>();
+        memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
+        memory.command_dma = queues.command_payloads.address;
+    }
+    const auto result = start_and_stop_quz(io, memory);
     const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
     adapter.write16(pci_command, restore);
     const bool restored = adapter.read16(pci_command) == restore;
     log("iwlwifi: %s, DMA idle=%u, PCI command restored=%u\n", result.status,
         uint64_t(result.dma_idle), uint64_t(restored));
     report(result.status);
+    if (result.nvm.version)
+        log("iwlwifi: NVM version=%x channels=%u bands=%x TX=%x RX=%x\n",
+            uint64_t(result.nvm.version), uint64_t(result.nvm.channel_count),
+            uint64_t(result.nvm.bands), uint64_t(result.nvm.tx_chains),
+            uint64_t(result.nvm.rx_chains));
     if (!result.dma_idle || !restored) {
         queues.pin_until_reboot();
         staged.retain = true;
@@ -280,11 +295,16 @@ void launch_firmware(BootQueues& queues, StagedImage& staged) {
     }
 }
 
-void stage_firmware(const uint8_t* bytes, size_t size, bool start) {
+void stage_firmware(const uint8_t* bytes, size_t size, bool start, bool nvm) {
     FirmwareImage image{};
     if (const auto* error = parse_firmware(bytes, size, image)) {
         log("iwlwifi: firmware rejected: %s\n", error);
         report(error);
+        return;
+    }
+    if (nvm && image.nvm_version != 4) {
+        log("iwlwifi: unsupported NVM version %u\n", uint64_t(image.nvm_version));
+        report("firmware does not advertise NVM version 4");
         return;
     }
     if (start && image.alive_version != 6) {
@@ -318,11 +338,11 @@ void stage_firmware(const uint8_t* bytes, size_t size, bool start) {
         uint64_t(image.paging_bytes));
     report("firmware and boot queues staged in memory");
     if (start)
-        launch_firmware(queues, staged);
+        launch_firmware(queues, staged, nvm);
 }
 } // namespace
 
-void check_firmware(bool probe_pci, bool start) {
+void check_firmware(bool probe_pci, bool start, bool nvm) {
     if (probe_pci || start) {
         start_requested = start;
         probe = Probe::absent;
@@ -350,7 +370,7 @@ void check_firmware(bool probe_pci, bool start) {
         return;
     }
     if (node_read(file, 0, bytes, size) == int64_t(size))
-        stage_firmware(bytes, size, start);
+        stage_firmware(bytes, size, start, nvm);
     else {
         log("iwlwifi: firmware read failed\n");
         report("firmware read failed");

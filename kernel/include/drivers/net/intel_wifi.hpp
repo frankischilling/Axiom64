@@ -33,9 +33,10 @@ struct FirmwareImage {
     FirmwareRegion regions[region_count];
     uint32_t paging_bytes;
     uint8_t alive_version;
+    uint8_t nvm_version;
 };
 
 // The returned sections borrow the firmware bytes. A rejected image leaves output intact.
 const char* parse_firmware(const uint8_t*, size_t, FirmwareImage&);
-void check_firmware(bool probe_pci, bool start = false);
+void check_firmware(bool probe_pci, bool start = false, bool nvm = false);
 } // namespace ax::IntelWifi

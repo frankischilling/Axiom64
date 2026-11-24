@@ -124,6 +124,12 @@ struct StartupFixture {
     ReceiveStatus receive_status{};
     uint32_t used[rx_ring_entries]{};
     uint8_t buffer[ax::page_size]{};
+    uint8_t replies[3][ax::page_size]{};
+    CommandDescriptor commands[command_ring_entries]{};
+    CommandPayloads payloads{};
+    unsigned commands_sent = 0;
+    bool malformed_nvm = false;
+    bool wrong_sequence = false;
     bool master = false;
     bool requested_master = false;
     bool sent_doorbell = false;
@@ -133,6 +139,57 @@ struct StartupFixture {
     explicit StartupFixture(StartupCase scenario) : scenario(scenario) {
         csr[0x24 / 4] = scenario == StartupCase::blocked ? 0 : 1u << 27;
         alive_packet(buffer);
+    }
+
+    void command_reply(unsigned index) {
+        assert(index == ++commands_sent && index <= 3);
+        const unsigned slot = index - 1;
+        const uint8_t expected_groups[] = {2, 12, 12};
+        const uint8_t expected_commands[] = {3, 0, 2};
+        const uint8_t expected_word = slot ? 0 : 2;
+        const auto& command = payloads[slot];
+        const uint8_t expected[] = {expected_commands[slot],
+                                    expected_groups[slot],
+                                    uint8_t(slot),
+                                    0,
+                                    4,
+                                    0,
+                                    0,
+                                    0,
+                                    expected_word,
+                                    0,
+                                    0,
+                                    0};
+        assert(!memcmp(expected, command, sizeof(expected)));
+        assert(commands[slot].buffer_count == 1 && commands[slot].buffers[0].length == 12);
+        assert(commands[slot].buffers[0].address == 0xa000 + slot * command_slot_bytes);
+
+        auto* reply = replies[slot];
+        if (index == 2) {
+            // INIT complete and the command reply share a receive buffer.
+            reply[0] = 4;
+            reply[4] = 4;
+            reply[7] = 0x80;
+            reply += 64;
+        }
+        const unsigned length = index == 3 ? 472 : 4;
+        reply[0] = uint8_t(length);
+        reply[1] = uint8_t(length >> 8);
+        reply[4] = command[0];
+        reply[5] = command[1];
+        reply[6] = index == 3 && wrong_sequence ? 0xff : command[2];
+        if (index == 3) {
+            reply[8] = malformed_nvm;
+            reply[12] = 0x1d;
+            reply[13] = 0x0a;
+            reply[15] = 1;
+            reply[16] = 3;
+            reply[20] = 3;
+            reply[24] = 3;
+            reply[32] = 51;
+        }
+        used[index] = index + 1;
+        receive_status.closed_buffer = uint16_t(index + 1);
     }
 
     void write(unsigned offset, uint32_t value) {
@@ -171,9 +228,13 @@ struct StartupFixture {
             used[0] = scenario == StartupCase::bad_buffer ? 0 : 1;
             receive_status.closed_buffer = 1;
         }
+        if (offset == 0x460) {
+            assert(master && sent_doorbell);
+            command_reply(value);
+        }
     }
 
-    FirmwareBootResult run() {
+    FirmwareBootResult run(bool nvm = false) {
         const FirmwareBootIo io{
             this,
             [](void* ptr, unsigned offset) {
@@ -194,10 +255,19 @@ struct StartupFixture {
                 return true;
             },
             [](void* ptr, unsigned id) -> const uint8_t* {
-                return id == 1 ? static_cast<StartupFixture*>(ptr)->buffer : nullptr;
+                auto& model = *static_cast<StartupFixture*>(ptr);
+                if (id == 1)
+                    return model.buffer;
+                return id >= 2 && id <= 4 ? model.replies[id - 2] : nullptr;
             },
         };
-        return start_and_stop_quz(io, {0x9000, &receive_status, used});
+        FirmwareBootMemory memory{0x9000, &receive_status, used};
+        if (nvm) {
+            memory.commands = commands;
+            memory.command_payloads = &payloads;
+            memory.command_dma = 0xa000;
+        }
+        return start_and_stop_quz(io, memory);
     }
 };
 
@@ -225,6 +295,22 @@ void check_startup() {
         assert(outcome.dma_idle == (scenario != StartupCase::stop_failed));
     }
     std::puts("AX201_STARTUP_MODEL_PASS");
+
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        StartupFixture model(StartupCase::good);
+        model.malformed_nvm = scenario == 1;
+        model.wrong_sequence = scenario == 2;
+        const auto outcome = model.run(true);
+        assert(outcome.alive && outcome.dma_idle && model.reset_after_dma &&
+               model.commands_sent == 3);
+        if (scenario == 0) {
+            assert(outcome.nvm.version == 0xa1d && outcome.nvm.bands == 3);
+            assert(outcome.nvm.channel_count == 51 && outcome.nvm.addresses == 1);
+        } else {
+            assert(!outcome.nvm.version);
+        }
+    }
+    std::puts("AX201_NVM_MODEL_PASS");
 }
 } // namespace
 
@@ -236,6 +322,7 @@ int main(int argc, char** argv) {
     word(file, version, 77);
     word(file, version + 4, 0x12345678);
     word(file, append(file, 48, 4), 0x06630001);
+    word(file, append(file, 48, 4), 0x04010c02);
     word(file, append(file, 27, 4), 2);
     const size_t first_section = section(file, 0x400000, {7});
     const size_t delimiter = section(file, 0xffffcccc, {0, 0, 0, 0});
@@ -247,6 +334,7 @@ int main(int argc, char** argv) {
     const size_t last_section = section(file, 0x1000000, Bytes(4096, 11));
     FirmwareImage image{};
     assert(!parse_firmware(file.data(), file.size(), image));
+    assert(image.nvm_version == 4);
     assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
            image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
@@ -287,6 +375,7 @@ int main(int argc, char** argv) {
         std::ifstream input(argv[1], std::ios::binary);
         Bytes device_file{std::istreambuf_iterator<char>(input), {}};
         assert(!parse_firmware(device_file.data(), device_file.size(), image));
+        assert(image.nvm_version == 4);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

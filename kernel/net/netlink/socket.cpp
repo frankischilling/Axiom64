@@ -26,6 +26,7 @@
 #include "net/netlink.hpp"
 #include "net/netlink_wireless.hpp"
 #include "net/socket_control.hpp"
+#include "net/socket_filter.hpp"
 #include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
@@ -55,6 +56,7 @@ struct NetlinkSocket {
     int error = 0;
     Handle* handle = nullptr;
     WirelessDump wireless_dump;
+    SocketFilter filter{};
     NetlinkFrame* queue[queue_count]{};
 };
 
@@ -129,6 +131,7 @@ void netlink_close(NetlinkSocket* socket) {
     socket->wireless_dump = {};
     while (socket->count)
         netlink_consume(socket);
+    socket->filter.detach();
     *socket = {};
 }
 
@@ -215,6 +218,9 @@ static void pump_wireless_dump(NetlinkSocket* socket) {
 
 static int deliver_notification(NetlinkSocket& socket, const void* data, size_t length,
                                 const NetlinkAddress& source, const uint32_t* credentials) {
+    length = socket.filter.snapshot({static_cast<const uint8_t*>(data), length});
+    if (!length)
+        return 0;
     NetlinkFrame* frame;
     if (int error = reserve_frame(&socket, length, frame))
         return error;
@@ -506,6 +512,10 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         return address_out(task, address, b, c);
     }
     if (frame.rax == 54) {
+        if (socket->protocol == uevent_protocol && b == 1 && c == 26) // SO_ATTACH_FILTER
+            return socket->filter.attach(task, d, frame.r8);
+        if (socket->protocol == uevent_protocol && b == 1 && c == 27) // SO_DETACH_FILTER
+            return socket->filter.detach();
         int value;
         if (frame.r8 < 4)
             return -22;

@@ -51,44 +51,50 @@ int select_family(const uint8_t* input, const NetlinkHeader& request, bool dump)
     if (generic.command != get_family)
         return -95;
     if (dump)
-        return request.length == header_size ? 0 : -95;
+        return 0;
 
-    bool seen_id = false, found = false;
-    const char* name = nullptr;
-    for (size_t offset = header_size; offset < request.length;) {
+    bool seen_id = false, found_id = false, seen_name = false, found_name = false;
+    for (size_t offset = header_size; request.length - offset >= sizeof(Attribute);) {
         Attribute field{};
-        size_t remaining = request.length - offset;
-        if (remaining < sizeof(field))
-            return -22;
+        const size_t remaining = request.length - offset;
         memcpy(&field, input + offset, sizeof(field));
-        size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
-        if (field.length < sizeof(field) || aligned > remaining)
+        if (field.length < sizeof(field) || field.length > remaining)
             return -22;
-        size_t bytes = field.length - sizeof(field);
+        const size_t bytes = field.length - sizeof(field);
         const uint8_t* value = input + offset + sizeof(field);
-        if (field.type == family_id && !seen_id) {
-            if (bytes != sizeof(uint16_t))
-                return -22;
+        switch (field.type & 0x3fff) {
+        case family_id: {
+            if (bytes < sizeof(uint16_t))
+                return -34;
             uint16_t id;
             memcpy(&id, value, sizeof(id));
-            found = id == control_family;
+            found_id = id == control_family;
             seen_id = true;
-        } else if (field.type == family_name && !name) {
-            if (bytes < 2 || bytes > 16 || value[bytes - 1])
-                return -22;
-            name = reinterpret_cast<const char*>(value);
-            if (strlen(name) != bytes - 1)
-                return -22;
-        } else {
-            return -22;
+            break;
         }
+        case family_name: {
+            if (!bytes || bytes > 16)
+                return -22;
+            size_t length = 0;
+            while (length < bytes && value[length])
+                ++length;
+            if (length == bytes)
+                return -22;
+            found_name = length == sizeof(control_name) - 1 && !memcmp(value, control_name, length);
+            seen_name = true;
+            break;
+        }
+        }
+        const size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
+        if (aligned > remaining)
+            break;
         offset += aligned;
     }
-    if (name)
-        return strcmp(name, control_name) ? -2 : 0;
+    if (seen_name)
+        return found_name ? 0 : -2;
     if (!seen_id)
         return -22;
-    return found ? 0 : -2;
+    return found_id ? 0 : -2;
 }
 
 void attribute(uint8_t*& tail, uint16_t type, const void* value, size_t bytes) {
@@ -151,13 +157,7 @@ size_t generic_reply(const void* data, uint32_t port, bool capped, void* reply, 
     if (!(request.flags & 1) || request.type < 16)
         return 0;
     bool dump = (request.flags & 0x300) == 0x300;
-    int error = -2;
-    if (request.type == control_family) {
-        if (request.flags & ~(1u | 4u | (dump ? 0x300u : 0u)))
-            error = -95;
-        else
-            error = select_family(input, request, dump);
-    }
+    const int error = request.type == control_family ? select_family(input, request, dump) : -2;
     if (error)
         return netlink_ack(input, request, port, error, capped, reply);
 

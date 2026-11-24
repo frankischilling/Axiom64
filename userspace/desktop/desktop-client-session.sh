@@ -23,6 +23,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://gnu.org/licenses/>.
 set -eu
+if test -d /usr/share/i18n/locales/musl; then
+    export MUSL_LOCPATH="${MUSL_LOCPATH:-/usr/share/i18n/locales/musl}"
+fi
 if test "${1:-}" = --display-manager; then
     : "${DISPLAY:?SDDM did not set DISPLAY.}" "${XAUTHORITY:?SDDM did not set XAUTHORITY.}"
 else

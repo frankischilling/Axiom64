@@ -11,6 +11,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #include "drivers/net/intel_wifi_live.hpp"
+#include "drivers/net/intel_wifi_channel.hpp"
 #include "mm/dma.hpp"
 
 namespace ax::IntelWifi {
@@ -388,6 +389,45 @@ const char* configure_scan_station(CommandSession& commands, uint8_t (&address)[
     return nullptr;
 }
 
+const char* check_channel_contexts(CommandSession& commands, const ScanChannelList& list,
+                                   uint8_t rx_mask, bool dual_lmac, unsigned& checked) {
+    if (!rx_mask)
+        return "firmware and NVM receive antenna masks do not overlap";
+
+    constexpr struct {
+        ChannelStep step;
+        const char* failure;
+    } steps[]{
+        {ChannelStep::add_phy, "PHY context add failed"},
+        {ChannelStep::rx_chains, "radio chain configuration failed"},
+        {ChannelStep::initialize_fifo, "unassociated receive FIFO setup failed"},
+        {ChannelStep::bind, "station channel binding failed"},
+        {ChannelStep::unbind, "station channel unbind failed"},
+        {ChannelStep::remove_phy, "PHY context removal failed"},
+    };
+
+    bool bands[2]{};
+    for (unsigned i = 0; i < list.count; ++i) {
+        const auto& channel = list.entries[i];
+        const bool high = channel.frequency_mhz >= 5000;
+        if (!channel.allowed || bands[high])
+            continue;
+        for (const auto& step : steps) {
+            if (checked && step.step == ChannelStep::initialize_fifo)
+                continue;
+            const auto command = channel_command(step.step, channel, rx_mask, dual_lmac);
+            FirmwarePacket reply{};
+            if (commands.send(command.group, command.opcode, command.bytes, command.size, reply) !=
+                    Reply::matched ||
+                (command.has_status && !binding_succeeded(reply)))
+                return step.failure;
+        }
+        bands[high] = true;
+        ++checked;
+    }
+    return checked ? nullptr : "no permitted 2.4 or 5 GHz channels";
+}
+
 const char* run_passive_scan(CommandSession& commands, const ScanChannelList& channels,
                              const uint8_t (&address)[6], PassiveScan& scan, uint32_t id) {
     uint8_t request[scan_request_bytes];
@@ -476,7 +516,9 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     const bool request_dma = error == nullptr;
     bool alive = false;
     unsigned completed_scans = 0;
+    unsigned checked_channels = 0;
     const bool passive_check = scan && scan->check >= FirmwareCheck::passive_scan;
+    const bool channel_check = scan && scan->check == FirmwareCheck::channel_context;
     NvmInfo info{};
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
@@ -515,12 +557,18 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                         live->running = true;
                         return {"live passive scan ready", alive, false, true, info, regulatory};
                     }
-                    const unsigned scans = scan->check == FirmwareCheck::rescan ? 2 : 1;
-                    while (!error && completed_scans < scans) {
-                        error =
-                            run_passive_scan(commands, channels, address, passive, completed_scans);
-                        if (!error)
-                            ++completed_scans;
+                    if (!error && channel_check) {
+                        error = check_channel_contexts(commands, channels,
+                                                       info.rx_chains & scan->antennas.rx,
+                                                       scan->dual_lmac, checked_channels);
+                    } else {
+                        const unsigned scans = scan->check == FirmwareCheck::rescan ? 2 : 1;
+                        while (!error && completed_scans < scans) {
+                            error = run_passive_scan(commands, channels, address, passive,
+                                                     completed_scans);
+                            if (!error)
+                                ++completed_scans;
+                        }
                     }
                 }
             }
@@ -528,8 +576,12 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     }
 
     const bool idle = stop_adapter(reg, request_dma);
+    if (channel_check && !idle && !error)
+        error = "operating channel check could not stop DMA";
     const char* success = "firmware ALIVE received";
-    if (scan && scan->check == FirmwareCheck::rescan)
+    if (channel_check)
+        success = "operating channel binding check passed";
+    else if (scan && scan->check == FirmwareCheck::rescan)
         success = "two firmware passive scans complete";
     else if (passive_check)
         success = "firmware passive scan complete";
@@ -539,8 +591,8 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
         success = "firmware scan configuration accepted";
     else if (memory.commands)
         success = "firmware NVM read passed";
-    return {error ? error : success, alive, idle, !error, info, regulatory, passive,
-            completed_scans};
+    return {error ? error : success, alive,           idle, !error, info, regulatory, passive,
+            completed_scans,         checked_channels};
 }
 
 FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,

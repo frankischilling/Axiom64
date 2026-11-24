@@ -348,13 +348,13 @@ bool restore_registers(BootQueues& queues, StagedImage& staged, uint16_t origina
 }
 
 void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
-                     const AntennaMasks& antennas) {
+                     const FirmwareImage& image) {
     if (check >= FirmwareCheck::nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
         report("command buffer allocation failed");
         return;
     }
     ScanElementStorage* elements = nullptr;
-    if (check >= FirmwareCheck::passive_scan) {
+    if (check >= FirmwareCheck::passive_scan && check != FirmwareCheck::channel_context) {
         elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
         if (!elements) {
             report("scan result allocation failed");
@@ -369,7 +369,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     }
     const auto io = boot_io(boot);
     const auto memory = boot_memory(queues, check);
-    const ScanChecks scan{antennas, check, elements};
+    const ScanChecks scan{image.antennas, check, elements, image.dual_lmac};
     const auto result =
         start_and_stop_quz(io, memory, check >= FirmwareCheck::scan_config ? &scan : nullptr);
     const bool restored = restore_registers(queues, staged, original, result.dma_idle);
@@ -378,6 +378,8 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     report(result.status);
     if (check == FirmwareCheck::rescan)
         log("iwlwifi: completed scans=%u\n", uint64_t(result.completed_scans));
+    if (check == FirmwareCheck::channel_context)
+        log("iwlwifi: checked operating channels=%u\n", uint64_t(result.checked_channels));
     if (result.nvm.version)
         log("iwlwifi: NVM version=%x channels=%u bands=%x TX=%x RX=%x\n",
             uint64_t(result.nvm.version), uint64_t(result.nvm.channel_count),
@@ -564,6 +566,10 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report("firmware lacks the supported passive scan commands");
         return;
     }
+    if (check == FirmwareCheck::channel_context && !image.channel_context_supported) {
+        report("firmware lacks the supported operating channel commands");
+        return;
+    }
     if (check == FirmwareCheck::live_scan) {
         launch_live_firmware(image);
         return;
@@ -571,7 +577,7 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
     StagedImage staged;
     BootQueues queues;
     if (prepare_image(image, staged, queues) && check != FirmwareCheck::stage)
-        launch_firmware(queues, staged, check, image.antennas);
+        launch_firmware(queues, staged, check, image);
 }
 } // namespace
 

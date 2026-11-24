@@ -43,12 +43,14 @@ struct FirmwareBootResult {
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
     unsigned completed_scans = 0;
+    unsigned checked_channels = 0;
 };
 
 struct ScanChecks {
     AntennaMasks antennas;
     FirmwareCheck check;
     ScanElementStorage* elements = nullptr;
+    bool dual_lmac = false;
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.

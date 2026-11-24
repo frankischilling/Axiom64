@@ -2371,3 +2371,11 @@ probe. Channels that firmware permits for active scanning run first.
 Channels that require passive operation, including radar and indoor-only
 channels, run in a separate passive phase. Readers receive one completion
 event and one combined result after both phases finish.
+
+Use `iwlwifi.channel-check` to test the operating channel needed before
+authentication. The check selects one permitted 20 MHz channel in each
+available band, configures the PHY and receive chains, and binds the
+unassociated station MAC to the PHY. It checks the firmware's binding
+status, removes each binding and PHY in order, and stops DMA. The serial
+log gives the number of completed channel checks. This check sends no
+authentication frames.

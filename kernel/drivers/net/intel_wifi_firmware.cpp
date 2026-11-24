@@ -34,6 +34,19 @@ constexpr ScanVersion scan_versions[]{
 };
 constexpr unsigned scan_api_mask = (1u << (sizeof(scan_versions) / sizeof(*scan_versions))) - 1;
 
+struct ChannelVersion {
+    uint8_t opcode, group, command, response;
+};
+
+constexpr ChannelVersion channel_versions[]{
+    {0x08, 1, 4, 0}, // PHY context.
+    {0x08, 5, 2, 0}, // Radio link control.
+    {0xd1, 1, 3, 0}, // Smart FIFO.
+    {0x2b, 1, 2, 1}, // MAC to PHY binding and status.
+};
+constexpr unsigned channel_api_mask =
+    (1u << (sizeof(channel_versions) / sizeof(*channel_versions))) - 1;
+
 uint32_t load32(const uint8_t* bytes) {
     return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) | (uint32_t(bytes[2]) << 16) |
            (uint32_t(bytes[3]) << 24);
@@ -76,8 +89,9 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     bool seen_version = false, seen_cpu_count = false, seen_paging_size = false, seen_alive = false;
     bool seen_nvm = false, seen_phy_sku = false, seen_scan_config = false, seen_mcc = false;
     bool mcc_v1_v5 = false;
-    uint32_t first_api_flags = 0, capabilities[3]{};
+    uint32_t api_flags[3]{}, capabilities[3]{};
     unsigned seen_scan_apis = 0, supported_scan_apis = 0;
+    unsigned seen_channel_apis = 0, supported_channel_apis = 0;
     for (size_t cursor = tlv_file_header; cursor < size;) {
         if (size - cursor < tlv_header)
             return "truncated TLV header";
@@ -115,12 +129,14 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
             image.antennas = {uint8_t((phy >> 16) & 0xf), uint8_t((phy >> 20) & 0xf)};
             break;
         }
-        case tlv_api_flags:
+        case tlv_api_flags: {
             if (length != 8)
                 return "invalid firmware API flags";
-            if (!load32(payload))
-                first_api_flags |= load32(payload + 4);
+            const auto word = load32(payload);
+            if (word < sizeof(api_flags) / sizeof(*api_flags))
+                api_flags[word] |= load32(payload + 4);
             break;
+        }
         case tlv_capabilities: {
             if (length != 8)
                 return "invalid firmware capabilities";
@@ -141,6 +157,18 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
                         seen_scan_apis |= flag;
                         if (payload[i + (required.notification ? 3 : 2)] == required.version)
                             supported_scan_apis |= flag;
+                    }
+                    flag <<= 1;
+                }
+                flag = 1;
+                for (const auto& required : channel_versions) {
+                    if (payload[i] == required.opcode && payload[i + 1] == required.group) {
+                        if (seen_channel_apis & flag)
+                            return "duplicate firmware channel context version";
+                        seen_channel_apis |= flag;
+                        if (payload[i + 2] == required.command &&
+                            payload[i + 3] == required.response)
+                            supported_channel_apis |= flag;
                     }
                     flag <<= 1;
                 }
@@ -196,10 +224,16 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
         return "paging size mismatch";
     constexpr uint32_t lar = 1u << 1, multi_mcc = 1u << 29, wifi_mcc = 1u << 9;
     constexpr uint32_t mcc_11ax = 1u << (89 - 64);
-    image.current_regulatory_profile =
-        mcc_v1_v5 && (capabilities[0] & lar) && (capabilities[2] & mcc_11ax) &&
-        ((first_api_flags & wifi_mcc) || (capabilities[0] & multi_mcc));
+    image.current_regulatory_profile = mcc_v1_v5 && (capabilities[0] & lar) &&
+                                       (capabilities[2] & mcc_11ax) &&
+                                       ((api_flags[0] & wifi_mcc) || (capabilities[0] & multi_mcc));
     image.passive_scan_supported = supported_scan_apis == scan_api_mask;
+    constexpr uint32_t binding_cdb = 1u << (39 - 32), concurrent_bands = 1u << (40 - 32);
+    constexpr uint32_t smart_fifo_offload = 1u << (68 - 64);
+    image.dual_lmac = capabilities[1] & concurrent_bands;
+    image.channel_context_supported = supported_channel_apis == channel_api_mask &&
+                                      (capabilities[1] & binding_cdb) &&
+                                      !(api_flags[2] & smart_fifo_offload);
     output = image;
     return nullptr;
 }

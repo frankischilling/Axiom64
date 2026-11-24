@@ -268,6 +268,10 @@ struct StartupFixture {
     uint8_t scan_only_channel = 0;
     uint8_t notification_channel = 1;
     bool probe_expected = false;
+    bool check_channels = false;
+    bool dual_lmac = false;
+    unsigned bad_binding_status = 0;
+    unsigned short_binding_status = 0;
     unsigned scan_delays = 0;
     bool malformed_nvm = false;
     bool wrong_sequence = false;
@@ -334,6 +338,54 @@ struct StartupFixture {
         return slot < 9 ? replies[slot] : nullptr;
     }
 
+    unsigned expect_channel_command(unsigned index, uint8_t* expected) const {
+        const bool high = index >= 14;
+        const uint8_t lmac = high && dual_lmac;
+        switch (index) {
+        case 8:
+        case 13:
+        case 14:
+        case 18:
+            expected[0] = 8;
+            expected[12] = index == 13 || index == 18 ? 3 : 1;
+            expected[16] = high ? 36 : 1;
+            expected[20] = !high;
+            expected[24] = lmac;
+            return 32;
+        case 9:
+        case 15:
+            expected[0] = 8;
+            expected[1] = 5;
+            expected[12] = 4;
+            expected[13] = 0x14;
+            return 32;
+        case 10:
+            expected[0] = 0xd1;
+            expected[8] = 3;
+            expected[13] = 0x10;
+            expected[17] = 0x20;
+            for (unsigned i = 0; i < 10; ++i) {
+                expected[20 + i * 4] = 0x40;
+                expected[21 + i * 4] = 0x42;
+                expected[22 + i * 4] = 0x0f;
+            }
+            for (unsigned i = 0; i < 5; ++i) {
+                expected[60 + i * 8] = 0x90;
+                expected[61 + i * 8] = 1;
+                expected[64 + i * 8] = 0xa0;
+            }
+            return 92;
+        default:
+            assert(index == 11 || index == 12 || index == 16 || index == 17);
+            const bool remove = index == 12 || index == 17;
+            expected[0] = 0x2b;
+            expected[12] = remove ? 3 : 1;
+            memset(expected + (remove ? 16 : 20), 0xff, remove ? 12 : 8);
+            expected[32] = lmac;
+            return 28;
+        }
+    }
+
     void command_reply(unsigned tail) {
         const unsigned index = ++commands_sent;
         assert(tail == (index & (command_sequence_count - 1)));
@@ -341,7 +393,7 @@ struct StartupFixture {
         const unsigned sequence = (index - 1) & (command_sequence_count - 1);
         const unsigned slot = sequence & (command_ring_entries - 1);
         const auto& command = payloads[slot];
-        const bool scanning = passive != ScanCase::unused;
+        const bool scanning = check_channels || passive != ScanCase::unused;
         const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
         uint8_t expected[command_slot_bytes]{};
         uint16_t payload_bytes = 4;
@@ -376,6 +428,8 @@ struct StartupFixture {
             expected[40] = 0xf;
             expected[44] = 0x15;
             expected[60] = 0x44;
+        } else if (check_channels) {
+            payload_bytes = expect_channel_command(index, expected);
         } else {
             expected[0] = 0xd;
             payload_bytes = 1940;
@@ -446,7 +500,11 @@ struct StartupFixture {
             reply[7] = 0x80;
             reply += 64;
         }
-        const unsigned length = mcc ? (scanning ? 84 : 32) : index == 3 ? 472 : 4;
+        const bool binding = check_channels && index >= 8 && command[0] == 0x2b;
+        const unsigned length = binding      ? (index == short_binding_status ? 7 : 8)
+                                : mcc        ? (scanning ? 84 : 32)
+                                : index == 3 ? 472
+                                             : 4;
         reply[0] = uint8_t(length);
         reply[1] = uint8_t(length >> 8);
         const bool reject = index == 4 && reject_scan_config;
@@ -472,7 +530,9 @@ struct StartupFixture {
             if (scanning)
                 data[76] = 0x01;
         }
-        if (index >= 8)
+        if (binding && index == bad_binding_status)
+            reply[11] = 1;
+        if (!check_channels && index >= 8)
             scan_notifications(reply, uint8_t((index - 8) & 1));
         used[index] = index + 1;
         receive_status.closed_buffer = uint16_t(index + 1 + backlog);
@@ -580,7 +640,7 @@ struct StartupFixture {
 
     FirmwareBootResult run(bool nvm = false, const ScanChecks* scan = nullptr) {
         const auto io = make_io();
-        const auto memory = make_memory(nvm, scan && scan->check == FirmwareCheck::rescan);
+        const auto memory = make_memory(nvm, scan && scan->check >= FirmwareCheck::rescan);
         return start_and_stop_quz(io, memory, scan);
     }
 };
@@ -850,6 +910,42 @@ void check_scan_channels() {
     std::puts("AX201_SCAN_CHANNEL_MODEL_PASS");
 }
 
+void check_channel_contexts() {
+    struct Case {
+        StartupCase startup;
+        bool dual_lmac;
+        unsigned refused, shortened, commands, completed;
+        const char* status;
+    };
+
+    const Case cases[]{
+        {StartupCase::good, false, 0, 0, 18, 2, "operating channel binding check passed"},
+        {StartupCase::good, true, 0, 0, 18, 2, "operating channel binding check passed"},
+        {StartupCase::good, false, 11, 0, 11, 0, "station channel binding failed"},
+        {StartupCase::good, false, 0, 17, 17, 1, "station channel unbind failed"},
+        {StartupCase::stop_failed, false, 0, 0, 18, 2,
+         "operating channel check could not stop DMA"},
+    };
+    for (const auto& test : cases) {
+        StartupFixture model(test.startup);
+        model.check_channels = true;
+        model.dual_lmac = test.dual_lmac;
+        model.regulatory = RegulatoryCase::valid;
+        model.bad_binding_status = test.refused;
+        model.short_binding_status = test.shortened;
+        model.live_replies.resize(18 * ax::page_size);
+        const ScanChecks request{{1, 2}, FirmwareCheck::channel_context, nullptr, test.dual_lmac};
+        const auto result = model.run(true, &request);
+        const bool stopped = test.startup != StartupCase::stop_failed;
+        assert(result.dma_idle == stopped && !model.master && model.reset_after_dma);
+        assert(result.successful == (stopped && !test.refused && !test.shortened));
+        assert(result.alive && !result.completed_scans &&
+               result.checked_channels == test.completed);
+        assert(model.commands_sent == test.commands && !strcmp(result.status, test.status));
+    }
+    std::puts("AX201_CHANNEL_CONTEXT_MODEL_PASS");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -934,8 +1030,16 @@ int main(int argc, char** argv) {
     word(file, append(file, 48, 4), 0x00050128);
     word(file, append(file, 48, 4), 0x000f010d);
     word(file, append(file, 48, 4), 0x046300c1);
+    word(file, append(file, 48, 4), 0x00040108);
+    word(file, append(file, 48, 4), 0x00020508);
+    word(file, append(file, 48, 4), 0x000301d1);
+    const auto binding_version = append(file, 48, 4);
+    word(file, binding_version, 0x0102012b);
     word(file, append(file, 29, 8) + 4, 1u << 9);
     word(file, append(file, 30, 8) + 4, 1u << 1);
+    const auto binding_caps = append(file, 30, 8);
+    word(file, binding_caps, 1);
+    word(file, binding_caps + 4, (1u << 7) | (1u << 8));
     auto regulatory_caps = append(file, 30, 8);
     word(file, regulatory_caps, 2);
     word(file, regulatory_caps + 4, 1u << 25);
@@ -955,6 +1059,7 @@ int main(int argc, char** argv) {
     assert(image.scan_config_version == 5 && image.antennas.tx == 3 && image.antennas.rx == 3);
     assert(image.current_regulatory_profile);
     assert(image.passive_scan_supported);
+    assert(image.channel_context_supported && image.dual_lmac);
     assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
            image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
@@ -967,6 +1072,7 @@ int main(int argc, char** argv) {
     check_live_scans();
     check_active_scan();
     check_scan_channels();
+    check_channel_contexts();
     check_receive_recycling();
     check_access_points();
 
@@ -991,6 +1097,19 @@ int main(int argc, char** argv) {
     Bytes duplicate_scan = file;
     word(duplicate_scan, append(duplicate_scan, 48, 4), 0x0004010c);
     reject(duplicate_scan);
+    Bytes duplicate_binding = file;
+    word(duplicate_binding, append(duplicate_binding, 48, 4), 0x0102012b);
+    reject(duplicate_binding);
+    Bytes short_binding = file;
+    word(short_binding, binding_version, 0x0002012b);
+    FirmwareImage unsupported_binding{};
+    assert(!parse_firmware(short_binding.data(), short_binding.size(), unsupported_binding));
+    assert(!unsupported_binding.channel_context_supported &&
+           unsupported_binding.passive_scan_supported);
+    Bytes old_binding = file;
+    word(old_binding, binding_caps + 4, 0);
+    assert(!parse_firmware(old_binding.data(), old_binding.size(), unsupported_binding));
+    assert(!unsupported_binding.channel_context_supported && !unsupported_binding.dual_lmac);
     Bytes no_regulatory = file;
     word(no_regulatory, regulatory_caps + 4, 0);
     FirmwareImage without_mcc{};
@@ -1015,6 +1134,7 @@ int main(int argc, char** argv) {
         assert(image.scan_config_version == 5 && image.antennas.tx == 3 && image.antennas.rx == 3);
         assert(image.current_regulatory_profile);
         assert(image.passive_scan_supported);
+        assert(image.channel_context_supported && !image.dual_lmac);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

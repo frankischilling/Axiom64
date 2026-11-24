@@ -42,6 +42,8 @@ struct FirmwareImage {
     AntennaMasks antennas;
     bool current_regulatory_profile;
     bool passive_scan_supported;
+    bool channel_context_supported;
+    bool dual_lmac;
 };
 
 // The returned sections borrow the firmware bytes. A rejected image leaves output intact.
@@ -55,6 +57,7 @@ enum class FirmwareCheck {
     regulatory,
     passive_scan,
     rescan,
+    channel_context,
     live_scan
 };
 void check_firmware(bool probe_pci, FirmwareCheck);

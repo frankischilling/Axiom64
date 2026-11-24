@@ -154,6 +154,8 @@ BootInfo boot_info;
     auto wifi_check = IntelWifi::FirmwareCheck::stage;
     if (arguments.has("iwlwifi.live-scan"))
         wifi_check = IntelWifi::FirmwareCheck::live_scan;
+    else if (arguments.has("iwlwifi.channel-check"))
+        wifi_check = IntelWifi::FirmwareCheck::channel_context;
     else if (arguments.has("iwlwifi.rescan-check"))
         wifi_check = IntelWifi::FirmwareCheck::rescan;
     else if (arguments.has("iwlwifi.passive-scan"))

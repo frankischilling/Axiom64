@@ -2363,6 +2363,8 @@ scan is running returns `EBUSY`. If a scan aborts, readers can still
 query the last successful snapshot. A request can also select frequencies
 in MHz. It skips disabled channels and rejects empty lists, unknown or
 duplicate frequencies, and selections with no permitted channels.
+The colocated 6 GHz scan hint can accompany these requests. The AX201
+scans its supported 2.4 and 5 GHz channels as usual.
 
 Use `--active` for a broadcast probe test. Live requests may include up to
 20 SSID entries. A zero-length entry

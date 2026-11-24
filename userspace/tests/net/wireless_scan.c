@@ -370,7 +370,7 @@ static void check_bad_ssids(int fd, unsigned family, unsigned index) {
 
 static void trigger_filtered(int fd, unsigned family, unsigned index, unsigned sequence,
                              unsigned count, uint32_t first, uint32_t second, int malformed,
-                             int error) {
+                             uint32_t flags, int error) {
     struct packet request = make_request(family, NL80211_CMD_TRIGGER_SCAN, NLM_F_ACK, sequence);
 
     const struct {
@@ -384,6 +384,8 @@ static void trigger_filtered(int fd, unsigned family, unsigned index, unsigned s
     append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
     append_attribute(&request, NL80211_ATTR_SCAN_FREQUENCIES | NLA_F_NESTED, entries,
                      count * sizeof(entries[0]));
+    if (flags)
+        append_attribute(&request, NL80211_ATTR_SCAN_FLAGS, &flags, sizeof(flags));
     send_packet(fd, &request);
     alignas(struct nlmsghdr) uint8_t bytes[1024];
     receive(fd, bytes, sizeof(bytes), 0);
@@ -417,16 +419,19 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
     int dump = -1;
     if (fixture) {
         check_bad_ssids(fd, family, index);
-        trigger_filtered(fd, family, index, 31, 0, 0, 0, 0, EINVAL);
-        trigger_filtered(fd, family, index, 32, 1, 5260, 0, 1, EINVAL);
-        trigger_filtered(fd, family, index, 33, 1, 1234, 0, 0, EINVAL);
-        trigger_filtered(fd, family, index, 34, 1, 2417, 0, 0, EINVAL);
-        trigger_filtered(fd, family, index, 35, 2, 5260, 5260, 0, EINVAL);
+        trigger_filtered(fd, family, index, 31, 0, 0, 0, 0, 0, EINVAL);
+        trigger_filtered(fd, family, index, 32, 1, 5260, 0, 1, 0, EINVAL);
+        trigger_filtered(fd, family, index, 33, 1, 1234, 0, 0, 0, EINVAL);
+        trigger_filtered(fd, family, index, 34, 1, 2417, 0, 0, 0, EINVAL);
+        trigger_filtered(fd, family, index, 35, 2, 5260, 5260, 0, 0, EINVAL);
+        const uint32_t colocated = NL80211_SCAN_FLAG_COLOCATED_6GHZ;
+        trigger_filtered(fd, family, index, 39, 1, 5260, 0, 0,
+                         colocated | NL80211_SCAN_FLAG_RANDOM_ADDR, EOPNOTSUPP);
         dump = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
         require(dump >= 0, "open concurrent dump socket");
         send_request(dump, family, NL80211_CMD_GET_SCAN, NLM_F_DUMP, 20, NL80211_ATTR_IFINDEX,
                      &index, sizeof(index));
-        trigger_filtered(fd, family, index, 11, 2, 2417, 5260, 0, 0);
+        trigger_filtered(fd, family, index, 11, 2, 2417, 5260, 0, colocated, 0);
     } else if (active) {
         const struct nlattr wildcard = {.nla_len = NLA_HDRLEN, .nla_type = 1};
         trigger_ssids(fd, family, index, 11, &wildcard, sizeof(wildcard), 0);

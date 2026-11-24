@@ -51,6 +51,7 @@ enum BssAttribute : uint16_t {
 };
 
 constexpr uint32_t station = 2;
+constexpr uint32_t scan_colocated_6ghz = 1u << 14;
 constexpr uint64_t device_id = 1;
 constexpr uint16_t multipart = 2, dump_flags = 0x300;
 constexpr uint8_t new_wiphy = 3, new_interface = 7, new_scan_results = 34, scan_aborted = 35;
@@ -306,7 +307,8 @@ int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsi
                 if (size != sizeof(flags))
                     return -22;
                 memcpy(&flags, value, sizeof(flags));
-                if (flags)
+                // This radio has no 6 GHz channels. The colocated-AP hint does not affect its scan.
+                if (flags & ~scan_colocated_6ghz)
                     return -95;
             }
             break;

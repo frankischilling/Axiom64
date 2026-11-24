@@ -367,13 +367,15 @@ void retain_associated_access_point(PassiveScan& scan, const PassiveScan& previo
 }
 
 void update_scan_history(PassiveScan& scan, const PassiveScan& previous, uint64_t now_ms,
-                         const AccessPoint* associated) {
+                         const AccessPoint* associated, bool flush_cache) {
     for (unsigned i = 0; i < scan.access_point_count; ++i)
         scan.access_points[i].seen_ms = now_ms;
     if (!scan.elements || !previous.elements)
         return;
     if (associated)
         retain_associated_access_point(scan, previous, *associated);
+    if (flush_cache)
+        return;
     for (unsigned i = 0; i < previous.access_point_count; ++i) {
         const auto& point = previous.access_points[i];
         if (!recent(point, now_ms))

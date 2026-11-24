@@ -54,6 +54,7 @@ struct ScanSsids {
 struct ScanRequest {
     uint64_t channels = all_scan_channels;
     ScanSsids ssids{};
+    bool flush_cache = false;
 };
 
 struct ScanInformationElements {
@@ -96,7 +97,8 @@ struct PassiveScan {
 bool prepare_scan_phase(const ScanChannelList&, PassiveScan&, uint8_t (&wire)[scan_request_bytes],
                         uint32_t id, uint64_t channels, const ScanSsids&, bool associated = false);
 void retain_associated_access_point(PassiveScan&, const PassiveScan&, const AccessPoint&);
-void update_scan_history(PassiveScan&, const PassiveScan&, uint64_t now_ms, const AccessPoint*);
+void update_scan_history(PassiveScan&, const PassiveScan&, uint64_t now_ms, const AccessPoint*,
+                         bool flush_cache = false);
 bool expire_scan_history(PassiveScan&, uint64_t now_ms, const AccessPoint*);
 constexpr size_t scan_abort_bytes = 8;
 void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]);

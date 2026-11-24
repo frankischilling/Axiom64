@@ -836,5 +836,16 @@ void check_intel_wifi_access_points() {
                                 &scan.access_points[1]));
     assert(expire_scan_history(replacement, second_scan + scan_cache_lifetime_ms, nullptr));
     assert(replacement.access_point_count == 0);
+
+    replacement.access_point_count = 1;
+    replacement.access_points[0] = scan.access_points[1];
+    retained_elements.records[0] = elements.records[1];
+    update_scan_history(replacement, scan, second_scan, nullptr, true);
+    assert(replacement.access_point_count == 1);
+    assert(replacement.access_points[0].seen_ms == second_scan);
+    update_scan_history(replacement, scan, second_scan, &peer, true);
+    assert(replacement.access_point_count == 2 &&
+           replacement.access_points[1].seen_ms == first_scan);
+    assert(!memcmp(retained_elements.records[1].probe, probe, sizeof(probe)));
     std::puts("AX201_ACCESS_POINT_MODEL_PASS");
 }

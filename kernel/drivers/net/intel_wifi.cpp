@@ -525,8 +525,10 @@ struct RuntimeRadio {
     LiveScanSession session{io, memory};
     uint16_t original_pci = 0;
     ScanElementStorage* pending = nullptr;
+    bool flush_scan_cache = false;
     bool polling = false;
     bool connectable = false;
+    bool can_recover = true;
     unsigned owner_port = 0;
 
     ~RuntimeRadio() {
@@ -580,16 +582,23 @@ void stop_runtime(NetAdapter& device) {
 }
 
 void recover_runtime(NetAdapter& device) {
+    const bool retry = radio && radio->can_recover;
     const bool safe = shut_down_radio(device);
-    // Consume the retained image even on failure to bound startup retries.
     auto* bytes = live_firmware;
     const auto size = live_firmware_size;
     live_firmware = nullptr;
     live_firmware_size = 0;
-    if (safe && bytes) {
+    if (retry && safe && bytes) {
         log("iwlwifi: restarting firmware after runtime failure\n");
         stage_firmware(bytes, size, FirmwareCheck::live_scan, {});
         log("iwlwifi: firmware restart %s\n", radio ? "complete" : "failed");
+        if (radio) {
+            // Confirm progress before allowing another restart.
+            radio->can_recover = false;
+            live_firmware = bytes;
+            live_firmware_size = size;
+            return;
+        }
     }
     release(bytes);
 }
@@ -668,6 +677,7 @@ void poll_runtime(NetAdapter& device) {
             return;
         const bool connected = result == JoinOutcome::connected;
         if (connected) {
+            radio->can_recover = true;
             device.info.carrier = device.info.writable = true;
             ++completed_generation;
         }
@@ -710,7 +720,9 @@ void poll_runtime(NetAdapter& device) {
         return;
     const bool complete = outcome == ScanOutcome::complete;
     if (complete) {
-        update_scan_history(radio->session.scan, completed_scan, now_ms, associated_access_point());
+        update_scan_history(radio->session.scan, completed_scan, now_ms, associated_access_point(),
+                            radio->flush_scan_cache);
+        radio->can_recover = true;
         release(completed_scan.elements);
         completed_scan = radio->session.scan;
         radio->pending = nullptr;
@@ -882,11 +894,7 @@ uint32_t passive_scan_generation() {
 }
 
 bool live_scan_available() {
-    if (!radio || radio->session.join.phase != JoinPhase::idle ||
-        radio->session.leave.phase != LeavePhase::idle)
-        return false;
-    const auto& station = radio->session.station;
-    return !station.key_busy && (!station.queue.id || station.port_authorized);
+    return radio != nullptr;
 }
 
 bool live_connect_available() {
@@ -1008,6 +1016,7 @@ int trigger_live_scan(const ScanRequest& request) {
         return error;
     }
     radio->pending = elements;
+    radio->flush_scan_cache = request.flush_cache;
     return 0;
 }
 

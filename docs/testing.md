@@ -2501,6 +2501,9 @@ The AX201 keeps recent access points across completed scans, including scans
 that cover different channels. Scan replies report each entry's age. Entries
 expire after 30 seconds, apart from the current association. The bounded
 cache gives the latest scan priority when it fills.
+Use `NL80211_SCAN_FLAG_FLUSH` when a successful scan should replace the
+earlier results. The driver keeps the current association and retains its
+cache if the scan aborts.
 
 Send `NL80211_CMD_DISCONNECT` to end a connection or cancel a pending
 association. Wait for the result on the `mlme` group before scanning or
@@ -2511,6 +2514,6 @@ resources from that attempt. After cleanup, the radio can scan and connect
 again. If firmware fails to confirm cleanup, the driver stops the radio
 to protect the DMA buffers. If the driver can stop DMA and restore the PCI
 command register, it tries one restart using the firmware saved at startup.
-The restarted radio keeps its interface name and can scan again. If DMA or
-PCI restoration cannot be confirmed, the old buffers stay reserved until
-reboot.
+The restarted radio keeps its interface name. A completed scan or association
+allows another recovery after a later failure. If DMA or PCI restoration
+cannot be confirmed, the old buffers stay reserved until reboot.

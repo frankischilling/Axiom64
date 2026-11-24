@@ -437,7 +437,8 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
         require(dump >= 0, "open concurrent dump socket");
         send_request(dump, family, NL80211_CMD_GET_SCAN, NLM_F_DUMP, 20, NL80211_ATTR_IFINDEX,
                      &index, sizeof(index));
-        trigger_filtered(fd, family, index, 11, 2, 2417, 5260, 0, colocated, 0);
+        trigger_filtered(fd, family, index, 11, 2, 2417, 5260, 0,
+                         colocated | NL80211_SCAN_FLAG_FLUSH, 0);
     } else if (active) {
         const struct nlattr wildcard = {.nla_len = NLA_HDRLEN, .nla_type = 1};
         trigger_ssids(fd, family, index, 11, &wildcard, sizeof(wildcard), 0);

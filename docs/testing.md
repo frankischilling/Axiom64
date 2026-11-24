@@ -2442,7 +2442,12 @@ port, the driver passes only EAPOL frames until the supplicant authorizes
 the associated peer. Closing the socket that owns a connection ends it.
 The connection event includes the association request and response elements when
 available. If the access point refuses association, the event reports its status
-code. Secured associations and encryption keys still need driver support.
+code.
+
+The host tests cover the AX201's CCMP transmit command and receive path. They
+check that receive delivery rejects frames with a bad integrity check, a replayed
+packet number, or no matching key, and allows EAPOL during authentication.
+Secured connections still require association and userspace key management.
 
 Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
 disconnect event on the `mlme` group before scanning or connecting again.

@@ -59,6 +59,113 @@ void check_intel_wifi_association_codec() {
     std::puts("AX201_ASSOCIATION_CODEC_PASS");
 }
 
+void check_intel_wifi_ccmp_data() {
+    constexpr uint8_t station[]{2, 0, 0, 0, 0, 3}, bssid[]{2, 0, 0, 0, 0, 1};
+    CommandDescriptor ring[management_queue_entries]{};
+    uint16_t counts[management_queue_entries]{};
+    uint8_t payload[authentication_dma_bytes]{};
+    const AuthenticationDma dma{ring, counts, payload, 0x52000};
+    const PeerQueue queue{0x102, 0x37};
+    uint8_t ethernet[15]{};
+    memcpy(ethernet, bssid, sizeof(bssid));
+    memcpy(ethernet + 6, station, sizeof(station));
+    ethernet[12] = 8;
+    ethernet[14] = 0x7f;
+    const uint8_t snap[]{0xaa, 0xaa, 3, 0, 0, 0, 8, 0, 0x7f};
+    assert(prepare_station_data(dma, queue, 0x400a, station, bssid, ethernet, sizeof(ethernet), 7,
+                                true));
+    assert(payload[8] == 1 && payload[69] == 0x41);
+    assert(payload[4] == 24 + sizeof(snap) && !memcmp(payload + 128, snap, sizeof(snap)));
+    assert(prepare_station_data(dma, queue, 0x400a, station, bssid, ethernet, sizeof(ethernet), 7));
+    assert(payload[8] == 3 && payload[69] == 1);
+
+    uint8_t rx[112]{};
+    uint8_t decoded[station_frame_bytes]{};
+    StationCcmpKeys keys{};
+    FirmwarePacket packet{0xc1, 0, 0x8000, rx, sizeof(rx)};
+    auto* frame = rx + 48;
+    auto make_rx = [&](bool encrypted, bool qos, bool group, uint8_t key, uint64_t pn) {
+        memset(rx, 0, sizeof(rx));
+        const unsigned mac = qos ? 26 : 24;
+        const unsigned body = mac + (encrypted ? 8 : 0) + (qos ? 2 : 0);
+        rx[0] = uint8_t(body + sizeof(snap) + 4);
+        rx[2] = 0x20; // Four bytes of trailer in the MPDU length.
+        rx[3] = qos ? 0x20 : 0;
+        rx[12] = encrypted ? 0x43 : 3;
+        rx[13] = encrypted ? 2 : 0;
+        rx[34] = 1;
+        frame[0] = qos ? 0x88 : 8;
+        frame[1] = encrypted ? 0x42 : 2;
+        memcpy(frame + 4, station, sizeof(station));
+        if (group)
+            memset(frame + 4, 0xff, 6);
+        memcpy(frame + 10, bssid, sizeof(bssid));
+        memcpy(frame + 16, bssid, sizeof(bssid));
+        if (qos)
+            frame[24] = 4;
+        if (encrypted) {
+            auto* iv = frame + mac;
+            iv[0] = uint8_t(pn);
+            iv[1] = uint8_t(pn >> 8);
+            iv[3] = uint8_t((key << 6) | 0x20);
+            for (unsigned i = 0; i < 4; ++i)
+                iv[4 + i] = uint8_t(pn >> (16 + 8 * i));
+        }
+        memcpy(frame + body, snap, sizeof(snap));
+        packet.length = 48 + rx[0];
+        return frame + body;
+    };
+    const auto receive = [&] {
+        return receive_station_data(packet, station, bssid, 1, decoded, &keys);
+    };
+
+    constexpr uint64_t pn = 0x010203040506;
+    auto* body = make_rx(true, false, false, 0, pn);
+    assert(!receive());
+    keys.pairwise.installed = true;
+    keys.pairwise.packet_number[0] = pn - 1;
+    assert(!receive_station_data(packet, station, bssid, 1, decoded));
+    rx[12] &= ~0x40;
+    assert(!receive());
+    rx[12] |= 0x40;
+    frame[27] = 0; // Missing Extended IV.
+    assert(!receive());
+    frame[27] = 0x60; // Wrong pairwise key index.
+    assert(!receive());
+    frame[27] = 0x20;
+    --packet.length;
+    assert(!receive());
+    ++packet.length;
+    body[0] = 0;
+    assert(!receive() && keys.pairwise.packet_number[0] == pn - 1);
+    body[0] = 0xaa;
+    assert(receive() == sizeof(ethernet) && decoded[14] == 0x7f);
+    assert(keys.pairwise.packet_number[0] == pn && !receive());
+    make_rx(true, true, false, 0, pn);
+    frame[24] = 0;
+    assert(!receive());
+    make_rx(true, true, false, 0, pn - 1);
+    frame[24] |= 0x80;
+    assert(!receive() && !keys.pairwise.packet_number[4]);
+    frame[24] &= 0x7f;
+    assert(receive() == sizeof(ethernet) && keys.pairwise.packet_number[4] == pn - 1 && !receive());
+    make_rx(true, false, true, 2, pn - 1);
+    keys.group[1].installed = true;
+    assert(!receive());
+    keys.group[2].installed = true;
+    keys.group[2].packet_number[0] = pn - 2;
+    assert(receive() == sizeof(ethernet) && decoded[0] == 0xff && !receive());
+
+    body = make_rx(false, false, false, 0, 0);
+    assert(!receive());
+    body[6] = 0x88;
+    body[7] = 0x8e;
+    assert(receive() == sizeof(ethernet));
+    frame[21] ^= 1;
+    assert(!receive());
+    std::puts("AX201_CCMP_DATA_CODEC_PASS");
+}
+
 void check_intel_wifi_key_codec() {
     constexpr uint8_t key[ccmp_key_bytes]{0x12, 0x34, 0x56, 0x78};
     constexpr uint64_t largest_pn = 0xffffffffffff;
@@ -81,6 +188,31 @@ void check_intel_wifi_key_codec() {
     erase_key_bytes(command, sizeof(command));
     assert(!memcmp(command, empty, sizeof(command)));
     std::puts("AX201_CCMP_KEY_CODEC_PASS");
+}
+
+void check_intel_wifi_scan_channels() {
+    NvmInfo nvm{};
+    nvm.bands = 3;
+    RegulatoryProfile profile{};
+    profile.channel_slots = regulatory_channel_limit;
+    profile.flags[13] = 1;
+    profile.flags[18] = 0x39;
+    profile.flags[19] = 0x29;
+    const auto mixed = scan_channel_list(nvm, profile);
+    assert(mixed.count == scan_channel_limit);
+    assert(mixed.entries[13].number == 14 && mixed.entries[13].frequency_mhz == 2484 &&
+           mixed.entries[13].allowed);
+    assert(mixed.entries[18].number == 52 && mixed.entries[18].frequency_mhz == 5260 &&
+           mixed.entries[18].allowed && mixed.entries[18].radar && mixed.entries[18].indoor &&
+           !mixed.entries[18].active);
+    assert(mixed.entries[19].allowed && mixed.entries[19].indoor && !mixed.entries[19].active);
+    assert(!mixed.entries[20].allowed);
+    nvm.bands = 2;
+    const auto high_only = scan_channel_list(nvm, profile);
+    assert(high_only.count == scan_channel_limit - 14 &&
+           high_only.entries[0].frequency_mhz == 5180 && !high_only.entries[0].allowed);
+    assert(high_only.entries[4].frequency_mhz == 5260 && high_only.entries[4].allowed);
+    std::puts("AX201_SCAN_CHANNEL_MODEL_PASS");
 }
 
 void check_intel_wifi_access_points() {

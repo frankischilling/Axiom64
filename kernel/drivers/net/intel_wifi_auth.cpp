@@ -21,6 +21,8 @@ constexpr unsigned second_tb_offset = 64, third_tb_offset = 128;
 static_assert(third_tb_offset + association_body_bytes <= authentication_dma_bytes);
 constexpr uint8_t snap_prefix[]{0xaa, 0xaa, 3, 0, 0};
 constexpr unsigned snap_bytes = 8, ethernet_bytes = 14;
+constexpr uint8_t protected_frame = 0x40;
+constexpr uint16_t eapol_type = 0x888e;
 constexpr uint8_t arp_header[]{0, 1, 8, 0, 6, 4};
 
 bool uses_bridge_tunnel(uint16_t type) {
@@ -337,7 +339,8 @@ static bool prepare_station_frame(const AuthenticationDma& dma, PeerQueue queue,
     dma.payload[4] = uint8_t(header_bytes + length);
     dma.payload[5] = uint8_t((header_bytes + length) >> 8);
     dma.payload[7] = header_bytes / 2; // Offload MAC header size in words.
-    dma.payload[8] = 3;                // Use the command rate and disable encryption.
+    // TX v9 generates the IV and encrypts with the firmware's station key.
+    dma.payload[8] = (header[1] & protected_frame) ? 1 : 3;
 
     auto* rate_field = dma.payload + second_tb_offset;
     for (unsigned i = 0; i < 4; ++i)
@@ -386,7 +389,7 @@ bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uin
 
 bool prepare_station_data(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
                           const uint8_t (&station)[6], const uint8_t (&bssid)[6],
-                          const uint8_t* frame, size_t length, uint16_t sequence) {
+                          const uint8_t* frame, size_t length, uint16_t sequence, bool encrypt) {
     if (!frame || length < ethernet_bytes || length > station_frame_bytes ||
         memcmp(frame + 6, station, sizeof(station)))
         return false;
@@ -394,6 +397,8 @@ bool prepare_station_data(const AuthenticationDma& dma, PeerQueue queue, uint32_
     if (type < 1536 || (length > 1514 && type != 0x8100 && type != 0x88a8))
         return false;
     uint8_t header[header_bytes]{0x08, 0x01}; // Data frame headed to the distribution system.
+    if (encrypt)
+        header[1] |= protected_frame;
     memcpy(header + 4, bssid, sizeof(bssid));
     memcpy(header + 10, station, sizeof(station));
     memcpy(header + 16, frame, sizeof(station));
@@ -424,24 +429,34 @@ bool prepare_arp_request(const AuthenticationDma& dma, PeerQueue queue, uint32_t
 
 size_t receive_station_data(const FirmwarePacket& packet, const uint8_t (&station)[6],
                             const uint8_t (&bssid)[6], uint8_t channel,
-                            uint8_t (&output)[station_frame_bytes]) {
+                            uint8_t (&output)[station_frame_bytes], StationCcmpKeys* keys) {
     constexpr unsigned descriptor_bytes = 48;
+    constexpr unsigned ccmp_header_bytes = 8;
+    constexpr uint16_t security_mask = 7 << 8, ccmp_algorithm = 2 << 8, mic_ok = 1 << 6;
     if (packet.group || packet.opcode != 0xc1 || !(packet.sequence & 0x8000) || !packet.payload ||
         packet.length < descriptor_bytes + header_bytes)
         return 0;
     const auto* rx = packet.payload;
     const auto* frame = rx + descriptor_bytes;
-    if ((rx[12] & 3) != 3 || (rx[3] & 0x40) || rx[34] != channel ||
-        (frame[0] != 0x08 && frame[0] != 0x88) || (frame[1] & 0xc7) != 2 || (frame[22] & 15) ||
+    const bool encrypted = frame[1] & protected_frame;
+    const bool qos = frame[0] == 0x88;
+    const auto status = read16(rx + 12);
+    if ((rx[12] & 3) != 3 || (rx[3] & 0x40) || rx[34] != channel || (frame[0] != 0x08 && !qos) ||
+        (frame[1] & 0x87) != 2 || (frame[22] & 15) ||
         (!(frame[4] & 1) && memcmp(frame + 4, station, sizeof(station))) ||
         memcmp(frame + 10, bssid, sizeof(bssid)) || !memcmp(frame + 16, station, sizeof(station)) ||
-        (frame[16] & 1))
+        (frame[16] & 1) ||
+        (encrypted && (!keys || (status & (security_mask | mic_ok)) != (ccmp_algorithm | mic_ok))))
         return 0;
-    const unsigned body_offset = header_bytes + (frame[0] == 0x88 ? 2 : 0) + (rx[3] & 0x20 ? 2 : 0);
+    const unsigned mac_bytes = header_bytes + (qos ? 2 : 0);
+    const unsigned body_offset =
+        mac_bytes + (encrypted ? ccmp_header_bytes : 0) + (rx[3] & 0x20 ? 2 : 0);
     const unsigned length = read16(rx);
     const unsigned trailer = (rx[2] & 0xf0) >> 3;
     if (length < body_offset + snap_bytes + trailer || length > packet.length - descriptor_bytes)
         return 0;
+    if (qos && (frame[24] & 0x80))
+        return 0; // A-MSDU delivery requires a separate decoder.
     const auto* snap = frame + body_offset;
     const uint16_t type = ip4::get16(snap + 6);
     const size_t payload = length - body_offset - snap_bytes - trailer;
@@ -449,6 +464,23 @@ size_t receive_station_data(const FirmwarePacket& packet, const uint8_t (&statio
         (snap[5] != 0xf8 && (snap[5] || uses_bridge_tunnel(type))) ||
         payload > (type == 0x8100 || type == 0x88a8 ? 1504u : 1500u))
         return 0;
+    if (encrypted) {
+        const auto* iv = frame + mac_bytes;
+        const unsigned key_index = iv[3] >> 6;
+        auto& key = (frame[4] & 1) ? keys->group[key_index] : keys->pairwise;
+        if (!key.installed || iv[2] || (iv[3] & 0x3f) != 0x20 || (!(frame[4] & 1) && key_index))
+            return 0;
+        const uint64_t pn = read16(iv) | (uint64_t(read32(iv + 4)) << 16);
+        auto& last = key.packet_number[qos ? frame[24] & 15 : 0];
+        if (pn <= last)
+            return 0;
+        last = pn;
+    } else if (keys) {
+        constexpr uint8_t pae_group[]{1, 0x80, 0xc2, 0, 0, 3};
+        if (type != eapol_type || memcmp(frame + 16, bssid, sizeof(bssid)) ||
+            (memcmp(frame + 4, station, sizeof(station)) && memcmp(frame + 4, pae_group, 6)))
+            return 0;
+    }
     memcpy(output, frame + 4, 6);
     memcpy(output + 6, frame + 16, 6);
     ip4::put16(output + 12, type);

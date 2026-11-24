@@ -20,6 +20,8 @@ struct LiveStation {
     size_t pending_bytes = 0;
     uint64_t transmit_deadline = 0, beacon_deadline = 0;
     bool port_authorized = true;
+    bool ccmp = false;
+    StationCcmpKeys keys{};
 };
 
 struct StationRequest {

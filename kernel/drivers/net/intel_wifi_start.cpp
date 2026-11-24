@@ -1587,9 +1587,13 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
 }
 
 namespace {
+bool is_eapol(const uint8_t* frame, size_t length) {
+    return frame && length >= 14 && frame[12] == 0x88 && frame[13] == 0x8e;
+}
+
 bool allows_station_data(const LiveStation& station, const uint8_t* frame, size_t length) {
-    return station.port_authorized ||
-           (frame && length >= 14 && frame[12] == 0x88 && frame[13] == 0x8e);
+    return (station.port_authorized && (!station.ccmp || station.keys.pairwise.installed)) ||
+           is_eapol(frame, length);
 }
 } // namespace
 
@@ -1600,11 +1604,14 @@ int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t leng
         return -95;
     if (!allows_station_data(station, frame, length))
         return -13;
+    if (station.ccmp && is_eapol(frame, length) && memcmp(frame, station.peer.bssid, 6))
+        return -13;
     if (station.pending_bytes)
         return -11;
     if (!prepare_station_data(session.receive.memory.data_transmit, station.queue, station.rate,
                               session.station_address, station.peer.bssid, frame, length,
-                              station.next_sequence))
+                              station.next_sequence,
+                              station.ccmp && station.keys.pairwise.installed))
         return -22;
     ++station.next_sequence;
     station.pending_bytes = length;
@@ -1654,7 +1661,8 @@ bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
         if (observe_association_beacon(packet, station.peer, station.channel, timing))
             station.beacon_deadline = now_ms + beacon_timeout;
         if (const auto bytes = receive_station_data(packet, session.station_address,
-                                                    station.peer.bssid, station.channel, frame);
+                                                    station.peer.bssid, station.channel, frame,
+                                                    station.ccmp ? &station.keys : nullptr);
             bytes && allows_station_data(station, frame, bytes))
             receive(context, frame, bytes);
     }

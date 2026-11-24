@@ -51,6 +51,17 @@ struct AuthenticationDma {
 
 enum class AuthEvent { unrelated, accepted, denied, malformed, ended };
 
+struct CcmpReceiveKey {
+    // Non-QoS data shares the priority-zero replay counter with QoS TID 0.
+    uint64_t packet_number[16]{};
+    bool installed = false;
+};
+
+struct StationCcmpKeys {
+    CcmpReceiveKey pairwise;
+    CcmpReceiveKey group[4];
+};
+
 void prepare_session_protection(bool start, uint8_t (&wire)[session_protection_bytes]);
 AuthEvent observe_session_protection(const FirmwarePacket&);
 uint32_t authentication_rate(const uint8_t* ies, unsigned bytes, bool high_band, uint8_t antennas);
@@ -73,10 +84,11 @@ bool observe_arp_response(const FirmwarePacket&, const uint8_t (&station)[6], ui
                           const AuthenticationTarget&);
 bool prepare_station_data(const AuthenticationDma&, PeerQueue, uint32_t rate,
                           const uint8_t (&station)[6], const uint8_t (&bssid)[6],
-                          const uint8_t* frame, size_t length, uint16_t sequence);
+                          const uint8_t* frame, size_t length, uint16_t sequence,
+                          bool encrypt = false);
 size_t receive_station_data(const FirmwarePacket&, const uint8_t (&station)[6],
                             const uint8_t (&bssid)[6], uint8_t channel,
-                            uint8_t (&frame)[station_frame_bytes]);
+                            uint8_t (&frame)[station_frame_bytes], StationCcmpKeys* keys = nullptr);
 bool observe_station_disconnect(const FirmwarePacket&, const uint8_t (&station)[6],
                                 const AccessPoint&, uint8_t channel);
 AuthEvent observe_authentication_tx(const FirmwarePacket&, PeerQueue);

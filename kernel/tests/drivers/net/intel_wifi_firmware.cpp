@@ -16,7 +16,9 @@
 
 void check_intel_wifi_access_points();
 void check_intel_wifi_association_codec();
+void check_intel_wifi_ccmp_data();
 void check_intel_wifi_key_codec();
+void check_intel_wifi_scan_channels();
 
 namespace {
 using namespace ax::IntelWifi;
@@ -1320,31 +1322,6 @@ void check_active_scan() {
     std::puts("AX201_ACTIVE_SCAN_MODEL_PASS");
 }
 
-void check_scan_channels() {
-    NvmInfo nvm{};
-    nvm.bands = 3;
-    RegulatoryProfile profile{};
-    profile.channel_slots = regulatory_channel_limit;
-    profile.flags[13] = 1;
-    profile.flags[18] = 0x39;
-    profile.flags[19] = 0x29;
-    const auto mixed = scan_channel_list(nvm, profile);
-    assert(mixed.count == scan_channel_limit);
-    assert(mixed.entries[13].number == 14 && mixed.entries[13].frequency_mhz == 2484 &&
-           mixed.entries[13].allowed);
-    assert(mixed.entries[18].number == 52 && mixed.entries[18].frequency_mhz == 5260 &&
-           mixed.entries[18].allowed && mixed.entries[18].radar && mixed.entries[18].indoor &&
-           !mixed.entries[18].active);
-    assert(mixed.entries[19].allowed && mixed.entries[19].indoor && !mixed.entries[19].active);
-    assert(!mixed.entries[20].allowed);
-    nvm.bands = 2;
-    const auto high_only = scan_channel_list(nvm, profile);
-    assert(high_only.count == scan_channel_limit - 14 &&
-           high_only.entries[0].frequency_mhz == 5180 && !high_only.entries[0].allowed);
-    assert(high_only.entries[4].frequency_mhz == 5260 && high_only.entries[4].allowed);
-    std::puts("AX201_SCAN_CHANNEL_MODEL_PASS");
-}
-
 void check_channel_contexts() {
     struct Case {
         StartupCase startup;
@@ -1819,6 +1796,12 @@ void check_live_connection() {
             packet[12] = 8;
             assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
             session.station.port_authorized = true;
+            session.station.ccmp = true;
+            assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
+            packet[12] = 0x88;
+            packet[13] = 0x8e;
+            assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
+            session.station.ccmp = false;
             assert(submit_live_join(session, session.scan, request) == -106);
             check_live_departure(model, session, scan, request, pending);
         } else {
@@ -1901,9 +1884,10 @@ int main(int argc, char** argv) {
     check_startup();
     check_live_scans();
     check_active_scan();
-    check_scan_channels();
+    check_intel_wifi_scan_channels();
     check_channel_contexts();
     check_intel_wifi_key_codec();
+    check_intel_wifi_ccmp_data();
     check_security_key_commands();
     check_peer_queues();
     check_authentication_exchange();

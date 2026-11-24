@@ -35,6 +35,8 @@ struct SignalData {
     uint64_t child_system_ticks = 0;
     uint64_t value = 0;
     int error = 0;
+    int syscall_number = 0;
+    uint32_t syscall_architecture = 0;
 };
 
 struct QueuedSignal;

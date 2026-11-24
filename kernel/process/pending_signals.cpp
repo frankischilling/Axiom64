@@ -71,7 +71,7 @@ int PendingSignals::push(int number, const SignalData& data, uint32_t uid, uint6
         return 0;
     auto record =
         number == 9 ? nullptr : allocate(uid, !realtime && data.code >= 0 ? UINT64_MAX : limit);
-    if (!record && realtime && data.code != 0)
+    if (!record && ((realtime && data.code != 0) || (number == 31 && data.code == 1)))
         return -11;
     if (record) {
         *record = {nullptr, data, uid, number};

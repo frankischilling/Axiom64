@@ -26,31 +26,36 @@
 #include "process/cpu.hpp"
 #include "process/scheduler.hpp"
 #include "process/task.hpp"
+#include "security/seccomp.hpp"
 
 namespace ax {
 int64_t dispatch_linux_syscall(Frame*, Task*);
 
 extern "C" Frame* handle_syscall(Frame* f) {
     KernelGuard guard;
-    cpu_account(current_task());
-    asm volatile("fxsave64 %0" : "=m"(current_task()->fpu));
+    auto* running = current_task();
+    cpu_account(running);
+    asm volatile("fxsave64 %0" : "=m"(running->fpu));
     clock_refresh();
     DeviceInventory::power_supply_refresh();
     const uint64_t number = f->rax;
     if (trace_syscalls)
-        log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(current_task()->pid), number, f->rdi,
-            f->rsi, f->rdx);
-    const int64_t result = dispatch_linux_syscall(f, current_task());
+        log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(running->pid), number, f->rdi, f->rsi,
+            f->rdx);
+    int64_t result = 0;
+    const bool admitted = !running->seccomp_mode || seccomp_may_dispatch(*running, *f, result);
+    if (admitted)
+        result = dispatch_linux_syscall(f, running);
     cpu_refresh();
     epoll_notify();
     if (trace_syscalls)
         log("sys result=%d\n", result);
-    if (result == would_block) {
+    const bool retry = admitted && result == would_block;
+    if (retry) {
         f->rip -= 2;
         f->rax = number;
-    } else if (number != 15)
+    } else if (!admitted || number != 15)
         f->rax = result;
-    return schedule(f, number == 24 || result == would_block ||
-                           current_task()->state != State::runnable);
+    return schedule(f, number == 24 || retry || running->state != State::runnable);
 }
 } // namespace ax

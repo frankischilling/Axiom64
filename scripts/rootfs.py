@@ -25,7 +25,7 @@
 """Create a deterministic newc initramfs without privileged filesystem tools."""
 from pathlib import Path
 import subprocess
-from fetch import ROOT, LOCK
+from fetch import ROOT, LOCK, verify_archive
 from newc import write_cpio
 from ports import overlay_tar, packages
 from build_musl import loader, runtime_files
@@ -190,12 +190,33 @@ files["etc/network"] = (0o40700, b"")
 # Keep the shell built from our pinned upstream source after importing packages.
 regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")
+desktop = ROOT / "userspace/desktop"
+framebuffer = (desktop / "xorg-fbdev.conf").read_bytes()
+
+
+def xorg_config(name):
+    files[f"etc/X11/{name}"] = (0o100644, framebuffer + b"\n" + (desktop / name).read_bytes())
+
+
+xorg_config("xorg.conf")
+regular("usr/libexec/axiom64-xorg-seat", desktop / "xorg-seat.sh")
+regular("etc/X11/system.twmrc", desktop / "system.twmrc", 0o100644)
 if installed_desktop:
+    firmware = ROOT / "vendor/firmware/intel-ax201"
+    for kind, target in (("firmware", "lib/firmware"), ("license", "usr/share/licenses/Intel-AX201")):
+        entry = LOCK["intel_ax201_firmware"][kind]
+        source = firmware / entry["name"]
+        verify_archive(source, entry["sha256"])
+        files.setdefault(target, (0o40755, b""))
+        regular(f"{target}/{entry['name']}", source, 0o100644)
     files["bin/man"] = (0o120777, b"/usr/bin/man")
     files["usr/bin/ip"] = (0o120777, b"/sbin/ip")
     files["usr/bin/ss"] = (0o120777, b"/sbin/ss")
-for filename in ["xorg.conf", "system.twmrc"]:
-    regular(f"etc/X11/{filename}", ROOT / "userspace/desktop" / filename, 0o100644)
+    xorg_config("xorg-udev.conf")
+    regular("usr/libexec/axiom64-input-coldplug", ROOT / "userspace/services/input-coldplug.sh")
+    regular("usr/libexec/axiom64-networkmanager", ROOT / "userspace/services/networkmanager.sh")
+    regular("etc/NetworkManager/NetworkManager.conf",
+            ROOT / "userspace/services/networkmanager.conf", 0o100644)
 # Package shell-registration hooks are not run. Supply the conventional list
 # explicitly so clients using getusershell retain the authenticated shell.
 shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',

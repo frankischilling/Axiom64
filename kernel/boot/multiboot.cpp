@@ -101,8 +101,10 @@ void add_memory(const uint8_t* entry) {
         add_range(range, BootMemoryKind::reserved, 2);
         break;
     case 3:
-    case 4:
         add_range(range, BootMemoryKind::firmware, 3);
+        break;
+    case 4:
+        add_range(range, BootMemoryKind::acpi_nvs, 3);
         break;
     default:
         add_range(range, BootMemoryKind::other, 4);

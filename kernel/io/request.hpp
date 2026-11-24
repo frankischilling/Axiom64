@@ -95,6 +95,7 @@ struct IoRequest {
     Inet6SendControl inet6_output;
     uint8_t* send_control_data;
     bool inet_destination_named;
+    bool netlink_destination_named;
     NetlinkAddress netlink_destination;
     uint8_t* packet_data;
     bool packet_ready;

@@ -19,6 +19,7 @@ PYTHON = python3
 IPV4_WORKERS ?= 2
 IPV4_MULTICAST_CORE = $(wildcard kernel/net/ipv4/multicast/*.cpp)
 IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp kernel/tests/net/descriptor_notify.cpp
+SOCKET_FILTER_CORE = kernel/net/socket_filter.cpp kernel/net/socket_control.cpp
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -32,6 +33,30 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native test-usb-hid-mouse
+.PHONY: test-intel-wifi-firmware
+AX201_FIRMWARE = vendor/firmware/intel-ax201/iwlwifi-QuZ-a0-hr-b0-77.ucode
+AX201_LICENSE = vendor/firmware/intel-ax201/LICENCE.iwlwifi_firmware
+test-intel-wifi-firmware: build/intel-wifi-firmware-test $(AX201_FIRMWARE)
+	./build/intel-wifi-firmware-test $(AX201_FIRMWARE)
+build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp \
+	kernel/tests/drivers/net/intel_wifi_codecs.cpp \
+	kernel/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_context.cpp \
+	kernel/drivers/net/intel_wifi_start.cpp kernel/drivers/net/intel_wifi_command.cpp \
+	kernel/drivers/net/intel_wifi_station.cpp kernel/drivers/net/intel_wifi_station.hpp \
+	kernel/drivers/net/intel_wifi_rx.cpp kernel/include/drivers/net/intel_wifi_rx.hpp \
+	kernel/include/drivers/net/intel_wifi_live.hpp \
+	kernel/drivers/net/intel_wifi_scan.cpp kernel/include/drivers/net/intel_wifi_scan.hpp \
+	kernel/drivers/net/intel_wifi_channel.cpp kernel/include/drivers/net/intel_wifi_channel.hpp \
+	kernel/drivers/net/intel_wifi_peer.cpp kernel/include/drivers/net/intel_wifi_peer.hpp \
+	kernel/drivers/net/intel_wifi_auth.cpp kernel/include/drivers/net/intel_wifi_auth.hpp \
+	kernel/drivers/net/intel_wifi_key.cpp kernel/include/drivers/net/intel_wifi_key.hpp \
+	kernel/drivers/net/intel_wifi_rsn.cpp kernel/include/drivers/net/intel_wifi_rsn.hpp \
+	kernel/include/net/ipv4_wire.hpp \
+	kernel/include/drivers/net/intel_wifi.hpp kernel/include/drivers/net/intel_wifi_context.hpp \
+	kernel/include/drivers/net/intel_wifi_start.hpp kernel/include/drivers/net/intel_wifi_command.hpp \
+	kernel/include/mm/dma.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-partitions test-partitions-native
 .PHONY: test-block-cache test-guest-media
 .PHONY: test-vm-journal
@@ -500,6 +525,15 @@ test-netlink-inventory:
 	$(PYTHON) scripts/netlink_inventory_test.py
 test-netlink-inventory-native:
 	$(PYTHON) scripts/netlink_inventory_test.py --native
+.PHONY: test-generic-netlink-native
+build/generic-netlink-native: userspace/tests/net/generic_netlink.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/generic-netlink-static: userspace/tests/net/generic_netlink.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $<
+test-generic-netlink-native: build/generic-netlink-native
+	./build/generic-netlink-native
 RANDOM_HEADERS = kernel/include/core/random/primitives.hpp kernel/include/core/random/engine.hpp
 build/random-native: kernel/tests/random/generator.cpp $(RANDOM_CORE) $(RANDOM_HEADERS)
 	@mkdir -p build
@@ -695,9 +729,9 @@ build/ext2-tests: userspace/tests/fs/ext2.c
 build/root-tests: userspace/tests/fs/root.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/net-tests: userspace/tests/net/packet.c
+build/net-tests: userspace/tests/net/packet.c scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json scripts/build_musl.py sources.lock.json dependencies.json Makefile
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $<
 build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_query.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h userspace/tests/net/ipv4_unconfigured.c userspace/tests/net/ipv4_unconfigured.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^)
@@ -954,16 +988,30 @@ test-pci-interrupts: build/pci-interrupt-tests
 test-pci-inventory: build/axiom64.elf | busybox
 	$(PYTHON) scripts/pci_inventory_test.py
 
+.PHONY: test-designware-i2c
+build/designware-i2c-tests: kernel/tests/drivers/platform/designware_i2c.cpp kernel/drivers/input/hid_touchpad.cpp kernel/drivers/input/touchpad.cpp kernel/include/drivers/platform/designware_i2c.hpp kernel/include/drivers/platform/poll.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+test-designware-i2c: build/designware-i2c-tests
+	./build/designware-i2c-tests
+
 .PHONY: test-virtio-gpu
 test-virtio-gpu: build/axiom64.elf
 	$(PYTHON) scripts/virtio_gpu_test.py
 
 .PHONY: test-acpi-routing
-build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_resources.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-acpi-routing: build/acpi-routing-tests
 	./build/acpi-routing-tests
+.PHONY: test-acpi-system-memory
+build/acpi-system-memory-tests: kernel/tests/firmware/system_memory.cpp kernel/firmware/platform.cpp kernel/firmware/acpi.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-acpi-system-memory: build/acpi-system-memory-tests
+	./build/acpi-system-memory-tests
+	./build/acpi-system-memory-tests --reserved-facs
 build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
@@ -1294,7 +1342,7 @@ build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/te
 build/ipv4-routes-host: kernel/tests/net/ipv4_routes.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp kernel/tests/net/ipv4_address_lifecycle.cpp
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp kernel/tests/net/ipv4_address_lifecycle.cpp $(SOCKET_FILTER_CORE)
 
 test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host build/ipv4-routes-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host
@@ -1338,6 +1386,7 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
+build/tcp-socket-output-host: $(SOCKET_FILTER_CORE)
 build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@

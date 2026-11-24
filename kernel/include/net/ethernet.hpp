@@ -28,6 +28,7 @@
 
 namespace ax {
 struct Task;
+struct PciFunction;
 constexpr unsigned max_net_devices = 8;
 constexpr size_t ethernet_header = 14, max_ethernet_frame = 65535 + 18;
 
@@ -42,7 +43,10 @@ struct NetInfo {
     uint8_t mac[6]{};
     uint32_t mtu = 1500, maximum_mtu = 1500;
     bool administrative = false, carrier = false, live = false, writable = false;
+    const char* driver = nullptr;
+    char bus_address[13]{};
     NetStats stats;
+    bool wireless = false;
 };
 
 // One CPU, serialized with interrupts masked. send copies the complete frame;
@@ -54,15 +58,25 @@ struct NetAdapter {
     int (*send)(NetAdapter&, const void*, size_t);
     void (*stop)(NetAdapter&);
     void* data;
+    bool receive_only_diagnostic = false;
+    void (*administrative_changed)(NetAdapter&) = nullptr;
 };
 
-void net_init();
+using NetRegistrationObserver = void (*)(const NetInfo&, const PciFunction*);
+
+void net_init(NetRegistrationObserver = nullptr);
 
 void net_poll();
 
+void net_device_poll(NetAdapter&);
+
 void net_shutdown();
 
-unsigned net_register(NetAdapter&);
+using NetLinkObserver = void (*)(const NetInfo&, uint32_t changed_flags);
+
+void net_observe_links(NetLinkObserver);
+
+unsigned net_register(NetAdapter&, const char* driver = nullptr, const PciFunction* pci = nullptr);
 
 const NetInfo* net_info(unsigned index);
 

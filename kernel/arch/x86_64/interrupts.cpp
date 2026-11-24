@@ -529,6 +529,19 @@ bool interrupt_line_ready(const Irq::Line& subscription) {
     return subscription.index && !lines[subscription.index - 1].retired_by_error;
 }
 
+bool interrupt_mask_exclusive_line(const Irq::Line& subscription, bool masked) {
+    if (!interrupt_line_ready(subscription) || subscription.slot)
+        return false;
+    auto& line = lines[subscription.index - 1];
+    if (!line.vector || line.shared)
+        return false;
+    auto& io = controllers[line.route.controller];
+    const unsigned reg = line_register(line);
+    const uint32_t low = io.read(reg);
+    io.write(reg, masked ? low | lvt_mask : low & ~lvt_mask);
+    return bool(io.read(reg) & lvt_mask) == masked;
+}
+
 bool interrupt_dispatch(uint64_t vector) {
     // The LAPIC never puts its spurious vector in the in-service register.
     if (vector == Irq::spurious)

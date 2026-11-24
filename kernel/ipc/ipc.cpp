@@ -368,6 +368,12 @@ uint32_t readiness(Handle* h, const Task* task) {
         if (info && !info->live)
             events |= 8;
     }
+    if (h->netlink) {
+        if (!netlink_front(h->netlink))
+            events &= ~1u;
+        if (netlink_error(h->netlink))
+            events |= 8;
+    }
     if (h->inet) {
         if (inet_stream(h->inet))
             return tcp_events(h->inet);

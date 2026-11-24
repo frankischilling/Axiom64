@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/firmware/aml.cpp
- * @brief   Decodes ACPI PCI interrupt routing from firmware AML.
+ * @brief   Loads and evaluates a bounded ACPI AML namespace.
  * @author  frankischilling
- * @date    2026-11-19
+ * @date    2026-11-22
  *
- * Indexes the AML namespace and evaluates the objects used for PCI interrupt
- * routing. The evaluator can read PCI configuration fields and stores
- * temporary packages and buffers in bounded storage.
+ * Supports the operations used by the firmware probes.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -24,73 +22,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
-#include "firmware/aml.hpp"
-#include "core/base.hpp"
+#include "aml_internal.hpp"
 
-namespace ax::Acpi {
-namespace {
-
-constexpr unsigned max_depth = 16, max_objects = 768;
-constexpr uint8_t root_prefix = 0x5c, parent_prefix = 0x5e;
-
-constexpr uint32_t name_segment(const char (&s)[5]) {
-    return uint32_t(s[0]) | uint32_t(s[1]) << 8 | uint32_t(s[2]) << 16 | uint32_t(s[3]) << 24;
-}
-
-struct Cursor {
-    const uint8_t* next = nullptr;
-    size_t left = 0;
-
-    unsigned peek() const {
-        return left ? *next : 0x100;
-    }
-
-    bool take(size_t count, Cursor& result) {
-        if (count > left)
-            return false;
-        result = {next, count};
-        if (count)
-            next += count;
-        left -= count;
-        return true;
-    }
-
-    bool skip(size_t count) {
-        Cursor unused;
-        return take(count, unused);
-    }
-
-    bool read(size_t count, uint64_t& value) {
-        Cursor span;
-        if (!take(count, span))
-            return false;
-        value = 0;
-        for (size_t i = 0; i < count; ++i)
-            value |= uint64_t(span.next[i]) << (i * 8);
-        return true;
-    }
-
-    bool length(unsigned& length, unsigned& bytes_read) {
-        unsigned first = peek();
-        if (!skip(1))
-            return false;
-        unsigned following = first >> 6;
-        length = first & (following ? 15 : 63);
-        if (following && (first & 0x30))
-            return false;
-        uint64_t bytes;
-        if (!read(following, bytes))
-            return false;
-        length |= unsigned(bytes) << 4;
-        bytes_read = following + 1;
-        return true;
-    }
-
-    bool block(Cursor& result) {
-        unsigned size, bytes;
-        return length(size, bytes) && size >= bytes && take(size - bytes, result);
-    }
-};
+namespace ax::Acpi::Aml {
 
 bool integer(Cursor& stream, uint64_t& value) {
     switch (stream.peek()) {
@@ -115,17 +49,6 @@ bool integer(Cursor& stream, uint64_t& value) {
         return false;
     }
 }
-
-struct Path {
-    uint32_t segments[max_depth];
-    unsigned count;
-};
-
-struct Name {
-    Path path;
-    unsigned parents;
-    bool absolute;
-};
 
 bool name_character(uint8_t byte, bool first) {
     return byte == '_' || (byte >= 'A' && byte <= 'Z') || (!first && byte >= '0' && byte <= '9');
@@ -219,175 +142,73 @@ bool data(Cursor& stream) {
     return read_name(stream, name) && name.path.count;
 }
 
-enum class Kind : uint8_t { Scope, Device, Data, Method, Opaque, Region, PciField };
-
-struct Object {
-    Path path;
-    Cursor content;
-    uint64_t integer;
-    Kind kind;
-    unsigned arguments;
-    bool assigned;
-    const Object* region = nullptr;
-};
-
-enum class Type : uint8_t {
-    None,
-    Integer,
-    Buffer,
-    Package,
-    Device,
-    String,
-    Reference,
-    BufferField
-};
-
-struct Value {
-    Type type;
-    uint64_t number;
-    Cursor content;
-    const Object* object;
-    Value* entries = nullptr;
-    uint8_t* bytes = nullptr;
-};
-
-struct Frame {
-    struct Named {
-        uint32_t name;
-        Value value;
-    };
-
-    const Value* arguments;
-    unsigned count;
-    Value locals[8]{};
-    Named names[8]{};
-    unsigned named = 0;
-
-    Value* find(const Name& name) {
-        if (name.absolute || name.parents || name.path.count != 1)
-            return nullptr;
-        for (unsigned i = 0; i < named; ++i)
-            if (names[i].name == name.path.segments[0])
-                return &names[i].value;
-        return nullptr;
-    }
-
-    bool add(const Name& name, Value value) {
-        if (name.absolute || name.parents || name.path.count != 1 ||
-            named == sizeof(names) / sizeof(*names) || find(name))
+bool region_operand(Cursor& stream, unsigned depth = 0) {
+    if (depth == max_depth)
+        return false;
+    switch (stream.peek()) {
+    case 0x72:   // Add
+    case 0x74:   // Subtract
+    case 0x77:   // Multiply
+    case 0x79:   // ShiftLeft
+    case 0x7a:   // ShiftRight
+    case 0x7b:   // And
+    case 0x7d: { // Or
+        stream.skip(1);
+        if (!region_operand(stream, depth + 1) || !region_operand(stream, depth + 1))
             return false;
-        names[named++] = {name.path.segments[0], value};
-        return true;
+        if (stream.peek() == 0)
+            return stream.skip(1); // NullName discards the result.
+        Name target;
+        return read_name(stream, target) && target.path.count;
     }
-};
-
-struct ConfigField {
-    uint16_t segment, offset;
-    uint8_t bus, slot, function;
-    bool operator==(const ConfigField&) const = default;
-};
-
-struct LinkChange {
-    ConfigField field;
-    uint8_t previous, next;
-};
-
-struct Namespace {
-    Object objects[max_objects];
-    Value values[4096];
-    uint8_t buffers[8192];
-    unsigned count;
-    unsigned steps;
-    unsigned used_values;
-    unsigned used_bytes;
-    uint64_t integer_mask;
-    const PciBridges* bridges;
-    PciConfigRead read_pci;
-    PciLinkProgram link_program;
-    LinkChange changes[4];
-    unsigned change_count;
-    uint8_t programming_gsi;
-    bool change_emitted;
-    bool link_evaluation;
-
-    Object* find(const Path& path) {
-        for (unsigned i = 0; i < count; ++i)
-            if (match(objects[i].path, path))
-                return &objects[i];
-        return nullptr;
+    default:
+        return data(stream);
     }
+}
 
-    Object* lookup(Path scope, const Name& name) {
-        Path path;
-        if (!append(scope, name, path))
-            return nullptr;
-        if (name.absolute || name.parents || name.path.count != 1)
-            return find(path);
-        for (;;) {
-            if (auto object = find(path))
-                return object;
-            if (!scope.count)
-                return nullptr;
-            --scope.count;
-            append(scope, name, path);
-        }
+unsigned buffer_field_width(unsigned opcode) {
+    switch (opcode) {
+    case 0x8a:
+        return 32; // CreateDWordField
+    case 0x8b:
+        return 16; // CreateWordField
+    case 0x8c:
+        return 8; // CreateByteField
+    case 0x8d:
+        return 1; // CreateBitField
+    case 0x8f:
+        return 64; // CreateQWordField
+    default:
+        return 0;
     }
+}
 
-    Object* child(const Path& scope, uint32_t segment) {
-        Path path = scope;
-        if (path.count == max_depth)
-            return nullptr;
-        path.segments[path.count++] = segment;
-        return find(path);
+bool buffer_field_offset(Cursor buffer, uint64_t index, unsigned width, uint64_t& offset) {
+    const unsigned scale = width == 1 ? 1 : 8;
+    if (index > UINT64_MAX / scale || buffer.left > UINT64_MAX / 8)
+        return false;
+    offset = index * scale;
+    const uint64_t bits = buffer.left * 8;
+    return offset <= bits && width <= bits - offset;
+}
+
+uint64_t read_buffer_bits(const uint8_t* data, uint64_t offset, unsigned length) {
+    uint64_t result = 0;
+    for (unsigned i = 0; i < length; ++i) {
+        const auto bit = offset + i;
+        result |= uint64_t((data[bit / 8] >> (bit % 8)) & 1) << i;
     }
+    return result;
+}
 
-    bool add(const Path& path, Kind kind, Cursor content = {}, unsigned arguments = 0) {
-        if (!path.count || count == max_objects || find(path))
-            return false;
-        objects[count++] = {path, content, 0, kind, arguments, false};
-        return true;
+void write_buffer_bits(uint8_t* data, uint64_t offset, unsigned length, uint64_t value) {
+    for (unsigned i = 0; i < length; ++i) {
+        const auto bit = offset + i;
+        const uint8_t mask = 1u << (bit % 8);
+        auto& byte = data[bit / 8];
+        byte = (byte & ~mask) | ((value >> i) & 1 ? mask : 0);
     }
-
-    bool load(Cursor stream, const Path& scope, unsigned depth);
-    bool load_fields(Cursor, const Path&);
-    bool field_address(const Object&, ConfigField&, unsigned depth);
-    bool read_field(const Object&, Value&, unsigned depth);
-    bool stage_field(const Object&, Value, unsigned depth);
-
-    bool evaluate(Cursor&, const Path&, Frame*, Value&, unsigned depth);
-    bool execute(Cursor, const Path&, Frame&, Value&, unsigned depth);
-    bool store(Cursor&, const Path&, Frame*, Value, unsigned depth);
-
-    bool value(const Object& object, Value& result, unsigned depth) {
-        if (object.kind == Kind::Device) {
-            result = {Type::Device, 0, {}, &object};
-            return true;
-        }
-        if (object.kind == Kind::PciField)
-            return read_field(object, result, depth);
-        if (object.kind != Kind::Data)
-            return false;
-        if (object.assigned) {
-            result = {Type::Integer, object.integer, {}, nullptr};
-            return true;
-        }
-        Cursor stream = object.content;
-        return evaluate(stream, parent(object.path), nullptr, result, depth) && !stream.left;
-    }
-
-    bool method(const Object& object, const Value* args, unsigned count, Value& result,
-                unsigned depth = 0) {
-        Frame frame{args, count};
-        return object.kind == Kind::Method && count == object.arguments &&
-               execute(object.content, parent(object.path), frame, result, depth);
-    }
-
-    bool config(const Path& scope, uint32_t segment, Value& result, unsigned depth = 0) {
-        const auto* object = child(scope, segment);
-        return object && (object->kind == Kind::Method ? method(*object, nullptr, 0, result, depth)
-                                                       : value(*object, result, depth));
-    }
-};
+}
 
 bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
     if (depth >= max_depth)
@@ -405,6 +226,34 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
         Path path;
         uint64_t info;
         switch (opcode) {
+        case 0xa0: { // Evaluate supported predicates before loading the selected declarations.
+            if (!stream.block(block))
+                return false;
+            auto literal = block;
+            uint64_t condition;
+            if (integer(literal, condition)) {
+                block = literal;
+                condition &= integer_mask;
+            } else {
+                const unsigned values_before = used_values, bytes_before = used_bytes;
+                Value result{};
+                if (!read_system_memory || !evaluate(block, scope, nullptr, result, depth + 1) ||
+                    result.type != Type::Integer)
+                    return false;
+                condition = result.number;
+                used_values = values_before;
+                used_bytes = bytes_before;
+            }
+            if (condition && !load(block, scope, depth + 1))
+                return false;
+            if (stream.peek() == 0xa1) {
+                Cursor alternative;
+                if (!stream.skip(1) || !stream.block(alternative) ||
+                    (!condition && !load(alternative, scope, depth + 1)))
+                    return false;
+            }
+            break;
+        }
         case 0x08: { // Name
             if (!read_name(stream, name) || !append(scope, name, path))
                 return false;
@@ -413,6 +262,14 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
                 return false;
             break;
         }
+        case 0x8a: // CreateDWordField
+        case 0x8b: // CreateWordField
+        case 0x8c: // CreateByteField
+        case 0x8d: // CreateBitField
+        case 0x8f: // CreateQWordField
+            if (!read_system_memory || !declare_buffer_field(stream, scope, opcode, depth + 1))
+                return false;
+            break;
         case 0x10:   // Scope
         case 0x14:   // Method
         case 0x5b82: // Device
@@ -424,6 +281,7 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
             if (opcode == 0x14) {
                 if (!block.read(1, info) || !add(path, Kind::Method, block, info & 7))
                     return false;
+                objects[count - 1].integer = info;
                 break;
             }
             if (opcode == 0x10) {
@@ -442,21 +300,26 @@ bool Namespace::load(Cursor stream, const Path& scope, unsigned depth) {
                 return false;
             break;
         case 0x06: // Alias
-            if (!read_name(stream, other) || !other.path.count)
+            if (!read_name(stream, other) || !other.path.count || !read_name(stream, name) ||
+                !append(scope, name, path) || !add(path, Kind::Opaque))
                 return false;
-            [[fallthrough]];
+            break;
         case 0x5b01: // Mutex
         case 0x5b02: // Event
-            if (!read_name(stream, name) || !append(scope, name, path) || !add(path, Kind::Opaque))
+            if (!read_name(stream, name) || !append(scope, name, path))
                 return false;
-            if (opcode == 0x5b01 && !stream.skip(1))
+            if (opcode == 0x5b01) {
+                if (!stream.read(1, info) || info > 15 || !add(path, Kind::Mutex, {}, info))
+                    return false;
+            } else if (!add(path, Kind::Event)) {
                 return false;
+            }
             break;
         case 0x5b80: { // OperationRegion
             if (!read_name(stream, name) || !append(scope, name, path))
                 return false;
             Cursor operands = stream;
-            if (!stream.skip(1) || !data(stream) || !data(stream) ||
+            if (!stream.skip(1) || !region_operand(stream) || !region_operand(stream) ||
                 !add(path, Kind::Region, {operands.next, operands.left - stream.left}))
                 return false;
             break;
@@ -488,18 +351,26 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
     if (!read_name(field, name) || !field.left)
         return false;
     auto* region = lookup(scope, name);
-    if (!region || region->kind != Kind::Region || region->content.peek() != 2)
+    if (!region || region->kind != Kind::Region)
         return true;
-    unsigned access = field.peek() & 15;
+    const unsigned space = region->content.peek();
+    const bool system_memory = space == 0 && read_system_memory;
+    const bool diagnostic_pci = space == 2 && read_system_memory;
+    if (!system_memory && space != 2)
+        return true;
+    const unsigned flags = field.peek();
+    unsigned access = flags & 15;
     field.skip(1);
     uint64_t offset = 0;
+    const uint64_t limit = system_memory ? UINT64_MAX : 4096 * 8;
+    const unsigned integer_bits = integer_mask == UINT32_MAX ? 32 : 64;
     while (field.left) {
         auto term = field.peek();
         if (term == 1) { // AccessField
             uint64_t operands;
             if (!field.skip(1) || !field.read(2, operands))
                 return false;
-            access = operands & 15;
+            access = (system_memory || diagnostic_pci) && operands >> 8 ? 15 : operands & 15;
             continue;
         }
         if (term == 2 || term == 3)
@@ -507,10 +378,15 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
         unsigned bits, bytes;
         uint64_t segment = 0;
         if (!(term ? field.read(4, segment) : field.skip(1)) || !field.length(bits, bytes) ||
-            offset + bits > 4096 * 8)
+            bits > limit - offset)
             return false;
-        if (term && !(offset & 7) && (bits == 8 || bits == 16 || bits == 32) &&
-            (!access || (access <= 3 && (8u << (access - 1)) == bits))) {
+        const unsigned access_bits = access && access <= 3 ? 8u << (access - 1) : bits;
+        const bool supported =
+            system_memory    ? bits && bits <= integer_bits && access <= 1 && !(flags & 0x80)
+            : diagnostic_pci ? bits && bits <= 32 && access <= 3 && !(flags & 0x90)
+                             : !(offset & 7) && (bits == 8 || bits == 16 || bits == 32) &&
+                                   (!access || (access <= 3 && access_bits == bits));
+        if (term && supported) {
             Path path = scope;
             if (path.count == max_depth)
                 return false;
@@ -518,14 +394,74 @@ bool Namespace::load_fields(Cursor field, const Path& scope) {
                 if (!name_character(uint8_t(segment >> (8 * i)), !i))
                     return false;
             path.segments[path.count++] = segment;
-            if (!add(path, Kind::PciField, {}, bits / 8))
+            const auto kind = system_memory    ? Kind::MemoryField
+                              : diagnostic_pci ? Kind::DiagnosticPciField
+                                               : Kind::PciField;
+            const bool bit_field = kind != Kind::PciField;
+            if (!add(path, kind, {}, bit_field ? bits : bits / 8))
                 return false;
-            objects[count - 1].integer = offset / 8;
-            objects[count - 1].region = region;
+            auto& entry = objects[count - 1];
+            entry.integer = bit_field ? offset : offset / 8;
+            entry.region = region;
+            entry.firmware_lock = system_memory && (flags & 0x10);
+            entry.preserves_field_neighbors = system_memory && !(flags & 0x60);
+            entry.access_bytes = system_memory || (diagnostic_pci && !access) ? 1 : access_bits / 8;
         }
         offset += bits;
     }
     return true;
+}
+
+bool Namespace::declare_buffer_field(Cursor& stream, const Path& scope, unsigned opcode,
+                                     unsigned depth) {
+    const unsigned values_before = used_values, bytes_before = used_bytes;
+    Name source, name;
+    Path path;
+    Value index_value{}, buffer{};
+    if (!read_name(stream, source) || !source.path.count ||
+        !evaluate(stream, scope, nullptr, index_value, depth + 1) ||
+        index_value.type != Type::Integer || !read_name(stream, name) || !name.path.count ||
+        !append(scope, name, path))
+        return false;
+    auto* backing = lookup(scope, source);
+    if (!backing || backing->kind != Kind::Data || !value(*backing, buffer, depth + 1) ||
+        buffer.type != Type::Buffer)
+        return false;
+    const unsigned width = buffer_field_width(opcode);
+    uint64_t offset;
+    if (!buffer_field_offset(buffer.content, index_value.number, width, offset))
+        return false;
+    if (!retain_buffer(*backing, buffer) || !add(path, Kind::BufferField, {}, width))
+        return false;
+    auto& field = objects[count - 1];
+    field.integer = offset;
+    field.region = backing;
+    used_values = values_before;
+    used_bytes = bytes_before;
+    return true;
+}
+
+bool Namespace::retain_buffer(Object& object, Value& buffer) {
+    if (object.assigned == Type::Buffer)
+        return true;
+    if (buffer.content.left > sizeof(buffers) - used_bytes - persistent_bytes)
+        return false;
+    persistent_bytes += unsigned(buffer.content.left);
+    auto* copy = buffers + sizeof(buffers) - persistent_bytes;
+    memcpy(copy, buffer.content.next, buffer.content.left);
+    object.content = {copy, buffer.content.left};
+    object.assigned = Type::Buffer;
+    buffer.content = object.content;
+    buffer.bytes = copy;
+    return true;
+}
+
+uint8_t* Namespace::scratch_buffer(size_t size) {
+    if (size > sizeof(buffers) - used_bytes - persistent_bytes)
+        return nullptr;
+    auto* result = buffers + used_bytes;
+    used_bytes += unsigned(size);
+    return result;
 }
 
 bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value input,
@@ -538,7 +474,7 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
     if (target == 0x88) {
         Value reference{};
         if (link_evaluation || !evaluate(stream, scope, frame, reference, depth + 1) ||
-            reference.type != Type::Reference || input.type == Type::Reference)
+            reference.type != Type::Reference || input.is_reference())
             return false;
         *reference.entries = input;
         return true;
@@ -552,8 +488,15 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
         if (local->type == Type::BufferField) {
             if (input.type != Type::Integer)
                 return false;
-            for (unsigned i = 0; i < local->number; ++i)
-                local->bytes[i] = uint8_t(input.number >> (8 * i));
+            write_buffer_bits(local->bytes, local->bit_shift, local->number, input.number);
+        } else if (local->type == Type::LocalMemoryField) {
+            Value current{};
+            return replay_initialization && input.type == Type::Integer &&
+                   read_local_memory(*local, current) &&
+                   stage_memory_bits(local->number + local->bit_shift / 8, local->bit_shift % 8,
+                                     local->content.left, input.number);
+        } else if (local->type == Type::LocalRegion) {
+            return false;
         } else {
             *local = input;
         }
@@ -562,12 +505,30 @@ bool Namespace::store(Cursor& stream, const Path& scope, Frame* frame, Value inp
     auto* object = lookup(scope, name);
     if (object && object->kind == Kind::PciField)
         return stage_field(*object, input, depth + 1);
+    if (object && object->kind == Kind::MemoryField && replay_initialization)
+        return stage_memory_field(*object, input, depth + 1);
+    if (object && object->kind == Kind::BufferField && !link_evaluation &&
+        input.type == Type::Integer) {
+        auto* bytes = const_cast<uint8_t*>(object->region->content.next);
+        write_buffer_bits(bytes, object->integer, object->arguments, input.number);
+        return true;
+    }
     Value old{};
-    if (link_evaluation || input.type != Type::Integer || !object || object->kind != Kind::Data ||
-        !value(*object, old, depth + 1) || old.type != Type::Integer)
+    if (link_evaluation || !object || object->kind != Kind::Data ||
+        (input.type != Type::Integer && !(replay_initialization && input.type == Type::String)) ||
+        !value(*object, old, depth + 1) || old.type != input.type)
         return false;
-    object->assigned = true;
-    object->integer = input.number;
+    if (input.type == Type::String) {
+        if (input.content.left > sizeof(buffers) - used_bytes - persistent_bytes)
+            return false;
+        persistent_bytes += unsigned(input.content.left);
+        auto* bytes = buffers + sizeof(buffers) - persistent_bytes;
+        memmove(bytes, input.content.next, input.content.left);
+        object->content = {bytes, input.content.left};
+    } else {
+        object->integer = input.number;
+    }
+    object->assigned = input.type;
     return true;
 }
 
@@ -575,6 +536,12 @@ bool integer_result(unsigned opcode, uint64_t left, uint64_t right, uint64_t& re
     switch (opcode) {
     case 0x72:
         result = left + right;
+        break;
+    case 0x74:
+        result = left - right;
+        break;
+    case 0x77:
+        result = left * right;
         break;
     case 0x79:
         result = right < 64 ? left << right : 0;
@@ -587,6 +554,12 @@ bool integer_result(unsigned opcode, uint64_t left, uint64_t right, uint64_t& re
         break;
     case 0x7d:
         result = left | right;
+        break;
+    case 0x90:
+        result = left && right;
+        break;
+    case 0x91:
+        result = left || right;
         break;
     case 0x92:
         result = !left;
@@ -606,9 +579,109 @@ bool integer_result(unsigned opcode, uint64_t left, uint64_t right, uint64_t& re
     return true;
 }
 
+uint64_t explicit_integer(Cursor string, uint64_t maximum) {
+    while (string.peek() == ' ' || (string.peek() >= '\t' && string.peek() <= '\r'))
+        string.skip(1);
+    unsigned radix = 10;
+    if (string.left >= 2 && string.next[0] == '0' &&
+        (string.next[1] == 'x' || string.next[1] == 'X')) {
+        radix = 16;
+        string.skip(2);
+    }
+    uint64_t result = 0;
+    while (string.left) {
+        const unsigned character = string.peek();
+        unsigned digit = radix;
+        if (character >= '0' && character <= '9')
+            digit = character - '0';
+        else if ((character | 32) >= 'a' && (character | 32) <= 'f')
+            digit = (character | 32) - 'a' + 10;
+        if (digit >= radix || result > (maximum - digit) / radix)
+            break;
+        result = result * radix + digit;
+        string.skip(1);
+    }
+    return result;
+}
+
+static bool integer_match(unsigned op, uint64_t element, uint64_t operand) {
+    switch (op) {
+    case 0:
+        return true; // MTR
+    case 1:
+        return element == operand;
+    case 2:
+        return element <= operand;
+    case 3:
+        return element < operand;
+    case 4:
+        return element >= operand;
+    case 5:
+        return element > operand;
+    }
+    return false;
+}
+
+bool Namespace::synchronize(unsigned opcode, Cursor& stream, const Path& scope, Frame& frame,
+                            Value& result, unsigned depth) {
+    Name name;
+    if (!replay_initialization || !read_name(stream, name) || !name.path.count || frame.find(name))
+        return false;
+    auto* object = lookup(scope, name);
+    const bool mutex = opcode == 0x23 || opcode == 0x27;
+    if (!object || object->kind != (mutex ? Kind::Mutex : Kind::Event))
+        return false;
+
+    switch (opcode) {
+    case 0x23: { // Acquire: the timeout is a literal WordData.
+        uint64_t timeout;
+        if (!stream.read(2, timeout) || object->arguments < sync_level())
+            return false;
+        if (!object->integer) {
+            if (held_mutex_count == sizeof(held_mutexes) / sizeof(*held_mutexes))
+                return false;
+            held_mutexes[held_mutex_count++] = object;
+        }
+        ++object->integer;
+        result = {Type::Integer, 0, {}, nullptr};
+        return true;
+    }
+    case 0x24: // Signal
+        ++object->integer;
+        return true;
+    case 0x25: { // Wait
+        Value timeout{};
+        if (!evaluate(stream, scope, &frame, timeout, depth + 1) || timeout.type != Type::Integer)
+            return false;
+        // No other AML thread can signal a private event while replay is running.
+        if (!object->integer && timeout.number)
+            return false;
+        result = {Type::Integer, object->integer ? 0 : integer_mask, {}, nullptr};
+        if (object->integer)
+            --object->integer;
+        return true;
+    }
+    case 0x26: // Reset
+        object->integer = 0;
+        return true;
+    case 0x27: // Release
+        if (!object->integer || object->arguments != sync_level())
+            return false;
+        if (!--object->integer) {
+            unsigned slot = held_mutex_count - 1;
+            while (held_mutexes[slot] != object)
+                --slot;
+            // Remaining acquisitions above this one have the same level.
+            held_mutexes[slot] = held_mutexes[--held_mutex_count];
+        }
+        return true;
+    }
+    return false;
+}
+
 bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value& result,
                          unsigned depth) {
-    if (depth >= max_depth || !steps)
+    if (depth >= max_evaluation_depth || !steps)
         return false;
     --steps;
     uint64_t number;
@@ -627,6 +700,41 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         return result.type != Type::None && stream.skip(1);
     }
     switch (opcode) {
+    case 0x5b: {
+        uint64_t extended;
+        if (!stream.skip(1) || !stream.read(1, extended))
+            return false;
+        if (extended == 0x33) { // Timer
+            if (!replay_initialization || !frame)
+                return false;
+            result = {Type::Integer, replay_time_100ns & integer_mask, {}, nullptr};
+            return true;
+        }
+        if (extended >= 0x23 && extended <= 0x27)
+            return frame && synchronize(extended, stream, scope, *frame, result, depth);
+        // CondRefOf
+        Name source;
+        if (extended != 0x12 || !read_name(stream, source) || !source.path.count)
+            return false;
+        auto* local = frame ? frame->find(source) : nullptr;
+        const auto* object = local ? nullptr : lookup(scope, source);
+        const bool present = local || object;
+        if (present) {
+            const Value reference = local ? Value{Type::Reference, 0, {}, nullptr, local}
+                                          : Value{Type::ObjectReference, 0, {}, object};
+            if (!store(stream, scope, frame, reference, depth + 1))
+                return false;
+        } else if (frame && stream.peek() >= 0x60 && stream.peek() <= 0x67) {
+            stream.skip(1);
+        } else {
+            Name target;
+            if (!read_name(stream, target) ||
+                (!target.path.count && (target.absolute || target.parents)))
+                return false;
+        }
+        result = {Type::Integer, present ? integer_mask : 0, {}, nullptr};
+        return true;
+    }
     case 0x0d: {
         stream.skip(1);
         Cursor text = stream;
@@ -635,20 +743,23 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         result = {Type::String, 0, {text.next, text.left - stream.left}, nullptr};
         return stream.skip(1);
     }
-    case 0x11:
-        if (!stream.skip(1) || !stream.block(block) || !integer(block, number) ||
-            number != block.left)
+    case 0x11: { // Buffer
+        Value length{};
+        if (!stream.skip(1) || !stream.block(block) ||
+            !evaluate(block, scope, frame, length, depth + 1) || length.type != Type::Integer)
             return false;
+        number = max(length.number, uint64_t(block.left));
         result = {Type::Buffer, 0, block, nullptr};
-        if (frame) {
-            if (number > sizeof(buffers) - used_bytes)
+        if (frame || number != block.left) {
+            result.bytes = scratch_buffer(number);
+            if (!result.bytes)
                 return false;
-            result.bytes = buffers + used_bytes;
-            used_bytes += unsigned(number);
-            memcpy(result.bytes, block.next, number);
-            result.content.next = result.bytes;
+            memcpy(result.bytes, block.next, block.left);
+            memset(result.bytes + block.left, 0, number - block.left);
+            result.content = {result.bytes, size_t(number)};
         }
         return true;
+    }
     case 0x12: {
         if (!stream.skip(1) || !stream.block(block) || !block.read(1, number) ||
             number > sizeof(values) / sizeof(*values) - used_values)
@@ -666,21 +777,57 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     case 0x70: // Store
         return stream.skip(1) && evaluate(stream, scope, frame, result, depth + 1) &&
                store(stream, scope, frame, result, depth + 1);
-    case 0x75: { // Increment
+    case 0x75:   // Increment
+    case 0x76: { // Decrement
         if (!stream.skip(1) || stream.peek() < 0x60 || stream.peek() > 0x67)
             return false;
         auto target = stream;
         if (!evaluate(stream, scope, frame, result, depth + 1) || result.type != Type::Integer)
             return false;
-        result.number = (result.number + 1) & integer_mask;
+        result.number = (opcode == 0x75 ? result.number + 1 : result.number - 1) & integer_mask;
         return store(target, scope, frame, result, depth + 1);
     }
-    case 0x83: // DerefOf
+    case 0x80: { // Bitwise Not
         if (!stream.skip(1) || !evaluate(stream, scope, frame, result, depth + 1) ||
-            result.type != Type::Reference || result.entries->type == Type::Reference)
+            result.type != Type::Integer)
+            return false;
+        result.number = ~result.number & integer_mask;
+        return store(stream, scope, frame, result, depth + 1);
+    }
+    case 0x83: // DerefOf
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, result, depth + 1))
+            return false;
+        if (result.type == Type::ObjectReference)
+            return value(*result.object, result, depth + 1);
+        if (result.type != Type::Reference || result.entries->is_reference())
             return false;
         result = *result.entries;
         return result.type != Type::None;
+    case 0x84: { // ConcatenateResTemplate
+        Value first{}, second{};
+        size_t left, right;
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, first, depth + 1) ||
+            !evaluate(stream, scope, frame, second, depth + 1) || first.type != Type::Buffer ||
+            second.type != Type::Buffer || !resource_payload(first.content, left) ||
+            !resource_payload(second.content, right) || left > sizeof(buffers) ||
+            right > sizeof(buffers))
+            return false;
+        const size_t length = left + right + 2;
+        auto* bytes = scratch_buffer(length);
+        if (!bytes)
+            return false;
+        if (left)
+            memcpy(bytes, first.content.next, left);
+        if (right)
+            memcpy(bytes + left, second.content.next, right);
+        bytes[length - 2] = 0x79;
+        uint8_t sum = 0;
+        for (size_t i = 0; i < length - 1; ++i)
+            sum += bytes[i];
+        bytes[length - 1] = uint8_t(0 - sum);
+        result = {Type::Buffer, 0, {bytes, length}, nullptr, nullptr, bytes};
+        return store(stream, scope, frame, result, depth + 1);
+    }
     case 0x88: { // Index
         Value package{}, index{};
         if (!stream.skip(1) || !evaluate(stream, scope, frame, package, depth + 1) ||
@@ -690,23 +837,81 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
         result = {Type::Reference, 0, {}, nullptr, package.entries + index.number};
         return store(stream, scope, frame, result, depth + 1);
     }
+    case 0x89: { // Match
+        Value package{}, operands[2]{}, start{};
+        uint64_t operators[2]{};
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, package, depth + 1) ||
+            package.type != Type::Package)
+            return false;
+        for (unsigned i = 0; i < 2; ++i)
+            if (!stream.read(1, operators[i]) || operators[i] > 5 ||
+                !evaluate(stream, scope, frame, operands[i], depth + 1) ||
+                operands[i].type != Type::Integer)
+                return false;
+        if (!evaluate(stream, scope, frame, start, depth + 1) || start.type != Type::Integer ||
+            start.number >= package.number)
+            return false;
+        result = {Type::Integer, integer_mask, {}, nullptr};
+        for (auto index = start.number; index < package.number; ++index) {
+            const auto& element = package.entries[index];
+            if (element.type == Type::None)
+                continue;
+            // The firmware resource evaluator supports integer package matching.
+            if (element.type != Type::Integer)
+                return false;
+            if (integer_match(operators[0], element.number, operands[0].number) &&
+                integer_match(operators[1], element.number, operands[1].number)) {
+                result.number = index;
+                break;
+            }
+        }
+        return true;
+    }
+    case 0x99: { // ToInteger
+        Value input{};
+        if (!stream.skip(1) || !evaluate(stream, scope, frame, input, depth + 1))
+            return false;
+        if (input.type == Type::Integer)
+            number = input.number;
+        else if (input.type == Type::String)
+            number = explicit_integer(input.content, integer_mask);
+        else if (input.type == Type::Buffer && input.content.left) {
+            const unsigned width = integer_mask == UINT32_MAX ? 4 : 8;
+            if (!input.content.read(min(size_t(width), input.content.left), number))
+                return false;
+        } else
+            return false;
+        result = {Type::Integer, number & integer_mask, {}, nullptr};
+        return store(stream, scope, frame, result, depth + 1);
+    }
     case 0x72:   // Add
+    case 0x74:   // Subtract
+    case 0x77:   // Multiply
     case 0x79:   // ShiftLeft
     case 0x7a:   // ShiftRight
     case 0x7b:   // And
     case 0x7d:   // Or
+    case 0x90:   // LAnd
+    case 0x91:   // LOr
     case 0x92:   // LNot
     case 0x93:   // LEqual
     case 0x94:   // LGreater
     case 0x95: { // LLess
         stream.skip(1);
         Value left{}, right{};
-        if (!evaluate(stream, scope, frame, left, depth + 1) || left.type != Type::Integer ||
-            (opcode != 0x92 &&
-             (!evaluate(stream, scope, frame, right, depth + 1) || right.type != Type::Integer)) ||
+        if (!evaluate(stream, scope, frame, left, depth + 1) ||
+            (opcode != 0x92 && !evaluate(stream, scope, frame, right, depth + 1)))
+            return false;
+        if (opcode == 0x93 && left.type == Type::Buffer && right.type == Type::Buffer) {
+            const bool equal = left.content.left == right.content.left &&
+                               !memcmp(left.content.next, right.content.next, left.content.left);
+            result = {Type::Integer, equal ? integer_mask : 0, {}, nullptr};
+            return true;
+        }
+        if (left.type != Type::Integer || (opcode != 0x92 && right.type != Type::Integer) ||
             !integer_result(opcode, left.number, right.number, number))
             return false;
-        if (opcode >= 0x92) {
+        if (opcode >= 0x90) {
             result = {Type::Integer, number ? integer_mask : 0, {}, nullptr};
             return true;
         }
@@ -718,11 +923,13 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     if (!read_name(stream, name) || !name.path.count)
         return false;
     if (auto local = frame ? frame->find(name) : nullptr) {
+        if (local->type == Type::LocalMemoryField)
+            return read_local_memory(*local, result);
+        if (local->type == Type::LocalRegion)
+            return false;
         if (local->type == Type::BufferField) {
-            Cursor bytes{local->bytes, size_t(local->number)};
-            if (!bytes.read(unsigned(local->number), number))
-                return false;
-            result = {Type::Integer, number, {}, nullptr};
+            number = read_buffer_bits(local->bytes, local->bit_shift, local->number);
+            result = {Type::Integer, number & integer_mask, {}, nullptr};
         } else {
             result = *local;
         }
@@ -731,7 +938,7 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     const auto* object = lookup(scope, name);
     if (!object)
         return false;
-    if (object->kind != Kind::Method)
+    if (object->kind != Kind::Method && object->kind != Kind::InterfaceQuery)
         return value(*object, result, depth + 1);
     Value arguments[7]{};
     for (unsigned i = 0; i < object->arguments; ++i)
@@ -740,11 +947,71 @@ bool Namespace::evaluate(Cursor& stream, const Path& scope, Frame* frame, Value&
     return method(*object, arguments, object->arguments, result, depth + 1);
 }
 
+bool Namespace::declare_local_region(Cursor& stream, const Path& scope, Frame& frame,
+                                     unsigned depth) {
+    Name name;
+    uint64_t space;
+    Value address{}, length{};
+    if (!read_name(stream, name) || !stream.read(1, space) || space != 0 ||
+        !evaluate(stream, scope, &frame, address, depth + 1) || address.type != Type::Integer ||
+        !evaluate(stream, scope, &frame, length, depth + 1) || length.type != Type::Integer ||
+        !length.number || length.number > UINT64_MAX - address.number)
+        return false;
+    return frame.add(name, {Type::LocalRegion, address.number, {nullptr, length.number}, nullptr});
+}
+
+bool Namespace::declare_local_fields(Cursor& stream, Frame& frame) {
+    Cursor field;
+    Name name;
+    uint64_t flags;
+    if (!stream.block(field) || !read_name(field, name) || !field.read(1, flags))
+        return false;
+    const bool bar_pair = flags == 3 && !replay_initialization && read_pci_bars;
+    const bool ecam = (flags == 2 || flags == 3) && replay_initialization && read_pci_ecam;
+    if (!bar_pair && !ecam && (!replay_initialization || (flags != 0 && flags != 1)))
+        return false;
+    const auto* region = frame.find(name);
+    if (!region || region->type != Type::LocalRegion)
+        return false;
+    const unsigned unit = bar_pair || ecam ? 1u << (flags - 1) : 1;
+    const unsigned unit_bits = 8 * unit;
+
+    uint64_t offset = 0;
+    while (field.left) {
+        const unsigned term = field.peek();
+        unsigned bits, encoded_bytes;
+        Name field_name{};
+        if ((term == 0 ? !field.skip(1) : !read_name(field, field_name)) ||
+            !field.length(bits, encoded_bytes))
+            return false;
+        const uint64_t end = offset + bits;
+        if (end < offset || end / 8 + (end % 8 != 0) > region->content.left)
+            return false;
+        const unsigned shift = offset % unit_bits;
+        if (term &&
+            (!bits || bits > (integer_mask == UINT32_MAX ? 32u : 64u) || region->number % unit ||
+             (bar_pair && (shift || bits % 32)) ||
+             (ecam && (end / unit_bits + (end % unit_bits != 0)) > region->content.left / unit) ||
+             !frame.add(field_name, {Type::LocalMemoryField,
+                                     region->number + (offset - shift) / 8,
+                                     {nullptr, bits},
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     uint8_t(shift),
+                                     uint8_t(unit == 1 ? 0 : unit)})))
+            return false;
+        offset = end;
+    }
+    return true;
+}
+
 bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& result,
                         unsigned depth) {
-    if (depth >= max_depth)
+    if (depth >= max_evaluation_depth)
         return false;
-    while (stream.left && result.type == Type::None) {
+    while (stream.left && result.type == Type::None &&
+           frame.loop_control == Frame::LoopControl::none) {
         if (!steps)
             return false;
         --steps;
@@ -760,16 +1027,36 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
                 return false;
             break;
         }
-        case 0x8a: { // CreateDWordField
+        case 0x8a:   // CreateDWordField
+        case 0x8b:   // CreateWordField
+        case 0x8c:   // CreateByteField
+        case 0x8d:   // CreateBitField
+        case 0x8f: { // CreateQWordField
             Value buffer{}, offset{};
             Name name;
-            if (!evaluate(stream, scope, &frame, buffer, depth + 1) ||
-                !evaluate(stream, scope, &frame, offset, depth + 1) || !read_name(stream, name) ||
-                buffer.type != Type::Buffer || !buffer.bytes || offset.type != Type::Integer ||
-                buffer.content.left < 4 || offset.number > buffer.content.left - 4 ||
-                !frame.add(
-                    name,
-                    {Type::BufferField, 4, {}, nullptr, nullptr, buffer.bytes + offset.number}))
+            const unsigned width = buffer_field_width(opcode);
+            uint64_t bit;
+            Cursor source = stream;
+            if (!evaluate(stream, scope, &frame, buffer, depth + 1) || buffer.type != Type::Buffer)
+                return false;
+            Name backing_name;
+            if (read_system_memory && !link_evaluation && read_name(source, backing_name) &&
+                backing_name.path.count && source.next == stream.next &&
+                !frame.find(backing_name)) {
+                auto* backing = lookup(scope, backing_name);
+                if (backing && backing->kind == Kind::Data && !retain_buffer(*backing, buffer))
+                    return false;
+            }
+            if (!buffer.bytes || !evaluate(stream, scope, &frame, offset, depth + 1) ||
+                !read_name(stream, name) || offset.type != Type::Integer ||
+                !buffer_field_offset(buffer.content, offset.number, width, bit) ||
+                !frame.add(name, {Type::BufferField,
+                                  width,
+                                  {},
+                                  nullptr,
+                                  nullptr,
+                                  buffer.bytes + bit / 8,
+                                  uint8_t(bit % 8)}))
                 return false;
             break;
         }
@@ -789,6 +1076,7 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
             Cursor loop;
             if (!stream.block(loop))
                 return false;
+            ++frame.loops;
             while (result.type == Type::None) {
                 Cursor body = loop;
                 Value test{};
@@ -798,261 +1086,102 @@ bool Namespace::execute(Cursor stream, const Path& scope, Frame& frame, Value& r
                     break;
                 if (!execute(body, scope, frame, result, depth + 1))
                     return false;
+                const auto control = frame.loop_control;
+                frame.loop_control = Frame::LoopControl::none;
+                if (control == Frame::LoopControl::stop)
+                    break;
             }
+            --frame.loops;
             break;
         }
+        case 0x9f: // Continue
+        case 0xa5: // Break
+            if (!frame.loops)
+                return false;
+            frame.loop_control =
+                opcode == 0x9f ? Frame::LoopControl::next : Frame::LoopControl::stop;
+            break;
         case 0xa3: // NoOp
             break;
+        case 0x86: { // Notify
+            Name target;
+            Value event{};
+            if (!replay_initialization || !read_name(stream, target) ||
+                !(target.absolute || target.parents || target.path.count))
+                return false;
+            const auto* device = lookup(scope, target);
+            if (!device || device->kind != Kind::Device ||
+                !evaluate(stream, scope, &frame, event, depth + 1) || event.type != Type::Integer ||
+                (event.number != 0 && event.number != 2))
+                return false;
+            // Bus Check and Device Wake have no recipient in this private replay.
+            break;
+        }
         case 0xa4: // Return
             return evaluate(stream, scope, &frame, result, depth + 1) &&
-                   result.type != Type::None && result.type != Type::Reference;
+                   result.type != Type::None && !result.is_reference();
+        case 0x5b: { // Extended opcode
+            const unsigned extended = stream.peek();
+            if (replay_initialization && (extended == 0x21 || extended == 0x22)) {
+                // This private replay has no firmware threads to schedule or hardware writes
+                // to complete. Advance its clock while leaving the live clock untouched.
+                stream.skip(1);
+                Value interval{};
+                const bool stall = extended == 0x21;
+                const uint64_t scale = stall ? 10 : 10000;
+                if (!evaluate(stream, scope, &frame, interval, depth + 1) ||
+                    interval.type != Type::Integer || (stall && interval.number > 255) ||
+                    interval.number > (UINT64_MAX - replay_time_100ns) / scale)
+                    return false;
+                replay_time_100ns += interval.number * scale;
+                break;
+            }
+            if ((replay_initialization || read_pci_bars) &&
+                (extended == 0x80 || extended == 0x81)) {
+                stream.skip(1);
+                const bool declared = extended == 0x80
+                                          ? declare_local_region(stream, scope, frame, depth)
+                                          : declare_local_fields(stream, frame);
+                if (!declared)
+                    return false;
+                break;
+            }
+            [[fallthrough]]; // Other supported operations are evaluated as expressions.
+        }
         case 0x70:   // Store
+        case 0x84:   // ConcatenateResTemplate
+        case 0x99:   // ToInteger
         case 0x72:   // Add
+        case 0x74:   // Subtract
+        case 0x77:   // Multiply
         case 0x75:   // Increment
+        case 0x76:   // Decrement
         case 0x79:   // ShiftLeft
         case 0x7a:   // ShiftRight
         case 0x7b:   // And
-        case 0x7d: { // Or
+        case 0x7d:   // Or
+        case 0x80: { // Bitwise Not
             Value ignored{};
             if (!evaluate(term, scope, &frame, ignored, depth + 1))
                 return false;
             stream = term;
             break;
         }
-        default:
-            return false;
-        }
-    }
-    return true;
-}
-
-bool interrupt_resource(Cursor resources, uint64_t index, PciPinRoute& route) {
-    const Cursor original = resources;
-    bool found = false;
-    while (resources.left) {
-        unsigned tag = resources.peek();
-        resources.skip(1);
-        uint64_t length = tag & 7;
-        if ((tag & 0x80) && !resources.read(2, length))
-            return false;
-        Cursor item;
-        if (!resources.take(length, item))
-            return false;
-        if (tag == 0x79) { // EndTag
-            if (!found || resources.left)
+        default: {
+            Name name;
+            Cursor encoded = term;
+            if (!replay_initialization || !read_name(encoded, name) || !name.path.count ||
+                frame.find(name))
                 return false;
-            if (!item.peek())
-                return true;
-            uint8_t sum = 0;
-            for (size_t i = 0; i < original.left; ++i)
-                sum += original.next[i];
-            return !sum;
-        }
-        if (found)
-            continue;
-        if (index) {
-            --index;
-            continue;
-        }
-        uint64_t flags, irq;
-        if (tag == 0x89) { // Extended Interrupt
-            uint64_t count;
-            if (!item.read(1, flags) || !item.read(1, count) || count != 1 || !item.read(4, irq) ||
-                !(flags & 1))
+            const auto* object = lookup(scope, name);
+            Value ignored{};
+            if (!object || object->kind != Kind::Method ||
+                !evaluate(term, scope, &frame, ignored, depth + 1))
                 return false;
-            route.gsi = irq;
-            route.active_low = flags & 4;
-            route.level = !(flags & 2);
-            route.shared = flags & 8;
-        } else if (tag == 0x22 || tag == 0x23) { // IRQ
-            flags = 1;
-            if (!item.read(2, irq) || !irq || (irq & (irq - 1)) ||
-                (tag == 0x23 && !item.read(1, flags)))
-                return false;
-            route.gsi = __builtin_ctz(unsigned(irq));
-            route.active_low = flags & 8;
-            route.level = !(flags & 1);
-            route.shared = flags & 16;
-        } else {
-            return false;
+            stream = term;
+            break;
         }
-        found = true;
-    }
-    return false;
-}
-
-// A programmable PIIX link uses an extended interrupt descriptor for
-// shared, active-high, level-triggered IRQs.
-uint8_t select_link_gsi(Cursor resources, uint32_t allowed) {
-    const Cursor original = resources;
-    uint64_t size, flags, count;
-    if (resources.peek() != 0x89 || !resources.skip(1) || !resources.read(2, size) ||
-        !resources.read(1, flags) || flags != 9 || !resources.read(1, count) || !count ||
-        count > 32 || size != 2 + count * 4)
-        return 0;
-
-    uint32_t possible = 0;
-    for (unsigned i = 0; i < count; ++i) {
-        uint64_t gsi;
-        if (!resources.read(4, gsi))
-            return 0;
-        if (gsi < 32)
-            possible |= 1u << gsi;
-    }
-    if (resources.left != 2 || resources.next[0] != 0x79)
-        return 0;
-    if (resources.next[1]) {
-        uint8_t sum = 0;
-        for (size_t i = 0; i < original.left; ++i)
-            sum += original.next[i];
-        if (sum)
-            return 0;
-    }
-    constexpr uint8_t preference[]{10, 11, 5};
-    for (auto gsi : preference)
-        if (possible & allowed & (1u << gsi))
-            return gsi;
-    return 0;
-}
-
-bool restore_link(Namespace& space, const Object& device, uint64_t index, PciPinRoute& route) {
-    if (!space.link_program.write || !space.link_program.allowed_gsis || index || !route.level ||
-        route.active_low || !route.shared ||
-        space.change_count == sizeof(space.changes) / sizeof(*space.changes))
-        return false;
-
-    Value id{}, possible{}, state{};
-    const auto* method = space.child(device.path, name_segment("_SRS"));
-    if (!method || !space.config(device.path, name_segment("_HID"), id) ||
-        id.type != Type::Integer || id.number != 0x0f0cd041 ||
-        !space.config(device.path, name_segment("_PRS"), possible) || possible.type != Type::Buffer)
-        return false;
-    const auto* sta = space.child(device.path, name_segment("_STA"));
-    if (sta && (!space.config(device.path, name_segment("_STA"), state) ||
-                state.type != Type::Integer || (state.number & 3) != 1))
-        return false;
-
-    const auto selected = select_link_gsi(possible.content, space.link_program.allowed_gsis);
-    if (!selected)
-        return false;
-
-    uint8_t setting[]{0x89, 6, 0, 9, 1, selected, 0, 0, 0, 0x79, 0};
-    Value argument{Type::Buffer, 0, {setting, sizeof(setting)}, nullptr, nullptr, setting};
-    Value ignored{};
-    unsigned initial_changes = space.change_count;
-    space.programming_gsi = selected;
-    space.change_emitted = false;
-    bool executed = space.method(*method, &argument, 1, ignored);
-    space.programming_gsi = 0;
-
-    // Read through the staged field and require firmware to report exactly what was requested.
-    Value current{};
-    state = {};
-    auto verified = route;
-    if (!executed || space.change_count != initial_changes + 1 ||
-        !space.config(device.path, name_segment("_CRS"), current) || current.type != Type::Buffer ||
-        !interrupt_resource(current.content, index, verified) || verified.gsi != selected ||
-        !verified.level || verified.active_low || !verified.shared ||
-        (sta && (!space.config(device.path, name_segment("_STA"), state) ||
-                 state.type != Type::Integer || (state.number & 3) != 3))) {
-        space.change_count = initial_changes;
-        return false;
-    }
-    route = verified;
-    return true;
-}
-
-bool string_name(Cursor text, Name& name) {
-    name = {};
-    if (text.peek() == root_prefix) {
-        name.absolute = true;
-        text.skip(1);
-    }
-    while (!name.absolute && text.peek() == parent_prefix) {
-        text.skip(1);
-        ++name.parents;
-    }
-    while (text.left) {
-        if (name.path.count == max_depth)
-            return false;
-        uint32_t segment = 0;
-        unsigned i = 0;
-        while (text.left && text.peek() != '.') {
-            unsigned letter = text.peek();
-            if (i == 4 || !name_character(letter, i == 0))
-                return false;
-            text.skip(1);
-            segment |= uint32_t(letter) << (8 * i++);
         }
-        if (!i)
-            return false;
-        while (i < 4)
-            segment |= uint32_t('_') << (8 * i++);
-        name.path.segments[name.path.count++] = segment;
-        if (text.left && (!text.skip(1) || !text.left))
-            return false;
-    }
-    return name.path.count;
-}
-
-bool route_package(Namespace& space, Value package, unsigned segment, unsigned bus,
-                   PciPinRoutes& result) {
-    if (package.type != Type::Package || package.number > 256)
-        return false;
-    for (unsigned i = 0; i < package.number; ++i) {
-        const auto& row = package.entries[i];
-        if (row.type != Type::Package || row.number != 4)
-            return false;
-        const auto& address = row.entries[0];
-        const auto& pin = row.entries[1];
-        const auto& source = row.entries[2];
-        const auto& index = row.entries[3];
-        if (address.type != Type::Integer || address.number >> 16 >= 32 ||
-            pin.type != Type::Integer || pin.number >= 4 || index.type != Type::Integer)
-            return false;
-        unsigned function = address.number & 0xffff;
-        if (function >= 8 && function != 0xffff)
-            return false;
-        PciPinRoute route{0,
-                          uint16_t(segment),
-                          uint8_t(bus),
-                          uint8_t(address.number >> 16),
-                          uint8_t(function),
-                          uint8_t(pin.number + 1),
-                          true,
-                          true,
-                          true};
-        if (source.type == Type::Integer && !source.number && index.number <= UINT32_MAX) {
-            route.gsi = index.number;
-        } else {
-            const Object* device = source.object;
-            if (source.type == Type::String) {
-                Name name;
-                if (!string_name(source.content, name))
-                    return false;
-                device = space.lookup(row.object ? row.object->path : Path{}, name);
-            }
-            Value crs{};
-            unsigned values = space.used_values, bytes = space.used_bytes;
-            bool valid = device && device->kind == Kind::Device &&
-                         space.config(device->path, name_segment("_CRS"), crs) &&
-                         crs.type == Type::Buffer &&
-                         interrupt_resource(crs.content, index.number, route);
-            if (valid && !route.gsi) {
-                space.link_evaluation = true;
-                restore_link(space, *device, index.number, route);
-                space.link_evaluation = false;
-            }
-            space.used_values = values;
-            space.used_bytes = bytes;
-            if (!valid)
-                return false;
-            if (!route.gsi)
-                continue;
-        }
-        if (result.count == sizeof(result.entries) / sizeof(*result.entries))
-            return false;
-        result.entries[result.count++] = route;
     }
     return true;
 }
@@ -1065,23 +1194,61 @@ bool pci_root_id(Value id) {
            (!memcmp(id.content.next, "PNP0A03", 7) || !memcmp(id.content.next, "PNP0A08", 7));
 }
 
-bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth) {
-    if (depth >= max_depth)
+struct ConfigSpan {
+    uint64_t offset;
+    unsigned bytes, shift;
+};
+
+ConfigSpan config_span(const Object& field) {
+    if (field.kind == Kind::PciField)
+        return {field.integer, field.arguments, 0};
+    const unsigned unit = 8 * field.access_bytes;
+    const unsigned shift = field.integer % unit;
+    const unsigned units = (shift + field.arguments + unit - 1) / unit;
+    return {field.integer / unit * field.access_bytes, units * field.access_bytes, shift};
+}
+
+bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth,
+                              bool* absent) {
+    if (depth >= max_evaluation_depth)
         return false;
     const auto* region = field.region;
     Cursor operands = region->content;
     operands.skip(1);
     uint64_t base, length;
-    unsigned width = field.arguments;
+    const auto span = config_span(field);
     if (!integer(operands, base) || !integer(operands, length) || operands.left || base >= 4096 ||
-        length > 4096 - base || field.integer > length || width > length - field.integer ||
-        ((base + field.integer) & (width - 1)))
+        length > 4096 - base || span.offset > length || span.bytes > length - span.offset ||
+        ((base + span.offset) & (field.access_bytes - 1)))
         return false;
 
-    // Resolve namespace device addresses from the operation region to its PCI root.
+    if (!pci_address(parent(region->path), address, depth, absent))
+        return false;
+    address.offset = base + span.offset;
+    return true;
+}
+
+bool Namespace::pci_branch_absent(ConfigField port) {
+    if (!read_pci)
+        return false;
+    uint32_t vendor, class_code, header, buses;
+    const auto read = [&](uint16_t offset, uint8_t width, uint32_t& value) {
+        return read_pci(port.segment, port.bus, port.slot, port.function, offset, width, value);
+    };
+    if (!read(0, 2, vendor))
+        return false;
+    if (vendor == UINT16_MAX)
+        return true;
+    return read(0x0a, 2, class_code) && class_code == 0x0604 && read(0x0e, 1, header) &&
+           (header & 0x7f) == 1 && read(0x18, 4, buses) && !(buses & 0x00ffff00) &&
+           uint8_t(buses) == port.bus;
+}
+
+bool Namespace::pci_address(Path root, ConfigField& address, unsigned depth, bool* absent) {
+    if (depth >= max_evaluation_depth)
+        return false;
     uint32_t addresses[max_depth];
     unsigned used = 0;
-    Path root = parent(region->path);
     for (;;) {
         const auto* device = find(root);
         if (!device || device->kind != Kind::Device)
@@ -1095,7 +1262,7 @@ bool Namespace::field_address(const Object& field, ConfigField& address, unsigne
         addresses[used++] = adr.number;
         root = parent(root);
     }
-    if (!used)
+    if (!used && !absent)
         return false;
     Value segment{Type::Integer, 0, {}, nullptr}, bus = segment;
     if ((child(root, name_segment("_SEG")) &&
@@ -1121,31 +1288,170 @@ bool Namespace::field_address(const Object& field, ConfigField& address, unsigne
                 return false;
             next = &bridge;
         }
-        if (!next)
-            return false;
+        if (!next) {
+            // Diagnostic AML may describe a child of an unused root port. Confirm that no
+            // secondary bus is reachable before returning the config-space absent value.
+            const ConfigField port{uint16_t(segment.number), 0, uint8_t(bus.number),
+                                   uint8_t(address >> 16), uint8_t(address & 7)};
+            if (!absent || !pci_branch_absent(port))
+                return false;
+            *absent = true;
+            return true;
+        }
         bus.number = next->secondary;
         subordinate = next->subordinate;
     }
-    address = {uint16_t(segment.number), uint16_t(base + field.integer), uint8_t(bus.number),
-               uint8_t(addresses[0] >> 16), uint8_t(addresses[0] & 7)};
+    const uint32_t endpoint = used ? addresses[0] : 0;
+    address = {uint16_t(segment.number), 0, uint8_t(bus.number), uint8_t(endpoint >> 16),
+               uint8_t(endpoint & 7)};
     return true;
 }
 
 bool Namespace::read_field(const Object& field, Value& result, unsigned depth) {
-    ConfigField address;
-    if (!read_pci || !field_address(field, address, depth))
+    ConfigField address{};
+    bool absent = false;
+    if (!read_pci || !field_address(field, address, depth,
+                                    field.kind == Kind::DiagnosticPciField ? &absent : nullptr))
         return false;
-    if (field.arguments == 1)
+    if (absent) {
+        result = {Type::Integer, (1ull << field.arguments) - 1, {}, nullptr};
+        return true;
+    }
+    if (field.kind == Kind::PciField && field.arguments == 1)
         for (unsigned i = 0; i < change_count; ++i)
             if (changes[i].field == address) {
                 result = {Type::Integer, changes[i].next, {}, nullptr};
                 return true;
             }
-    uint32_t value;
-    if (!read_pci(address.segment, address.bus, address.slot, address.function, address.offset,
-                  field.arguments, value))
-        return false;
+    uint64_t value = 0;
+    const auto span = config_span(field);
+    for (unsigned i = 0; i < span.bytes; i += field.access_bytes) {
+        uint32_t part;
+        if (!read_pci(address.segment, address.bus, address.slot, address.function,
+                      address.offset + i, field.access_bytes, part))
+            return false;
+        const uint64_t mask = (1ull << (field.access_bytes * 8)) - 1;
+        value |= (part & mask) << (i * 8);
+    }
+    if (field.kind == Kind::DiagnosticPciField)
+        value = (value >> span.shift) & ((1ull << field.arguments) - 1);
     result = {Type::Integer, value, {}, nullptr};
+    return true;
+}
+
+bool Namespace::memory_field_bytes(const Object& field, uint8_t* data, uint64_t& address,
+                                   size_t& bytes, unsigned depth) {
+    Cursor operands = field.region->content;
+    operands.skip(1);
+    const Path scope = parent(field.region->path);
+    Value base{}, length{};
+    if (!read_system_memory || !evaluate(operands, scope, nullptr, base, depth + 1) ||
+        !evaluate(operands, scope, nullptr, length, depth + 1) || operands.left ||
+        base.type != Type::Integer || length.type != Type::Integer ||
+        length.number > UINT64_MAX - base.number)
+        return false;
+    const uint64_t offset = field.integer / 8;
+    bytes = (field.integer % 8 + field.arguments + 7) / 8;
+    if (offset >= length.number || bytes > length.number - offset)
+        return false;
+    address = base.number + offset;
+    return read_memory_bytes(address, data, bytes, field.firmware_lock, false);
+}
+
+bool Namespace::read_memory_bytes(uint64_t address, uint8_t* data, size_t bytes, bool lock,
+                                  bool local) {
+    if ((!read_system_memory || !read_system_memory(address, data, bytes, lock)) &&
+        (!local || lock || !read_registers ||
+         !read_registers(register_context, address, data, bytes)))
+        return false;
+    apply_memory_overlay(address, data, bytes);
+    return true;
+}
+
+void Namespace::apply_memory_overlay(uint64_t address, uint8_t* data, size_t bytes) const {
+    for (unsigned i = 0; i < memory_overlay_count; ++i) {
+        const auto& entry = memory_overlay[i];
+        if (entry.address < address || entry.address - address >= bytes)
+            continue;
+        auto& byte = data[entry.address - address];
+        byte = (byte & ~entry.mask) | entry.value;
+    }
+}
+
+bool Namespace::read_memory_field(const Object& field, Value& result, unsigned depth) {
+    uint64_t address;
+    size_t bytes;
+    uint8_t data[9]{};
+    if (!memory_field_bytes(field, data, address, bytes, depth))
+        return false;
+    const uint64_t number = read_buffer_bits(data, field.integer % 8, field.arguments);
+    result = {Type::Integer, number & integer_mask, {}, nullptr};
+    return true;
+}
+
+bool Namespace::read_local_memory(const Value& field, Value& result) {
+    const unsigned bits = field.content.left;
+    if (field.access_bytes == 4 && !replay_initialization) {
+        uint32_t values[2]{};
+        if (!read_pci_bars(field.number, values, bits / 32))
+            return false;
+        result = {Type::Integer, values[0] | (uint64_t(values[1]) << 32), {}, nullptr};
+        return true;
+    }
+    uint8_t data[12]{}; // A 64-bit field can span three aligned dwords.
+    if (const unsigned unit = field.access_bytes) {
+        const unsigned unit_bits = 8 * unit;
+        const unsigned bytes = (field.bit_shift + bits + unit_bits - 1) / unit_bits * unit;
+        // One field cannot straddle two PCI functions.
+        if (bytes > 4096 - (field.number & 0xfff))
+            return false;
+        for (unsigned offset = 0; offset < bytes; offset += unit) {
+            uint32_t value;
+            if (!read_pci_ecam(field.number + offset, unit, value))
+                return false;
+            for (unsigned byte = 0; byte < unit; ++byte)
+                data[offset + byte] = uint8_t(value >> (8 * byte));
+        }
+        apply_memory_overlay(field.number, data, bytes);
+    } else if (!read_memory_bytes(field.number, data, (field.bit_shift + bits + 7) / 8, false,
+                                  true)) {
+        return false;
+    }
+    result = {Type::Integer, read_buffer_bits(data, field.bit_shift, bits), {}, nullptr};
+    return true;
+}
+
+bool Namespace::stage_memory_field(const Object& field, Value input, unsigned depth) {
+    uint64_t address;
+    size_t bytes;
+    uint8_t data[9]{};
+    if (link_evaluation || input.type != Type::Integer || !field.preserves_field_neighbors ||
+        !memory_field_bytes(field, data, address, bytes, depth))
+        return false;
+    return stage_memory_bits(address, field.integer % 8, field.arguments, input.number);
+}
+
+bool Namespace::stage_memory_bits(uint64_t address, unsigned shift, unsigned bits,
+                                  uint64_t number) {
+    uint8_t data[9]{}, mask[9]{};
+    const unsigned bytes = (shift + bits + 7) / 8;
+    write_buffer_bits(data, shift, bits, number);
+    write_buffer_bits(mask, shift, bits, integer_mask);
+
+    // Store only the written bits so overlapping fields see the latest value.
+    for (size_t byte = 0; byte < bytes; ++byte) {
+        unsigned i = 0;
+        while (i < memory_overlay_count && memory_overlay[i].address != address + byte)
+            ++i;
+        if (i == memory_overlay_count) {
+            if (i == sizeof(memory_overlay) / sizeof(*memory_overlay))
+                return false;
+            memory_overlay[memory_overlay_count++] = {address + byte, 0, 0};
+        }
+        auto& entry = memory_overlay[i];
+        entry.value = (entry.value & ~mask[byte]) | (data[byte] & mask[byte]);
+        entry.mask |= mask[byte];
+    }
     return true;
 }
 
@@ -1171,143 +1477,50 @@ bool Namespace::stage_field(const Object& field, Value input, unsigned depth) {
     return true;
 }
 
-bool scope_routes(Namespace& space, const Path& scope, uint16_t segment, uint8_t bus,
-                  PciPinRoutes& output) {
-    if (!space.child(scope, name_segment("_PRT")))
-        return true;
-    space.used_values = 0;
-    space.used_bytes = 0;
-    Value routes{};
-    const auto first_change = space.change_count;
-    if (space.config(scope, name_segment("_PRT"), routes) &&
-        route_package(space, routes, segment, bus, output))
-        return true;
-    space.change_count = first_change;
-    return false;
-}
-
-void bridge_routes(Namespace& space, const Path& scope, uint16_t segment, uint8_t bus,
-                   uint8_t subordinate, PciBridges& bridges, bool* bound, PciPinRoutes& output) {
-    for (unsigned i = 0; i < space.count; ++i) {
-        const auto& device = space.objects[i];
-        Value address{};
-        if (device.kind != Kind::Device || device.path.count != scope.count + 1 ||
-            !match(parent(device.path), scope) ||
-            !space.config(device.path, name_segment("_ADR"), address) ||
-            address.type != Type::Integer || address.number >> 16 >= 32)
-            continue;
-        unsigned function = address.number & 0xffff;
-        if (function >= 8 && function != UINT16_MAX)
-            continue;
-        for (unsigned j = 0; j < bridges.count; ++j) {
-            auto& bridge = bridges.entries[j];
-            if (bridge.segment != segment || bridge.primary != bus ||
-                bridge.slot != (address.number >> 16) ||
-                (function != UINT16_MAX && bridge.function != function) ||
-                bridge.subordinate > subordinate ||
-                parent_bridge(bridges, segment, bridge.secondary).bridge != &bridge)
-                continue;
-            if (bound[j]) {
-                bridge.routing_rejected = true;
-                continue;
-            }
-            bound[j] = true;
-            unsigned first = output.count;
-            if (!scope_routes(space, device.path, segment, bridge.secondary, output)) {
-                output.count = first;
-                bridge.routing_rejected = true;
-            }
-            bridge_routes(space, device.path, segment, bridge.secondary, bridge.subordinate,
-                          bridges, bound, output);
-        }
-    }
-}
-
-bool routing(Namespace& space, PciPinRoutes& output, PciBridges* bridges) {
-    if (auto pic = space.child({}, name_segment("_PIC"))) {
-        Value mode{Type::Integer, 1, {}, nullptr}, ignored{};
-        if (!space.method(*pic, &mode, 1, ignored))
-            return false;
-    }
-    bool bound[256]{};
-    for (unsigned i = 0; i < space.count; ++i) {
-        const auto& device = space.objects[i];
-        Value hid{};
-        if (device.kind != Kind::Device || !space.config(device.path, name_segment("_HID"), hid) ||
-            !pci_root_id(hid))
-            continue;
-        Value seg{Type::Integer, 0, {}, nullptr}, bus = seg;
-        if ((space.child(device.path, name_segment("_SEG")) &&
-             !space.config(device.path, name_segment("_SEG"), seg)) ||
-            (space.child(device.path, name_segment("_BBN")) &&
-             !space.config(device.path, name_segment("_BBN"), bus)) ||
-            seg.type != Type::Integer || seg.number > UINT16_MAX || bus.type != Type::Integer ||
-            bus.number > UINT8_MAX)
-            return false;
-        if (!scope_routes(space, device.path, seg.number, bus.number, output))
-            return false;
-        if (bridges && !bridges->overflow)
-            bridge_routes(space, device.path, seg.number, bus.number, UINT8_MAX, *bridges, bound,
-                          output);
-    }
-    return output.count != 0;
-}
-
-const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
-                             uint8_t slot, uint8_t function, uint8_t pin, bool& ambiguous) {
-    const PciPinRoute* exact = nullptr;
-    const PciPinRoute* wildcard = nullptr;
-    for (unsigned i = 0; i < routes.count; ++i) {
-        const auto& route = routes.entries[i];
-        if (route.segment != segment || route.bus != bus || route.slot != slot || route.pin != pin)
-            continue;
-        if (route.function == function) {
-            if (exact) {
-                ambiguous = true;
-                return nullptr;
-            }
-            exact = &route;
-        } else if (route.function == UINT8_MAX) {
-            if (wildcard) {
-                ambiguous = true;
-                return nullptr;
-            }
-            wildcard = &route;
-        }
-    }
-    return exact ? exact : wildcard;
-}
-
-} // namespace
-
-bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
-                           PciBridges* bridges, PciConfigRead read_pci, PciLinkProgram program) {
-    result.count = 0;
-    result.programmed_links = 0;
-    result.rollback_failed = false;
-    if (blocks.ssdt_count > max_root_entries ||
-        (bridges && bridges->count > sizeof(bridges->entries) / sizeof(*bridges->entries)))
-        return false;
-    if (bridges)
-        for (unsigned i = 0; i < bridges->count; ++i)
-            bridges->entries[i].routing_rejected = false;
-    auto* space = static_cast<Namespace*>(alloc(sizeof(Namespace)));
+Namespace* load_namespace(const DefinitionBlocks& blocks, const PciBridges* bridges,
+                          PciConfigRead read_pci, PciLinkProgram program,
+                          SystemMemoryRead read_system_memory) {
+    if (blocks.ssdt_count > max_root_entries)
+        return nullptr;
+    const unsigned capacity = read_system_memory ? 8192 : 768;
+    const unsigned slots = read_system_memory ? 16384 : 2048;
+    auto* space = static_cast<Namespace*>(
+        alloc(sizeof(Namespace) + capacity * sizeof(Object) + slots * sizeof(uint16_t)));
     if (!space)
-        return false;
+        return nullptr;
+    space->objects = reinterpret_cast<Object*>(space + 1);
+    space->index = reinterpret_cast<uint16_t*>(space->objects + capacity);
+    space->capacity = capacity;
+    space->index_mask = slots - 1;
+    memset(space->index, 0, slots * sizeof(*space->index));
     space->count = 0;
     space->steps = 32768;
     space->used_values = 0;
     space->used_bytes = 0;
+    space->used_method_names = 0;
+    space->persistent_bytes = 0;
     space->integer_mask = blocks.dsdt.table && blocks.dsdt.length >= 36 && blocks.dsdt.table[8] >= 2
                               ? UINT64_MAX
                               : UINT32_MAX;
     space->bridges = bridges;
     space->read_pci = read_pci;
+    space->read_system_memory = read_system_memory;
+    space->read_registers = nullptr;
+    space->read_pci_bars = nullptr;
+    space->read_pci_ecam = nullptr;
+    space->register_context = nullptr;
+    space->query_osi = nullptr;
     space->link_program = program;
     space->change_count = 0;
     space->programming_gsi = 0;
     space->change_emitted = false;
     space->link_evaluation = false;
+    space->replay_initialization = false;
+    space->replay_time_100ns = 0;
+    space->held_mutex_count = 0;
+    space->active_methods = 0;
+    space->method_sync_level = 0;
+    space->memory_overlay_count = 0;
     auto load = [&](const DefinitionBlock& block) {
         return block.table && block.length >= 36 &&
                space->load({block.table + 36, block.length - 36}, {}, 0);
@@ -1315,58 +1528,10 @@ bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
     bool ok = load(blocks.dsdt);
     for (size_t i = 0; ok && i < blocks.ssdt_count; ++i)
         ok = load(blocks.ssdt[i]);
-    ok = ok && routing(*space, result, bridges);
-    if (ok && space->change_count) {
-        auto apply = [&](const LinkChange& change, bool undo) {
-            const auto& field = change.field;
-            return program.write(field.segment, field.bus, field.slot, field.function, field.offset,
-                                 undo ? change.next : change.previous,
-                                 undo ? change.previous : change.next);
-        };
-        for (unsigned i = 0; i < space->change_count; ++i) {
-            if (!apply(space->changes[i], false)) {
-                while (i)
-                    if (!apply(space->changes[--i], true))
-                        result.rollback_failed = true;
-                ok = false;
-                break;
-            }
-        }
-        if (ok)
-            result.programmed_links = space->change_count;
-    }
-    release(space);
-    if (!ok)
-        result.count = 0;
-    return ok;
-}
-
-const PciPinRoute* find_pci_pin(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
-                                uint8_t slot, uint8_t function, uint8_t pin,
-                                const PciBridges* bridges) {
-    if (!pin || pin > 4 || slot >= 32 || function >= 8)
+    if (!ok) {
+        release(space);
         return nullptr;
-    uint8_t subordinate = bus;
-    for (;;) {
-        ParentBridge parent;
-        if (bridges && !bridges->overflow)
-            parent = parent_bridge(*bridges, segment, bus);
-        const auto* bridge = parent.bridge;
-        if (parent.invalid ||
-            (bridge && (bridge->subordinate < subordinate || bridge->routing_rejected)))
-            return nullptr;
-        bool ambiguous = false;
-        const auto* route = bus_route(routes, segment, bus, slot, function, pin, ambiguous);
-        if (ambiguous || route || !bridge)
-            return route;
-        // An ARI-enabled downstream port interprets every function as slot zero.
-        unsigned device = bridge->ari ? 0 : slot;
-        pin = ((pin - 1 + device) & 3) + 1;
-        bus = bridge->primary;
-        slot = bridge->slot;
-        function = bridge->function;
-        subordinate = bridge->subordinate;
     }
+    return space;
 }
-
-} // namespace ax::Acpi
+} // namespace ax::Acpi::Aml

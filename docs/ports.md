@@ -40,6 +40,12 @@ instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.
 Connection setup needs NetworkManager, a supported Wi-Fi device, and the
 CA certificate and authentication server domain supplied by your school.
+Run the helper from your normal account. If NetworkManager asks about
+optional settings, choose `no` to keep the defaults. Use your Axiom64 account
+password if the system asks you to authorize network changes. Confirm the
+prefilled school username and enter your school password at the NetworkManager
+Wi-Fi prompt. The helper saves the profile after the connection succeeds.
+If the connection fails, authorize cleanup of the temporary profile if prompted.
 
 The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
 UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools
@@ -57,6 +63,12 @@ llvmpipe provides OpenGL for the framebuffer X server. The source bundle
 includes the pinned Alpine recipes, the Go runtime and modules linked into
 `kitten`, and the release archive for its bundled symbol font. The full and
 desktop profiles use the smaller framebuffer session with xterm.
+
+The installed desktop includes NetworkManager 1.52.1, `nmcli`, and the
+Plasma 6.3.6 network applet. The package and source locks include the Wi-Fi
+backend, wpa_supplicant, the applet, and its libraries. See
+[persistent root boot](disk-root.md) for service startup and connection storage.
+Wi-Fi association on the Blade needs the Intel wireless driver.
 
 The installed desktop also ships btop 1.4.0. It reads live CPU and memory data,
 process names and arguments, and mounted filesystem capacity. The first desktop
@@ -92,6 +104,12 @@ Run `make cross-toolchain-sources` to fetch and authenticate the GNU releases an
 Run `make test-cross-toolchain CROSS_TOOLCHAIN_PREFIX=/path/to/install` to verify the installed cross tools. It checks the header dependencies and linker inputs, rejects linking against an empty sysroot, then boots the cross-linked static and dynamic C clients and shared C++ exception and thread-local state test under BIOS and UEFI.
 
 `dependencies.json` pins the bootloader, protocol header, BusyBox, libcap and OpenSSL by SHA-256. `ports.lock.json` pins APK URLs, versions, SHA-256, license labels, upstream sites, origins, and source commits. A package can also declare a checked `vendored_archive` under [`vendor/ports`](../vendor/ports/README.md), preserving its original bytes when an upstream repository stops serving that version. Root filesystem assembly treats package contents as data and never runs installation hooks. Font indexes are generated explicitly. Mesa's renderer, LLVM, and SPIR-V payloads are omitted because the image uses fbdev with GLX disabled.
+
+The installed desktop ships the unmodified Intel QuZ/HR API 77 firmware.
+The image builder checks the firmware and Intel's license against
+`dependencies.json` before copying them to `/lib/firmware` and
+`/usr/share/licenses/Intel-AX201`. The source bundle keeps both files
+exactly as distributed upstream.
 
 Upstream libcap 2.78 supplies installed `getcap` and `setcap` tools, linked against the runtime musl provider. The build elects libcap's BSD-3-Clause option, retains its complete upstream `License`, and includes the SHA256-verified archive in the source bundle. Static and dynamic fixture tools use the explicit build provider; native Linux tools retain their actual libc and startup inputs. [File capability verification](file-capabilities.md#upstream-tools-and-verification) records the tool, source and runtime provenance.
 

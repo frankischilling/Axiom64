@@ -94,7 +94,7 @@ int ipv6_family(const uint8_t* data, size_t size, int& mode) {
 } // namespace
 
 int netlink_link_change(const void* data, const NetlinkHeader& request) {
-    if (request.type != 16 || (request.flags & ~(1u | 4u)))
+    if ((request.type != 16 && request.type != 19) || (request.flags & ~(1u | 4u)))
         return -95;
     if (request.length < sizeof(request) + sizeof(LinkHeader))
         return -22;
@@ -103,13 +103,16 @@ int netlink_link_change(const void* data, const NetlinkHeader& request) {
     memcpy(&link, input + sizeof(request), sizeof(link));
     if (link.family && link.family != 10)
         return -97;
-    if (link.padding || link.type || link.flags || link.change)
+    const uint32_t change = link.change ? link.change : link.flags;
+    if (link.padding || link.type || (change & ~1u))
         return -95;
-    if (link.index <= 0 ||
-        (unsigned(link.index) != ipv6_loopback && !net_info(unsigned(link.index))))
+    const auto* info = link.index > 0 ? net_info(unsigned(link.index)) : nullptr;
+    const bool loopback = unsigned(link.index) == ipv6_loopback;
+    if (!info && !loopback)
         return -19;
     int mode = -1;
-    bool found = false;
+    uint32_t mtu = 0;
+    bool has_mtu = false;
     for (size_t at = sizeof(request) + sizeof(link); at < request.length;) {
         Attribute field;
         if (request.length - at < sizeof(field))
@@ -117,20 +120,35 @@ int netlink_link_change(const void* data, const NetlinkHeader& request) {
         memcpy(&field, input + at, sizeof(field));
         if (field.length < sizeof(field) || field.length > request.length - at)
             return -22;
-        if ((field.type & 0x3fff) != 26)
+        if ((field.type & 0x3fff) == 26 && mode < 0) {
+            int error = ipv6_family(input + at + sizeof(field), field.length - sizeof(field), mode);
+            if (error)
+                return error;
+        } else if (field.type == 4 && !has_mtu) { // IFLA_MTU
+            if (field.length != sizeof(field) + sizeof(mtu))
+                return -22;
+            memcpy(&mtu, input + at + sizeof(field), sizeof(mtu));
+            has_mtu = true;
+        } else {
             return -95;
-        int error = ipv6_family(input + at + sizeof(field), field.length - sizeof(field), mode);
-        if (error)
-            return error;
-        found = true;
+        }
         size_t length = (size_t(field.length) + 3) & ~size_t(3);
         if (length > request.length - at)
             return -22;
         at += length;
     }
-    if (!found)
-        return -95;
-    return ip6::configuration_write(unsigned(link.index), ip6::ConfigurationKey::generation_mode,
-                                    mode, ip6::ConfigurationWrite::netlink);
+    if (mode >= 0) {
+        if (has_mtu || change)
+            return -95;
+        return ip6::configuration_write(unsigned(link.index),
+                                        ip6::ConfigurationKey::generation_mode, mode,
+                                        ip6::ConfigurationWrite::netlink);
+    }
+    if (loopback)
+        return has_mtu || (change && !(link.flags & 1)) ? -95 : 0;
+    if (!has_mtu && !change)
+        return 0;
+    const bool up = change ? (link.flags & 1) != 0 : info->administrative;
+    return net_configure(unsigned(link.index), up, has_mtu ? mtu : info->mtu);
 }
 } // namespace ax

@@ -90,6 +90,7 @@ struct Selection {
 };
 
 static ip4::AddressBook addresses;
+static Ipv4AddressObserver address_observer;
 static Ipv4Config loopback{0x7f000001, 0xff000000, 0};
 static ip4::RouteTable routes;
 static Neighbor neighbors[neighbor_count];
@@ -900,6 +901,10 @@ Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address& entry) {
     return addresses.cache(entry, ticks);
 }
 
+void ipv4_observe_addresses(Ipv4AddressObserver observer) {
+    address_observer = observer;
+}
+
 const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint) {
     refresh_addresses();
     if (index == ipv4_loopback)
@@ -932,6 +937,24 @@ static uint16_t active_interfaces() {
         if (auto info = net_info(index); info && info->administrative)
             active |= 1u << (index - 1);
     return active;
+}
+
+static void notify_addresses(const ip4::AddressBook& before, unsigned index) {
+    if (!address_observer)
+        return;
+    for (unsigned n = 0; auto old = before.at(n); ++n)
+        if (old->index == index && !addresses.find(index, old->config.address, old->config.mask))
+            address_observer(*old, before.cache(*old, ticks), true);
+    for (unsigned n = 0; auto current = addresses.at(n); ++n) {
+        if (current->index != index)
+            continue;
+        auto old = before.find(index, current->config.address, current->config.mask);
+        auto cache = addresses.cache(*current, ticks);
+        if (!old || old->secondary != current->secondary || old->flags != current->flags ||
+            old->config.broadcast != current->config.broadcast ||
+            strcmp(old->label, current->label) || before.cache(*old, ticks) != cache)
+            address_observer(*current, cache, false);
+    }
 }
 
 static int addresses_changed(const ip4::AddressBook& before, unsigned index, bool rollback = true) {
@@ -983,6 +1006,10 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index, boo
             path_mtu.discard_source(index, old->config.address);
         if (assigned(index, old->config.address))
             continue;
+        if (!ipv4_local(old->config.address)) {
+            routes.withdraw_source(old->config.address);
+            path_mtu.discard_source(0, old->config.address);
+        }
         ip4::reassembly_discard(old->config.address);
         for (auto& item : output) {
             if (!item.bytes || item.index != index)
@@ -1011,6 +1038,7 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index, boo
         for (auto& neighbor : neighbors)
             if (neighbor.index == index)
                 neighbor = {};
+    notify_addresses(before, index);
     return error;
 }
 
@@ -1061,7 +1089,7 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
 }
 
 int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config,
-                     Ipv4AddressLifetimes lifetime, bool replace) {
+                     Ipv4AddressLifetimes lifetime, bool replace, bool suppress_prefix_route) {
     if (!net_info(index))
         return -19;
     if (!label || !*label)
@@ -1076,7 +1104,8 @@ int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config
     memcpy(name, label, length + 1);
     refresh_addresses();
     auto before = addresses;
-    int error = addresses.add(index, name, captured, ticks, lifetime, replace);
+    int error =
+        addresses.add(index, name, captured, ticks, lifetime, replace, suppress_prefix_route);
     return error ? error : addresses_changed(before, index);
 }
 
@@ -1118,7 +1147,8 @@ int ipv4_administrative_changed(unsigned index) {
     return 0;
 }
 
-static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive) {
+static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive,
+                        bool append) {
     refresh_addresses();
     auto value = input;
     if (!ip4::mask_valid(value.mask) || (value.destination & value.mask) != value.destination)
@@ -1151,6 +1181,8 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
         return -19;
     if (!net_info(value.index)->administrative)
         return -100;
+    if (value.preferred_source && !ipv4_local(value.preferred_source))
+        return -22;
     auto preferred = addresses.preferred(value.index, value.gateway);
     const auto config = preferred ? &preferred->config : nullptr;
     if (value.gateway &&
@@ -1160,18 +1192,22 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
         return -101;
     if (value.scope == 255)
         value.scope = value.gateway ? 0 : 253;
-    int error = routes.insert(value, exclusive);
+    int error = routes.insert(value, exclusive, append);
     if (!error)
         retire_destinations();
     return error;
 }
 
 int ipv4_route(const Ipv4Route& value, bool remove) {
-    return change_route(value, remove, false, false);
+    return change_route(value, remove, false, false, false);
 }
 
-int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive) {
-    return change_route(value, remove, true, exclusive);
+int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive, bool append) {
+    return change_route(value, remove, true, exclusive, append);
+}
+
+void ipv4_observe_routes(Ipv4RouteObserver observer) {
+    routes.observe(observer);
 }
 
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {

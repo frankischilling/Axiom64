@@ -223,11 +223,13 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
     if (!dump) {
         if (!route.index || (route.prefix && !(seen & 2)))
             return -22;
-        if (message.type == 24 && (message.flags & 0x600) != 0x600)
+        constexpr uint16_t create = 0x400, exclusive = 0x200, append = 0x800;
+        if (message.type == 24 &&
+            (!(message.flags & create) || !(message.flags & (exclusive | append))))
             return -95;
         if (message.type == 25 && !(seen & (1u << 6)))
             route.metric = 0;
-        return ipv6_route_control(route, message.type == 25, message.flags & 0x200);
+        return ipv6_route_control(route, message.type == 25, message.flags & exclusive);
     }
     Writer output(reply, capacity);
     uint16_t flags = 2 | (header.table || header.protocol || header.type || route.index ? 0x20 : 0);

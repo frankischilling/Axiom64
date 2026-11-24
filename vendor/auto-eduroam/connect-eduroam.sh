@@ -85,7 +85,18 @@ fi
 uuid="${token:0:8}-${token:8:4}-${token:12:4}-${token:16:4}-${token:20:12}"
 owner=$(id -un)
 cancel_profile() {
-    nmcli --wait 5 connection delete uuid "$uuid" >/dev/null 2>&1 || true
+    local status=$?
+    trap - EXIT
+    local existing
+    if ! existing=$(nmcli --terse --get-values UUID connection show); then
+        printf '%s\n' 'Could not check whether the temporary eduroam profile is still active.' >&2
+    elif grep -Fxq "$uuid" <<<"$existing"; then
+        printf '%s\n' 'Removing the temporary eduroam profile.' >&2
+        if ! nmcli --ask --wait 30 connection delete uuid "$uuid"; then
+            printf '%s\n' 'Could not remove the temporary profile. It will clear when NetworkManager restarts.' >&2
+        fi
+    fi
+    exit "$status"
 }
 trap cancel_profile EXIT
 trap 'exit 130' INT
@@ -95,10 +106,12 @@ settings=()
 if [[ -n $anonymous ]]; then
     settings+=(802-1x.anonymous-identity "$anonymous")
 fi
-nmcli --ask connection add type wifi ifname "$interface" con-name "$profile" ssid eduroam \
+nmcli --ask connection add save no type wifi ifname "$interface" \
+    con-name "$profile setup $uuid" ssid eduroam \
     connection.uuid "$uuid" connection.permissions "user:$owner" connection.autoconnect no \
     wifi-sec.key-mgmt wpa-eap 802-1x.eap peap 802-1x.phase2-auth mschapv2 \
     802-1x.identity "$identity" 802-1x.ca-cert "$certificate" 802-1x.domain-suffix-match "$domain" \
     802-1x.password-flags not-saved "${settings[@]}"
 nmcli --ask --wait 60 connection up uuid "$uuid" ifname "$interface"
+nmcli --ask connection modify uuid "$uuid" connection.id "$profile"
 trap - EXIT

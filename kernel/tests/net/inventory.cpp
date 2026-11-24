@@ -195,6 +195,26 @@ static int evaluate(const uint8_t* packet, bool strict, unsigned* records = null
     return 0;
 }
 
+static void ipv4_address_events() {
+    const auto* address = ipv4_address(max_net_devices + 1);
+    const auto lifetime = ipv4_address_cache(*address);
+    for (bool removed : {false, true}) {
+        uint8_t output[96];
+        size_t size =
+            netlink_format_ipv4_address_event(*address, lifetime, removed, output, sizeof(output));
+        require(size >= 24 && size <= sizeof(output), "IPv4 event fits reserved buffer");
+        NetlinkHeader header;
+        memcpy(&header, output, sizeof(header));
+        require(header.length == size && header.type == (removed ? 21 : 20) && !header.flags &&
+                    !header.port && !header.sequence && output[16] == 2 && output[17] == 24 &&
+                    (output[18] & 1),
+                "unsolicited IPv4 event identifies the secondary address and action");
+        address_attributes(output, size);
+        require(!netlink_format_ipv4_address_event(*address, lifetime, removed, output, size - 1),
+                "short event buffer is rejected");
+    }
+}
+
 static void named_links() {
     uint8_t packet[48]{}, output[netlink_family_reply]{};
     NetlinkHeader request{sizeof(packet), 18, 1, 123, 0};
@@ -226,6 +246,7 @@ static void named_links() {
 
 int main() {
     named_links();
+    ipv4_address_events();
     uint8_t packet[128]{};
     unsigned cases = 0;
     for (uint16_t type : {uint16_t(18), uint16_t(22)}) {

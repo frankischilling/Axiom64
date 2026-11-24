@@ -39,6 +39,20 @@ void rtl8168g_attach(const PciFunction&);
 
 static NetAdapter* devices[max_net_devices];
 static unsigned count;
+static NetLinkObserver link_observer;
+static NetRegistrationObserver registration_observer;
+
+void net_observe_links(NetLinkObserver observer) {
+    link_observer = observer;
+}
+
+void net_device_poll(NetAdapter& adapter) {
+    const auto& info = adapter.info;
+    const bool carrier = info.carrier, live = info.live;
+    adapter.poll(adapter);
+    if (info.index && link_observer && (info.carrier != carrier || info.live != live))
+        link_observer(info, 0);
+}
 
 static void discover(const PciFunction& pci) {
     virtio_net_attach(pci);
@@ -46,11 +60,12 @@ static void discover(const PciFunction& pci) {
     rtl8168g_attach(pci);
 }
 
-void net_init() {
+void net_init(NetRegistrationObserver observer) {
+    registration_observer = observer;
     pci_scan(discover);
 }
 
-unsigned net_register(NetAdapter& adapter) {
+unsigned net_register(NetAdapter& adapter, const char* driver, const PciFunction* pci) {
     bool nonzero = false;
     for (auto byte : adapter.info.mac)
         nonzero |= byte != 0;
@@ -60,9 +75,18 @@ unsigned net_register(NetAdapter& adapter) {
         return 0;
     auto& info = adapter.info;
     info.index = count + 1;
-    memcpy(info.name, "eth0", 5);
-    info.name[3] += count;
+    unsigned unit = 0;
+    for (unsigned i = 0; i < count; ++i)
+        if (devices[i]->info.wireless == info.wireless)
+            ++unit;
+    const auto name = info.wireless ? "wlan0" : "eth0";
+    const auto length = strlen(name);
+    memcpy(info.name, name, length + 1);
+    info.name[length - 1] += unit;
     info.mtu = min(info.maximum_mtu, uint32_t(1500));
+    info.driver = driver;
+    if (pci)
+        pci->format_address(info.bus_address);
     devices[count++] = &adapter;
     log("NET_DEVICE index=%u name=%s mtu=%u carrier=%u mac=%x:%x:%x:%x:%x:%x\n",
         uint64_t(info.index), info.name, uint64_t(info.mtu), uint64_t(info.carrier),
@@ -70,6 +94,8 @@ unsigned net_register(NetAdapter& adapter) {
         uint64_t(info.mac[4]), uint64_t(info.mac[5]));
     ip4::configuration_registered(info.index);
     ip6::configuration_registered(info.index);
+    if (registration_observer)
+        registration_observer(info, pci);
     return info.index;
 }
 
@@ -80,7 +106,7 @@ const NetInfo* net_info(unsigned index) {
 void net_poll() {
     for (unsigned i = 0; i < count; i++)
         if (devices[i]->info.live)
-            devices[i]->poll(*devices[i]);
+            net_device_poll(*devices[i]);
     ipv4_poll();
     ipv6_poll();
 }
@@ -98,24 +124,32 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
     auto info = net_info(index);
     if (!info)
         return -19;
+    if (administrative && devices[index - 1]->receive_only_diagnostic)
+        return -95;
     if (mtu < 68 || mtu > info->maximum_mtu)
         return -22;
-    auto& writable = devices[index - 1]->info;
+    auto& adapter = *devices[index - 1];
+    auto& writable = adapter.info;
     uint32_t previous_mtu = writable.mtu;
     bool previous_administrative = writable.administrative;
     writable.administrative = administrative;
     writable.mtu = mtu;
-    if (previous_administrative != administrative)
+    if (previous_administrative != administrative) {
         if (int error = ipv4_administrative_changed(index)) {
             writable.administrative = previous_administrative;
             writable.mtu = previous_mtu;
             return error;
         }
+        if (adapter.administrative_changed)
+            adapter.administrative_changed(adapter);
+    }
     ip6::configuration_changed(index);
     if (previous_mtu != mtu) {
         ipv4_mtu_changed(index, previous_mtu);
         ipv6_mtu_changed(index, previous_mtu);
     }
+    if (link_observer && (previous_administrative != administrative || previous_mtu != mtu))
+        link_observer(writable, previous_administrative != administrative ? 1 : 0);
     return 0;
 }
 
@@ -135,7 +169,7 @@ int net_send_checked(unsigned index, const void* frame, size_t length, int (*val
     if (!info)
         return -19;
     auto& adapter = *devices[index - 1];
-    adapter.poll(adapter);
+    net_device_poll(adapter);
     if (!info->live)
         return -5;
     if (!info->administrative || !info->carrier)

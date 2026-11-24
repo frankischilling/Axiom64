@@ -47,11 +47,15 @@ struct Ipv4AddressLifetimes {
 
 struct Ipv4AddressCacheInfo {
     uint32_t preferred = UINT32_MAX, valid = UINT32_MAX, created = 0, updated = 0;
+
+    bool operator==(const Ipv4AddressCacheInfo&) const = default;
 };
 
 static_assert(sizeof(Ipv4AddressLifetimes) == 8 && sizeof(Ipv4AddressCacheInfo) == 16);
 
 struct Ipv4Address {
+    static constexpr uint32_t no_prefix_route = 0x200; // Linux IFA_F_NOPREFIXROUTE.
+
     Ipv4Config config;
     unsigned index = 0;
     char label[16]{};
@@ -63,7 +67,7 @@ struct Ipv4Route {
     uint32_t destination = 0, mask = 0, gateway = 0;
     unsigned index = 0, metric = 0;
     uint8_t protocol = 3, scope = 255;
-    // Listing metadata; mutation requests select their source independently.
+    // Preferred source for new output that does not specify its own address.
     uint32_t preferred_source = 0;
 };
 
@@ -76,6 +80,9 @@ const Ipv4Address* ipv4_address(unsigned position);
 
 Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address&);
 
+using Ipv4AddressObserver = void (*)(const Ipv4Address&, const Ipv4AddressCacheInfo&, bool removed);
+void ipv4_observe_addresses(Ipv4AddressObserver);
+
 const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint = 0);
 
 int ipv4_configure(unsigned index, const Ipv4Config&);
@@ -83,7 +90,8 @@ int ipv4_configure(unsigned index, const Ipv4Config&);
 int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config&);
 
 int ipv4_address_add(unsigned index, const char* label, const Ipv4Config&,
-                     Ipv4AddressLifetimes = {}, bool replace = false);
+                     Ipv4AddressLifetimes = {}, bool replace = false,
+                     bool suppress_prefix_route = false);
 
 int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask);
 
@@ -96,9 +104,12 @@ int ipv4_administrative_changed(unsigned index);
 int ipv4_route(const Ipv4Route&, bool remove);
 
 // Routing control retains protocol/scope and applies Linux deletion filters.
-int ipv4_route_control(const Ipv4Route&, bool remove, bool exclusive);
+int ipv4_route_control(const Ipv4Route&, bool remove, bool exclusive, bool append = false);
 
 size_t ipv4_routes(Ipv4Route*, size_t capacity);
+
+using Ipv4RouteObserver = void (*)(const Ipv4Route&, bool removed);
+void ipv4_observe_routes(Ipv4RouteObserver);
 
 bool ipv4_local(uint32_t address);
 

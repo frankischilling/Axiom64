@@ -73,14 +73,39 @@ static void sleep_ms(unsigned milliseconds) {
         require(errno == EINTR, "nanosleep");
 }
 
+static void check_clock_precision(void) {
+    struct timespec resolution, boot_resolution, coarse_resolution, coarse;
+    require(!clock_getres(CLOCK_MONOTONIC, &resolution) && !resolution.tv_sec &&
+                resolution.tv_nsec == 1000,
+            "microsecond monotonic resolution with an elapsed counter");
+    require(!clock_getres(CLOCK_BOOTTIME, &boot_resolution) && !boot_resolution.tv_sec &&
+                boot_resolution.tv_nsec == resolution.tv_nsec,
+            "boot and monotonic resolution agree");
+    require(!clock_getres(CLOCK_MONOTONIC_COARSE, &coarse_resolution) &&
+                !coarse_resolution.tv_sec && coarse_resolution.tv_nsec == 10000000 &&
+                !clock_gettime(CLOCK_MONOTONIC_COARSE, &coarse) && coarse.tv_nsec % 10000000 == 0,
+            "coarse clock retains the scheduler tick");
+    int sub_tick = 0;
+    for (unsigned sample = 0; sample < 256 && !sub_tick; ++sample) {
+        uint64_t before = clock_ns();
+        struct timespec boot;
+        require(!clock_gettime(CLOCK_BOOTTIME, &boot), "boot clock");
+        uint64_t boot_ns = (uint64_t)boot.tv_sec * 1000000000 + (uint64_t)boot.tv_nsec;
+        uint64_t after = clock_ns();
+        require(before <= boot_ns && boot_ns <= after && boot_ns % 1000 == 0,
+                "boot and monotonic timestamps share the elapsed counter");
+        sub_tick = boot_ns % 10000000 != 0;
+    }
+    require(sub_tick, "hardware readings retain the fraction of a scheduler tick");
+    puts("CLOCK_SUBTICK_PASS resolution_ns=1000");
+}
+
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
-    struct timespec resolution;
-    require(!clock_getres(CLOCK_MONOTONIC, &resolution) && !resolution.tv_sec &&
-                resolution.tv_nsec == 10000000,
-            "clock_getres");
+    check_clock_precision();
     uint64_t before = clock_ns();
     sleep_ms(100);
+    require(clock_ns() - before >= 100000000, "relative sleep does not use up its first tick");
     report("sleep-before", before);
     require(!mkdir("/mnt", 0755) && !mkdir("/mnt/clock", 0755), "mkdir");
     before = clock_ns();

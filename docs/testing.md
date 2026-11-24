@@ -2280,17 +2280,21 @@ and checks the final ext2 image with e2fsck.
 
 ## Intel AX201 firmware staging
 
-`make test-intel-wifi-firmware` checks the firmware parser with address and
-undefined-behavior sanitizers. To check the adapter's actual image, run
+`make test-intel-wifi-firmware` checks the firmware parser, boot context, and
+queue descriptors with address and undefined-behavior sanitizers. To check the
+adapter's actual image, run
 `build/intel-wifi-firmware-test /path/to/iwlwifi-QuZ-a0-hr-b0-77.ucode` after
 building the test. Use the unmodified file from the Linux Firmware `20251021`
 release and keep `LICENCE.iwlwifi_firmware` alongside any redistributed copy.
 
 In a test initramfs, put the firmware in `/lib/firmware`. Boot with
-`iwlwifi.firmware-check` to validate the image and compare all staged sections
-with the bytes in the file. Use `iwlwifi.probe` to also require the AX201 PCI
-function and confirm the QuZ MAC and HR radio revisions. Add `fbconsole` to see
+`iwlwifi.firmware-check` to validate the image, compare staged sections with
+the firmware file, and prepare the receive and host-command queues.
+Use `iwlwifi.probe` to require the AX201 PCI function and confirm the QuZ MAC
+and HR radio revisions. Add `fbconsole` to see
 the result on the boot display. The serial log includes the section counts and
-PCI probe details. These checks leave the radio off and release staging memory.
+PCI probe details. The Blade has passed adapter identification and firmware
+staging over PXE. The queue setup leaves the radio off and releases the staged
+memory.
 Firmware startup, a wireless interface, and network association remain to be
 implemented.

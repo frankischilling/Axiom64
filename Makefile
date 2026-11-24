@@ -35,7 +35,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-intel-wifi-firmware
 test-intel-wifi-firmware: build/intel-wifi-firmware-test
 	./build/intel-wifi-firmware-test
-build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_firmware.cpp kernel/include/drivers/net/intel_wifi.hpp kernel/include/core/base.hpp
+build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_context.cpp kernel/include/drivers/net/intel_wifi.hpp kernel/include/drivers/net/intel_wifi_context.hpp kernel/include/mm/dma.hpp kernel/include/core/base.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-partitions test-partitions-native

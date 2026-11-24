@@ -14,6 +14,7 @@ namespace ax::IntelWifi {
 inline constexpr uint32_t firmware_api = 77;
 inline constexpr size_t max_firmware_bytes = 4 * 1024 * 1024;
 inline constexpr unsigned max_sections = 64;
+inline constexpr uint32_t max_section_bytes = 32 * 1024;
 
 enum Region { lmac, umac, paging, region_count };
 

@@ -7,7 +7,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi.hpp"
+#include "drivers/net/intel_wifi_context.hpp"
 #include "drivers/platform/fb_console.hpp"
 #include "drivers/platform/pci.hpp"
 #include "fs/vfs.hpp"
@@ -19,7 +19,7 @@ constexpr uint32_t device_id = 0x06f08086, subsystem_id = 0x00748086;
 constexpr uint32_t wireless_class = 0x028000;
 constexpr uint16_t pci_command = 4, memory_space = 2, bus_master = 4, intx_disable = 1u << 10;
 constexpr unsigned csr_hw_rev = 0x28, csr_hw_rf_id = 0x9c;
-constexpr uint32_t quz_revision = 0x00000351, hr_radio = 0x0010a100;
+constexpr uint32_t hr_radio = 0x0010a100;
 constexpr char firmware_file[] = "/lib/firmware/iwlwifi-QuZ-a0-hr-b0-77.ucode";
 enum class Probe { absent, rejected, identified };
 Probe probe;
@@ -77,12 +77,12 @@ void probe_adapter(const PciFunction& pci) {
         return;
     }
     log("iwlwifi: MAC revision=%x radio=%x\n", uint64_t(revision), uint64_t(radio));
-    if (revision == quz_revision && radio == hr_radio)
+    if (revision == quz_mac_revision && radio == hr_radio)
         probe = Probe::identified;
 }
 
 struct StagedImage {
-    uint64_t addresses[region_count][max_sections]{};
+    FirmwareAddresses addresses{};
     size_t page_counts[region_count][max_sections]{};
 
     StagedImage() = default;
@@ -126,6 +126,73 @@ struct StagedImage {
     }
 };
 
+struct DmaBuffer {
+    uint64_t address = 0;
+    size_t pages = 0;
+
+    DmaBuffer() = default;
+    DmaBuffer(const DmaBuffer&) = delete;
+    DmaBuffer& operator=(const DmaBuffer&) = delete;
+
+    ~DmaBuffer() {
+        if (address)
+            page_free(address, pages);
+    }
+
+    bool allocate(size_t bytes) {
+        pages = align_up(bytes) / page_size;
+        address = Dma::allocate(pages, Dma::pci);
+        return address != 0;
+    }
+
+    template <typename T> T& data() const {
+        return *static_cast<T*>(physical(address));
+    }
+};
+
+struct BootQueues {
+    using FreeRing = uint64_t[rx_ring_entries];
+    using Commands = CommandDescriptor[command_ring_entries];
+    using InvalidCommand = uint8_t[invalid_command_size];
+
+    DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
+    unsigned receive_count = 0;
+
+    ~BootQueues() {
+        for (unsigned i = 0; i < receive_count; ++i)
+            page_free(align_down(free_ring.data<FreeRing>()[i]), 1);
+    }
+
+    bool prepare(const FirmwareImage& image, const FirmwareAddresses& addresses) {
+        if (!free_ring.allocate(sizeof(FreeRing)) ||
+            !used_ring.allocate(rx_ring_entries * sizeof(uint32_t)) ||
+            !status.allocate(sizeof(ReceiveStatus)) || !commands.allocate(sizeof(Commands)) ||
+            !invalid_command.allocate(sizeof(InvalidCommand)) ||
+            !context.allocate(sizeof(BootContext)))
+            return false;
+
+        if (!prepare_command_ring(invalid_command.address, invalid_command.data<InvalidCommand>(),
+                                  commands.data<Commands>()) ||
+            !make_boot_context(image, addresses,
+                               {free_ring.address, used_ring.address, status.address},
+                               commands.address, context.data<BootContext>()))
+            return false;
+
+        // Keep one slot empty. The hardware write pointer is programmed after it configures RX.
+        auto& ring = free_ring.data<FreeRing>();
+        for (; receive_count < rx_ring_entries - 1; ++receive_count) {
+            const auto address = Dma::allocate(1, Dma::pci);
+            if (!address)
+                return false;
+            if (!encode_receive_buffer(address, receive_count + 1, ring[receive_count])) {
+                page_free(address, 1);
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 void stage_firmware(const uint8_t* bytes, size_t size) {
     FirmwareImage image{};
     if (const auto* error = parse_firmware(bytes, size, image)) {
@@ -144,11 +211,20 @@ void stage_firmware(const uint8_t* bytes, size_t size) {
         report("DMA staging readback failed");
         return;
     }
+    BootQueues queues;
+    if (!queues.prepare(image, staged.addresses)) {
+        log("iwlwifi: boot context preparation failed\n");
+        report("boot context preparation failed");
+        return;
+    }
+    const auto& context = queues.context.data<BootContext>();
+    log("iwlwifi: boot context dwords=%u RX=%u buffers=%u commands=%u\n", uint64_t(context.dwords),
+        uint64_t(rx_ring_entries), uint64_t(queues.receive_count), uint64_t(command_ring_entries));
     log("iwlwifi: DMA staged API=%u LMAC=%u UMAC=%u paging=%u paging_bytes=%u\n",
         uint64_t(image.version[0]), uint64_t(image.regions[lmac].count),
         uint64_t(image.regions[umac].count), uint64_t(image.regions[paging].count),
         uint64_t(image.paging_bytes));
-    report("firmware staged in memory");
+    report("firmware and boot queues staged in memory");
 }
 } // namespace
 

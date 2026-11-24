@@ -43,7 +43,8 @@ bool append_section(FirmwareImage& image, Region& region, const uint8_t* payload
         }
         return false;
     }
-    if (sections.count == max_sections || size - sizeof(uint32_t) > UINT32_MAX - offset)
+    if (sections.count == max_sections || size - sizeof(uint32_t) > max_section_bytes ||
+        size - sizeof(uint32_t) > UINT32_MAX - offset)
         return false;
     sections.sections[sections.count++] = {payload + sizeof(uint32_t),
                                            size - uint32_t(sizeof(uint32_t))};

@@ -465,16 +465,14 @@ const char* wait_authentication(CommandSession& commands, unsigned deadline, con
     return timeout;
 }
 
-const char* authenticate_peer(CommandSession& commands, PeerQueue queue, uint32_t rate,
-                              const uint8_t (&station)[6], const AccessPoint& peer,
-                              const ScanChannel& channel) {
+const char* start_management_session(CommandSession& commands) {
     uint8_t protection[session_protection_bytes];
     prepare_session_protection(true, protection);
     const auto sequence = commands.index;
     if (!commands.submit(3, 5, protection, sizeof(protection)))
         return "cannot submit session protection";
     bool acknowledged = false, started = false;
-    const auto* start_error = wait_authentication(
+    return wait_authentication(
         commands, 100, "session protection did not start",
         [&](const FirmwarePacket& packet, bool& done) -> const char* {
             if (packet.sequence == sequence && packet.group == 0 && packet.opcode == 2)
@@ -489,42 +487,79 @@ const char* authenticate_peer(CommandSession& commands, PeerQueue queue, uint32_
             done = acknowledged && started;
             return nullptr;
         });
-    if (start_error)
-        return start_error;
+}
 
-    if (!prepare_authentication_frame(commands.rx.memory.authentication, queue, rate, station,
-                                      peer))
-        return "cannot prepare authentication transmit descriptor";
+const char* exchange_management(CommandSession& commands, PeerQueue& queue, uint32_t rate,
+                                const uint8_t (&station)[6], const AccessPoint& peer,
+                                const ScanChannel& channel, ManagementFrame kind,
+                                const AssociationRequest& association, uint16_t& aid) {
+    const bool authentication = kind == ManagementFrame::authenticate;
+    const bool leaving = kind == ManagementFrame::leave;
+    const auto sent = queue;
+    if (!prepare_management_frame(commands.rx.memory.authentication, sent, rate, station, peer,
+                                  kind, association))
+        return "cannot prepare management transmit descriptor";
     __atomic_thread_fence(__ATOMIC_RELEASE);
     commands.reg.write(command_write_pointer,
-                       uint8_t(queue.write_pointer + 1) | (uint32_t(queue.id) << 16));
+                       uint8_t(sent.write_pointer + 1) | (uint32_t(sent.id) << 16));
 
-    bool transmitted = false, accepted = false;
-    const auto* tx_error = wait_authentication(
-        commands, 950, "open-system authentication timed out",
-        [&](const FirmwarePacket& packet, bool& done) -> const char* {
-            const auto tx = observe_authentication_tx(packet, queue);
-            if (tx == AuthEvent::accepted)
+    bool transmitted = false, accepted = leaving;
+    const char* timeout = authentication ? "open-system authentication timed out"
+                          : leaving      ? "deauthentication transmit timed out"
+                                         : "association exchange timed out";
+    return wait_authentication(
+        commands, 950, timeout, [&](const FirmwarePacket& packet, bool& done) -> const char* {
+            const auto tx = observe_authentication_tx(packet, sent);
+            if (tx == AuthEvent::accepted) {
                 transmitted = true;
-            else if (tx == AuthEvent::denied)
-                return "firmware could not deliver the authentication request";
-            else if (tx == AuthEvent::malformed)
-                return "firmware returned an invalid authentication transmit completion";
-            const auto reply = observe_authentication_reply(packet, station, peer, channel.number);
-            if (reply == AuthEvent::accepted)
-                accepted = true;
-            else if (reply == AuthEvent::denied)
-                return "access point refused open-system authentication";
-            else if (reply == AuthEvent::malformed)
-                return "access point returned an invalid authentication reply";
+                queue.write_pointer = uint8_t(sent.write_pointer + 1);
+            } else if (tx == AuthEvent::denied) {
+                return authentication ? "firmware could not deliver the authentication request"
+                                      : "firmware could not deliver the management frame";
+            } else if (tx == AuthEvent::malformed) {
+                return "firmware returned an invalid management transmit completion";
+            }
+            if (!accepted) {
+                const auto reply =
+                    authentication
+                        ? observe_authentication_reply(packet, station, peer, channel.number)
+                        : observe_association_reply(packet, station, peer, channel.number, aid);
+                if (reply == AuthEvent::accepted)
+                    accepted = true;
+                else if (reply == AuthEvent::denied)
+                    return authentication ? "access point refused open-system authentication"
+                                          : "access point refused association";
+                else if (reply == AuthEvent::malformed)
+                    return authentication ? "access point returned an invalid authentication reply"
+                                          : "access point returned an invalid association reply";
+            }
             if (observe_session_protection(packet) == AuthEvent::ended)
-                return "session protection ended before authentication completed";
+                return "session protection ended before the management exchange completed";
             done = transmitted && accepted;
             return nullptr;
         });
-    if (tx_error)
-        return tx_error;
+}
 
+const char* run_management_exchange(CommandSession& commands, PeerQueue queue, uint32_t rate,
+                                    const uint8_t (&station)[6], const AccessPoint& peer,
+                                    const ScanChannel& channel,
+                                    const AssociationRequest& association, uint16_t& aid) {
+    if (const auto* error = start_management_session(commands))
+        return error;
+    if (const auto* error = exchange_management(commands, queue, rate, station, peer, channel,
+                                                ManagementFrame::authenticate, association, aid))
+        return error;
+    if (association.length) {
+        const auto* error = exchange_management(commands, queue, rate, station, peer, channel,
+                                                ManagementFrame::associate, association, aid);
+        if (error)
+            return error;
+        if (const auto* leave_error =
+                exchange_management(commands, queue, rate, station, peer, channel,
+                                    ManagementFrame::leave, association, aid))
+            return leave_error;
+    }
+    uint8_t protection[session_protection_bytes];
     prepare_session_protection(false, protection);
     FirmwarePacket reply{};
     return commands.send(3, 5, protection, sizeof(protection), reply) == Reply::matched
@@ -534,8 +569,9 @@ const char* authenticate_peer(CommandSession& commands, PeerQueue queue, uint32_
 
 const char* check_peer_queue(CommandSession& commands, const ScanChannelList& channels,
                              const PassiveScan& scan, const ScanChecks& checks,
-                             AntennaMasks usable_antennas, PeerQueue& queue) {
-    const bool authenticate = checks.check == FirmwareCheck::authenticate;
+                             AntennaMasks usable_antennas, PeerQueue& queue,
+                             uint16_t& association_id) {
+    const bool authenticate = management_exchange(checks.check);
     const AccessPoint* peer = nullptr;
     const ScanChannel* channel = nullptr;
     for (unsigned i = 0; i < scan.access_point_count; ++i) {
@@ -558,6 +594,7 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
                    ? "requested access point not found on a permitted active channel"
                    : "no infrastructure access point on a channel permitted for active operation";
     uint32_t rate = 0;
+    AssociationRequest association;
     if (authenticate) {
         if (!scan.elements)
             return "authentication scan information is missing";
@@ -569,6 +606,11 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
                                        channel->frequency_mhz >= 5000, usable_antennas.tx);
         if (!rate)
             return "no supported authentication transmit rate";
+        if (checks.check == FirmwareCheck::associate &&
+            !prepare_association_request(*peer, ies.beacon, peer->beacon_ie_bytes,
+                                         channel->frequency_mhz >= 5000, association))
+            return "association check requires a named open access point with supported legacy "
+                   "rates";
     }
     if (const auto* error = apply_channel_context(commands, *channel, usable_antennas.rx,
                                                   checks.dual_lmac, true, true))
@@ -595,7 +637,8 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
         return "firmware management queue allocation failed";
     if (authenticate) {
         if (const auto* error =
-                authenticate_peer(commands, queue, rate, scan.station_address, *peer, *channel))
+                run_management_exchange(commands, queue, rate, scan.station_address, *peer,
+                                        *channel, association, association_id))
             return error;
     }
     if (!prepare_remove_management_queue(station, scheduler) ||
@@ -677,7 +720,7 @@ static bool stop_adapter(const Registers& reg, bool request_dma) {
 
 static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
                                    const ScanChecks* scan, LiveScanSession* live) {
-    const bool authenticate = scan && scan->check == FirmwareCheck::authenticate;
+    const bool authenticate = scan && management_exchange(scan->check);
     const bool peer_check = authenticate || (scan && scan->check == FirmwareCheck::peer_queue);
     if (peer_check && !valid_peer_queue_memory(memory.peer_queue))
         return {"invalid management queue DMA addresses", false, true};
@@ -708,6 +751,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     unsigned completed_scans = 0;
     unsigned checked_channels = 0;
     PeerQueue peer_queue{};
+    uint16_t association_id = 0;
     const bool passive_check = scan && scan->check >= FirmwareCheck::passive_scan;
     const bool channel_check = scan && scan->check == FirmwareCheck::channel_context;
     NvmInfo info{};
@@ -768,7 +812,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                             error = check_peer_queue(commands, channels, passive, *scan,
                                                      {uint8_t(info.tx_chains & scan->antennas.tx),
                                                       uint8_t(info.rx_chains & scan->antennas.rx)},
-                                                     peer_queue);
+                                                     peer_queue, association_id);
                     }
                 }
             }
@@ -783,7 +827,9 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     else if (peer_check && !idle && !error)
         error = "peer queue check could not stop DMA";
     const char* success = "firmware ALIVE received";
-    if (authenticate)
+    if (scan && scan->check == FirmwareCheck::associate)
+        success = "open-system association and deauthentication passed";
+    else if (authenticate)
         success = "open-system authentication exchange passed";
     else if (peer_check)
         success = "peer station and management queue check passed";
@@ -808,7 +854,8 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
             passive,
             completed_scans,
             checked_channels,
-            peer_queue};
+            peer_queue,
+            association_id};
 }
 
 FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,

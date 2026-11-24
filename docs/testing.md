@@ -2392,5 +2392,11 @@ Use `iwlwifi.auth-check=xx:xx:xx:xx:xx:xx` with the BSSID of an access
 point you can use for testing. The check listens for that BSSID, selects
 a legacy rate advertised by the access point, and sends one open-system
 authentication request. It checks both the firmware transmit completion
-and the access point's reply before stopping the adapter. Association
-and network configuration are separate steps after authentication.
+and the access point's reply before stopping the adapter.
+
+Use `iwlwifi.assoc-check=xx:xx:xx:xx:xx:xx` with a named, open test
+access point on a permitted active channel. The check authenticates,
+requests association with the advertised SSID and compatible legacy
+rates, checks the assigned association ID, then sends a deauthentication
+frame before stopping the adapter. It leaves network configuration to
+userspace. Encrypted networks and data transfer still need driver support.

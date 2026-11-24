@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/net/intel_wifi_auth.cpp
- * @brief   Encode an AX201 management TX and decode its authentication result.
+ * @brief   Encode management frames and decode AX201 firmware and peer replies.
  * @author  frankischilling
  * @date    2026-11-23
  *
@@ -17,6 +17,7 @@ namespace {
 constexpr unsigned header_bytes = 24, body_bytes = 6;
 constexpr unsigned first_tb_bytes = 20, second_tb_bytes = 4 + header_bytes;
 constexpr unsigned second_tb_offset = 64, third_tb_offset = 128;
+static_assert(third_tb_offset + association_body_bytes <= authentication_dma_bytes);
 
 uint16_t read16(const uint8_t* data) {
     return uint16_t(data[0] | (unsigned(data[1]) << 8));
@@ -139,16 +140,98 @@ void prepare_authentication_mac(const uint8_t (&station)[6], const AccessPoint& 
     command[132] = 1; // Listen interval in beacons.
 }
 
-bool prepare_authentication_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
-                                  const uint8_t (&station)[6], const AccessPoint& peer) {
+bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, unsigned bytes,
+                                 bool high_band, AssociationRequest& request) {
+    request.length = 0;
+    if ((peer.capability & 0x13) != 1 || !peer.ssid_length ||
+        peer.ssid_length > sizeof(peer.ssid) || !ies)
+        return false;
+
+    const unsigned first_rate = high_band ? scan_cck_rate_count : 0;
+    unsigned rates = 0;
+    for (unsigned offset = 0; offset < bytes;) {
+        if (bytes - offset < 2)
+            return false;
+        const unsigned id = ies[offset], length = ies[offset + 1];
+        offset += 2;
+        if (length > bytes - offset || id == 48)
+            return false;
+        const auto* data = ies + offset;
+        const uint8_t wpa_type[]{0, 0x50, 0xf2, 1};
+        if (id == 221 && length >= sizeof(wpa_type) && !memcmp(data, wpa_type, sizeof(wpa_type)))
+            return false;
+        if (id == 1 || id == 50) {
+            for (unsigned i = 0; i < length; ++i) {
+                unsigned index = first_rate;
+                while (index < sizeof(scan_legacy_rates) &&
+                       scan_legacy_rates[index] != (data[i] & 0x7f))
+                    ++index;
+                if (index < sizeof(scan_legacy_rates))
+                    rates |= 1u << index;
+                else if (data[i] & 0x80)
+                    return false;
+            }
+        }
+        offset += length;
+    }
+    if (!rates)
+        return false;
+
+    uint8_t supported[sizeof(scan_legacy_rates)];
+    unsigned count = 0;
+    for (unsigned i = first_rate; i < sizeof(scan_legacy_rates); ++i)
+        if (rates & (1u << i))
+            supported[count++] = scan_legacy_rates[i];
+
+    auto* body = request.body;
+    const auto capability = peer.capability & 0x0421; // ESS, short preamble, short slot.
+    body[0] = uint8_t(capability);
+    body[1] = uint8_t(capability >> 8);
+    body[2] = 1;
+    body[3] = 0;
+    body[4] = 0; // SSID.
+    body[5] = peer.ssid_length;
+    memcpy(body + 6, peer.ssid, peer.ssid_length);
+    unsigned end = 6 + peer.ssid_length;
+    const unsigned initial = min(count, 8u);
+    body[end++] = 1; // Supported Rates.
+    body[end++] = uint8_t(initial);
+    memcpy(body + end, supported, initial);
+    end += initial;
+    if (count > initial) {
+        body[end++] = 50; // Extended Supported Rates.
+        body[end++] = uint8_t(count - initial);
+        memcpy(body + end, supported + initial, count - initial);
+        end += count - initial;
+    }
+    request.length = end;
+    return true;
+}
+
+bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
+                              const uint8_t (&station)[6], const AccessPoint& peer,
+                              ManagementFrame kind, const AssociationRequest& association) {
     if (!valid_authentication_dma(dma) || !rate || !queue.id || queue.id >= 512)
         return false;
+    constexpr uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
+    constexpr uint8_t leave_body[]{3, 0}; // Station is leaving.
+    const uint8_t* body = auth_body;
+    unsigned length = sizeof(auth_body);
+    if (kind == ManagementFrame::associate) {
+        body = association.body;
+        length = association.length;
+        if (!length || length > sizeof(association.body))
+            return false;
+    } else if (kind == ManagementFrame::leave) {
+        body = leave_body;
+        length = sizeof(leave_body);
+    }
     memset(dma.payload, 0, authentication_dma_bytes);
     const auto sequence = transmit_sequence(queue);
     dma.payload[0] = 0x1c;
     dma.payload[2] = uint8_t(sequence);
     dma.payload[3] = uint8_t(sequence >> 8);
-    dma.payload[4] = header_bytes + body_bytes;
+    dma.payload[4] = uint8_t(header_bytes + length);
     dma.payload[7] = header_bytes / 2; // Offload MAC header size in words.
     dma.payload[8] = 3;                // Use the command rate and disable encryption.
 
@@ -156,11 +239,11 @@ bool prepare_authentication_frame(const AuthenticationDma& dma, PeerQueue queue,
     for (unsigned i = 0; i < 4; ++i)
         rate_field[i] = uint8_t(rate >> (8 * i));
     auto* header = rate_field + 4;
-    header[0] = 0xb0;
+    header[0] = uint8_t(kind);
     memcpy(header + 4, peer.bssid, sizeof(peer.bssid));
     memcpy(header + 10, station, sizeof(station));
     memcpy(header + 16, peer.bssid, sizeof(peer.bssid));
-    dma.payload[third_tb_offset + 2] = 1; // Open-system authentication, transaction one.
+    memcpy(dma.payload + third_tb_offset, body, length);
 
     const unsigned slot = queue.write_pointer & (management_queue_entries - 1);
     auto& descriptor = dma.ring[slot];
@@ -168,8 +251,8 @@ bool prepare_authentication_frame(const AuthenticationDma& dma, PeerQueue queue,
     descriptor.buffer_count = 3;
     descriptor.buffers[0] = {first_tb_bytes, dma.address};
     descriptor.buffers[1] = {second_tb_bytes, dma.address + second_tb_offset};
-    descriptor.buffers[2] = {body_bytes, dma.address + third_tb_offset};
-    dma.byte_counts[slot] = (header_bytes + body_bytes + 3) / 4;
+    descriptor.buffers[2] = {uint16_t(length), dma.address + third_tb_offset};
+    dma.byte_counts[slot] = uint16_t((header_bytes + length + 3) / 4);
     return true;
 }
 
@@ -187,15 +270,17 @@ AuthEvent observe_authentication_tx(const FirmwarePacket& packet, PeerQueue queu
     return status == 1 || status == 2 ? AuthEvent::accepted : AuthEvent::denied;
 }
 
-AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
-                                       const AccessPoint& peer, uint8_t channel) {
+namespace {
+AuthEvent management_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                           const AccessPoint& peer, uint8_t channel, uint8_t subtype,
+                           const uint8_t*& body) {
     constexpr unsigned descriptor_bytes = 48;
     if (packet.group || packet.opcode != 0xc1 || !(packet.sequence & 0x8000) || !packet.payload ||
         packet.length < descriptor_bytes + header_bytes)
         return AuthEvent::unrelated;
     const auto* rx = packet.payload;
     const auto* frame = rx + descriptor_bytes;
-    if ((rx[12] & 3) != 3 || (rx[3] & 0x20) || rx[34] != channel || frame[0] != 0xb0 ||
+    if ((rx[12] & 3) != 3 || (rx[3] & 0x20) || rx[34] != channel || frame[0] != subtype ||
         (frame[1] & 0xc3) || memcmp(frame + 4, station, sizeof(station)) ||
         memcmp(frame + 10, peer.bssid, sizeof(peer.bssid)) ||
         memcmp(frame + 16, peer.bssid, sizeof(peer.bssid)))
@@ -203,8 +288,34 @@ AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8
     const unsigned length = read16(rx);
     if (length < header_bytes + body_bytes || length > packet.length - descriptor_bytes)
         return AuthEvent::malformed;
-    if (read16(frame + 24) || read16(frame + 26) != 2)
+    body = frame + header_bytes;
+    return AuthEvent::accepted;
+}
+} // namespace
+
+AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                                       const AccessPoint& peer, uint8_t channel) {
+    const uint8_t* body = nullptr;
+    const auto result = management_reply(packet, station, peer, channel, 0xb0, body);
+    if (result != AuthEvent::accepted)
+        return result;
+    if (read16(body) || read16(body + 2) != 2)
         return AuthEvent::unrelated;
-    return read16(frame + 28) ? AuthEvent::denied : AuthEvent::accepted;
+    return read16(body + 4) ? AuthEvent::denied : AuthEvent::accepted;
+}
+
+AuthEvent observe_association_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                                    const AccessPoint& peer, uint8_t channel, uint16_t& aid) {
+    const uint8_t* body = nullptr;
+    const auto result = management_reply(packet, station, peer, channel, 0x10, body);
+    if (result != AuthEvent::accepted)
+        return result;
+    if (read16(body + 2))
+        return AuthEvent::denied;
+    const auto id = read16(body + 4) & 0x7ff;
+    if (!id || id > 2007)
+        return AuthEvent::malformed;
+    aid = uint16_t(id);
+    return AuthEvent::accepted;
 }
 } // namespace ax::IntelWifi

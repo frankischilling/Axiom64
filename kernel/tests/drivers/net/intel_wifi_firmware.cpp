@@ -138,6 +138,7 @@ enum class AuthCase {
     reply_timeout,
     wrong_target
 };
+enum class AssocCase { unused, accepted, refused, invalid_id, secured, leave_failed };
 enum class ScanCase {
     unused,
     complete,
@@ -291,6 +292,7 @@ struct StartupFixture {
     bool dual_lmac = false;
     PeerCase peer_case = PeerCase::unused;
     AuthCase auth_case = AuthCase::unused;
+    AssocCase assoc_case = AssocCase::unused;
     CommandDescriptor management_ring[management_queue_entries]{};
     uint16_t management_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
     uint8_t authentication_payload[authentication_dma_bytes]{};
@@ -348,6 +350,15 @@ struct StartupFixture {
                 beacon[32] = 100;
                 beacon[38] = beacon[39] = 1;
                 beacon[40] = 0x82; // Basic 1 Mbps rate.
+            }
+            if (assoc_case != AssocCase::unused) {
+                const uint8_t ies[]{0,  3,  'l', 'a', 'b', 1, 8,  0x82, 4,  11, 22,
+                                    12, 18, 24,  36,  50,  4, 48, 72,   96, 108};
+                memcpy(beacon + 36, ies, sizeof(ies));
+                mpdu[0] = 36 + sizeof(ies);
+                frame[0] = 52 + mpdu[0];
+                if (assoc_case == AssocCase::secured)
+                    beacon[34] |= 0x10;
             }
             // Zero-length SSID is valid for a hidden network.
         }
@@ -455,35 +466,49 @@ struct StartupFixture {
     }
 
     void authentication_doorbell(uint32_t value) {
-        assert(auth_case != AuthCase::unused && commands_sent == 16 && !authentication_rx_buffers);
-        assert(value == 0x01010035);
-        const auto& descriptor = management_ring[4];
-        assert(descriptor.buffer_count == 3 && management_counts[4] == 8);
-        const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {6, 0x52080}};
+        const auto step = authentication_rx_buffers;
+        assert(auth_case != AuthCase::unused && commands_sent == 16 && step <= 2);
+        assert(!step || assoc_case != AssocCase::unused);
+        assert(value == 0x01010035 + step);
+        const auto slot = 4 + step;
+        const auto& descriptor = management_ring[slot];
+        const uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
+        const uint8_t assoc_body[]{1,  0,  1,  0,  0,  3,  'l', 'a', 'b', 1,  8,  2,  4,
+                                   11, 22, 12, 18, 24, 36, 50,  4,   48,  72, 96, 108};
+        const uint8_t leave_body[]{3, 0};
+        const uint8_t* body = step == 0 ? auth_body : step == 1 ? assoc_body : leave_body;
+        const uint16_t length = step == 0   ? sizeof(auth_body)
+                                : step == 1 ? sizeof(assoc_body)
+                                            : sizeof(leave_body);
+        assert(descriptor.buffer_count == 3 && management_counts[slot] == (24 + length + 3) / 4);
+        const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {length, 0x52080}};
         assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
-        const uint8_t first[20]{0x1c, 0, 4, 1, 30, 0, 0, 12, 3};
+        const uint8_t first[20]{0x1c, 0, uint8_t(slot), 1, uint8_t(24 + length), 0, 0, 12, 3};
+        const uint8_t subtype = step == 0 ? 0xb0 : step == 1 ? 0 : 0xc0;
         const uint8_t second[]{
-            0, 0x40, 0,    0,    0xb0, 0,    0, 0, 2, 0, 0, 0,    0, 0x11,
-            2, 0x11, 0x22, 0x33, 0x44, 0x55, 2, 0, 0, 0, 0, 0x11, 0, 0,
+            0, 0x40, 0,    0,    subtype, 0,    0, 0, 2, 0, 0, 0,    0, 0x11,
+            2, 0x11, 0x22, 0x33, 0x44,    0x55, 2, 0, 0, 0, 0, 0x11, 0, 0,
         };
-        const uint8_t body[6]{0, 0, 1, 0, 0, 0};
         assert(!memcmp(authentication_payload, first, sizeof(first)));
         assert(!memcmp(authentication_payload + 64, second, sizeof(second)));
-        assert(!memcmp(authentication_payload + 128, body, sizeof(body)));
+        assert(!memcmp(authentication_payload + 128, body, length));
 
-        auto* buffer = reply_buffer(commands_sent);
-        const bool first_reply = auth_case == AuthCase::reply_first;
+        auto* buffer = reply_buffer(commands_sent + step);
+        const bool first_reply = auth_case == AuthCase::reply_first && step != 2;
         auto* tx = buffer + (first_reply ? 128 : 0);
         tx[0] = 52;
         tx[4] = 0x1c;
-        tx[6] = 4;
+        tx[6] = uint8_t(slot);
         tx[7] = 1;
         tx[8] = 1;
         tx[44] = tx[45] = 1;
-        tx[48] = auth_case == AuthCase::denied_tx ? 0x84 : 1;
-        tx[52] = 0x35;
+        tx[48] =
+            auth_case == AuthCase::denied_tx || (step == 2 && assoc_case == AssocCase::leave_failed)
+                ? 0x84
+                : 1;
+        tx[52] = uint8_t(0x35 + step);
 
-        if (auth_case != AuthCase::reply_timeout) {
+        if (step != 2 && auth_case != AuthCase::reply_timeout) {
             auto* rx = buffer + (first_reply ? 0 : 64);
             rx[0] = 82;
             rx[4] = 0xc1;
@@ -498,12 +523,21 @@ struct StartupFixture {
                 0,    0, 0, 0x11, 2, 0,    0,    0,    0,    0x11, 0, 0,
             };
             memcpy(frame, header, sizeof(header));
-            frame[26] = 2;
-            frame[28] = auth_case == AuthCase::denied_ap ? 13 : 0;
+            if (step == 0) {
+                frame[26] = 2;
+                frame[28] = auth_case == AuthCase::denied_ap ? 13 : 0;
+            } else {
+                frame[0] = 0x10;
+                frame[24] = 1;
+                frame[26] = assoc_case == AssocCase::refused ? 17 : 0;
+                frame[28] = assoc_case == AssocCase::invalid_id ? 0 : 42;
+                frame[29] = 0xc0;
+            }
         }
-        authentication_rx_buffers = 1;
-        used[17] = 18;
-        receive_status.closed_buffer = 18;
+        ++authentication_rx_buffers;
+        const unsigned index = commands_sent + authentication_rx_buffers;
+        used[index] = index + 1;
+        receive_status.closed_buffer = uint16_t(index + 1);
     }
 
     void command_reply(unsigned tail) {
@@ -1247,6 +1281,62 @@ void check_authentication_exchange() {
     std::puts("AX201_AUTHENTICATION_MODEL_PASS");
 }
 
+void check_association_exchange() {
+    struct Case {
+        AssocCase response;
+        AuthCase auth_response;
+        unsigned commands, transmits;
+        uint16_t aid;
+        const char* status;
+    };
+
+    const Case cases[]{
+        {AssocCase::accepted, AuthCase::accepted, 21, 3, 42,
+         "open-system association and deauthentication passed"},
+        {AssocCase::accepted, AuthCase::reply_first, 21, 3, 42,
+         "open-system association and deauthentication passed"},
+        {AssocCase::refused, AuthCase::accepted, 16, 2, 0, "access point refused association"},
+        {AssocCase::invalid_id, AuthCase::accepted, 16, 2, 0,
+         "access point returned an invalid association reply"},
+        {AssocCase::secured, AuthCase::accepted, 8, 0, 0,
+         "association check requires a named open access point with supported legacy rates"},
+        {AssocCase::leave_failed, AuthCase::accepted, 16, 3, 42,
+         "firmware could not deliver the management frame"},
+    };
+    for (const auto& test : cases) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = PeerCase::success;
+        model.auth_case = test.auth_response;
+        model.assoc_case = test.response;
+        model.live_replies.resize(24 * ax::page_size);
+        ScanElementStorage elements{};
+        const ScanChecks request{
+            {1, 2}, FirmwareCheck::associate, &elements, false, {{2, 0, 0, 0, 0, 0x11}}};
+        const auto result = model.run(true, &request);
+        assert(model.commands_sent == test.commands && !strcmp(result.status, test.status));
+        assert(model.authentication_rx_buffers == test.transmits);
+        assert(result.association_id == test.aid);
+        assert(result.alive && result.dma_idle && !model.master && model.reset_after_dma);
+        assert(result.successful == (test.response == AssocCase::accepted));
+    }
+
+    AccessPoint peer{};
+    peer.capability = 1;
+    peer.ssid[0] = 'A';
+    peer.ssid_length = 1;
+    const uint8_t rsn[]{1, 1, 0x82, 48, 2, 1, 0};
+    const uint8_t wpa[]{1, 1, 0x82, 221, 4, 0, 0x50, 0xf2, 1};
+    const uint8_t basic[]{1, 2, 0x8c, 0xff};
+    AssociationRequest request;
+    assert(!prepare_association_request(peer, rsn, sizeof(rsn), false, request));
+    assert(!prepare_association_request(peer, wpa, sizeof(wpa), false, request));
+    assert(!prepare_association_request(peer, basic, sizeof(basic), true, request));
+    assert(!prepare_association_request(peer, basic, sizeof(basic) - 1, true, request));
+    std::puts("AX201_ASSOCIATION_MODEL_PASS");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -1387,6 +1477,7 @@ int main(int argc, char** argv) {
     check_channel_contexts();
     check_peer_queues();
     check_authentication_exchange();
+    check_association_exchange();
     check_receive_recycling();
     check_access_points();
 

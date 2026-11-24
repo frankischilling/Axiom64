@@ -62,8 +62,13 @@ enum class FirmwareCheck {
     channel_context,
     peer_queue,
     authenticate,
+    associate,
     live_scan
 };
+
+inline constexpr bool management_exchange(FirmwareCheck check) {
+    return check == FirmwareCheck::authenticate || check == FirmwareCheck::associate;
+}
 
 struct AuthenticationTarget {
     uint8_t bssid[6]{};

@@ -343,9 +343,9 @@ FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
-    if (check == FirmwareCheck::peer_queue || check == FirmwareCheck::authenticate)
+    if (check == FirmwareCheck::peer_queue || management_exchange(check))
         memory.peer_queue = {queues.management_ring.address, queues.management_byte_counts.address};
-    if (check == FirmwareCheck::authenticate) {
+    if (management_exchange(check)) {
         using Counts = uint16_t[transmit_byte_count_bytes / sizeof(uint16_t)];
         using Payload = uint8_t[authentication_dma_bytes];
         memory.authentication = {queues.management_ring.data<BootQueues::ManagementDescriptors>(),
@@ -374,7 +374,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         report("command buffer allocation failed");
         return;
     }
-    const bool authenticate = check == FirmwareCheck::authenticate;
+    const bool authenticate = management_exchange(check);
     const bool peer_test = authenticate || check == FirmwareCheck::peer_queue;
     if (peer_test &&
         (!queues.management_ring.allocate(sizeof(BootQueues::ManagementDescriptors)) ||
@@ -422,6 +422,8 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     if (peer_test && result.peer_queue.id)
         log("iwlwifi: management queue=%u initial pointer=%u\n", uint64_t(result.peer_queue.id),
             uint64_t(result.peer_queue.write_pointer));
+    if (result.association_id)
+        log("iwlwifi: access point assigned AID=%u\n", uint64_t(result.association_id));
     if (result.nvm.version)
         log("iwlwifi: NVM version=%x channels=%u bands=%x TX=%x RX=%x\n",
             uint64_t(result.nvm.version), uint64_t(result.nvm.channel_count),
@@ -617,7 +619,7 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check,
         report("firmware lacks the supported peer station and scheduler commands");
         return;
     }
-    if (check == FirmwareCheck::authenticate && !image.authentication_supported) {
+    if (management_exchange(check) && !image.authentication_supported) {
         report("firmware lacks the supported authentication commands");
         return;
     }

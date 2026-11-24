@@ -154,12 +154,24 @@ BootInfo boot_info;
     auto wifi_check = IntelWifi::FirmwareCheck::stage;
     IntelWifi::AuthenticationTarget auth_target;
     char auth_bssid[18]{};
+    char assoc_bssid[18]{};
     const int auth_argument = arguments.read("iwlwifi.auth-check=", auth_bssid, sizeof(auth_bssid));
-    bool valid_wifi_check = true;
-    if (auth_argument || arguments.has("iwlwifi.auth-check")) {
+    const int assoc_argument =
+        arguments.read("iwlwifi.assoc-check=", assoc_bssid, sizeof(assoc_bssid));
+    const bool wants_auth = auth_argument || arguments.has("iwlwifi.auth-check");
+    const bool wants_assoc = assoc_argument || arguments.has("iwlwifi.assoc-check");
+    const char* wifi_check_error = nullptr;
+    if (wants_auth && wants_assoc) {
+        wifi_check_error = "iwlwifi: select either auth-check or assoc-check\n";
+    } else if (wants_assoc) {
+        wifi_check = IntelWifi::FirmwareCheck::associate;
+        if (assoc_argument != 1 ||
+            !IntelWifi::parse_authentication_target(assoc_bssid, auth_target))
+            wifi_check_error = "iwlwifi: assoc-check requires one unicast BSSID\n";
+    } else if (wants_auth) {
         wifi_check = IntelWifi::FirmwareCheck::authenticate;
-        valid_wifi_check =
-            auth_argument == 1 && IntelWifi::parse_authentication_target(auth_bssid, auth_target);
+        if (auth_argument != 1 || !IntelWifi::parse_authentication_target(auth_bssid, auth_target))
+            wifi_check_error = "iwlwifi: auth-check requires one unicast BSSID\n";
     } else if (arguments.has("iwlwifi.live-scan"))
         wifi_check = IntelWifi::FirmwareCheck::live_scan;
     else if (arguments.has("iwlwifi.peer-queue-check"))
@@ -178,8 +190,8 @@ BootInfo boot_info;
         wifi_check = IntelWifi::FirmwareCheck::nvm;
     else if (arguments.has("iwlwifi.start-check"))
         wifi_check = IntelWifi::FirmwareCheck::start;
-    if (!valid_wifi_check)
-        log("iwlwifi: auth-check requires one unicast BSSID\n");
+    if (wifi_check_error)
+        log(wifi_check_error);
     else if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
              arguments.has("iwlwifi.firmware-check"))
         IntelWifi::check_firmware(probe_wifi, wifi_check, auth_target);

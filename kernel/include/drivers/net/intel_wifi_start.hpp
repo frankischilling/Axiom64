@@ -47,6 +47,7 @@ struct FirmwareBootResult {
     unsigned completed_scans = 0;
     unsigned checked_channels = 0;
     PeerQueue peer_queue{};
+    uint16_t association_id = 0;
 };
 
 struct ScanChecks {

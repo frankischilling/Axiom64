@@ -43,6 +43,7 @@ struct NetlinkHeader {
 };
 
 static_assert(sizeof(NetlinkAddress) == 12 && sizeof(NetlinkHeader) == 16);
+constexpr unsigned netlink_route_protocol = 0, netlink_generic_protocol = 16;
 constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4176,
                  netlink_address_reply = 4412, netlink_ipv6_route_reply = 6144,
                  netlink_max_reply = 12288;
@@ -55,6 +56,26 @@ struct NetlinkFrame {
 inline const uint8_t* netlink_bytes(const NetlinkFrame* frame) {
     return reinterpret_cast<const uint8_t*>(frame + 1);
 }
+
+constexpr size_t netlink_align(size_t bytes) {
+    return (bytes + 3) & ~size_t(3);
+}
+
+inline size_t netlink_ack(const void* packet, const NetlinkHeader& request, uint32_t port,
+                          bool capped, int32_t error, uint8_t* output) {
+    const size_t echo = capped || !error ? sizeof(request) : request.length;
+    const NetlinkHeader header{uint32_t(20 + netlink_align(echo)), 2,
+                               uint16_t(echo == sizeof(request) ? 0x100 : 0), request.sequence,
+                               port};
+    memcpy(output, &header, sizeof(header));
+    memcpy(output + sizeof(header), &error, sizeof(error));
+    memcpy(output + 20, packet, echo);
+    memset(output + 20 + echo, 0, netlink_align(echo) - echo);
+    return header.length;
+}
+
+size_t generic_netlink_capacity(const NetlinkHeader&, bool capped);
+size_t generic_netlink_reply(const void*, uint32_t port, bool capped, void*);
 
 // Caller reserves this capacity before invoking route mutation/reply generation.
 size_t routing_capacity(const NetlinkHeader&, const void* request = nullptr);

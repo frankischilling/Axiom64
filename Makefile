@@ -512,6 +512,15 @@ test-netlink-inventory:
 	$(PYTHON) scripts/netlink_inventory_test.py
 test-netlink-inventory-native:
 	$(PYTHON) scripts/netlink_inventory_test.py --native
+.PHONY: test-generic-netlink-native
+build/generic-netlink-native: userspace/tests/net/generic_netlink.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/generic-netlink-static: userspace/tests/net/generic_netlink.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $<
+test-generic-netlink-native: build/generic-netlink-native
+	./build/generic-netlink-native
 RANDOM_HEADERS = kernel/include/core/random/primitives.hpp kernel/include/core/random/engine.hpp
 build/random-native: kernel/tests/random/generator.cpp $(RANDOM_CORE) $(RANDOM_HEADERS)
 	@mkdir -p build

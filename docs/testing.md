@@ -2325,3 +2325,10 @@ signal of `-128` means the driver had no on-channel measurement. The log
 escapes non-printing bytes in network names.
 Run the check from the PXE RAM image for a physical test. Wi-Fi association
 and NetworkManager integration still require implementation.
+
+`make test-generic-netlink-native` checks the controller contract on Linux.
+Build `build/generic-netlink-static` to run the same client in an Axiom64 guest.
+It checks family lookup, multipart dumps, acknowledgements, invalid requests,
+and the separate routing and Generic Netlink port spaces. Axiom64 currently
+registers `nlctrl`. The `nl80211` family and Generic Netlink multicast groups
+are still pending.

@@ -191,6 +191,32 @@ make sources
 
 `build/axiom64-sources.tar` contains upstream sources, patches, recipes, manifests, the BusyBox configuration, and Axiom64 build sources. Python and shell build helpers retain their paths under `scripts/`, including the CI tool setup recipe. CI publishes it beside the boot artifact. Recipes describe the distribution's build options and patches; Axiom64 does not claim to reproduce every distribution binary bit for bit.
 
+## Firefox ESR offline test image
+
+The Firefox test image combines the installed desktop with the pinned Alpine
+x86-64 Firefox ESR package. It uses the same runtime libraries as that desktop.
+The builder verifies the package, its exact recipe, and the corresponding
+source and patches. It copies their license notices into the image.
+
+```sh
+make -j2 build/axiom64.elf build/rootfs-installed-desktop.cpio
+python3 scripts/firefox_lab.py build/firefox-esr-lab.cpio
+python3 scripts/boot_media.py disk build/firefox-esr-lab.raw --installed \
+    --initramfs build/firefox-esr-lab.cpio
+cp /usr/share/OVMF/OVMF_VARS_4M.fd build/firefox-esr-vars.fd
+qemu-system-x86_64 -machine q35 -m 4G -smp 4 -nic none -serial stdio \
+    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+    -drive if=pflash,format=raw,file=build/firefox-esr-vars.fd \
+    -drive if=none,id=disk,format=raw,snapshot=on,file=build/firefox-esr-lab.raw \
+    -device nvme,drive=disk,serial=AXIOM64
+```
+
+Sign in as an ordinary user, launch Firefox ESR, and open a local test page.
+The package is for offline compatibility testing. Firefox's Linux content
+sandbox still needs user namespaces and seccomp support before web browsing.
+
+## Updating port locks
+
 Updating ports is an explicit maintenance operation. Resolve package roots with `scripts/ports.py resolve`, refresh recipes with `scripts/sources.py resolve`, review both locks, and run the full firmware tests. Ordinary builds use committed locks. Source caches reject changed checksums; remove an outdated cached patch before fetching its new pinned revision.
 
 Musl's build cache uses the selected source entry, local musl patches, build recipe, and compiler. Adding an unrelated desktop port keeps the existing musl build available.

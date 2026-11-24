@@ -93,8 +93,8 @@ def is_notice(name, size):
             path.suffix.lower() not in {".c", ".h", ".py", ".sh", ".in"})
 
 
-def notices(origin, paths):
-    destination = NOTICES / origin
+def notices(origin, paths, *, notice_root=None):
+    destination = (NOTICES if notice_root is None else notice_root) / origin
     destination.mkdir(parents=True, exist_ok=True)
     for path in paths:
         # Flatten archive names before writing any notices.

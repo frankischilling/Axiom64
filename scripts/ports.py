@@ -162,7 +162,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.command == "resolve":
         locked = resolve(args.names or TOOLCHAIN)
-        LOCKFILE.write_text(json.dumps({"distribution": "Alpine Linux 3.22 x86_64", "packages": locked}, indent=2) + "\n")
+        lock = json.loads(LOCKFILE.read_text()) if LOCKFILE.exists() else {}
+        lock.update(distribution="Alpine Linux 3.22 x86_64", packages=locked)
+        LOCKFILE.write_text(json.dumps(lock, indent=2) + "\n")
     else:
         for package, archive in packages():
             print(f"Verified {archive.name}", flush=True)

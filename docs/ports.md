@@ -30,6 +30,12 @@ instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.
 Connection setup needs NetworkManager, a supported Wi-Fi device, and the
 CA certificate and authentication server domain supplied by your school.
+Run the helper from your normal account. If NetworkManager asks about
+optional settings, choose `no` to keep the defaults. Use your Axiom64 account
+password if the system asks you to authorize network changes. Confirm the
+prefilled school username and enter your school password at the NetworkManager
+Wi-Fi prompt. The helper saves the profile after the connection succeeds.
+If the connection fails, authorize cleanup of the temporary profile if prompted.
 
 The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
 UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools

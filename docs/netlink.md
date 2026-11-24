@@ -8,7 +8,7 @@ Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `
 | --- | --- |
 | `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, IPv6, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
 | `RTM_NEWLINK`, `RTM_SETLINK` | Change administrative state and MTU on an existing Ethernet adapter with `CAP_NET_ADMIN`. A link change may set both fields in one request. IPv6 address-generation mode uses a separate request. |
-| `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family, including flags and cache information; IPv4 labels, local/peer address and optional broadcast; IPv6 prefix and scope |
+| `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family and, with strict checking enabled, interface index. Reports flags and cache information, plus IPv4 labels, local and peer addresses, and optional broadcast data, or IPv6 prefix and scope. |
 | `RTM_NEWROUTE` | Main-table unicast supports create with exclusive or append. IPv4 also supports create alone and accepts a local preferred source. IPv6 requires an explicit interface. IPv4 gateway routes can infer it from a configured subnet. |
 | `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters. IPv4 also accepts a preferred source filter. |
 | `RTM_GETROUTE` | Multipart dump with `NLM_F_DUMP`; IPv4 or unspecified family, optional protocol/interface filters; main-table unicast records followed by `NLMSG_DONE` and status |

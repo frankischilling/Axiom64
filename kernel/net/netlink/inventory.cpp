@@ -247,6 +247,7 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
     if (input[0] && input[0] != 2 && input[0] != 10 && !(request.type == 18 && input[0] == 17))
         return -97;
     int32_t selected = 0;
+    uint32_t address_index = 0;
     const char* name = nullptr;
     if (body > complete)
         if (int error = link_query_attributes(input + complete, body - complete, direct, name))
@@ -258,10 +259,16 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         if (selected && unsigned(selected) != ipv4_loopback && !net_info(unsigned(selected)))
             return -19;
     }
+    if (strict && request.type == 22) {
+        memcpy(&address_index, input + 4, sizeof(address_index));
+        if (address_index && address_index != ipv4_loopback && !net_info(address_index))
+            return -19;
+    }
     // rtgenmsg contains only the family; legacy senders leave its alignment bytes uninitialized.
     for (size_t i = 1; body >= complete && i < complete; i++)
-        if (input[i] && !(direct && i >= 4 && i < 8))
+        if (input[i] && !(i >= 4 && i < 8 && (direct || request.type == 22)))
             return -22;
+    const uint16_t flags = 2 | (address_index ? 0x20 : 0); // MULTI and DUMP_FILTERED.
     Writer output(reply);
     for (unsigned index = 1; index <= ipv4_loopback; index++) {
         bool loopback = index == ipv4_loopback;
@@ -276,15 +283,17 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         if (request.type == 18) {
             if (!link(output, request, port, *info, loopback, !direct, !direct && input[0] == 10))
                 return -90;
-        } else if (input[0] != 10)
+        } else if (input[0] != 10 && (!address_index || address_index == index))
             for (unsigned n = 0; auto entry = ipv4_address(n); n++)
-                if (entry->index == index && !address4(output, {0, 20, 2, request.sequence, port},
-                                                       *entry, ipv4_address_cache(*entry)))
+                if (entry->index == index &&
+                    !address4(output, {0, 20, flags, request.sequence, port}, *entry,
+                              ipv4_address_cache(*entry)))
                     return -90;
     }
     if (request.type == 22 && input[0] != 2)
         for (unsigned n = 0; auto entry = ipv6_address(n); n++)
-            if (!address6(output, {0, 20, 2, request.sequence, port}, *entry,
+            if ((!address_index || entry->index == address_index) &&
+                !address6(output, {0, 20, flags, request.sequence, port}, *entry,
                           ipv6_address_cache(*entry)))
                 return -90;
     if (direct) {
@@ -301,7 +310,7 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         size = output.size;
         return 0;
     }
-    NetlinkHeader done{20, 3, 2, request.sequence, port};
+    NetlinkHeader done{20, 3, flags, request.sequence, port};
     int status = 0;
     if (!output.append(&done, sizeof(done)) || !output.append(&status, sizeof(status)))
         return -90;

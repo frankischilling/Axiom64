@@ -318,6 +318,14 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
     // Reserve every response before processing the first request in this datagram.
     // No route mutation can succeed while allocation/backpressure loses its result.
     for (size_t at = 0; at < length;) {
+        // Some callers send the whole zero-initialized request buffer.
+        if (count && !bytes[at]) {
+            size_t padding = at;
+            while (padding < length && !bytes[padding])
+                padding++;
+            if (padding == length)
+                break;
+        }
         NetlinkHeader header;
         if (length - at < sizeof(header))
             return -22;

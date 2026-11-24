@@ -13,7 +13,6 @@
 namespace ax::IntelWifi {
 inline constexpr unsigned mac_context_bytes = 148;
 inline constexpr unsigned passive_request_bytes = 1940;
-inline constexpr uint32_t passive_scan_id = 0;
 
 bool decode_station_address(uint32_t high, uint32_t low, uint8_t (&address)[6]);
 void prepare_scan_station(const uint8_t (&address)[6], uint8_t (&command)[mac_context_bytes]);
@@ -46,6 +45,7 @@ struct AccessPoint {
 };
 
 struct PassiveScan {
+    uint32_t id = 0;
     uint8_t station_address[6]{};
     uint8_t channels[51]{};
     uint8_t channel_count = 0;
@@ -57,8 +57,41 @@ struct PassiveScan {
 };
 
 bool prepare_passive_scan(const NvmInfo&, const RegulatoryProfile&, PassiveScan&,
-                          uint8_t (&request)[passive_request_bytes]);
+                          uint8_t (&request)[passive_request_bytes], uint32_t id = 0);
 void observe_passive_scan(PassiveScan&, const FirmwarePacket&);
+
+enum class ScanOutcome {
+    pending,
+    complete,
+    rejected,
+    reply_timeout,
+    completion_timeout,
+    aborted,
+    malformed,
+    receive_failed,
+};
+
+// The transport supplies timestamps and notifications. Each call returns without waiting.
+class PassiveScanExchange {
+    PassiveScan& scan;
+    const uint16_t sequence;
+    uint64_t phase_start;
+    ScanOutcome result = ScanOutcome::pending;
+    bool accepted = false;
+
+  public:
+    PassiveScanExchange(PassiveScan& scan, uint16_t sequence, uint64_t started_ms)
+        : scan(scan), sequence(sequence), phase_start(started_ms) {
+    }
+
+    ScanOutcome outcome() const {
+        return result;
+    }
+
+    void expire(uint64_t now_ms);
+    void observe(const FirmwarePacket&, uint64_t now_ms);
+    void receive_failed();
+};
 
 // The boot diagnostic publishes a completed snapshot after stopping the adapter.
 // Its information elements remain owned by the driver for the rest of the boot.

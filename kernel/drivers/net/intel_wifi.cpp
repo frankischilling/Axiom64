@@ -282,7 +282,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         return;
     }
     ScanElementStorage* elements = nullptr;
-    if (check == FirmwareCheck::passive_scan) {
+    if (check >= FirmwareCheck::passive_scan) {
         elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
         if (!elements) {
             report("scan result allocation failed");
@@ -335,6 +335,8 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     log("iwlwifi: %s, DMA idle=%u, PCI command restored=%u\n", result.status,
         uint64_t(result.dma_idle), uint64_t(restored));
     report(result.status);
+    if (check == FirmwareCheck::rescan)
+        log("iwlwifi: completed scans=%u\n", uint64_t(result.completed_scans));
     if (result.nvm.version)
         log("iwlwifi: NVM version=%x channels=%u bands=%x TX=%x RX=%x\n",
             uint64_t(result.nvm.version), uint64_t(result.nvm.channel_count),
@@ -404,7 +406,7 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report("firmware lacks a supported regulatory profile query");
         return;
     }
-    if (check == FirmwareCheck::passive_scan && !image.passive_scan_supported) {
+    if (check >= FirmwareCheck::passive_scan && !image.passive_scan_supported) {
         report("firmware lacks the supported passive scan commands");
         return;
     }

@@ -210,11 +210,14 @@ void prepare_scan_station(const uint8_t (&address)[6], uint8_t (&command)[mac_co
 }
 
 bool prepare_passive_scan(const NvmInfo& nvm, const RegulatoryProfile& profile, PassiveScan& scan,
-                          uint8_t (&request)[passive_request_bytes]) {
+                          uint8_t (&request)[passive_request_bytes], uint32_t id) {
     memset(request, 0, sizeof(request));
     auto* const elements = scan.elements;
     scan = PassiveScan{};
     scan.elements = elements;
+    scan.id = id;
+    for (unsigned i = 0; i < 4; ++i)
+        request[i] = uint8_t(id >> (8 * i));
     for (unsigned i = 0; i < profile.channel_slots && i < sizeof(channel_order); ++i) {
         const bool low = i < low_band_channels;
         if (!(profile.flags[i] & 1) || !(nvm.bands & (low ? 1 : 2)))
@@ -253,8 +256,8 @@ void observe_passive_scan(PassiveScan& scan, const FirmwarePacket& packet) {
         scan.status = PassiveScan::Status::malformed;
         return;
     }
-    constexpr uint32_t id = passive_scan_id;
-    if (read16(packet.payload) != (id & 0xffff) || read16(packet.payload + 2) != (id >> 16))
+    if (read16(packet.payload) != (scan.id & 0xffff) ||
+        read16(packet.payload + 2) != (scan.id >> 16))
         return;
     const uint8_t status = packet.payload[6];
     if (status == 1)
@@ -263,5 +266,48 @@ void observe_passive_scan(PassiveScan& scan, const FirmwarePacket& packet) {
         scan.status = PassiveScan::Status::aborted;
     else
         scan.status = PassiveScan::Status::malformed;
+}
+
+void PassiveScanExchange::expire(uint64_t now_ms) {
+    const unsigned timeout_ms = accepted ? 12000 : 2000;
+    if (result == ScanOutcome::pending && now_ms - phase_start >= timeout_ms)
+        result = accepted ? ScanOutcome::completion_timeout : ScanOutcome::reply_timeout;
+}
+
+void PassiveScanExchange::observe(const FirmwarePacket& packet, uint64_t now_ms) {
+    expire(now_ms);
+    if (result != ScanOutcome::pending)
+        return;
+    observe_passive_scan(scan, packet);
+    if (!accepted && packet.sequence == sequence) {
+        if (packet.group == 0 && packet.opcode == 2) {
+            result = ScanOutcome::rejected;
+            return;
+        }
+        if (packet.group == 1 && packet.opcode == 0xd) {
+            accepted = true;
+            phase_start = now_ms;
+        }
+    }
+    if (!accepted)
+        return;
+    switch (scan.status) {
+    case PassiveScan::Status::pending:
+        break;
+    case PassiveScan::Status::complete:
+        result = ScanOutcome::complete;
+        break;
+    case PassiveScan::Status::aborted:
+        result = ScanOutcome::aborted;
+        break;
+    case PassiveScan::Status::malformed:
+        result = ScanOutcome::malformed;
+        break;
+    }
+}
+
+void PassiveScanExchange::receive_failed() {
+    if (result == ScanOutcome::pending)
+        result = ScanOutcome::receive_failed;
 }
 } // namespace ax::IntelWifi

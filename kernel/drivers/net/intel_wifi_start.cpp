@@ -251,37 +251,34 @@ const char* wait_for_alive(const Registers& reg, ReceiveReader& rx) {
 }
 
 enum class Reply { matched, rejected, broken, timeout };
-enum class WaitFor { reply, initialization, scan };
+enum class WaitFor { reply, initialization };
 
 struct CommandSession {
     const Registers& reg;
     ReceiveReader& rx;
     uint16_t index = 0;
     bool init_complete = false;
-    PassiveScan* passive = nullptr;
+
+    bool acknowledge_pending() const {
+        const auto cause = reg.read(interrupts);
+        const auto control = reg.read(gp);
+        if (cause == UINT32_MAX || (cause & error_interrupts) || control == UINT32_MAX ||
+            !(control & rf_enabled))
+            return false;
+        if (cause)
+            reg.write(interrupts, cause);
+        return true;
+    }
 
     Reply wait(uint8_t group, uint8_t opcode, uint16_t sequence, FirmwarePacket& packet,
                WaitFor event = WaitFor::reply) {
-        const unsigned deadline_ms = event == WaitFor::scan ? 12000 : 2000;
-        for (unsigned attempt = 0; attempt < deadline_ms; ++attempt) {
-            const auto cause = reg.read(interrupts);
-            const auto control = reg.read(gp);
-            if (cause == UINT32_MAX || (cause & error_interrupts) || control == UINT32_MAX ||
-                !(control & rf_enabled))
+        for (unsigned attempt = 0; attempt < 2000; ++attempt) {
+            if (!acknowledge_pending())
                 return Reply::broken;
-            if (cause)
-                reg.write(interrupts, cause);
             PacketRead received;
             while ((received = rx.next(packet)) == PacketRead::packet) {
                 if (packet.group == 0 && packet.opcode == 4)
                     init_complete = true;
-                if (passive)
-                    observe_passive_scan(*passive, packet);
-                if (event == WaitFor::scan) {
-                    if (passive->status != PassiveScan::Status::pending)
-                        return Reply::matched;
-                    continue;
-                }
                 if (event == WaitFor::initialization) {
                     if (init_complete)
                         return Reply::matched;
@@ -300,18 +297,45 @@ struct CommandSession {
         return Reply::timeout;
     }
 
-    Reply send(uint8_t group, uint8_t opcode, const uint8_t* payload, size_t bytes,
-               FirmwarePacket& packet) {
+    bool submit(uint8_t group, uint8_t opcode, const uint8_t* payload, size_t bytes) {
         const auto& memory = rx.memory;
         const unsigned slot = index;
         if (slot >= command_ring_entries ||
             !prepare_host_command((*memory.command_payloads)[slot],
                                   memory.command_dma + slot * command_slot_bytes,
                                   memory.commands[slot], index, group, opcode, payload, bytes))
-            return Reply::broken;
+            return false;
         __atomic_thread_fence(__ATOMIC_RELEASE);
         reg.write(command_write_pointer, ++index);
-        return wait(group, opcode, uint16_t(slot), packet);
+        return true;
+    }
+
+    Reply send(uint8_t group, uint8_t opcode, const uint8_t* payload, size_t bytes,
+               FirmwarePacket& packet) {
+        const auto sequence = index;
+        return submit(group, opcode, payload, bytes) ? wait(group, opcode, sequence, packet)
+                                                     : Reply::broken;
+    }
+
+    void poll_scan(PassiveScanExchange& exchange, uint64_t now_ms) {
+        exchange.expire(now_ms);
+        if (exchange.outcome() != ScanOutcome::pending)
+            return;
+        if (!acknowledge_pending()) {
+            exchange.receive_failed();
+            return;
+        }
+        // Drain a bounded number of notifications before yielding to the caller.
+        for (unsigned i = 0; i < 64 && exchange.outcome() == ScanOutcome::pending; ++i) {
+            FirmwarePacket packet{};
+            const auto received = rx.next(packet);
+            if (received != PacketRead::packet) {
+                if (received == PacketRead::malformed)
+                    exchange.receive_failed();
+                break;
+            }
+            exchange.observe(packet, now_ms);
+        }
     }
 };
 
@@ -373,14 +397,8 @@ const char* configure_tx_antennas(CommandSession& commands, const NvmInfo& nvm,
     return nullptr;
 }
 
-const char* run_passive_scan(CommandSession& commands, const NvmInfo& nvm,
-                             const RegulatoryProfile& regulatory, PassiveScan& scan) {
-    uint8_t request[passive_request_bytes];
-    if (!prepare_passive_scan(nvm, regulatory, scan, request))
-        return "no permitted 2.4 or 5 GHz channels";
-
+const char* configure_scan_station(CommandSession& commands, uint8_t (&address)[6]) {
     // The 22000-family CSR holds optional OEM straps followed by an OTP fallback.
-    auto& address = scan.station_address;
     const auto& reg = commands.reg;
     if (!decode_station_address(reg.read(0x388), reg.read(0x38c), address) &&
         !decode_station_address(reg.read(0x380), reg.read(0x384), address))
@@ -390,24 +408,45 @@ const char* run_passive_scan(CommandSession& commands, const NvmInfo& nvm,
     FirmwarePacket reply{};
     if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
         return "firmware station context setup failed";
+    return nullptr;
+}
 
-    commands.passive = &scan;
-    const auto submitted = commands.send(1, 0xd, request, sizeof(request), reply);
-    auto completed = Reply::matched;
-    if (submitted == Reply::matched && scan.status == PassiveScan::Status::pending)
-        completed = commands.wait(0, 0xf, 0, reply, WaitFor::scan);
-    commands.passive = nullptr;
-    if (submitted != Reply::matched)
+const char* run_passive_scan(CommandSession& commands, const NvmInfo& nvm,
+                             const RegulatoryProfile& regulatory, const uint8_t (&address)[6],
+                             PassiveScan& scan, uint32_t id) {
+    uint8_t request[passive_request_bytes];
+    if (!prepare_passive_scan(nvm, regulatory, scan, request, id))
+        return "no permitted 2.4 or 5 GHz channels";
+    memcpy(scan.station_address, address, sizeof(address));
+
+    PassiveScanExchange exchange(scan, commands.index, 0);
+    if (!commands.submit(1, 0xd, request, sizeof(request)))
+        return "cannot submit the passive scan request";
+    for (uint64_t elapsed_ms = 0;; ++elapsed_ms) {
+        commands.poll_scan(exchange, elapsed_ms);
+        if (exchange.outcome() != ScanOutcome::pending)
+            break;
+        if (!commands.reg.delay(1000))
+            return "passive scan timer unavailable";
+    }
+    switch (exchange.outcome()) {
+    case ScanOutcome::complete:
+        return nullptr;
+    case ScanOutcome::rejected:
         return "firmware rejected the passive scan request";
-    if (completed == Reply::timeout)
+    case ScanOutcome::reply_timeout:
+        return "passive scan command reply timed out";
+    case ScanOutcome::completion_timeout:
         return "passive scan completion timed out";
-    if (completed != Reply::matched)
+    case ScanOutcome::receive_failed:
         return "passive scan receive failed";
-    if (scan.status == PassiveScan::Status::aborted)
+    case ScanOutcome::aborted:
         return "firmware aborted the passive scan";
-    return scan.status == PassiveScan::Status::complete
-               ? nullptr
-               : "firmware returned an invalid scan completion";
+    case ScanOutcome::malformed:
+    case ScanOutcome::pending:
+        return "firmware returned an invalid scan completion";
+    }
+    __builtin_unreachable();
 }
 } // namespace
 
@@ -443,6 +482,8 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         return {error, false, true};
     const bool request_dma = error == nullptr;
     bool alive = false;
+    unsigned completed_scans = 0;
+    const bool passive_check = scan && scan->check >= FirmwareCheck::passive_scan;
     NvmInfo info{};
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
@@ -463,14 +504,23 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             if (alive && memory.commands) {
                 CommandSession commands{reg, rx};
                 error = request_nvm(commands, info);
-                if (!error && scan && scan->check == FirmwareCheck::passive_scan)
+                if (!error && passive_check)
                     error = configure_tx_antennas(commands, info, scan->antennas);
                 if (!error && scan && scan->check >= FirmwareCheck::regulatory)
                     error = request_regulatory_profile(commands, info, regulatory);
                 if (!error && scan)
                     error = configure_scan(commands, info, scan->antennas);
-                if (!error && scan && scan->check == FirmwareCheck::passive_scan)
-                    error = run_passive_scan(commands, info, regulatory, passive);
+                if (!error && passive_check) {
+                    uint8_t address[6];
+                    error = configure_scan_station(commands, address);
+                    const unsigned scans = scan->check == FirmwareCheck::rescan ? 2 : 1;
+                    while (!error && completed_scans < scans) {
+                        error = run_passive_scan(commands, info, regulatory, address, passive,
+                                                 completed_scans);
+                        if (!error)
+                            ++completed_scans;
+                    }
+                }
             }
         }
     }
@@ -485,7 +535,9 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     }
     const bool reset_done = reset_adapter(reg);
     const char* success = "firmware ALIVE received";
-    if (scan && scan->check == FirmwareCheck::passive_scan)
+    if (scan && scan->check == FirmwareCheck::rescan)
+        success = "two firmware passive scans complete";
+    else if (passive_check)
         success = "firmware passive scan complete";
     else if (scan && scan->check == FirmwareCheck::regulatory)
         success = "firmware regulatory profile and scan configuration passed";
@@ -499,6 +551,7 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             !error,
             info,
             regulatory,
-            passive};
+            passive,
+            completed_scans};
 }
 } // namespace ax::IntelWifi

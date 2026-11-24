@@ -2331,6 +2331,12 @@ escapes non-printing bytes in network names.
 After a successful scan and adapter shutdown, the kernel keeps the completed
 snapshot and the original beacon and probe-response information elements.
 The snapshot retains up to 32 access points for the current boot.
+Use `iwlwifi.rescan-check` to request two passive scans in one firmware
+session before resetting the adapter. The display reports when both finish.
+The driver assigns each scan a separate identifier. A late completion from
+the first scan cannot finish the second one. The second scan replaces the
+first snapshot.
+
 After the radio stops, the kernel exposes the snapshot through Linux's
 `nl80211` interface. The diagnostic publishes `wlan0` and supports reading
 its radio, interface, and scan results. `GET_SCAN` streams results as

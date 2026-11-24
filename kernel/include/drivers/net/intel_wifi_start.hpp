@@ -40,6 +40,7 @@ struct FirmwareBootResult {
     NvmInfo nvm{};
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
+    unsigned completed_scans = 0;
 };
 
 struct ScanChecks {

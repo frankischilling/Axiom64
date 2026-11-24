@@ -152,7 +152,9 @@ BootInfo boot_info;
     ipv6_observe_addresses(netlink_ipv6_address_event);
     const bool probe_wifi = arguments.has("iwlwifi.probe");
     auto wifi_check = IntelWifi::FirmwareCheck::stage;
-    if (arguments.has("iwlwifi.passive-scan"))
+    if (arguments.has("iwlwifi.rescan-check"))
+        wifi_check = IntelWifi::FirmwareCheck::rescan;
+    else if (arguments.has("iwlwifi.passive-scan"))
         wifi_check = IntelWifi::FirmwareCheck::passive_scan;
     else if (arguments.has("iwlwifi.regulatory-check"))
         wifi_check = IntelWifi::FirmwareCheck::regulatory;

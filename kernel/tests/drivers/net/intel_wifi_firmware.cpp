@@ -119,7 +119,16 @@ enum class StartupCase {
 };
 
 enum class RegulatoryCase { unused, valid, bad_count, disallowed, disabled, rejected };
-enum class ScanCase { unused, complete, early_completion, aborted, timeout };
+enum class ScanCase {
+    unused,
+    complete,
+    early_completion,
+    aborted,
+    timeout,
+    no_reply,
+    second_aborted,
+    busy_queue
+};
 
 struct StartupFixture {
     StartupCase scenario;
@@ -127,10 +136,11 @@ struct StartupFixture {
     ReceiveStatus receive_status{};
     uint32_t used[rx_ring_entries]{};
     uint8_t buffer[ax::page_size]{};
-    uint8_t replies[8][ax::page_size]{};
+    uint8_t replies[9][ax::page_size]{};
     CommandDescriptor commands[command_ring_entries]{};
     CommandPayloads payloads{};
     unsigned commands_sent = 0;
+    unsigned scan_delays = 0;
     bool malformed_nvm = false;
     bool wrong_sequence = false;
     bool reject_scan_config = false;
@@ -149,7 +159,7 @@ struct StartupFixture {
         alive_packet(buffer);
     }
 
-    void scan_notifications(uint8_t* reply) const {
+    void scan_notifications(uint8_t* reply, uint8_t id) const {
         const auto completion = [](uint8_t* frame, uint8_t id, uint8_t status) {
             frame[0] = 20;
             frame[4] = 0xf;
@@ -157,7 +167,7 @@ struct StartupFixture {
             frame[8] = id;
             frame[14] = status;
         };
-        completion(reply + 64, 7, 1); // A different scan.
+        completion(reply + 64, id ? 0 : 7, 1); // A different or already completed scan.
         for (unsigned offset : {128u, 256u, 384u}) {
             auto* frame = reply + offset;
             frame[0] = 90;
@@ -170,11 +180,16 @@ struct StartupFixture {
             auto* beacon = mpdu + 48;
             beacon[0] = 0x80;
             beacon[16] = 0x02;
-            beacon[21] = offset == 384 ? 0x12 : 0x11;
+            beacon[21] = uint8_t((id ? 0x20 : 0x10) + (offset == 384 ? 2 : 1));
             // Zero-length SSID is valid for a hidden network.
         }
-        if (passive != ScanCase::timeout)
-            completion(reply + 512, 0, passive == ScanCase::aborted ? 2 : 1);
+        if (passive != ScanCase::timeout) {
+            const bool abort =
+                passive == ScanCase::aborted || (id && passive == ScanCase::second_aborted);
+            completion(reply + 512, id, abort ? 2 : 1);
+        }
+        if (passive == ScanCase::no_reply)
+            reply[6] = 0xff;
         if (passive == ScanCase::early_completion) {
             uint8_t ack[64];
             memcpy(ack, reply, sizeof(ack));
@@ -184,7 +199,7 @@ struct StartupFixture {
     }
 
     void command_reply(unsigned index) {
-        assert(index == ++commands_sent && index <= 8);
+        assert(index == ++commands_sent && index <= 9);
         const unsigned slot = index - 1;
         const auto& command = payloads[slot];
         const bool scanning = passive != ScanCase::unused;
@@ -225,6 +240,7 @@ struct StartupFixture {
         } else {
             expected[0] = 0xd;
             payload_bytes = 1940;
+            expected[8] = uint8_t(index - 8);
             expected[12] = 6;
             expected[16] = 2;
             expected[17] = 8;
@@ -250,6 +266,16 @@ struct StartupFixture {
         }
 
         auto* reply = replies[slot];
+        const bool backlog = index == 8 && passive == ScanCase::busy_queue;
+        if (backlog) {
+            for (unsigned offset = 0; offset < ax::page_size; offset += 64) {
+                reply[offset] = 4;
+                reply[offset + 4] = 0x55; // Unrelated notification.
+                reply[offset + 7] = 0x80;
+            }
+            used[index + 1] = index + 2;
+            reply = replies[slot + 1];
+        }
         if (index == 2) {
             // INIT complete and the command reply share a receive buffer.
             reply[0] = 4;
@@ -283,10 +309,10 @@ struct StartupFixture {
             if (scanning)
                 data[76] = 0x01;
         }
-        if (index == 8)
-            scan_notifications(reply);
+        if (index >= 8)
+            scan_notifications(reply, uint8_t(index - 8));
         used[index] = index + 1;
-        receive_status.closed_buffer = uint16_t(index + 1);
+        receive_status.closed_buffer = uint16_t(index + 1 + backlog);
     }
 
     void write(unsigned offset, uint32_t value) {
@@ -340,7 +366,12 @@ struct StartupFixture {
             [](void* ptr, unsigned offset, uint32_t value) {
                 static_cast<StartupFixture*>(ptr)->write(offset, value);
             },
-            [](void*, unsigned) { return true; },
+            [](void* ptr, unsigned usec) {
+                auto& model = *static_cast<StartupFixture*>(ptr);
+                if (model.commands_sent >= 8 && !model.requested_stop && usec == 1000)
+                    ++model.scan_delays;
+                return true;
+            },
             [](void* ptr, bool enable) {
                 auto& model = *static_cast<StartupFixture*>(ptr);
                 model.requested_master |= enable;
@@ -355,7 +386,7 @@ struct StartupFixture {
                 auto& model = *static_cast<StartupFixture*>(ptr);
                 if (id == 1)
                     return model.buffer;
-                return id >= 2 && id <= 9 ? model.replies[id - 2] : nullptr;
+                return id >= 2 && id <= 10 ? model.replies[id - 2] : nullptr;
             },
         };
         FirmwareBootMemory memory{0x9000, &receive_status, used};
@@ -369,6 +400,27 @@ struct StartupFixture {
 };
 
 void check_startup() {
+    {
+        PassiveScan scan{};
+        scan.id = 1;
+        const FirmwarePacket accepted{0xd, 1, 5, nullptr, 0};
+        const uint8_t data[16]{1, 0, 0, 0, 0, 0, 1};
+        const FirmwarePacket complete{0xf, 0, 0x8000, data, sizeof(data)};
+        PassiveScanExchange delayed(scan, 5, 25);
+        delayed.expire(2024);
+        assert(delayed.outcome() == ScanOutcome::pending);
+        delayed.observe(accepted, 2024);
+        delayed.expire(14023);
+        assert(delayed.outcome() == ScanOutcome::pending);
+        delayed.expire(14024);
+        delayed.observe(complete, 14024);
+        assert(delayed.outcome() == ScanOutcome::completion_timeout);
+        PassiveScanExchange early(scan, 5, 1000);
+        early.observe(complete, 1001);
+        const FirmwarePacket reject{2, 0, 5, nullptr, 0};
+        early.observe(reject, 1002);
+        assert(early.outcome() == ScanOutcome::rejected);
+    }
     uint8_t buffer[ax::page_size]{};
     alive_packet(buffer);
     assert(read_alive_notification(buffer, sizeof(buffer)) == AlivePacket::success);
@@ -455,8 +507,8 @@ void check_startup() {
     }
     std::puts("AX201_REGULATORY_MODEL_PASS");
 
-    for (const auto test :
-         {ScanCase::complete, ScanCase::early_completion, ScanCase::aborted, ScanCase::timeout}) {
+    for (const auto test : {ScanCase::complete, ScanCase::early_completion, ScanCase::aborted,
+                            ScanCase::timeout, ScanCase::no_reply, ScanCase::busy_queue}) {
         StartupFixture model(StartupCase::good);
         model.regulatory = RegulatoryCase::valid;
         model.passive = test;
@@ -465,12 +517,17 @@ void check_startup() {
         const auto outcome = model.run(true, &scan);
         assert(outcome.alive && outcome.dma_idle && model.reset_after_dma && !model.master);
         assert(model.commands_sent == 8 && outcome.passive.channel_count == 2);
+        if (test == ScanCase::busy_queue)
+            assert(model.scan_delays == 1);
         if (test == ScanCase::timeout) {
             assert(!strcmp(outcome.status, "passive scan completion timed out"));
             assert(!outcome.successful);
         } else if (test == ScanCase::aborted) {
             assert(!strcmp(outcome.status, "firmware aborted the passive scan"));
             assert(!outcome.successful);
+        } else if (test == ScanCase::no_reply) {
+            assert(!strcmp(outcome.status, "passive scan command reply timed out"));
+            assert(!outcome.successful && !outcome.completed_scans);
         } else {
             assert(!strcmp(outcome.status, "firmware passive scan complete"));
             assert(outcome.successful && outcome.passive.access_point_count == 1);
@@ -480,6 +537,23 @@ void check_startup() {
         }
     }
     std::puts("AX201_PASSIVE_SCAN_MODEL_PASS");
+    for (const auto test : {ScanCase::early_completion, ScanCase::second_aborted}) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = test;
+        ScanElementStorage elements{};
+        const ScanChecks scans{{1, 2}, FirmwareCheck::rescan, &elements};
+        const auto result = model.run(true, &scans);
+        const bool complete = test == ScanCase::early_completion;
+        assert(result.completed_scans == (complete ? 2u : 1u) && result.successful == complete);
+        assert(model.commands_sent == 9 && result.dma_idle && model.reset_after_dma &&
+               !model.master);
+        assert(result.passive.id == 1 && result.passive.access_point_count == 1);
+        assert(result.passive.access_points[0].bssid[5] == 0x21);
+        assert(!strcmp(result.status, complete ? "two firmware passive scans complete"
+                                               : "firmware aborted the passive scan"));
+    }
+    std::puts("AX201_REPEAT_SCAN_MODEL_PASS");
 }
 
 void check_access_points() {

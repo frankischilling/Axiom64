@@ -2323,5 +2323,8 @@ points from valid beacons and probe responses. The adapter resets afterwards.
 The serial log lists each recorded BSSID, SSID, frequency, and signal. A
 signal of `-128` means the driver had no on-channel measurement. The log
 escapes non-printing bytes in network names.
+After a successful scan and adapter shutdown, the kernel keeps the completed
+snapshot and the original beacon and probe-response information elements.
+The snapshot retains up to 32 access points for the current boot.
 Run the check from the PXE RAM image for a physical test. Wi-Fi association
 and NetworkManager integration still require implementation.

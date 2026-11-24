@@ -27,6 +27,7 @@ Probe probe;
 PciFunction adapter{};
 volatile uint32_t* adapter_registers;
 bool start_requested;
+PassiveScan completed_scan{};
 
 void report(const char* status) {
     constexpr char prefix[] = "Intel AX201: ";
@@ -61,10 +62,11 @@ void log_access_point(const AccessPoint& point) {
         bssid[i * 3 + 2] = i == 5 ? '\0' : ':';
     }
     log("iwlwifi: BSS %s at %u MHz signal_dbm=%d interval_tu=%u capability=%x source=%s "
-        "ssid=\"%s\"\n",
+        "beacon_ies=%u probe_ies=%u ssid=\"%s\"\n",
         bssid, uint64_t(point.frequency_mhz), int64_t(point.signal_dbm),
         uint64_t(point.beacon_interval_tu), uint64_t(point.capability),
-        point.probe_response ? "probe" : "beacon", ssid);
+        point.probe_response ? "probe" : "beacon", uint64_t(point.beacon_ie_bytes),
+        uint64_t(point.probe_ie_bytes), ssid);
 }
 
 bool device_powered(const PciFunction& pci) {
@@ -270,11 +272,20 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         report("PCI function is not idle for startup");
         return;
     }
+    ScanElementStorage* elements = nullptr;
+    if (check == FirmwareCheck::passive_scan) {
+        elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
+        if (!elements) {
+            report("scan result allocation failed");
+            return;
+        }
+    }
     AdapterBoot boot{uint16_t(original | memory_space | intx_disable), queues};
     adapter.write16(pci_command, boot.command);
     if (adapter.read16(pci_command) != boot.command) {
         adapter.write16(pci_command, original);
         report("cannot enable PCI register access");
+        release(elements);
         return;
     }
 
@@ -306,7 +317,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
-    const ScanChecks scan{antennas, check};
+    const ScanChecks scan{antennas, check, elements};
     const auto result =
         start_and_stop_quz(io, memory, check >= FirmwareCheck::scan_config ? &scan : nullptr);
     const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
@@ -323,21 +334,27 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     if (result.regulatory.country[0])
         log("iwlwifi: regulatory domain=%s permitted=%u slots=%u\n", result.regulatory.country,
             uint64_t(result.regulatory.valid_channels), uint64_t(result.regulatory.channel_slots));
-    if (result.passive.status == PassiveScan::Status::complete) {
+    if (result.successful && result.dma_idle && restored &&
+        result.passive.status == PassiveScan::Status::complete) {
+        release(completed_scan.elements);
+        completed_scan = result.passive;
+        elements = nullptr;
+        const auto& passive = *passive_scan_snapshot();
         log("iwlwifi: passive scan channels=%u access points=%u truncated=%u\n",
-            uint64_t(result.passive.channel_count), uint64_t(result.passive.access_point_count),
-            uint64_t(result.passive.access_points_truncated));
-        for (unsigned i = 0; i < result.passive.access_point_count; ++i)
-            log_access_point(result.passive.access_points[i]);
-        if (result.passive.access_points_truncated) {
+            uint64_t(passive.channel_count), uint64_t(passive.access_point_count),
+            uint64_t(passive.access_points_truncated));
+        for (unsigned i = 0; i < passive.access_point_count; ++i)
+            log_access_point(passive.access_points[i]);
+        if (passive.access_points_truncated) {
             report("at least 32 access points seen");
         } else {
             char count[] = "access points seen: 00";
-            count[sizeof(count) - 3] = char('0' + result.passive.access_point_count / 10);
-            count[sizeof(count) - 2] = char('0' + result.passive.access_point_count % 10);
+            count[sizeof(count) - 3] = char('0' + passive.access_point_count / 10);
+            count[sizeof(count) - 2] = char('0' + passive.access_point_count % 10);
             report(count);
         }
     }
+    release(elements);
     if (!result.dma_idle || !restored) {
         queues.pin_until_reboot();
         staged.retain = true;
@@ -406,6 +423,10 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         launch_firmware(queues, staged, check, image.antennas);
 }
 } // namespace
+
+const PassiveScan* passive_scan_snapshot() {
+    return completed_scan.status == PassiveScan::Status::complete ? &completed_scan : nullptr;
+}
 
 void check_firmware(bool probe_pci, FirmwareCheck check) {
     const bool start = check != FirmwareCheck::stage;

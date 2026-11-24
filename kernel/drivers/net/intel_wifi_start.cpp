@@ -446,6 +446,8 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     NvmInfo info{};
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
+    if (scan)
+        passive.elements = scan->elements;
     if (request_dma) {
         if (!io.bus_master(io.context, true)) {
             error = "PCI bus master did not enable";
@@ -494,6 +496,7 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     return {error ? error : success,
             alive,
             !request_dma || (idle && reset_done),
+            !error,
             info,
             regulatory,
             passive};

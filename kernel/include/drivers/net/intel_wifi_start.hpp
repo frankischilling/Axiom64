@@ -36,6 +36,7 @@ struct FirmwareBootResult {
     const char* status;
     bool alive;
     bool dma_idle;
+    bool successful = false;
     NvmInfo nvm{};
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
@@ -44,6 +45,7 @@ struct FirmwareBootResult {
 struct ScanChecks {
     AntennaMasks antennas;
     FirmwareCheck check;
+    ScanElementStorage* elements = nullptr;
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.

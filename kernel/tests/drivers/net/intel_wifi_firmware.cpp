@@ -460,17 +460,23 @@ void check_startup() {
         StartupFixture model(StartupCase::good);
         model.regulatory = RegulatoryCase::valid;
         model.passive = test;
-        const ScanChecks scan{{1, 2}, FirmwareCheck::passive_scan};
+        ScanElementStorage elements{};
+        const ScanChecks scan{{1, 2}, FirmwareCheck::passive_scan, &elements};
         const auto outcome = model.run(true, &scan);
         assert(outcome.alive && outcome.dma_idle && model.reset_after_dma && !model.master);
         assert(model.commands_sent == 8 && outcome.passive.channel_count == 2);
-        if (test == ScanCase::timeout)
+        if (test == ScanCase::timeout) {
             assert(!strcmp(outcome.status, "passive scan completion timed out"));
-        else if (test == ScanCase::aborted)
+            assert(!outcome.successful);
+        } else if (test == ScanCase::aborted) {
             assert(!strcmp(outcome.status, "firmware aborted the passive scan"));
-        else {
+            assert(!outcome.successful);
+        } else {
             assert(!strcmp(outcome.status, "firmware passive scan complete"));
-            assert(outcome.passive.access_point_count == 1);
+            assert(outcome.successful && outcome.passive.access_point_count == 1);
+            assert(outcome.passive.elements == &elements);
+            assert(outcome.passive.access_points[0].beacon_ie_bytes == 2);
+            assert(elements.records[0].beacon[0] == 0 && elements.records[0].beacon[1] == 0);
         }
     }
     std::puts("AX201_PASSIVE_SCAN_MODEL_PASS");
@@ -478,6 +484,8 @@ void check_startup() {
 
 void check_access_points() {
     PassiveScan scan{};
+    ScanElementStorage elements{};
+    scan.elements = &elements;
     scan.channels[0] = 1;
     scan.channels[1] = 6;
     scan.channels[2] = 36;
@@ -519,9 +527,21 @@ void check_access_points() {
     assert(scan.access_point_count == 1 && point.probe_response && point.ssid_length == 3);
     assert(point.ssid[0] == 'A' && point.ssid[1] == 0 && point.ssid[2] == 0xff);
     assert(point.signal_dbm == -62 && point.beacon_interval_tu == 100 && point.capability == 0x431);
+    const uint8_t probe[]{0, 3, 'A', 0, 0xff, 3, 1, 6};
+    const uint8_t original_beacon[]{0, 0, 3, 1, 6};
+    assert(point.probe_ie_bytes == sizeof(probe) &&
+           point.beacon_ie_bytes == sizeof(original_beacon));
+    assert(!memcmp(elements.records[0].probe, probe, sizeof(probe)) &&
+           !memcmp(elements.records[0].beacon, original_beacon, sizeof(original_beacon)));
     observe(false, 6, 6, 1, 41, {0, 0, 0});
     assert(scan.access_point_count == 1 && point.probe_response && point.ssid_length == 3 &&
            point.signal_dbm == -41);
+    const uint8_t later_beacon[]{0, 3, 0, 0, 0, 3, 1, 6};
+    assert(point.beacon_ie_bytes == sizeof(later_beacon));
+    assert(!memcmp(elements.records[0].beacon, later_beacon, sizeof(later_beacon)));
+    observe(true, 6, 6, 1, 52, {});
+    assert(point.probe_ie_bytes == sizeof(probe) &&
+           !memcmp(elements.records[0].probe, probe, sizeof(probe)));
     observe(false, 36, 36, 1, 60, {'B'});
     assert(scan.access_point_count == 2 && scan.access_points[1].frequency_mhz == 5180);
     for (uint8_t address = 2; address <= 32; ++address)

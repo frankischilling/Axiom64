@@ -43,6 +43,7 @@
 #include "mm/file_mapping.hpp"
 #include "mm/limits.hpp"
 #include "mm/remap.hpp"
+#include "mm/residency.hpp"
 #include "mm/stack.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/futex.hpp"
@@ -1233,6 +1234,11 @@ static int64_t dispatch(Frame* f, Task* running) {
         return remap_memory(*running, a, b, c, d);
     case 26:
         return sync_file_mappings(running->memory->space, a, b, unsigned(c));
+    case 27:
+        return mapped_residency(*running, a, b, c);
+    case 149:
+    case 150:
+        return set_memory_lock(*running, a, b, f->rax == 149);
     case 28:
         return running->memory->space.valid(a, b) ? 0 : -12;
     case 29:
@@ -1902,7 +1908,7 @@ static int64_t dispatch(Frame* f, Task* running) {
         return signalfd_syscall(*f);
     case 285: {
         auto h = fd_handle(a);
-        return h ? memfd_fallocate(*running, *h, b, c, d) : -9;
+        return h ? allocate_file_range(*running, *h, b, c, d) : -9;
     }
     case 283:
     case 286:

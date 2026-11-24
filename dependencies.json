@@ -87,6 +87,13 @@
     "url": "https://codeload.github.com/cupidthecat/cupidfetch/tar.gz/b3269b98f3130c2972e2b78b77a04cca5d7c729d",
     "sha256": "1d65fea84a8a7b242771694eeeb574ffd3f82211f07bcd8ee1bc492bbe3cc0e7"
   },
+  "auto_eduroam": {
+    "revision": "23e25f0cdb1d87e0e3857fcc095fcc2826d9b2fe",
+    "license": "GPL-3.0-or-later",
+    "archive": "auto-eduroam-23e25f0c.tar.gz",
+    "url": "https://codeload.github.com/frankischilling/auto-eduroam/tar.gz/23e25f0cdb1d87e0e3857fcc095fcc2826d9b2fe",
+    "sha256": "36851cdbe7637319f3cba709395691d59201b262f770b741ebe7b407561755b4"
+  },
   "chocolate_doom": {
     "version": "3.1.1",
     "revision": "410d96855b5df5410ff591a90efeafa889119224",

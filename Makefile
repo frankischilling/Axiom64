@@ -626,8 +626,12 @@ deps:
 	$(PYTHON) scripts/fetch.py
 busybox:
 	$(PYTHON) scripts/build_busybox.py
+.PHONY: test-mincore
+test-mincore: build/axiom64.elf busybox
+	$(PYTHON) -B scripts/mincore_test.py $(MINCORE_TEST_FLAGS)
 DOOM_INPUTS = scripts/build_doom.py $(wildcard vendor/chocolate-doom/*.patch)
-build/licenses/.stamp: sources.lock.json ports.lock.json dependencies.json scripts/sources.py scripts/fetch.py scripts/build_cupidfetch.py $(DOOM_INPUTS)
+EDUROAM_INPUTS = $(wildcard vendor/auto-eduroam/*)
+build/licenses/.stamp: sources.lock.json ports.lock.json dependencies.json scripts/sources.py scripts/fetch.py scripts/build_cupidfetch.py $(DOOM_INPUTS) $(EDUROAM_INPUTS)
 	$(PYTHON) scripts/sources.py prepare
 sources: busybox
 	$(PYTHON) scripts/sources.py bundle

@@ -164,11 +164,10 @@ package_payloads = {
     "weston-clients": ("usr/bin/weston-simple-shm",),
     "openssh-server-common": (),  # The installed server requires a local configuration.
 }
-installed_libraries = {'gmp', 'libgomp'} if installed_desktop else set()
 for package, archive in packages(include_installed=installed_desktop):
     if package.get("build_only", False):
         continue
-    if args.profile != "full" and package["name"] not in installed_libraries and package["name"] in {
+    if args.profile == "desktop" and package["name"] in {
         "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
         "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
         "libisoburn", "libisofs", "xorriso"
@@ -203,6 +202,9 @@ xorg_config("xorg.conf")
 regular("usr/libexec/axiom64-xorg-seat", desktop / "xorg-seat.sh")
 regular("etc/X11/system.twmrc", desktop / "system.twmrc", 0o100644)
 if installed_desktop:
+    files["bin/man"] = (0o120777, b"/usr/bin/man")
+    files["usr/bin/ip"] = (0o120777, b"/sbin/ip")
+    files["usr/bin/ss"] = (0o120777, b"/sbin/ss")
     xorg_config("xorg-udev.conf")
     regular("usr/libexec/axiom64-input-coldplug", ROOT / "userspace/services/input-coldplug.sh")
 # Package shell-registration hooks are not run. Supply the conventional list
@@ -216,10 +218,22 @@ regular("usr/bin/freedoom", ROOT / "userspace/desktop/freedoom.sh")
 regular("usr/bin/weston-nested", ROOT / "userspace/desktop/weston-nested.sh")
 for path in ("usr/share/applications", "etc/skel", "etc/skel/Desktop"):
     files.setdefault(path, (0o40755, b""))
+eduroam = ROOT / "vendor/auto-eduroam"
+eduroam_home = "usr/share/axiom64/auto-eduroam"
+for path in ("usr/share/axiom64", eduroam_home):
+    files.setdefault(path, (0o40755, b""))
+regular(eduroam_home + "/connect-eduroam.sh", eduroam / "connect-eduroam.sh")
+for name in ("README.md", "LICENSE"):
+    regular(eduroam_home + "/" + name, eduroam / name, 0o100644)
+for path in ("root/auto-eduroam", "etc/skel/auto-eduroam"):
+    files[path] = (0o120777, ("/" + eduroam_home).encode())
+files["usr/bin/connect-eduroam"] = (0o120777, f"/{eduroam_home}/connect-eduroam.sh".encode())
 for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)
 if installed_desktop:
+    for module in sorted((ROOT / "vendor/cmake").glob("*.cmake")):
+        regular("usr/share/cmake/Modules/Platform/" + module.name, module, 0o100644)
     for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
     files.setdefault("etc/xdg", (0o40755, b""))
@@ -275,6 +289,18 @@ if installed_desktop:
     if desktop.count(command) != 1:
         raise ValueError(f'{autostart} does not have the expected Plasma shell command')
     files[autostart] = mode, desktop.replace(command, b'\nExec=/usr/libexec/axiom64-plasma-shell\n')
+    # The tray treats a passive applet as hidden. Keep a present laptop battery
+    # visible at full charge unless the user has hidden the applet explicitly.
+    battery_applet = 'usr/share/plasma/plasmoids/org.kde.plasma.battery/contents/ui/main.qml'
+    mode, qml = files[battery_applet]
+    condition = b'if (batteryControl.hasCumulative && (batteryControl.state === '
+    replacement = (
+        b'if (batteryControl.hasCumulative && (batteryControl.hasInternalBatteries\n'
+        b'                || batteryControl.state === '
+    )
+    if qml.count(condition) != 1:
+        raise ValueError(f'{battery_applet} does not have the expected tray visibility condition')
+    files[battery_applet] = mode, qml.replace(condition, replacement)
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)

@@ -4,6 +4,44 @@ The kernel implements the Linux x86-64 ABI itself. The host builds static tests,
 
 Native development tools are GCC 14.2.0, binutils 2.44, Make 4.4.1, and NASM 2.16.03. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. The native toolchain test assembles an x86-64 ELF object and links and calls it from C. It also checks compiler diagnostics and builds a C++ shared library inside the guest. A separate executable loads the library with `dlopen`, catches its exceptions across the library boundary, and verifies that two threads use independent thread-local state.
 
+The installed desktop includes the native C and C++ toolchain and its
+development headers. Run `gcc`, `g++`, `as`, `ld`, or `make` from an
+ordinary terminal. The smaller desktop initramfs leaves out the toolchain.
+Build with `make build/axiom64.elf build/rootfs-installed-desktop.cpio` and run
+`python3 scripts/installed_toolchain_test.py` to check the installed profile.
+The test compiles and runs the examples as a signed-in user on BIOS and UEFI
+NVMe guests. It also clones a Git repository, builds a C and C++ project
+with Ninja, runs it through CTest, and searches files and output with ripgrep.
+
+The installed desktop ships Git 2.49.1, CMake 3.31.7, Ninja 1.12.1, and
+ripgrep 14.1.1. The port locks pin their Alpine packages, needed libraries,
+source archives, and build recipes. CMake recognizes Axiom64 and uses the ELF
+shared-library settings for its Linux ABI. Git, CMake, and ripgrep manual
+pages are under `/usr/share/man`.
+
+The installed desktop also includes Micro, the OpenSSH clients, GDB, strace,
+iproute2's `ip` and `ss`, and BIND's `dig`. GDB can inspect ELF files.
+Tracing or attaching to a running program requires the kernel's remaining
+`ptrace` support. Try `man 2 open` or `man 1 less` to read the bundled
+Linux manual and program manuals through mandoc.
+
+The installed Plasma desktop includes PowerDevil and its **Power and Battery**
+widget. The widget uses battery and charger data from UPower. On supported
+laptops, the tray shows the battery even at full charge. You can hide it
+under **Power and Battery** in System Tray Settings.
+
+New accounts get an `auto-eduroam` folder with the setup helper and its
+instructions. Existing accounts get it at desktop sign-in if that path is
+available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.
+Connection setup needs NetworkManager, a supported Wi-Fi device, and the
+CA certificate and authentication server domain supplied by your school.
+
+The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
+UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools
+under `/usr/bin` in scripts that put `/bin` first. Their manual pages are in
+`/usr/share/man/man1`. The port locks pin the packages, source archives, and
+Alpine patches. The source bundle includes the upstream licenses.
+
 The installed desktop profile sets Thunar 4.20.3 as the system default for folders and adds a shortcut to each account's desktop. The profile includes the GTK runtime, icons, and shared MIME database. The graphical session builds the image loader cache under the user's cache directory. The port manifests pin the packages and the corresponding source recipes.
 
 All image profiles ship the pinned Alpine D-Bus 1.16.2 daemon, tools and client library. The source bundle carries the upstream sources, notices and Alpine recipe. The test probe builds against the matching development headers, which stay out of the boot images. See [the D-Bus service and session setup](accounts.md#d-bus).

@@ -34,6 +34,7 @@ constexpr unsigned socket_count = 64, queue_count = 32;
 constexpr size_t queue_bytes = 65536;
 constexpr unsigned routing_protocol = 0, uevent_protocol = 15;
 constexpr uint32_t kernel_uevent_group = 1, processed_uevent_group = 2;
+constexpr size_t max_buffer_request = 512 * 1024;
 uint32_t next_port = UINT32_MAX;
 
 size_t aligned(size_t size) {
@@ -48,7 +49,8 @@ struct NetlinkSocket {
     unsigned deliveries = 0;
     uint32_t port = 0, groups = 0;
     NetlinkAddress peer{};
-    size_t bytes = 0, byte_limit = queue_bytes;
+    size_t bytes = 0;
+    size_t send_limit = queue_bytes, receive_limit = queue_bytes;
     int error = 0;
     Handle* handle = nullptr;
     NetlinkFrame* queue[queue_count]{};
@@ -134,8 +136,10 @@ size_t netlink_available(NetlinkSocket* socket) {
 }
 
 bool netlink_ready(NetlinkSocket* socket, bool write) {
+    const size_t write_limit =
+        socket->protocol == uevent_protocol ? queue_bytes : socket->receive_limit;
     return write ? socket->count + socket->deliveries < queue_count &&
-                       socket->bytes + 36 <= queue_bytes
+                       socket->bytes + 36 <= write_limit
                  : socket->count != 0 || socket->error;
 }
 
@@ -147,8 +151,8 @@ int netlink_error(NetlinkSocket* socket, bool consume) {
 }
 
 static int reserve_frame(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
-    if (socket->count + socket->deliveries >= queue_count || socket->bytes > socket->byte_limit ||
-        length > socket->byte_limit - socket->bytes)
+    if (socket->count + socket->deliveries >= queue_count ||
+        socket->bytes > socket->receive_limit || length > socket->receive_limit - socket->bytes)
         return -11;
     frame = static_cast<NetlinkFrame*>(alloc(sizeof(NetlinkFrame) + length));
     if (!frame)
@@ -254,7 +258,7 @@ static int64_t send_uevent(Task& task, NetlinkSocket* sender, const void* data, 
 
 int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t length,
                      const NetlinkAddress* destination) {
-    if (length > netlink_max_request)
+    if (length > netlink_max_request || length > socket->send_limit - 32)
         return -90;
     if (!length)
         return -61;
@@ -284,10 +288,10 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
             return -22;
         at += aligned(header.length);
     }
-    if (total > queue_bytes)
+    if (total > socket->receive_limit)
         return -90;
     if (count > queue_count - socket->count - socket->deliveries ||
-        total > queue_bytes - socket->bytes)
+        socket->bytes > socket->receive_limit || total > socket->receive_limit - socket->bytes)
         return -11;
     int error = socket->port ? 0 : bind_port(socket, 0, task.process->pid);
     if (error)
@@ -404,7 +408,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
                 return -1;
             if (value < 0)
                 return -22;
-            socket->byte_limit = max(size_t(256), min(size_t(value) * 2, queue_bytes));
+            socket->receive_limit = max(size_t(256), min(size_t(value) * 2, queue_bytes));
         } else if (socket->protocol == uevent_protocol && b == 270 && (c == 1 || c == 2)) {
             if (value != 1 && value != 2)
                 return -22;
@@ -417,7 +421,13 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             socket->capped = value != 0;
         else if (b == 270 && c == 12)
             socket->strict = value != 0;
-        else
+        else if (socket->protocol == routing_protocol && b == 1 && (c == 7 || c == 8)) {
+            const size_t limit = 2 * min(size_t(uint32_t(value)), max_buffer_request);
+            if (c == 7)
+                socket->send_limit = max(size_t(2048), limit);
+            else
+                socket->receive_limit = max(size_t(4096), limit);
+        } else
             return -92;
         return 0;
     }
@@ -435,10 +445,10 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             value = socket->protocol;
         else if (b == 1 && c == 39)
             value = 16;
-        else if (b == 1 && c == 8)
-            value = socket->byte_limit;
         else if (b == 1 && c == 7)
-            value = queue_bytes;
+            value = socket->send_limit;
+        else if (b == 1 && c == 8)
+            value = socket->receive_limit;
         else
             return -92;
         if (!task.memory->space.copy_in(&capacity, frame.r8, 4))

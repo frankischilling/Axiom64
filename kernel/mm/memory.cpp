@@ -328,7 +328,7 @@ uint64_t* AddressSpace::entry(uint64_t va, bool create_table) {
     return &table[(va >> 12) & 511];
 }
 
-enum class MappingMeasure { all, resident, private_data, writable_private_data };
+enum class MappingMeasure { all, resident, locked, private_data, writable_private_data };
 
 static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uint64_t start,
                               uint64_t end, MappingMeasure measure) {
@@ -340,6 +340,8 @@ static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uin
         if (!(mapping & page_mapping) || address >= end || address + span <= start)
             continue;
         if (level == 1 || (mapping & 128)) {
+            if (measure == MappingMeasure::locked && !(mapping & page_locked))
+                continue;
             if (measure == MappingMeasure::resident &&
                 (!(mapping & page_mask) || (mapping & 0x200)))
                 continue; // Exclude demand placeholders and device memory.
@@ -366,6 +368,11 @@ uint64_t AddressSpace::mapped_size(uint64_t start, uint64_t length) const {
 
 uint64_t AddressSpace::resident_size() const {
     return root ? mapped_length(root, 4, 0, 0, user_limit, MappingMeasure::resident) : 0;
+}
+
+uint64_t AddressSpace::locked_size(uint64_t start, uint64_t length) const {
+    return root && length ? mapped_length(root, 4, 0, start, start + length, MappingMeasure::locked)
+                          : 0;
 }
 
 static uint64_t first_mapping(uint64_t table, unsigned level, uint64_t base, uint64_t start,
@@ -475,7 +482,8 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot, uint64_t mapping_flags
     }
     for (uint64_t p = va; p < end; p += page_size) {
         auto& e = *entry(p);
-        e = (e & (page_mask | (page_software & ~page_private))) | permissions(prot) | mapping_flags;
+        e = (e & (page_mask | page_locked | (page_software & ~page_private))) | permissions(prot) |
+            mapping_flags;
     }
     sync_user_translations(root);
     return true;
@@ -610,10 +618,10 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
         if (*e & page_file)
             *e = file_page_protection(*e, prot);
         else if (!(*e & page_mask))
-            *e = reservation_permissions(prot);
+            *e = reservation_permissions(prot) | (*e & page_locked);
         else {
             const auto cache_mask = *e & 0x200 ? Mmio::leaf_cache_mask : 0;
-            *e = (*e & (page_mask | page_software | cache_mask)) | permissions(prot);
+            *e = (*e & (page_mask | page_software | page_locked | cache_mask)) | permissions(prot);
         }
     }
     sync_user_translations(root);
@@ -719,11 +727,11 @@ static bool clone_table(uint64_t dest, uint64_t src, int level) {
     for (size_t i = 0; i < end; i++) {
         if (!(s[i] & page_mask)) {
             if (level == 1 && (s[i] & page_mapping))
-                d[i] = s[i];
+                d[i] = s[i] & ~page_locked;
             continue;
         }
         if (level == 1 && (s[i] & 0x600)) {
-            d[i] = s[i];
+            d[i] = s[i] & ~page_locked;
             if (!(s[i] & 0x200))
                 page_retain(s[i] & page_mask);
             continue;
@@ -731,7 +739,7 @@ static bool clone_table(uint64_t dest, uint64_t src, int level) {
         uint64_t p = page_alloc();
         if (!p)
             return false;
-        d[i] = p | (s[i] & ~page_mask);
+        d[i] = p | (s[i] & ~(page_mask | page_locked));
         if (level > 1) {
             if (!clone_table(p, s[i] & page_mask, level - 1))
                 return false;

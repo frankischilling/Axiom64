@@ -511,6 +511,55 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
     return write_unmapped(node, offset, buffer, length);
 }
 
+static int preallocate(Node* node, uint64_t offset, uint64_t end) {
+    auto& v = volume(node);
+    Inode inode;
+    if (!v.begin())
+        return v.error;
+    if (!v.load_inode(node->inode, inode))
+        return v.finish(false);
+    if (end > v.capacity(inode) || (v.revision == 0 && end > INT32_MAX))
+        return -27;
+
+    const auto old_size = file_size(inode);
+    if (end > old_size && old_size % page_size) {
+        // Dirty writes in the old tail must reach disk before its padding becomes visible.
+        if (int error = flush_disk_pages(*node->mount, node, old_size, end))
+            return error;
+        if (!v.load_inode(node->inode, inode))
+            return v.finish(false);
+    }
+
+    const uint64_t last = end / v.block_size + (end % v.block_size != 0);
+    const unsigned available =
+        v.journal ? min(max_changes, journal_payload_limit(v.journal)) : max_changes;
+    // Leave room for indirect blocks, allocation bitmaps, and the inode in each transaction.
+    const unsigned batch = min(128u, max(1u, available / 16));
+    const unsigned group = (node->inode - 1) / v.inodes_per_group;
+    for (uint64_t first = offset / v.block_size; first < last;) {
+        const uint64_t stop = min(last, first + batch);
+        for (uint64_t logical = first; logical < stop; ++logical) {
+            uint32_t block;
+            if (!v.map_block(inode, logical, true, block, group))
+                return v.finish(false);
+        }
+        const uint64_t before = file_size(inode);
+        const uint64_t committed_size = min(end, stop * v.block_size);
+        if (committed_size > before && !v.size(inode, committed_size))
+            return v.finish(false);
+        inode.set_time(inode_ctime, node_now());
+        if (!v.save_inode(node->inode, inode))
+            return v.finish(false);
+        int error = v.finish(true);
+        if (node->size > before)
+            invalidate_disk_pages(*node, before, node->size);
+        if (error)
+            return error;
+        first = stop;
+    }
+    return 0;
+}
+
 static bool stage_truncate(Volume& v, Inode& inode, size_t length, SizeChange change) {
     if (!v.size(inode, length, change))
         return false;
@@ -1167,6 +1216,7 @@ const FilesystemOps ext2_ops = {
     .removexattr = removexattr,
     .queue_reclaim = queue_reclaim,
     .reclaim_queued = reclaim_queued,
+    .preallocate = preallocate,
 };
 
 unsigned ext2_mount_device(const Mount& mount) {

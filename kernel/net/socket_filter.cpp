@@ -64,7 +64,8 @@ bool supported_load(const FilterInstruction& item) {
         return false;
     if (mode == absolute && item.value >= ancillary) {
         uint32_t value;
-        return width == 0 && ancillary_value(item.value, {}, value);
+        // Linux decodes these extensions by offset for all three load widths.
+        return ancillary_value(item.value, {}, value);
     }
     return true;
 }

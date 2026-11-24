@@ -75,8 +75,14 @@ unsigned net_register(NetAdapter& adapter, const char* driver, const PciFunction
         return 0;
     auto& info = adapter.info;
     info.index = count + 1;
-    memcpy(info.name, "eth0", 5);
-    info.name[3] += count;
+    unsigned unit = 0;
+    for (unsigned i = 0; i < count; ++i)
+        if (devices[i]->info.wireless == info.wireless)
+            ++unit;
+    const auto name = info.wireless ? "wlan0" : "eth0";
+    const auto length = strlen(name);
+    memcpy(info.name, name, length + 1);
+    info.name[length - 1] += unit;
     info.mtu = min(info.maximum_mtu, uint32_t(1500));
     info.driver = driver;
     if (pci)
@@ -118,19 +124,25 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
     auto info = net_info(index);
     if (!info)
         return -19;
+    if (administrative && devices[index - 1]->receive_only_diagnostic)
+        return -95;
     if (mtu < 68 || mtu > info->maximum_mtu)
         return -22;
-    auto& writable = devices[index - 1]->info;
+    auto& adapter = *devices[index - 1];
+    auto& writable = adapter.info;
     uint32_t previous_mtu = writable.mtu;
     bool previous_administrative = writable.administrative;
     writable.administrative = administrative;
     writable.mtu = mtu;
-    if (previous_administrative != administrative)
+    if (previous_administrative != administrative) {
         if (int error = ipv4_administrative_changed(index)) {
             writable.administrative = previous_administrative;
             writable.mtu = previous_mtu;
             return error;
         }
+        if (adapter.administrative_changed)
+            adapter.administrative_changed(adapter);
+    }
     ip6::configuration_changed(index);
     if (previous_mtu != mtu) {
         ipv4_mtu_changed(index, previous_mtu);

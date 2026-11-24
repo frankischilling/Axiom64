@@ -28,6 +28,7 @@
 #include "boot/arguments.hpp"
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
+#include "drivers/net/intel_wifi.hpp"
 #include "drivers/platform/devices.hpp"
 #include "drivers/platform/inventory.hpp"
 #include "drivers/platform/intel_lpss.hpp"
@@ -131,6 +132,9 @@ BootInfo boot_info;
         poweroff(1);
     }
     vfs_init(boot_info.initramfs, boot_info.initramfs_size);
+    auto wifi_firmware = arguments.has("iwlwifi.boot-firmware") && !arguments.has("iwlwifi.disable")
+                             ? IntelWifi::read_boot_firmware()
+                             : IntelWifi::BootFirmware{};
     block_init();
     boot_root_init(arguments, init);
     const bool usb_keyboard_probe = arguments.has("usb.xhci=keyboard-probe");
@@ -149,6 +153,77 @@ BootInfo boot_info;
     ipv4_observe_addresses(netlink_ipv4_address_event);
     ipv4_observe_routes(netlink_ipv4_route_event);
     ipv6_observe_addresses(netlink_ipv6_address_event);
+    const bool probe_wifi = arguments.has("iwlwifi.probe");
+    auto wifi_check = IntelWifi::FirmwareCheck::stage;
+    IntelWifi::AuthenticationTarget auth_target;
+    char auth_bssid[18]{};
+    char assoc_bssid[18]{};
+    char data_target[50]{};
+    char open_bssid[18]{};
+    const int auth_argument = arguments.read("iwlwifi.auth-check=", auth_bssid, sizeof(auth_bssid));
+    const int assoc_argument =
+        arguments.read("iwlwifi.assoc-check=", assoc_bssid, sizeof(assoc_bssid));
+    const int data_argument =
+        arguments.read("iwlwifi.data-check=", data_target, sizeof(data_target));
+    const int open_argument = arguments.read("iwlwifi.open-link=", open_bssid, sizeof(open_bssid));
+    const bool wants_auth = auth_argument || arguments.has("iwlwifi.auth-check");
+    const bool wants_assoc = assoc_argument || arguments.has("iwlwifi.assoc-check");
+    const bool wants_data = data_argument || arguments.has("iwlwifi.data-check");
+    const bool wants_open = open_argument || arguments.has("iwlwifi.open-link");
+    const char* wifi_check_error = nullptr;
+    if (wants_auth + wants_assoc + wants_data + wants_open > 1) {
+        wifi_check_error = wants_data || wants_open
+                               ? "iwlwifi: select only one wireless exchange check\n"
+                               : "iwlwifi: select either auth-check or assoc-check\n";
+    } else if (wants_open) {
+        wifi_check = IntelWifi::FirmwareCheck::open_link;
+        if (open_argument != 1 || !IntelWifi::parse_authentication_target(open_bssid, auth_target))
+            wifi_check_error = "iwlwifi: open-link requires one unicast BSSID\n";
+    } else if (wants_data) {
+        wifi_check = IntelWifi::FirmwareCheck::data_probe;
+        if (data_argument != 1 || !IntelWifi::parse_data_probe_target(data_target, auth_target))
+            wifi_check_error = "iwlwifi: data-check requires BSSID,source IPv4,peer IPv4\n";
+    } else if (wants_assoc) {
+        wifi_check = IntelWifi::FirmwareCheck::associate;
+        if (assoc_argument != 1 ||
+            !IntelWifi::parse_authentication_target(assoc_bssid, auth_target))
+            wifi_check_error = "iwlwifi: assoc-check requires one unicast BSSID\n";
+    } else if (wants_auth) {
+        wifi_check = IntelWifi::FirmwareCheck::authenticate;
+        if (auth_argument != 1 || !IntelWifi::parse_authentication_target(auth_bssid, auth_target))
+            wifi_check_error = "iwlwifi: auth-check requires one unicast BSSID\n";
+    } else if (arguments.has("iwlwifi.live-scan"))
+        wifi_check = IntelWifi::FirmwareCheck::live_scan;
+    else if (arguments.has("iwlwifi.peer-queue-check"))
+        wifi_check = IntelWifi::FirmwareCheck::peer_queue;
+    else if (arguments.has("iwlwifi.channel-check"))
+        wifi_check = IntelWifi::FirmwareCheck::channel_context;
+    else if (arguments.has("iwlwifi.key-check"))
+        wifi_check = IntelWifi::FirmwareCheck::security_key;
+    else if (arguments.has("iwlwifi.rescan-check"))
+        wifi_check = IntelWifi::FirmwareCheck::rescan;
+    else if (arguments.has("iwlwifi.passive-scan"))
+        wifi_check = IntelWifi::FirmwareCheck::passive_scan;
+    else if (arguments.has("iwlwifi.regulatory-check"))
+        wifi_check = IntelWifi::FirmwareCheck::regulatory;
+    else if (arguments.has("iwlwifi.scan-config-check"))
+        wifi_check = IntelWifi::FirmwareCheck::scan_config;
+    else if (arguments.has("iwlwifi.nvm-check"))
+        wifi_check = IntelWifi::FirmwareCheck::nvm;
+    else if (arguments.has("iwlwifi.start-check"))
+        wifi_check = IntelWifi::FirmwareCheck::start;
+    if (arguments.has("iwlwifi.disable"))
+        log("iwlwifi: disabled by boot option\n");
+    else if (wifi_check_error)
+        log(wifi_check_error);
+    else if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
+             arguments.has("iwlwifi.firmware-check"))
+        IntelWifi::check_firmware(probe_wifi, wifi_check, auth_target, &wifi_firmware);
+    else if (wifi_firmware.bytes)
+        IntelWifi::check_firmware(false, IntelWifi::FirmwareCheck::live_scan, {}, &wifi_firmware);
+    else
+        IntelWifi::start_if_available();
+    release(wifi_firmware.bytes);
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

@@ -2282,3 +2282,249 @@ Run `make test-inotify-queue`, `sudo -n make test-inotify-native`, and
 BIOS and UEFI, and both virtio block transports. Each profile exercises RAM
 and ext2 with root and ordinary users, reopens its boot image before execution,
 and checks the final ext2 image with e2fsck.
+
+## Intel AX201 firmware staging
+
+The installed desktop includes the Intel AX201 firmware and its license.
+On the supported QuZ/HR adapter, a normal boot loads the firmware from
+`/lib/firmware` after mounting the system root. Use `iwlwifi.disable` on
+the boot command line to skip AX201 startup. The diagnostic options below
+are available for testing individual steps.
+
+`make test-intel-wifi-firmware` checks the firmware parser, boot context, and
+queue descriptors with address and undefined-behavior sanitizers. It runs the
+synthetic cases and checks the bundled API 77 firmware.
+
+In a test initramfs, put the firmware in `/lib/firmware`. Boot with
+`iwlwifi.firmware-check` to validate the image, compare staged sections with
+the firmware file, and prepare the receive and host-command queues.
+Use `iwlwifi.probe` to require the AX201 PCI function and confirm the QuZ MAC
+and HR radio revisions. Add `fbconsole` to see the result on the boot display.
+The serial log includes the section counts and PCI probe details. The Blade has
+passed adapter identification and firmware staging over PXE.
+
+`iwlwifi.start-check` adds a bounded hardware startup trial. It checks that
+the firmware advertises ALIVE version 6, starts the MAC, and waits for the
+firmware's ALIVE message. The trial stops and resets the adapter afterwards.
+If DMA shutdown cannot be verified, the kernel keeps its buffers reserved until
+reboot. The Blade has returned ALIVE and passed shutdown over PXE.
+
+`iwlwifi.nvm-check` continues after ALIVE. It sends the initialization and
+NVM access commands, waits for the initialization notification, and reads the
+device's NVM information before stopping the adapter. The register model
+checks reply matching and rejects invalid NVM data. The Blade returned a valid
+NVM reply and stopped the adapter over PXE.
+
+`iwlwifi.scan-config-check` also asks the firmware to configure scanning.
+It requires scan configuration version 5 and intersects the antenna masks
+from the firmware and NVM. It checks the command reply, then stops the adapter.
+Network discovery, a wireless interface, and association require further work.
+
+`iwlwifi.regulatory-check` reads the adapter's current country and channel
+permissions before configuring scanning. It stops if the profile is missing,
+invalid, or has no permitted channels.
+
+`iwlwifi.passive-scan` runs one passive scan across the 2.4 and 5 GHz channels
+allowed by both the firmware's current regulatory profile and the adapter's
+band support. The screen reports completion and a bounded count of access
+points from valid beacons and probe responses. The adapter resets afterwards.
+The serial log lists each recorded BSSID, SSID, frequency, and signal. A
+signal of `-128` means the driver had no on-channel measurement. The log
+escapes non-printing bytes in network names.
+After a successful scan and adapter shutdown, the kernel keeps the completed
+snapshot and the original beacon and probe-response information elements.
+The snapshot retains up to 32 access points for the current boot.
+Use `iwlwifi.rescan-check` to request two passive scans in one firmware
+session before resetting the adapter. The display reports when both finish.
+The driver assigns each scan a separate identifier. A late completion from
+the first scan cannot finish the second one. The second scan replaces the
+first snapshot. This mode returns each fully read buffer to the receive
+ring and posts descriptors in groups of eight. The firmware test wraps
+the ring and rejects completions beyond the posted tail or for buffers
+the driver still owns.
+
+After the radio stops, the kernel exposes the snapshot through Linux's
+`nl80211` interface. The diagnostic publishes `wlan0` and supports reading
+its radio, interface, and scan results. Radio queries list both supported
+bands and the channels currently permitted by firmware. Disabled channels
+are marked, and the diagnostic reports passive-only operation. `GET_SCAN`
+streams multipart results with the original beacon and probe-response
+data when available. The interface stays down and rejects requests to
+bring it up.
+Boot without the passive scan option for the normal device inventory.
+
+Run the userspace scan check from the PXE RAM image on the Blade. The output
+includes the number of access points read through `nl80211`. Association
+and NetworkManager connection controls remain open.
+
+Boot with `iwlwifi.live-scan` to keep the radio running and request scans
+after login. Bring `wlan0` up and run the userspace scan check with
+`--live` as an administrator. It subscribes to scan events, requests a
+scan across the permitted channels, and prints the number of access
+points after receiving the completion event. A second request while a
+scan is running returns `EBUSY`. If a scan aborts, readers can still
+query the last successful snapshot. A request can also select frequencies
+in MHz. It skips disabled channels and rejects empty lists, unknown or
+duplicate frequencies, and selections with no permitted channels.
+The colocated 6 GHz scan hint can accompany these requests. The AX201
+scans its supported 2.4 and 5 GHz channels as usual.
+
+Use `NL80211_CMD_ABORT_SCAN` to cancel an active scan. Wait for
+`NL80211_CMD_SCAN_ABORTED` in the scan group before requesting another scan.
+Taking `wlan0` down also cancels an active scan and leaves the network if
+connected. Bring the interface up again to scan once cleanup finishes.
+
+An authorized connection can scan while staying associated. Firmware returns
+to the serving channel between excursions. The driver continues handling
+data and transmit completions, and it keeps the connected access point in the
+result list if the scan did not hear it. Disconnect waits for the active scan
+to end before releasing the station.
+
+Use `--active` for a broadcast probe test. Live requests may include up to
+20 SSID entries. A zero-length entry
+requests broadcast discovery, and a named entry requests a directed
+probe. Channels that firmware permits for active scanning run first.
+Channels that require passive operation, including radar and indoor-only
+channels, run in a separate passive phase. Readers receive one completion
+event and one combined result after both phases finish.
+
+Use `iwlwifi.channel-check` to test the operating channel needed before
+authentication. The check selects one permitted 20 MHz channel in each
+available band, configures the PHY and receive chains, and binds the
+unassociated station MAC to the PHY. It checks the firmware's binding
+status, removes each binding and PHY in order, and stops DMA. The serial
+log gives the number of completed channel checks. This check sends no
+authentication frames.
+
+Use `iwlwifi.key-check` to test the AX201's CCMP-128 firmware commands.
+The check creates a temporary local peer, installs and removes pairwise
+and group test keys, then resets the adapter. It sends no Wi-Fi frames
+and can run without an access point. A passing report confirms that the
+firmware acknowledged the commands. Protected traffic needs its own test.
+
+Use `iwlwifi.peer-queue-check` for the next check. It listens for access
+points and selects an infrastructure network on a channel where firmware
+permits active operation. The check binds the operating channel, adds the
+unassociated peer to the firmware, and allocates a management transmit
+queue. It reports the queue ID and initial write pointer in the serial
+log. It removes the queue and peer before tearing down the binding and
+stopping DMA. The check posts no transmit frames.
+
+Use `iwlwifi.auth-check=xx:xx:xx:xx:xx:xx` with the BSSID of an access
+point you can use for testing. The check listens for that BSSID, selects
+a legacy rate advertised by the access point, and sends one open-system
+authentication request. It checks both the firmware transmit completion
+and the access point's reply before stopping the adapter.
+
+Use `iwlwifi.assoc-check=xx:xx:xx:xx:xx:xx` with a named, open test
+access point on a permitted active channel. The check authenticates,
+requests association with the advertised SSID and compatible legacy
+rates, and checks the assigned association ID. It waits for a fresh beacon
+from that access point and uses the beacon's delivery timing to put the
+firmware into the associated state. It then sends a deauthentication
+frame, clears the association, and stops the adapter.
+
+For a data-path check, use
+`iwlwifi.data-check=BSSID,source-ipv4,peer-ipv4` with an open test access
+point. Reserve the source address for the Blade and select a peer on the
+same IPv4 subnet. After association, the driver sends one ARP request
+through the access point and checks that the reply came from the selected
+peer. Success requires both the transmit completion and the matching ARP
+reply. The check stops the adapter afterward.
+
+To keep an association open for IP tests, boot with
+`iwlwifi.open-link=BSSID` and select an open lab access point. After
+`Intel AX201: open station ready` appears, bring up `wlan0` and run the
+usual IP client, such as `udhcpc -i wlan0` on a network with DHCP. Watch
+link state with `ip link show wlan0`. The driver lowers carrier when the
+access point disconnects or its beacons stop. It clears the association and
+keeps the radio available for scans. A transmit completion timeout stops the
+radio. Use live-scan mode for connections managed by userspace.
+
+With `iwlwifi.live-scan`, bring `wlan0` up and complete a scan before
+sending an `nl80211` connect request for an open network. The request
+selects an SSID from the scan results and can specify a BSSID and
+frequency. The acknowledgment means the driver accepted the request.
+The result arrives separately in the `mlme` multicast group after the
+firmware exchange. Carrier comes up after a successful result. If the
+access point refuses the join or fails to respond, the driver clears the
+attempt after firmware returns the transmit buffer. The radio can then
+scan and try again. A missing firmware completion stops the radio so it
+can release its DMA buffers safely.
+
+The open-network path accepts association requests from wpa_supplicant.
+It can prefer a BSSID or frequency and include operating classes or
+extended capabilities in the request. When userspace asks to control the
+port, the driver passes only EAPOL frames until the supplicant authorizes
+the associated peer. Closing the socket that owns a connection ends it.
+The connection event includes the association request and response elements when
+available. If the access point refuses authentication or association, the
+event reports its status code. If no response arrives, the event reports
+a timeout.
+
+The host tests cover the AX201's CCMP transmit command and receive path. They
+check that receive delivery rejects frames with a bad integrity check, a replayed
+packet number, or no matching key, and allows EAPOL during authentication.
+The key tests send pairwise and group key requests in both nl80211 attribute
+formats. The firmware model checks that a key becomes active after its
+acknowledgement, that a repeated install preserves replay counters, and that a
+timeout closes the link.
+
+The live driver supports WPA2 with CCMP-128 for both pairwise and group
+traffic. It accepts Enterprise and Personal profiles. When the supplicant
+offers several authentication suites, the driver checks the suite selected in
+the association request against the list. The station keeps the
+controlled port closed until userspace installs a pairwise key and authorizes
+the connection. The firmware model checks the outgoing association frame. In
+a guest with NetworkManager and wpa_supplicant installed, a simulated
+WPA2-Personal access point verified the integrity codes on messages two and
+four. The test also verified both CCMP key installs and port authorization.
+
+With a simulated WPA2-Enterprise access point, the installed supplicant
+authenticated using PEAP and MSCHAPv2. The profile included the test CA and
+server name. The guest then completed the four-way handshake, installed both
+CCMP keys and authorized the connection. On that simulated link, NetworkManager
+acquired an IPv4 lease and installed its route and DNS server. Curl resolved
+the test hostname through that server and downloaded a file whose SHA-256
+matched the original.
+
+The Blade still needs WPA2 authentication and encrypted traffic tests on a real
+access point. Networks that require protected management frames need additional
+driver support.
+
+While connected, `NL80211_CMD_GET_STATION` reports the access point's BSSID,
+the latest valid beacon signal in dBm, the transmit rate in 100 kbps units,
+and whether the controlled port is authorized. A station dump returns one
+entry while connected and an empty list after disconnect.
+
+The AX201 keeps recent access points across completed scans, including scans
+that cover different channels. Scan replies report each entry's age. Entries
+expire after 30 seconds, apart from the current association. The bounded
+cache gives the latest scan priority when it fills.
+Use `NL80211_SCAN_FLAG_FLUSH` when a successful scan should replace the
+earlier results. The driver keeps the current association and retains its
+cache if the scan aborts.
+
+Send `NL80211_CMD_DISCONNECT` to end a connection or cancel a pending
+association. Wait for the result on the `mlme` group before scanning or
+connecting again. An established connection ends with a disconnect event.
+A cancelled attempt ends with a connect timeout. The driver waits for the
+outstanding firmware command or transmit to finish, then removes the
+resources from that attempt. After cleanup, the radio can scan and connect
+again. If firmware fails to confirm cleanup, the driver stops the radio
+to protect the DMA buffers. If the driver can stop DMA and restore the PCI
+command register, it tries one restart using the firmware saved at startup.
+The restarted radio keeps its interface name. A completed scan or association
+allows another recovery after a later failure. If DMA or PCI restoration
+cannot be confirmed, the old buffers stay reserved until reboot.
+
+If Wi-Fi disappears, run `cat /proc/axiom64_ax201` on the affected boot.
+This read-only report shows whether the radio is live, its last association
+result and access point status code, the firmware's queue response, and which
+step stopped firmware recovery.
+The report is available from a local terminal when the wired link is down.
+
+A PXE archive can supply the firmware to an installed root. Include the
+firmware at its usual path in the archive and pass `iwlwifi.boot-firmware`.
+After the radio starts, the driver keeps that image for recovery. The status
+report shows whether the image is ready.

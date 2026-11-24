@@ -15,7 +15,8 @@ struct NetlinkHeader;
 inline constexpr uint16_t nl80211_family = 17;
 inline constexpr uint8_t nl80211_get_wiphy = 1, nl80211_get_interface = 5, nl80211_get_scan = 32;
 inline constexpr uint8_t nl80211_trigger_scan = 33;
-inline constexpr unsigned nl80211_scan_group = 17;
+inline constexpr uint8_t nl80211_connect = 46, nl80211_disconnect = 48;
+inline constexpr unsigned nl80211_scan_group = 17, nl80211_mlme_group = 18;
 
 struct WirelessDump {
     uint32_t sequence = 0;
@@ -26,6 +27,7 @@ struct WirelessDump {
 
 bool wireless_scan_available();
 bool wireless_trigger_available();
+bool wireless_connect_available();
 size_t wireless_reply_capacity(const NetlinkHeader&, const uint8_t* request);
 size_t wireless_reply(const void*, const NetlinkHeader&, uint32_t port, bool capped,
                       bool privileged, void*, void* followup, size_t& followup_length,
@@ -33,5 +35,8 @@ size_t wireless_reply(const void*, const NetlinkHeader&, uint32_t port, bool cap
 size_t wireless_dump_record(const WirelessDump&, uint32_t port, void* output);
 void wireless_dump_advance(WirelessDump&);
 void wireless_scan_finished(unsigned ifindex, bool complete);
-void netlink_broadcast_scan(const void*, size_t);
+void wireless_connection_finished(unsigned ifindex, const uint8_t (&bssid)[6], bool success,
+                                  bool timeout);
+void wireless_disconnected(unsigned ifindex);
+void netlink_broadcast_wireless(unsigned group, const void*, size_t);
 } // namespace ax

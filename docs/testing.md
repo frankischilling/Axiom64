@@ -2418,3 +2418,11 @@ link state with `ip link show wlan0`. The driver lowers carrier when the
 access point disconnects, beacons stop, or a transmit completion times
 out. The radio stops on link loss. Reconnection, encrypted networks, and
 connection setup through NetworkManager still need driver support.
+
+With `iwlwifi.live-scan`, bring `wlan0` up and complete a scan before
+sending an `nl80211` connect request for an open network. The request
+selects an SSID from the scan results and can specify a BSSID and
+frequency. The acknowledgment means the driver accepted the request.
+The result arrives separately in the `mlme` multicast group after the
+firmware exchange. Carrier comes up after a successful result. A failed
+exchange stops the radio so the firmware can release its DMA buffers.

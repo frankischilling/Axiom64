@@ -7,7 +7,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_scan.hpp"
+#include "drivers/net/intel_wifi_live.hpp"
 #include "net/netlink.hpp"
 #include "net/netlink_wireless.hpp"
 
@@ -22,12 +22,18 @@ enum Attribute : uint16_t {
     mac = 6,
     wiphy_bands = 22,
     supported_iftypes = 32,
+    frequency_mhz = 38,
     max_num_scan_ssids = 43,
     scan_frequencies = 44,
     scan_ssids = 45,
     generation = 46,
     bss = 47,
     supported_commands = 50,
+    ssid = 52,
+    auth_type = 53,
+    reason_code = 54,
+    timed_out = 65,
+    status_code = 72,
     wdev = 153,
     scan_flags = 158,
 };
@@ -39,6 +45,7 @@ enum BssAttribute : uint16_t {
     capability = 5,
     information_elements = 6,
     signal_mbm = 7,
+    bss_status = 9,
     beacon_elements = 11,
     probe_response_data = 14,
 };
@@ -114,6 +121,78 @@ class Message {
         return used;
     }
 };
+
+int select_connection(const uint8_t* bytes, size_t length, unsigned index,
+                      IntelWifi::StationRequest& connection) {
+    uint64_t seen = 0;
+    while (length) {
+        if (length < sizeof(AttributeHeader))
+            return -22;
+        AttributeHeader field;
+        memcpy(&field, bytes, sizeof(field));
+        const size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
+        if (field.length < sizeof(field) || aligned > length || (field.type & 0xc000))
+            return -22;
+        const auto* value = bytes + sizeof(field);
+        const size_t size = field.length - sizeof(field);
+        unsigned slot;
+        switch (field.type) {
+        case ifindex:
+        case frequency_mhz:
+        case auth_type: {
+            uint32_t number;
+            if (size != sizeof(number))
+                return -22;
+            memcpy(&number, value, sizeof(number));
+            if (field.type == ifindex && number != index)
+                return -19;
+            if (field.type == auth_type && number != 0)
+                return -95;
+            if (field.type == frequency_mhz) {
+                if (!number)
+                    return -22;
+                connection.frequency_mhz = number;
+            }
+            slot = field.type;
+            break;
+        }
+        case wdev: {
+            uint64_t id;
+            if (size != sizeof(id))
+                return -22;
+            memcpy(&id, value, sizeof(id));
+            if (id != device_id)
+                return -19;
+            slot = 0;
+            break;
+        }
+        case mac:
+            if (size != sizeof(connection.bssid) || (value[0] & 1))
+                return -22;
+            if (!(value[0] | value[1] | value[2] | value[3] | value[4] | value[5]))
+                return -22;
+            memcpy(connection.bssid, value, size);
+            slot = mac;
+            break;
+        case ssid:
+            if (!size || size > sizeof(connection.ssid.bytes))
+                return -22;
+            memcpy(connection.ssid.bytes, value, size);
+            connection.ssid.length = uint8_t(size);
+            slot = ssid;
+            break;
+        default:
+            return -95;
+        }
+        const auto bit = uint64_t(1) << slot;
+        if (seen & bit)
+            return -22;
+        seen |= bit;
+        bytes += aligned;
+        length -= aligned;
+    }
+    return (seen & ((uint64_t(1) << ifindex) | 1)) && connection.ssid.length ? 0 : -22;
+}
 
 int select_frequencies(const uint8_t* bytes, size_t length, uint64_t& channels) {
     constexpr size_t entry_bytes = sizeof(AttributeHeader) + sizeof(uint32_t);
@@ -313,6 +392,10 @@ bool wireless_trigger_available() {
     return IntelWifi::live_scan_available();
 }
 
+bool wireless_connect_available() {
+    return IntelWifi::live_connect_available();
+}
+
 size_t wireless_reply_capacity(const NetlinkHeader& header, const uint8_t* request) {
     return header.type == nl80211_family && header.length >= sizeof(header) + 4 &&
                    request[sizeof(header)] == nl80211_get_wiphy
@@ -333,6 +416,19 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
     const uint8_t command = bytes[sizeof(request)];
     const bool dump = (request.flags & dump_flags) == dump_flags;
     const bool trigger = command == nl80211_trigger_scan;
+    if (command == nl80211_connect) {
+        if (dump || !wireless_connect_available())
+            return netlink_ack(data, request, port, -95, capped, reply);
+        if (!privileged)
+            return netlink_ack(data, request, port, -1, capped, reply);
+        IntelWifi::StationRequest connection;
+        int error =
+            select_connection(bytes + header, request.length - header, info->index, connection);
+        if (!error)
+            error = IntelWifi::request_live_connection(connection);
+        return error || (request.flags & 4) ? netlink_ack(data, request, port, error, capped, reply)
+                                            : 0;
+    }
     if ((command != nl80211_get_wiphy && command != nl80211_get_interface &&
          command != nl80211_get_scan && !trigger) ||
         (command == nl80211_get_scan && !dump) || (trigger && dump))
@@ -375,9 +471,13 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         radio_band(message, list, 0, live);
         radio_band(message, list, 1, live);
         message.end_nested(bands);
-        if (live) {
+        if (live || wireless_connect_available()) {
             const size_t commands = message.begin_nested(supported_commands);
-            message.value(1, uint32_t(nl80211_trigger_scan));
+            unsigned entry = 1;
+            if (live)
+                message.value(entry++, uint32_t(nl80211_trigger_scan));
+            if (wireless_connect_available())
+                message.value(entry, uint32_t(nl80211_connect));
             message.end_nested(commands);
         }
         return message.finish(new_wiphy, request.sequence, port, dump);
@@ -407,6 +507,8 @@ size_t wireless_dump_record(const WirelessDump& cursor, uint32_t port, void* out
     message.value(frequency, uint32_t(point.frequency_mhz));
     message.value(beacon_interval, point.beacon_interval_tu);
     message.value(capability, point.capability);
+    if (IntelWifi::live_bss_associated(point))
+        message.value(bss_status, uint32_t(1)); // NL80211_BSS_STATUS_ASSOCIATED.
     if (point.signal_dbm != IntelWifi::scan_signal_unavailable)
         message.value(signal_mbm, int32_t(point.signal_dbm) * 100);
     if (point.probe_ie_bytes) {
@@ -435,6 +537,30 @@ void wireless_scan_finished(unsigned index, bool complete) {
     event.value(ifindex, uint32_t(index));
     event.value(wdev, device_id);
     const size_t size = event.finish(complete ? new_scan_results : scan_aborted, 0, 0, false);
-    netlink_broadcast_scan(bytes, size);
+    netlink_broadcast_wireless(nl80211_scan_group, bytes, size);
+}
+
+void wireless_connection_finished(unsigned index, const uint8_t (&bssid)[6], bool success,
+                                  bool timeout) {
+    uint8_t bytes[80];
+    Message event(bytes);
+    event.value(wiphy, uint32_t(0));
+    event.value(ifindex, uint32_t(index));
+    event.value(mac, bssid);
+    event.value(status_code, uint16_t(success ? 0 : 1));
+    if (timeout)
+        event.attr(timed_out, nullptr, 0);
+    const size_t size = event.finish(nl80211_connect, 0, 0, false);
+    netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
+}
+
+void wireless_disconnected(unsigned index) {
+    uint8_t bytes[64];
+    Message event(bytes);
+    event.value(wiphy, uint32_t(0));
+    event.value(ifindex, uint32_t(index));
+    event.value(reason_code, uint16_t(1)); // Unspecified link loss.
+    const size_t size = event.finish(nl80211_disconnect, 0, 0, false);
+    netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
 }
 } // namespace ax

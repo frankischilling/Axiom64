@@ -470,14 +470,90 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
     puts("WIRELESS_LIVE_SCAN_PASS");
 }
 
+static void connect_request(int fd, const struct packet* request, int error) {
+    alignas(struct nlmsghdr) uint8_t bytes[1024];
+    send_packet(fd, request);
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    require(message->nlmsg_seq == request->header.nlmsg_seq, "connect acknowledgment sequence");
+    check_error(message, error);
+}
+
+static void check_connection(int fd, unsigned family, unsigned index) {
+    const char name[] = "nl80211";
+    alignas(struct nlmsghdr) uint8_t bytes[8192];
+    send_request(fd, GENL_ID_CTRL, CTRL_CMD_GETFAMILY, 0, 15, CTRL_ATTR_FAMILY_NAME, name,
+                 sizeof(name));
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    const struct nlattr* groups = message_attribute(message, CTRL_ATTR_MCAST_GROUPS);
+    const struct nlattr* entry = nested(groups, 2);
+    require(!memcmp(payload(nested(entry, CTRL_ATTR_MCAST_GRP_NAME), 5), "mlme", 5),
+            "MLME multicast group name");
+    const uint32_t group = read_u32(nested(entry, CTRL_ATTR_MCAST_GRP_ID));
+    require(setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
+            "subscribe to connection events");
+
+    send_request(fd, family, NL80211_CMD_GET_WIPHY, 0, 16, NL80211_ATTR_IFINDEX, &index,
+                 sizeof(index));
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlattr* commands = message_attribute(message, NL80211_ATTR_SUPPORTED_COMMANDS);
+    require(read_u32(nested(commands, 2)) == NL80211_CMD_CONNECT, "radio advertises connect");
+
+    struct packet request = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 17);
+    const uint8_t peer[] = {2, 0, 0, 0, 0, 1};
+    const uint32_t frequency = 2412;
+    append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    connect_request(fd, &request, EINVAL);
+    append_attribute(&request, NL80211_ATTR_SSID, "lab", 3);
+    append_attribute(&request, NL80211_ATTR_MAC, peer, sizeof(peer));
+    append_attribute(&request, NL80211_ATTR_WIPHY_FREQ, &frequency, sizeof(frequency));
+    request.header.nlmsg_seq++;
+    connect_request(fd, &request, ENETDOWN);
+    bring_up_interface();
+    struct packet privacy = request;
+    privacy.header.nlmsg_seq++;
+    append_attribute(&privacy, NL80211_ATTR_PRIVACY, NULL, 0);
+    connect_request(fd, &privacy, EOPNOTSUPP);
+    struct packet duplicate = request;
+    duplicate.header.nlmsg_seq += 2;
+    append_attribute(&duplicate, NL80211_ATTR_SSID, "lab", 3);
+    connect_request(fd, &duplicate, EINVAL);
+
+    request.header.nlmsg_seq += 3;
+    connect_request(fd, &request, 0);
+    request.header.nlmsg_seq++;
+    connect_request(fd, &request, EBUSY);
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct genlmsghdr* event = NLMSG_DATA(message);
+    require(message->nlmsg_type == family && !message->nlmsg_seq && !message->nlmsg_pid &&
+                event->cmd == NL80211_CMD_CONNECT,
+            "asynchronous kernel connect result");
+    require(read_u32(message_attribute(message, NL80211_ATTR_IFINDEX)) == index &&
+                !memcmp(payload(message_attribute(message, NL80211_ATTR_MAC), 6), peer, 6),
+            "connect result identifies interface and peer");
+    uint16_t status;
+    memcpy(&status, payload(message_attribute(message, NL80211_ATTR_STATUS_CODE), sizeof(status)),
+           sizeof(status));
+    require(!status, "connection succeeded");
+    request.header.nlmsg_seq++;
+    connect_request(fd, &request, EISCONN);
+    require(setgid(1000) == 0 && setuid(1000) == 0, "drop connection privileges");
+    request.header.nlmsg_seq++;
+    connect_request(fd, &request, EPERM);
+    puts("WIRELESS_LIVE_CONNECT_PASS");
+}
+
 int main(int argc, char** argv) {
     int absent = argc == 2 && !strcmp(argv[1], "--absent");
     int observed = argc == 2 && !strcmp(argv[1], "--observed");
     int active = argc == 2 && !strcmp(argv[1], "--active");
     int live = active || (argc == 2 && !strcmp(argv[1], "--live"));
     int live_fixture = argc == 2 && !strcmp(argv[1], "--live-fixture");
-    require(argc == 1 || absent || observed || live || live_fixture, "wireless test mode");
-    if (!getuid() && !live && !live_fixture)
+    int connect_fixture = argc == 2 && !strcmp(argv[1], "--connect-fixture");
+    require(argc == 1 || absent || observed || live || live_fixture || connect_fixture,
+            "wireless test mode");
+    if (!getuid() && !live && !live_fixture && !connect_fixture)
         require(setgid(1000) == 0 && setuid(1000) == 0, "drop root credentials");
     int fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
     require(fd >= 0, "open generic netlink");
@@ -489,9 +565,11 @@ int main(int argc, char** argv) {
         const unsigned index = if_nametoindex("wlan0");
         require(index, "wireless interface detected");
         check_family_dump(fd, family);
-        check_interface(fd, family, index, live || live_fixture,
-                        live_fixture || (!observed && !live));
-        if (live || live_fixture)
+        check_interface(fd, family, index, live || live_fixture || connect_fixture,
+                        live_fixture || connect_fixture || (!observed && !live));
+        if (connect_fixture)
+            check_connection(fd, family, index);
+        else if (live || live_fixture)
             check_live(fd, family, index, group, live_fixture, active);
         else
             check_stream(fd, family, index, !observed);

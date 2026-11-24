@@ -522,6 +522,7 @@ struct RuntimeRadio {
     uint16_t original_pci = 0;
     ScanElementStorage* pending = nullptr;
     bool polling = false;
+    bool connectable = false;
 
     ~RuntimeRadio() {
         release(pending);
@@ -559,6 +560,21 @@ int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
 void poll_runtime(NetAdapter& device) {
     if (!radio || radio->polling)
         return;
+    if (radio->session.join.phase != JoinPhase::idle) {
+        const auto result = poll_live_join(radio->session, clock_monotonic_ns() / 1000000);
+        if (result == JoinOutcome::pending)
+            return;
+        const bool connected = result == JoinOutcome::connected;
+        if (connected) {
+            device.info.carrier = device.info.writable = true;
+            ++completed_generation;
+        }
+        wireless_connection_finished(device.info.index, radio->session.join.peer.bssid, connected,
+                                     result == JoinOutcome::timeout);
+        if (!connected)
+            stop_runtime(device);
+        return;
+    }
     if (radio->session.station.queue.id) {
         radio->polling = true;
         const bool connected = poll_live_station(
@@ -575,6 +591,8 @@ void poll_runtime(NetAdapter& device) {
         if (!connected) {
             log("iwlwifi: open station link lost\n");
             stop_runtime(device);
+            ++completed_generation;
+            wireless_disconnected(device.info.index);
         }
         return;
     }
@@ -610,9 +628,11 @@ void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
         return;
     }
     auto* device = new (storage) RuntimeRadio;
-    bool prepared = prepare_image(image, device->staged, device->queues) &&
-                    prepare_command_queues(device->queues, check);
     const bool open = check == FirmwareCheck::open_link;
+    device->connectable = !open && image.authentication_supported;
+    const auto queue_check = device->connectable ? FirmwareCheck::open_link : check;
+    bool prepared = prepare_image(image, device->staged, device->queues) &&
+                    prepare_command_queues(device->queues, queue_check);
     if (prepared && open) {
         device->pending = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
         if (!device->pending)
@@ -620,7 +640,7 @@ void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
         prepared = device->pending != nullptr;
     }
     if (prepared && enable_registers(device->boot, device->original_pci)) {
-        device->memory = boot_memory(device->queues, check);
+        device->memory = boot_memory(device->queues, queue_check);
         const auto result =
             start_live_quz(device->session, image.antennas, open ? &target : nullptr,
                            device->pending, image.dual_lmac);
@@ -722,7 +742,28 @@ uint32_t passive_scan_generation() {
 }
 
 bool live_scan_available() {
-    return radio && !radio->session.station.queue.id;
+    return radio && !radio->session.station.queue.id &&
+           radio->session.join.phase == JoinPhase::idle;
+}
+
+bool live_connect_available() {
+    return radio && radio->connectable;
+}
+
+int request_live_connection(const StationRequest& request) {
+    if (!live_connect_available())
+        return -95;
+    if (!scanned_adapter.info.administrative)
+        return -100;
+    return submit_live_join(radio->session, completed_scan, request);
+}
+
+bool live_bss_associated(const AccessPoint& point) {
+    if (!radio || !radio->session.station.queue.id)
+        return false;
+    const auto& peer = radio->session.station.peer;
+    return point.frequency_mhz == peer.frequency_mhz &&
+           !memcmp(point.bssid, peer.bssid, sizeof(peer.bssid));
 }
 
 int trigger_live_scan(const ScanRequest& request) {

@@ -905,11 +905,17 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                     uint8_t address[6];
                     error = configure_scan_station(commands, address);
                     const auto channels = scan_channel_list(info, regulatory);
-                    if (!error && live && !open) {
+                    if (!error && live) {
                         live->channels = channels;
                         memcpy(live->station_address, address, sizeof(address));
-                        live->running = true;
-                        return {"live passive scan ready", alive, false, true, info, regulatory};
+                        live->antennas = {uint8_t(info.tx_chains & scan->antennas.tx),
+                                          uint8_t(info.rx_chains & scan->antennas.rx)};
+                        live->dual_lmac = scan->dual_lmac;
+                        if (!open) {
+                            live->running = true;
+                            return {
+                                "live passive scan ready", alive, false, true, info, regulatory};
+                        }
                     }
                     if (!error && channel_check) {
                         error = check_channel_contexts(commands, channels,
@@ -930,8 +936,6 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                                                      peer_queue, association_id,
                                                      open ? &live->station : nullptr);
                         if (!error && open) {
-                            live->channels = channels;
-                            memcpy(live->station_address, address, sizeof(address));
                             live->running = true;
                             return {"open station ready",
                                     alive,
@@ -1005,6 +1009,7 @@ FirmwareBootResult start_live_quz(LiveScanSession& session, const AntennaMasks& 
     const ScanChecks check{antennas, open ? FirmwareCheck::open_link : FirmwareCheck::live_scan,
                            elements, dual_lmac, open ? *open : AuthenticationTarget{}};
     session.station = {};
+    session.join = {};
     return boot_quz(session.io, session.receive.memory, &check, &session);
 }
 
@@ -1013,6 +1018,7 @@ bool stop_live_quz(LiveScanSession& session) {
         return true;
     session.running = false;
     session.active = false;
+    session.join.phase = JoinPhase::idle;
     session.passive_channels = 0;
     return stop_adapter(Registers{session.io}, true);
 }
@@ -1035,7 +1041,7 @@ int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uin
                      const ScanRequest& request) {
     if (!session.running)
         return -95;
-    if (session.active || session.station.queue.id)
+    if (session.active || session.station.queue.id || session.join.phase != JoinPhase::idle)
         return -16;
 
     uint64_t allowed = 0, active = 0;
@@ -1082,6 +1088,253 @@ ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
         return ScanOutcome::pending;
     }
     return outcome;
+}
+
+int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
+                     const StationRequest& request) {
+    if (!session.running || !valid_peer_queue_memory(session.receive.memory.peer_queue) ||
+        !valid_peer_queue_memory(session.receive.memory.data_queue) ||
+        !valid_authentication_dma(session.receive.memory.authentication) ||
+        !valid_authentication_dma(session.receive.memory.data_transmit))
+        return -95;
+    if (session.station.queue.id)
+        return -106;
+    if (session.active || session.join.phase != JoinPhase::idle)
+        return -16;
+    if (!request.ssid.length || request.ssid.length > sizeof(request.ssid.bytes))
+        return -22;
+    if (!scan.elements || scan.status != PassiveScan::Status::complete)
+        return -2;
+
+    bool specified_bssid = false;
+    for (const auto byte : request.bssid)
+        specified_bssid |= byte != 0;
+    StationJoin candidate;
+    for (unsigned i = 0; i < scan.access_point_count; ++i) {
+        const auto& peer = scan.access_points[i];
+        if (peer.ssid_length != request.ssid.length ||
+            memcmp(peer.ssid, request.ssid.bytes, request.ssid.length) ||
+            (specified_bssid && memcmp(peer.bssid, request.bssid, sizeof(peer.bssid))) ||
+            (request.frequency_mhz && peer.frequency_mhz != request.frequency_mhz) ||
+            (candidate.rate && peer.signal_dbm <= candidate.peer.signal_dbm))
+            continue;
+        for (unsigned j = 0; j < session.channels.count; ++j) {
+            const auto& channel = session.channels.entries[j];
+            if (!channel.allowed || !channel.active || channel.frequency_mhz != peer.frequency_mhz)
+                continue;
+            const bool high = channel.frequency_mhz >= 5000;
+            const auto& elements = scan.elements->records[i];
+            AssociationRequest association;
+            if (!prepare_association_request(peer, elements.beacon, peer.beacon_ie_bytes, high,
+                                             association))
+                break;
+            const auto rate = authentication_rate(elements.beacon, peer.beacon_ie_bytes, high,
+                                                  session.antennas.tx);
+            if (!rate)
+                break;
+            candidate.peer = peer;
+            candidate.channel = channel;
+            candidate.association = association;
+            candidate.rate = rate;
+            break;
+        }
+    }
+    if (!candidate.rate)
+        return -2;
+    candidate.phase = JoinPhase::phy;
+    session.join = candidate;
+    return 0;
+}
+
+namespace {
+bool join_submit(CommandSession& commands, StationJoin& join, uint8_t group, uint8_t opcode,
+                 const uint8_t* bytes, size_t length) {
+    join.command_sequence = commands.index;
+    join.group = group;
+    join.opcode = opcode;
+    return commands.submit(group, opcode, bytes, length);
+}
+
+bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64_t now_ms) {
+    auto& join = session.join;
+    join.submitted = true;
+    join.acknowledged = join.indicated = false;
+    join.deadline = now_ms + 1000;
+    switch (join.phase) {
+    case JoinPhase::phy:
+    case JoinPhase::chains:
+    case JoinPhase::fifo:
+    case JoinPhase::bind: {
+        constexpr ChannelStep steps[]{ChannelStep::add_phy, ChannelStep::rx_chains,
+                                      ChannelStep::initialize_fifo, ChannelStep::bind};
+        const auto step = steps[unsigned(join.phase) - unsigned(JoinPhase::phy)];
+        const auto cmd =
+            channel_command(step, join.channel, session.antennas.rx, session.dual_lmac);
+        return join_submit(commands, join, cmd.group, cmd.opcode, cmd.bytes, cmd.size);
+    }
+    case JoinPhase::select_mac:
+    case JoinPhase::associated_mac: {
+        uint8_t wire[mac_context_bytes];
+        if (join.phase == JoinPhase::select_mac)
+            prepare_authentication_mac(session.station_address, join.peer, wire);
+        else
+            prepare_associated_mac(session.station_address, join.peer, join.aid, join.timing, wire);
+        return join_submit(commands, join, 1, 0x28, wire, sizeof(wire));
+    }
+    case JoinPhase::add_peer: {
+        uint8_t wire[peer_station_bytes];
+        return prepare_peer_station(join.peer, 0, wire) &&
+               join_submit(commands, join, 1, 0x18, wire, sizeof(wire));
+    }
+    case JoinPhase::management_queue:
+    case JoinPhase::data_queue: {
+        const bool data = join.phase == JoinPhase::data_queue;
+        const auto& memory = commands.rx.memory;
+        uint8_t wire[scheduler_command_bytes];
+        return prepare_add_station_queue(data ? memory.data_queue : memory.peer_queue, 0, wire,
+                                         data ? non_qos_tid : management_tid) &&
+               join_submit(commands, join, 5, 0x17, wire, sizeof(wire));
+    }
+    case JoinPhase::protect:
+    case JoinPhase::release_protection: {
+        uint8_t wire[session_protection_bytes];
+        prepare_session_protection(join.phase == JoinPhase::protect, wire);
+        return join_submit(commands, join, 3, 5, wire, sizeof(wire));
+    }
+    case JoinPhase::authenticate:
+    case JoinPhase::associate: {
+        const auto kind = join.phase == JoinPhase::authenticate ? ManagementFrame::authenticate
+                                                                : ManagementFrame::associate;
+        if (!prepare_management_frame(commands.rx.memory.authentication, join.management, join.rate,
+                                      session.station_address, join.peer, kind, join.association,
+                                      join.sequence))
+            return false;
+        ++join.sequence;
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        commands.reg.write(command_write_pointer, uint8_t(join.management.write_pointer + 1) |
+                                                      (uint32_t(join.management.id) << 16));
+        return true;
+    }
+    case JoinPhase::beacon:
+        return true;
+    case JoinPhase::idle:
+        return false;
+    }
+    __builtin_unreachable();
+}
+} // namespace
+
+namespace {
+enum class JoinProgress { waiting, ready, rejected, failed };
+
+JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket& packet) {
+    auto& join = session.join;
+    if (join.phase == JoinPhase::beacon)
+        return observe_association_beacon(packet, join.peer, join.channel.number, join.timing)
+                   ? JoinProgress::ready
+                   : JoinProgress::waiting;
+    if (join.phase == JoinPhase::authenticate || join.phase == JoinPhase::associate) {
+        const auto tx = observe_authentication_tx(packet, join.management);
+        if (tx == AuthEvent::denied)
+            return JoinProgress::rejected;
+        if (tx == AuthEvent::malformed || observe_session_protection(packet) == AuthEvent::ended)
+            return JoinProgress::failed;
+        join.acknowledged |= tx == AuthEvent::accepted;
+        const auto response =
+            join.phase == JoinPhase::authenticate
+                ? observe_authentication_reply(packet, session.station_address, join.peer,
+                                               join.channel.number)
+                : observe_association_reply(packet, session.station_address, join.peer,
+                                            join.channel.number, join.aid);
+        if (response == AuthEvent::denied)
+            return JoinProgress::rejected;
+        if (response == AuthEvent::malformed)
+            return JoinProgress::failed;
+        join.indicated |= response == AuthEvent::accepted;
+        if (join.acknowledged && join.indicated) {
+            ++join.management.write_pointer;
+            return JoinProgress::ready;
+        }
+        return JoinProgress::waiting;
+    }
+    if (packet.sequence == join.command_sequence) {
+        if (packet.group == 0 && packet.opcode == 2)
+            return JoinProgress::rejected;
+        join.acknowledged |= packet.group == join.group && packet.opcode == join.opcode;
+    }
+    if (join.phase == JoinPhase::protect) {
+        const auto event = observe_session_protection(packet);
+        if (event != AuthEvent::accepted && event != AuthEvent::unrelated)
+            return JoinProgress::failed;
+        join.indicated |= event == AuthEvent::accepted;
+        return join.acknowledged && join.indicated ? JoinProgress::ready : JoinProgress::waiting;
+    }
+    if (!join.acknowledged)
+        return JoinProgress::waiting;
+    switch (join.phase) {
+    case JoinPhase::bind:
+        if (!binding_succeeded(packet))
+            return JoinProgress::rejected;
+        break;
+    case JoinPhase::add_peer:
+        if (!peer_station_added(packet))
+            return JoinProgress::rejected;
+        break;
+    case JoinPhase::management_queue:
+        if (!parse_station_queue(packet, join.management))
+            return JoinProgress::rejected;
+        break;
+    case JoinPhase::data_queue:
+        if (!parse_station_queue(packet, join.data) || join.data.id == join.management.id)
+            return JoinProgress::rejected;
+        break;
+    default:
+        break;
+    }
+    return JoinProgress::ready;
+}
+} // namespace
+
+JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
+    auto& join = session.join;
+    if (join.phase == JoinPhase::idle)
+        return JoinOutcome::idle;
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    if (!commands.acknowledge_pending() ||
+        (!join.submitted && !begin_join_phase(session, commands, now_ms)))
+        return JoinOutcome::failed;
+    for (unsigned i = 0; i < 64; ++i) {
+        FirmwarePacket packet{};
+        const auto result = session.receive.next(packet);
+        if (result == PacketRead::malformed)
+            return JoinOutcome::failed;
+        if (result == PacketRead::end)
+            break;
+        switch (observe_join_packet(session, packet)) {
+        case JoinProgress::waiting:
+            continue;
+        case JoinProgress::failed:
+            return JoinOutcome::failed;
+        case JoinProgress::rejected:
+            return JoinOutcome::rejected;
+        case JoinProgress::ready:
+            if (join.phase == JoinPhase::release_protection) {
+                session.station.peer = join.peer;
+                session.station.peer.beacon_interval_tu = join.timing.beacon_interval_tu;
+                session.station.queue = join.data;
+                session.station.channel = join.channel.number;
+                session.station.rate = join.rate;
+                session.station.next_sequence = join.sequence;
+                join.phase = JoinPhase::idle;
+                return JoinOutcome::connected;
+            }
+            join.phase = JoinPhase(unsigned(join.phase) + 1);
+            join.submitted = false;
+            return JoinOutcome::pending;
+        }
+    }
+    return now_ms < join.deadline ? JoinOutcome::pending : JoinOutcome::timeout;
 }
 
 int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t length,

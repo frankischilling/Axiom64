@@ -245,9 +245,9 @@ void netlink_broadcast_uevent(const void* data, size_t length) {
     broadcast_notification(uevent_protocol, nullptr, data, length, {16, 0, 0, kernel_uevent_group});
 }
 
-void netlink_broadcast_scan(const void* data, size_t length) {
-    constexpr uint32_t group = 1u << (nl80211_scan_group - 1);
-    broadcast_notification(generic_protocol, nullptr, data, length, {16, 0, 0, group});
+void netlink_broadcast_wireless(unsigned group, const void* data, size_t length) {
+    const uint32_t mask = 1u << (group - 1);
+    broadcast_notification(generic_protocol, nullptr, data, length, {16, 0, 0, mask});
 }
 
 void netlink_link_event(const NetInfo& info, uint32_t changed_flags) {

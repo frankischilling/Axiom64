@@ -129,6 +129,7 @@ size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t p
     tail += sizeof(header);
     const bool wireless = family == nl80211_family;
     const bool trigger = wireless && wireless_trigger_available();
+    const bool connect = wireless && wireless_connect_available();
     if (wireless)
         attribute(tail, family_name, wireless_name, sizeof(wireless_name));
     else
@@ -138,34 +139,46 @@ size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t p
     number(tail, 4, 0);                  // No family-specific header.
     number(tail, 5, wireless ? 174 : 0); // NL80211_ATTR_SPLIT_WIPHY_DUMP.
 
-    constexpr uint8_t commands[]{nl80211_get_wiphy, nl80211_get_interface, nl80211_get_scan,
-                                 nl80211_trigger_scan};
-    const unsigned count = wireless ? sizeof(commands) - !trigger : 1;
+    const uint8_t commands[]{nl80211_get_wiphy, nl80211_get_interface, nl80211_get_scan,
+                             uint8_t(trigger ? nl80211_trigger_scan : 0),
+                             uint8_t(connect ? nl80211_connect : 0)};
     uint8_t operations[20 * sizeof(commands)];
     auto entries = operations;
+    const unsigned count = wireless ? sizeof(commands) : 1;
+    unsigned entry = 1;
     for (unsigned i = 0; i < count; ++i) {
+        if (wireless && !commands[i])
+            continue;
         uint8_t operation[16];
         auto item = operation;
         number(item, 1, wireless ? commands[i] : get_family);
         const unsigned flags = !wireless || i < 2 ? 6 : commands[i] == nl80211_get_scan ? 4 : 3;
         number(item, 2, flags);
-        attribute(entries, uint16_t(i + 1), operation, sizeof(operation));
+        attribute(entries, uint16_t(entry++), operation, sizeof(operation));
     }
     attribute(tail, 6, operations, entries - operations);
 
-    if (!wireless || trigger) {
-        uint8_t group[20], indexed_group[24];
-        auto item = group;
+    if (!wireless || trigger || connect) {
+        uint8_t groups[48];
+        auto next = groups;
+        uint16_t index = 1;
+        const auto add_group = [&](const char* name, size_t length, unsigned id) {
+            uint8_t group[20];
+            auto item = group;
+            attribute(item, 1, name, length);
+            number(item, 2, id);
+            attribute(next, index++, group, item - group);
+        };
         constexpr char notify[] = "notify";
         constexpr char scan[] = "scan";
-        if (wireless)
-            attribute(item, 1, scan, sizeof(scan));
-        else
-            attribute(item, 1, notify, sizeof(notify));
-        number(item, 2, wireless ? nl80211_scan_group : control_family);
-        item = indexed_group;
-        attribute(item, 1, group, sizeof(group));
-        attribute(tail, 7, indexed_group, sizeof(indexed_group));
+        constexpr char mlme[] = "mlme";
+        if (!wireless)
+            add_group(notify, sizeof(notify), control_family);
+        if (trigger)
+            add_group(scan, sizeof(scan), nl80211_scan_group);
+        if (connect)
+            add_group(mlme, sizeof(mlme), nl80211_mlme_group);
+        attribute(tail, 7, groups, next - groups);
     }
 
     size_t length = tail - output;

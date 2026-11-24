@@ -137,4 +137,8 @@ unsigned passive_scan_interface();
 uint32_t passive_scan_generation();
 bool live_scan_available();
 int trigger_live_scan(const ScanRequest&);
+struct StationRequest;
+bool live_connect_available();
+int request_live_connection(const StationRequest&);
+bool live_bss_associated(const AccessPoint&);
 } // namespace ax::IntelWifi

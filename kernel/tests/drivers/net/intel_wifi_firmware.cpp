@@ -1594,6 +1594,53 @@ void check_open_station() {
     std::puts("AX201_OPEN_STATION_MODEL_PASS");
 }
 
+void check_live_connection() {
+    for (const auto authentication : {AuthCase::accepted, AuthCase::reply_first,
+                                      AuthCase::denied_ap, AuthCase::reply_timeout}) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = PeerCase::success;
+        model.auth_case = authentication;
+        model.assoc_case = AssocCase::accepted;
+        model.arp_case = ArpCase::accepted;
+        model.open_station = true;
+        model.live_replies.resize(32 * ax::page_size);
+        const auto io = model.make_io();
+        const auto memory = model.make_memory(true, true);
+        LiveScanSession session(io, memory);
+        assert(start_live_quz(session, {1, 2}).successful);
+        ScanElementStorage scan{};
+        StationRequest request{{{'l', 'a', 'b'}, 3}, {2, 0, 0, 0, 0, 0x11}, 2412};
+        assert(submit_live_join(session, session.scan, request) == -2);
+        assert(submit_live_scan(session, scan, 0) == 0);
+        assert(submit_live_join(session, session.scan, request) == -16);
+        assert(poll_live_scan(session, 1) == ScanOutcome::complete);
+        request.bssid[5] = 0x12;
+        assert(submit_live_join(session, session.scan, request) == -2);
+        request.bssid[5] = 0x11;
+        assert(submit_live_join(session, session.scan, request) == 0);
+        assert(submit_live_scan(session, scan, 2) == -16 && model.commands_sent == 8);
+        assert(submit_live_join(session, session.scan, request) == -16);
+
+        auto outcome = JoinOutcome::pending;
+        for (uint64_t now = 2; now < 1500 && outcome == JoinOutcome::pending; ++now)
+            outcome = poll_live_join(session, now);
+        if (authentication == AuthCase::accepted || authentication == AuthCase::reply_first) {
+            assert(outcome == JoinOutcome::connected && model.commands_sent == 19);
+            assert(session.station.queue.id == 0x102 && session.station.channel == 1);
+            assert(session.station.next_sequence == 2 && session.join.aid == 42);
+            assert(submit_live_join(session, session.scan, request) == -106);
+        } else {
+            assert(!session.station.queue.id && model.commands_sent == 16);
+            assert(outcome == (authentication == AuthCase::reply_timeout ? JoinOutcome::timeout
+                                                                         : JoinOutcome::rejected));
+        }
+        assert(stop_live_quz(session) && !model.master);
+    }
+    std::puts("AX201_LIVE_CONNECTION_MODEL_PASS");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -1737,6 +1784,7 @@ int main(int argc, char** argv) {
     check_association_exchange();
     check_associated_arp();
     check_open_station();
+    check_live_connection();
     check_receive_recycling();
     check_access_points();
 

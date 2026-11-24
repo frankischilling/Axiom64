@@ -32,6 +32,7 @@
 #include "drivers/platform/inventory.hpp"
 #include "drivers/platform/intel_lpss.hpp"
 #include "drivers/platform/pci_inventory.hpp"
+#include "drivers/platform/power_supply.hpp"
 #include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
@@ -99,6 +100,9 @@ BootInfo boot_info;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
     const bool schedule_peers = arguments.has("smp.scheduler");
     clock_init(rsdp, schedule_peers);
+    const bool power_supply = arguments.has("acpi.power");
+    if (power_supply)
+        DeviceInventory::power_supply_prepare(definitions);
     if (schedule_peers && !clock_shared_counter_ready())
         log("SMP: scheduler requires a shared platform counter\n");
     if (schedule_peers || arguments.has("smp.probe"))
@@ -142,6 +146,10 @@ BootInfo boot_info;
         xhci_keyboard_init();
     if (arguments.has("lpss.i2c.input"))
         intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, LpssProbe::input);
+    if (arguments.has("acpi.power.probe") && !power_supply)
+        firmware_probe_power_supplies(definitions);
+    if (power_supply)
+        DeviceInventory::power_supply_init();
     publish_pci_inventory();
     DeviceInventory::network_inventory_init();
     net_init(DeviceInventory::publish_ethernet);

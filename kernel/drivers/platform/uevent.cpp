@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/platform/uevent.cpp
- * @brief   Device inventory add events.
+ * @brief   Device inventory add and change events.
  * @author  frankischilling
  * @date    2026-11-23
  *
@@ -31,7 +31,7 @@ namespace {
 uint64_t sequence;
 
 struct Message {
-    char data[768];
+    char data[2048];
     size_t size = 0;
 
     void text(const char* value) {
@@ -77,10 +77,18 @@ int64_t read(Handle* handle, void* output, size_t length) {
     return copied;
 }
 
+void emit(Node*, const char* action, bool synthetic);
+
 int64_t write(Handle* handle, const void* data, size_t length) {
-    if (!((length == 3 && !memcmp(data, "add", 3)) || (length == 4 && !memcmp(data, "add\n", 4))))
+    const auto* input = static_cast<const char*>(data);
+    const auto bytes = length && input[length - 1] == '\n' ? length - 1 : length;
+    if (bytes == 3 && !memcmp(input, "add", 3))
+        emit(handle->node, "add", true);
+    else if (handle->node->device == Device::power_supply_uevent && bytes == 6 &&
+             !memcmp(input, "change", 6))
+        emit(handle->node, "change", true);
+    else
         return -22;
-    inventory_device_added(handle->node, true);
     return length;
 }
 
@@ -89,9 +97,8 @@ int truncate(Node*, size_t length) {
 }
 
 constexpr ControlFileOps control{access, read, write, truncate};
-} // namespace
 
-void inventory_device_added(Node* node, bool synthetic) {
+void emit(Node* node, const char* action, bool synthetic) {
     char path[256]{};
     node_path(node, path, sizeof(path), false, root_node);
     size_t length = strlen(path);
@@ -106,12 +113,17 @@ void inventory_device_added(Node* node, bool synthetic) {
     size_t prefix_bytes = 2 * strlen(relative) + 100;
     if (prefix_bytes > sizeof(event.data) || node->size > sizeof(event.data) - prefix_bytes)
         return;
-    event.text("add@");
+    event.text(action);
+    event.text("@");
     event.field(relative);
-    event.field("ACTION=add");
+    event.text("ACTION=");
+    event.field(action);
     event.text("DEVPATH=");
     event.field(relative);
-    event.field(node->device == Device::network_uevent ? "SUBSYSTEM=net" : "SUBSYSTEM=input");
+    const char* subsystem = node->device == Device::network_uevent        ? "SUBSYSTEM=net"
+                            : node->device == Device::power_supply_uevent ? "SUBSYSTEM=power_supply"
+                                                                          : "SUBSYSTEM=input";
+    event.field(subsystem);
     event.properties(node->data, node->size);
     if (synthetic)
         event.field("SYNTH_UUID=0");
@@ -120,9 +132,20 @@ void inventory_device_added(Node* node, bool synthetic) {
     event.field("");
     netlink_broadcast_uevent(event.data, event.size);
 }
+} // namespace
+
+void inventory_device_added(Node* node, bool synthetic) {
+    emit(node, "add", synthetic);
+}
+
+void inventory_device_changed(Node* node) {
+    emit(node, "change", false);
+}
 
 const ControlFileOps* inventory_uevent_control(Node* node) {
-    return node->device == Device::input_uevent || node->device == Device::network_uevent ? &control
-                                                                                          : nullptr;
+    return node->device == Device::input_uevent || node->device == Device::network_uevent ||
+                   node->device == Device::power_supply_uevent
+               ? &control
+               : nullptr;
 }
 } // namespace ax

@@ -25,6 +25,7 @@
  */
 #pragma once
 #include "firmware/acpi.hpp"
+#include "firmware/embedded_controller.hpp"
 
 namespace ax::Acpi {
 
@@ -121,6 +122,20 @@ using RegisterRead = bool (*)(void* context, uint64_t address, uint8_t* bytes, s
 using OsiQuery = bool (*)(const uint8_t* name, size_t length);
 using PciBarRead = bool (*)(uint64_t address, uint32_t* values, size_t words);
 using PciEcamRead = bool (*)(uint64_t address, unsigned bytes, uint32_t& value);
+using EmbeddedControllerRead = bool (*)(void* context, uint8_t offset, uint8_t* bytes,
+                                        size_t length);
+using EmbeddedControllerWrite = bool (*)(void* context, uint8_t offset, const uint8_t* bytes,
+                                         size_t length);
+using CmosRead = bool (*)(void* context, uint8_t offset, uint8_t* bytes, size_t length,
+                          bool firmware_lock);
+
+struct PowerRegisters {
+    void* context = nullptr;
+    EmbeddedControllerRead read_ec = nullptr;
+    EmbeddedControllerWrite write_ec = nullptr;
+    CmosRead read_cmos = nullptr;
+    EmbeddedControllerPorts ports{};
+};
 
 struct ReadRegions {
     SystemMemoryRead memory = nullptr;
@@ -149,6 +164,44 @@ struct MotherboardResources {
 // Validated PNP0C01/PNP0C02 ranges may be listed even if other declarations fail.
 // An incomplete result cannot be used by an allocator as an exclusion list.
 bool decode_motherboard_resources(const DefinitionBlocks&, MotherboardResources&, ReadRegions = {});
+
+// Read the active PNP0C09 controller's data and command ports from _CRS.
+bool decode_embedded_controller_ports(const DefinitionBlocks&, EmbeddedControllerPorts&,
+                                      ReadRegions = {});
+
+// ACPI battery capacities and rates are milli-units. Unknown numeric readings
+// use UINT32_MAX, including values firmware returns as AML Ones.
+struct BatteryReading {
+    char name[5], model[32], serial[32], technology[16], manufacturer[32];
+    uint32_t unit, state, design_capacity, full_capacity, remaining_capacity;
+    uint32_t rate, voltage, design_voltage;
+    bool present;
+};
+
+struct AcAdapterReading {
+    char name[5];
+    bool online;
+};
+
+struct PowerSupplySnapshot {
+    BatteryReading batteries[8];
+    AcAdapterReading adapters[8];
+    unsigned battery_count, adapter_count;
+};
+
+struct PowerSupplyReader;
+
+// The reader connects its controller once. The caller keeps its providers alive
+// and serializes sampling and teardown.
+PowerSupplyReader* open_power_supply_reader(const DefinitionBlocks&, ReadRegions = {},
+                                            PowerRegisters = {}, const char** failure = nullptr);
+bool sample_power_supplies(PowerSupplyReader&, PowerSupplySnapshot&);
+void close_power_supply_reader(PowerSupplyReader*);
+
+// If EC access is supplied, the provider must own the named controller and honor
+// its Global Lock requirement. A failed evaluation produces no snapshot.
+bool read_power_supplies(const DefinitionBlocks&, PowerSupplySnapshot&, ReadRegions = {},
+                         PowerRegisters = {});
 
 struct IntelGpioResources {
     enum class Model { none, cannon_lake_lp, cannon_lake_h };

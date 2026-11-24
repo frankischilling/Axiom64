@@ -123,6 +123,8 @@ enum class Kind : uint8_t {
     DiagnosticPciField,
     InterfaceQuery,
     MemoryField,
+    EmbeddedControllerField,
+    CmosField,
     BufferField
 };
 enum class Type : uint8_t {
@@ -139,6 +141,8 @@ enum class Type : uint8_t {
     BufferField
 };
 
+struct Value;
+
 struct Object {
     Path path;
     Cursor content;
@@ -150,6 +154,7 @@ struct Object {
     bool firmware_lock = false;
     uint8_t access_bytes = 0;
     bool preserves_field_neighbors = false;
+    mutable Value* package = nullptr;
 };
 
 struct Value {
@@ -231,12 +236,15 @@ struct Namespace {
     unsigned count;
     unsigned steps;
     unsigned used_values;
+    unsigned persistent_values;
     unsigned used_bytes;
     unsigned persistent_bytes;
     uint64_t integer_mask;
     const PciBridges* bridges;
     PciConfigRead read_pci;
     SystemMemoryRead read_system_memory;
+    PowerRegisters power_registers;
+    const Object* power_controller;
     RegisterRead read_registers;
     PciBarRead read_pci_bars;
     PciEcamRead read_pci_ecam;
@@ -313,6 +321,9 @@ struct Namespace {
     bool load_fields(Cursor, const Path&);
     bool declare_buffer_field(Cursor&, const Path&, unsigned opcode, unsigned depth);
     bool retain_buffer(Object&, Value&);
+    bool retain_value(Value&, const Value&, unsigned depth = 0);
+    bool replace_package_element(Value&, const Value&);
+    Value* reserve_package_values(size_t);
     uint8_t* scratch_buffer(size_t);
     bool field_address(const Object&, ConfigField&, unsigned depth, bool* absent = nullptr);
     bool pci_address(Path, ConfigField&, unsigned depth = 0, bool* absent = nullptr);
@@ -321,6 +332,9 @@ struct Namespace {
     bool memory_field_bytes(const Object&, uint8_t*, uint64_t& address, size_t& length,
                             unsigned depth);
     bool read_memory_field(const Object&, Value&, unsigned depth);
+    bool power_field_span(const Object&, uint8_t& address, unsigned& bytes, unsigned depth);
+    bool read_power_field(const Object&, Value&, unsigned depth);
+    bool write_embedded_controller_field(const Object&, Value, unsigned depth);
     bool read_memory_bytes(uint64_t address, uint8_t*, size_t, bool lock, bool local);
     bool read_local_memory(const Value& field, Value& result);
     void apply_memory_overlay(uint64_t address, uint8_t* data, size_t bytes) const;
@@ -341,39 +355,7 @@ struct Namespace {
     bool execute(Cursor, const Path&, Frame&, Value&, unsigned depth);
     bool store(Cursor&, const Path&, Frame*, Value, unsigned depth);
 
-    bool value(const Object& object, Value& result, unsigned depth) {
-        if (object.kind == Kind::Device) {
-            result = {Type::Device, 0, {}, &object};
-            return true;
-        }
-        if (object.kind == Kind::PciField || object.kind == Kind::DiagnosticPciField)
-            return read_field(object, result, depth);
-        if (object.kind == Kind::MemoryField)
-            return read_memory_field(object, result, depth);
-        if (object.kind == Kind::BufferField) {
-            const auto number =
-                read_buffer_bits(object.region->content.next, object.integer, object.arguments);
-            result = {Type::Integer, number & integer_mask, {}, nullptr};
-            return true;
-        }
-        if (object.kind != Kind::Data)
-            return false;
-        if (object.assigned == Type::Integer) {
-            result = {Type::Integer, object.integer, {}, nullptr};
-            return true;
-        }
-        if (object.assigned == Type::String) {
-            result = {Type::String, 0, object.content, nullptr};
-            return true;
-        }
-        if (object.assigned == Type::Buffer) {
-            result = {Type::Buffer, 0,       object.content,
-                      nullptr,      nullptr, const_cast<uint8_t*>(object.content.next)};
-            return true;
-        }
-        Cursor stream = object.content;
-        return evaluate(stream, parent(object.path), nullptr, result, depth) && !stream.left;
-    }
+    bool value(const Object&, Value&, unsigned depth);
 
     bool method(const Object& object, const Value* args, unsigned count, Value& result,
                 unsigned depth = 0) {
@@ -399,6 +381,7 @@ struct Namespace {
         ++active_methods;
         const unsigned first = used_method_names;
         Frame frame{args, count, method_names, used_method_names, first};
+        result = {};
         bool ok = execute(object.content, object.path, frame, result, depth);
         used_method_names = first;
         method_sync_level = previous_level;
@@ -420,5 +403,5 @@ struct Namespace {
 
 bool pci_root_id(Value);
 Namespace* load_namespace(const DefinitionBlocks&, const PciBridges*, PciConfigRead, PciLinkProgram,
-                          SystemMemoryRead = nullptr);
+                          SystemMemoryRead = nullptr, PowerRegisters = {});
 } // namespace ax::Acpi::Aml

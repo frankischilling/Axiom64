@@ -23,13 +23,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#include "../../firmware/aml_internal.hpp"
 #include "drivers/platform/intel_gpio.hpp"
 #include "firmware/aml.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <initializer_list>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -470,10 +471,9 @@ void i2c_hid_cases() {
     I2cHidDevices devices{};
     assert(inspect(resources, true, devices) && devices.count == 1);
     const auto& device = devices.devices[0];
-    assert(!std::strcmp(device.hardware_id, "ELAN0406") &&
-           !std::strcmp(device.controller, controller) && device.address == 0x15 &&
-           device.max_hz == 400000 && !device.ten_bit && device.has_descriptor_register &&
-           device.descriptor_register == 0x122);
+    assert(!strcmp(device.hardware_id, "ELAN0406") && !strcmp(device.controller, controller) &&
+           device.address == 0x15 && device.max_hz == 400000 && !device.ten_bit &&
+           device.has_descriptor_register && device.descriptor_register == 0x122);
     const auto& pci = device.pci_controller;
     assert(pci.resolved && pci.segment == 1 && pci.bus == 4 && pci.slot == 0x15 &&
            pci.function == 1);
@@ -552,6 +552,314 @@ void root_window_cases() {
     const auto bad_range = address_window(0x8a, 0x0c, 1, 0x6000000000, 0x6000000fff, 0x2000);
     assert(!inspect(sequence({low, bad_range, {0x79, 0}}), true, windows) && !windows.count);
     std::puts("ACPI_PCI_ROOT_WINDOWS_PASS fixed_ranges checksum bounds disabled_root");
+}
+
+void embedded_controller_cases() {
+    using namespace ax::Acpi;
+    const Bytes numeric_id{0x0c, 0x41, 0xd0, 0x0c, 9};
+    const Bytes text_id{0x0d, 'P', 'N', 'P', '0', 'C', '0', '9', 0};
+    const Bytes data_port{0x47, 1, 0x62, 0, 0x62, 0, 0, 1};
+    const Bytes command_port{0x47, 1, 0x66, 0, 0x66, 0, 0, 1};
+    const Bytes end_tag{0x79, 0};
+    const auto valid = sequence({data_port, command_port, end_tag});
+    auto device = [](const char* label, const Bytes& resources, const Bytes& id,
+                     const Bytes& status) {
+        return block({0x5b, 0x82}, sequence({name(label), data("_HID", id), data("_STA", status),
+                                             buffer("_CRS", resources)}));
+    };
+    EmbeddedControllerPorts result{};
+    auto decode = [&](const Bytes& aml) {
+        const auto table = definition(aml);
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return decode_embedded_controller_ports(blocks, result);
+    };
+    assert(decode(device("EC00", valid, numeric_id, {0x0a, 0x0f})));
+    assert(result.data == 0x62 && result.command == 0x66);
+    assert(decode(
+        device("EC01", {0x4b, 0x68, 0, 1, 0x4b, 0x6c, 0, 1, 0x79, 0}, text_id, {0x0a, 0x0f})));
+    assert(result.data == 0x68 && result.command == 0x6c);
+    assert(!decode(device("EC00", valid, numeric_id, {0})) && !result.data);
+    assert(!decode(device("EC00", sequence({data_port, data_port, end_tag}), numeric_id,
+                          {0x0a, 0x0f})) &&
+           !result.data);
+    auto moving_port = command_port;
+    moving_port[4]++;
+    assert(!decode(device("EC00", sequence({data_port, moving_port, end_tag}), numeric_id,
+                          {0x0a, 0x0f})) &&
+           !result.data);
+    assert(!decode(device("EC00", sequence({data_port, command_port}), numeric_id, {0x0a, 0x0f})));
+    assert(!decode(sequence({device("EC00", valid, numeric_id, {0x0a, 0x0f}),
+                             device("EC01", valid, text_id, {0x0a, 0x0f})})) &&
+           !result.data);
+    std::puts("ACPI_EC_PORTS_PASS io fixed_io inactive duplicate truncated ambiguous");
+}
+
+void embedded_controller_read_cases() {
+    using namespace ax::Acpi;
+
+    struct PortTrace {
+        Bytes status, data;
+        std::vector<std::pair<uint16_t, uint8_t>> writes;
+        size_t status_reads = 0, data_reads = 0;
+        unsigned waits = 0;
+    };
+
+    PortTrace trace{{2, 0, 2, 0, 0, 1, 0, 0, 1}, {0x2b, 0x3c}, {}};
+    const EmbeddedControllerPorts ports{0x62, 0x66};
+    const EmbeddedControllerIo io{
+        &trace,
+        [](void* context, uint16_t port) {
+            auto& state = *static_cast<PortTrace*>(context);
+            if (port == 0x62)
+                return state.data.at(state.data_reads++);
+            assert(port == 0x66 && !state.status.empty());
+            const size_t n = state.status_reads++;
+            return state.status[n < state.status.size() ? n : state.status.size() - 1];
+        },
+        [](void* context, uint16_t port, uint8_t byte) {
+            static_cast<PortTrace*>(context)->writes.emplace_back(port, byte);
+        },
+        [](void* context, unsigned us) {
+            assert(us == 50);
+            ++static_cast<PortTrace*>(context)->waits;
+            return true;
+        }};
+    uint8_t result[2]{};
+    assert(read_embedded_controller(ports, io, 0xfe, result, 2));
+    const decltype(trace.writes) expected{{0x66, 0x80}, {0x62, 0xfe}, {0x66, 0x80}, {0x62, 0xff}};
+    assert(trace.writes == expected && trace.waits == 3 && trace.data_reads == 2);
+    assert(result[0] == 0x2b && result[1] == 0x3c);
+    trace = {{0, 0, 1, 0, 0, 0}, {0x5a}, {}};
+    assert(!read_embedded_controller(ports, io, 0x80, result, 2));
+    assert(trace.waits == 1000 && trace.data_reads == 1 && trace.writes.size() == 4);
+    assert(result[0] == 0x2b && result[1] == 0x3c);
+    trace = {{1, 0, 0, 1}, {0xa5, 0x12}, {}};
+    assert(read_embedded_controller(ports, io, 0x80, result, 1));
+    assert(trace.data_reads == 2 && result[0] == 0x12);
+    assert(trace.writes == (decltype(trace.writes){{0x66, 0x80}, {0x62, 0x80}}));
+    trace = {{1}, {0xa5}, {}};
+    assert(!read_embedded_controller(ports, io, 0x80, result, 2));
+    assert(trace.data_reads == 1 && trace.writes.empty() && result[0] == 0x12);
+    trace = {{0, 1}, {}, {}};
+    assert(!read_embedded_controller(ports, io, 0x80, result, 1));
+    assert(trace.data_reads == 0 && trace.writes == (decltype(trace.writes){{0x66, 0x80}}));
+    trace = {{0xff}, {}, {}};
+    assert(!read_embedded_controller(ports, io, 0xff, result, 2) && !trace.status_reads);
+    assert(!read_embedded_controller(ports, io, 0xfe, result, 2) && trace.status_reads == 1);
+    assert(trace.writes.empty());
+    trace = {{0, 0, 0, 2, 0}, {}, {}};
+    assert(write_embedded_controller(ports, io, 0x20, result, 1));
+    assert(trace.writes == (decltype(trace.writes){{0x66, 0x81}, {0x62, 0x20}, {0x62, 0x12}}));
+    assert(trace.waits == 1 && trace.data_reads == 0);
+    trace = {{0, 0, 0, 2}, {}, {}};
+    assert(!write_embedded_controller(ports, io, 0x20, result, 1));
+    assert(trace.writes.size() == 3 && trace.waits == 1000);
+    trace = {{3, 1, 1, 1, 3, 1}, {}, {}};
+    assert(write_embedded_controller(ports, io, 0x20, result, 1));
+    assert(trace.writes == (decltype(trace.writes){{0x66, 0x81}, {0x62, 0x20}, {0x62, 0x12}}));
+    assert(trace.waits == 2 && trace.data_reads == 0);
+    std::puts("ACPI_EC_READ_PASS byte_order deadline stale_output absent_controller range");
+    std::puts("ACPI_EC_WRITE_PASS command_address_data final_input_consumed pending_output");
+}
+
+void embedded_controller_field_cases() {
+    using namespace ax::Acpi;
+    using namespace ax::Acpi::Aml;
+    const auto region = sequence({{0x5b, 0x80}, name("ERAM"), {3, 0x0a, 0x60, 0x0a, 34}});
+    const auto fields = block({0x5b, 0x81}, sequence({name("ERAM"),
+                                                      {1, 0, 4},
+                                                      name("NIBL"),
+                                                      {12},
+                                                      name("WIDE"),
+                                                      {0x40, 0x10},
+                                                      name("OOB_"),
+                                                      {8}}));
+    const auto table = definition(sequence({region, fields}));
+    DefinitionBlocks blocks{};
+    blocks.dsdt = {table.data(), 0x1000, table.size()};
+    Bytes reads;
+    auto read = [](void* context, uint8_t offset, uint8_t* bytes, size_t length) {
+        auto& trace = *static_cast<Bytes*>(context);
+        trace.insert(trace.end(), {offset, uint8_t(length)});
+        if (offset == 0x60 && length == 2) {
+            bytes[0] = 0x30;
+            bytes[1] = 0x12;
+            return true;
+        }
+        assert(offset == 0x62 && length == 32);
+        for (size_t i = 0; i < length; ++i)
+            bytes[i] = uint8_t(i + 1);
+        return true;
+    };
+    auto* space = load_namespace(blocks, nullptr, nullptr, {}, nullptr, {&reads, read});
+    assert(space);
+    Value value{};
+    assert(space->config({}, name_segment("NIBL"), value) && value.type == Type::Integer &&
+           value.number == 0x123);
+    assert(space->config({}, name_segment("WIDE"), value) && value.type == Type::Buffer &&
+           value.content.left == 32 && value.content.next[0] == 1 && value.content.next[31] == 32);
+    assert(!space->config({}, name_segment("OOB_"), value));
+    assert(reads == (Bytes{0x60, 2, 0x62, 32}));
+    ax::release(space);
+    space = load_namespace(blocks, nullptr, nullptr, {});
+    assert(space && !space->config({}, name_segment("NIBL"), value));
+    ax::release(space);
+    std::puts("ACPI_EC_FIELDS_PASS unaligned_integer wide_buffer out_of_region missing_provider");
+}
+
+void named_package_cases() {
+    using namespace ax::Acpi;
+    using namespace ax::Acpi::Aml;
+    const auto stored = data("INFO", package(3, sequence({{0, 0x0d, 0}, package(1, {1})})));
+    auto index = [](Bytes source, uint8_t element) {
+        return sequence({{0x88}, source, {0x0a, element, 0}});
+    };
+    const auto first = index(name("INFO"), 0);
+    const auto text = index(name("INFO"), 1);
+    const auto nested = index(sequence({{0x83}, index(name("INFO"), 2)}), 0);
+    const auto label = block({0x11}, {0x0a, 5, 'B', 'l', 'a', 'd', 'e'});
+    const auto update = block({0x14}, sequence({name("SETV"),
+                                                {0},
+                                                {0x70, 0x0b, 0x51, 0x10},
+                                                first,
+                                                {0x70, 0x9c},
+                                                label,
+                                                {0x0a, 5, 0},
+                                                text,
+                                                {0x70, 0x0a, 9},
+                                                nested,
+                                                {0xa4},
+                                                name("INFO")}));
+    const auto table = definition(sequence({stored, update}));
+    DefinitionBlocks blocks{};
+    blocks.dsdt = {table.data(), 0x1000, table.size()};
+    auto* space = load_namespace(blocks, nullptr, nullptr, {});
+    assert(space);
+    Value value{};
+    assert(space->config({}, name_segment("INFO"), value));
+    auto* before = value.entries;
+    assert(before[0].number == 0 && before[2].entries[0].number == 1);
+    assert(space->config({}, name_segment("SETV"), value) && value.entries == before);
+    space->used_values = space->used_bytes = 0;
+    auto* scratch = space->scratch_buffer(64);
+    assert(scratch);
+    memset(scratch, 0xff, 64);
+    assert(space->config({}, name_segment("INFO"), value) && value.entries == before);
+    assert(value.entries[0].number == 4177);
+    assert(value.entries[2].entries[0].number == 9);
+    assert(value.entries[1].type == Type::String && value.entries[1].content.left == 5 &&
+           !memcmp(value.entries[1].content.next, "Blade", 5));
+    const Value too_long{Type::String, 0, {scratch, sizeof(space->buffers) + 1}, nullptr};
+    assert(!space->replace_package_element(value.entries[1], too_long));
+    assert(value.entries[1].content.left == 5 &&
+           !memcmp(value.entries[1].content.next, "Blade", 5));
+    ax::release(space);
+    std::puts(
+        "ACPI_NAMED_PACKAGE_PASS index_write nested_reference string_lifetime no_partial_store");
+}
+
+void battery_snapshot_cases() {
+    using namespace ax::Acpi;
+    auto string = [](const char* text) { return sequence({{0x0d}, name(text), {0}}); };
+    auto device = [](const char* label, Bytes body) {
+        return block({0x5b, 0x82}, sequence({name(label), body}));
+    };
+    auto method = [](const char* label, uint8_t count, Bytes body) {
+        return block({0x14}, sequence({name(label), {count}, body}));
+    };
+    const auto ec_fields =
+        block({0x5b, 0x81}, sequence({name("ERAM"), {1}, name("RTYR"), {8}, name("PSTA"), {8}}));
+    const auto cmos_fields =
+        block({0x5b, 0x81}, sequence({name("VRTC"), {0x11}, name("YEAR"), {8}}));
+    const auto ec = device(
+        "EC00", sequence({data("_HID", string("PNP0C09")),
+                          data("_GLK", {1}),
+                          buffer("_CRS", {0x4b, 0x62, 0, 1, 0x4b, 0x66, 0, 1, 0x79, 0}),
+                          data("ECON", {0}),
+                          {0x5b, 0x80},
+                          name("ERAM"),
+                          {3, 0, 0x0a, 2},
+                          ec_fields,
+                          {0x5b, 0x80},
+                          name("VRTC"),
+                          {5, 0, 1},
+                          cmos_fields,
+                          method("RTEC", 0, sequence({{0x70}, name("YEAR"), name("RTYR")})),
+                          method("_REG", 2, sequence({{0x70, 1}, name("ECON"), name("RTEC")}))}));
+    const auto info = package(
+        13, sequence({{1, 0x0b, 0x51, 0x10, 0x0b, 0x24, 0x0f, 1, 0x0b, 0xb0, 0x2d, 0, 0, 0, 0},
+                      string("Blade"),
+                      string("123"),
+                      string("Li-I"),
+                      string("Razer")}));
+    const auto state = package(4, {0x0a, 2, 0xff, 0x0b, 0xe8, 0x0b, 0x0b, 0x50, 0x2e});
+    // _BST is also tested with a malformed package rather than reading past its end.
+    auto tables = [&](bool broken) {
+        const auto battery = device(
+            "BAT0", sequence({data("_HID", string("PNP0C0A")),
+                              method("_STA", 0,
+                                     sequence({{0xa0, 0x0e},
+                                               {0x5c, 0x2e},
+                                               name("EC00ECON"),
+                                               {0xa4, 0x0a, 0x1f},
+                                               {0xa4, 0x0a, 0x0f}})),
+                              data("_BIF", info), data("_BST", broken ? package(1, {1}) : state)}));
+        const auto adapter = device(
+            "AC00",
+            sequence({data("_HID", string("ACPI0003")),
+                      method("_PSR", 0, sequence({{0xa4}, {0x5c, 0x2e}, name("EC00PSTA")}))}));
+        return definition(sequence({ec, battery, adapter}));
+    };
+
+    struct Sample {
+        uint8_t register_value[2]{0, 1};
+        unsigned cmos_reads = 0, ec_writes = 0;
+    } sample;
+
+    const PowerRegisters io{
+        &sample,
+        [](void* context, uint8_t offset, uint8_t* bytes, size_t length) {
+            assert(length == 1 && offset < 2);
+            *bytes = static_cast<Sample*>(context)->register_value[offset];
+            return true;
+        },
+        [](void* context, uint8_t offset, const uint8_t* bytes, size_t length) {
+            assert(offset == 0 && length == 1);
+            auto& sample = *static_cast<Sample*>(context);
+            sample.register_value[offset] = *bytes;
+            ++sample.ec_writes;
+            return true;
+        },
+        [](void* context, uint8_t offset, uint8_t* bytes, size_t length, bool lock) {
+            assert(offset == 0 && length == 1 && lock);
+            ++static_cast<Sample*>(context)->cmos_reads;
+            *bytes = 0x26;
+            return true;
+        },
+        {0x62, 0x66, true}};
+    PowerSupplySnapshot result{};
+    auto read = [&](bool broken, PowerRegisters registers) {
+        const auto table = tables(broken);
+        DefinitionBlocks blocks{};
+        blocks.dsdt = {table.data(), 0x1000, table.size()};
+        return read_power_supplies(blocks, result, {}, registers);
+    };
+    auto wrong_ports = io;
+    wrong_ports.ports.global_lock = false;
+    assert(!read(false, wrong_ports) && sample.cmos_reads == 0 && sample.ec_writes == 0);
+    assert(read(false, io));
+    assert(sample.cmos_reads == 1 && sample.ec_writes == 1 && sample.register_value[0] == 0x26);
+    assert(result.battery_count == 1 && result.adapter_count == 1 && result.adapters[0].online);
+    const auto& battery = result.batteries[0];
+    assert(battery.present && battery.state == 2 && battery.unit == 1 &&
+           battery.rate == UINT32_MAX);
+    assert(battery.design_capacity == 4177 && battery.full_capacity == 3876 &&
+           battery.remaining_capacity == 3048 && battery.voltage == 11856 &&
+           !strcmp(battery.model, "Blade") && !strcmp(battery.manufacturer, "Razer"));
+    assert(!read(true, io) && !result.battery_count && !result.adapter_count);
+    std::puts("ACPI_POWER_SUPPLY_PASS region_connect cmos_read ec_write battery_info status "
+              "adapter bounds");
 }
 
 void motherboard_resource_cases() {
@@ -679,7 +987,7 @@ bool read_test_nvs(uint64_t address, uint8_t* bytes, size_t length, bool lock) {
     if (address != 0x10000200 || length != 3 || (lock && !nvs_lock_available))
         return false;
     const uint8_t data[]{0xa0, 0x79, 0x01};
-    std::memcpy(bytes, data, sizeof(data));
+    memcpy(bytes, data, sizeof(data));
     return true;
 }
 
@@ -924,6 +1232,25 @@ void firmware_control_cases() {
         assert(inspect(sequence({block({0xa0}, sequence({predicate, present})), {0xa4, 0}})));
     }
 
+    const auto decimal_bytes = block({0x11}, {0x0a, 6, '1', '2', '3', 0, '4', '5'});
+    for (auto [limit, expected] : {std::pair{2, 12}, {6, 123}, {0, 0}}) {
+        const auto convert = sequence({{0x9c}, decimal_bytes, {0x0a, uint8_t(limit), 0x60}});
+        const auto check = Bytes{0x93, 0x99, 0x60, 0, 0x0a, uint8_t(expected)};
+        assert(inspect(sequence({convert, block({0xa0}, sequence({check, present})), {0xa4, 0}})));
+    }
+    assert(!inspect(sequence({{0x9c, 1, 1, 0x60}, present})));
+
+    const Bytes divide{0x78, 0x0a, 17, 0x0a, 5, 0x61, 0x62};
+    const Bytes quotient_and_remainder{0x90, 0x93, 0x61, 0x0a, 2, 0x93, 0x62, 0x0a, 3};
+    assert(inspect(
+        sequence({divide, block({0xa0}, sequence({quotient_and_remainder, present})), {0xa4, 0}})));
+    const Bytes divide_in_expression{0x93, 0x78, 0x0a, 17, 0x0a, 5, 0, 0, 0x0a, 3};
+    assert(
+        inspect(sequence({block({0xa0}, sequence({divide_in_expression, present})), {0xa4, 0}})));
+    assert(!inspect(sequence({{0x78, 1, 0, 0x61, 0x62}, present})));
+    std::puts(
+        "ACPI_CONVERSION_DIVIDE_PASS limited_string null_byte quotient remainder zero_divisor");
+
     const auto loop = block({0xa2}, sequence({{1, 0x75, 0x61},
                                               block({0xa0}, {0x93, 0x61, 1, 0x9f}),
                                               block({0xa0}, {0x93, 0x61, 0x0a, 2, 0xa5}),
@@ -1049,7 +1376,7 @@ void hid_initialization_cases() {
     assert(read(0x11, 0x0f, HidDiscovery::replay_initialization, devices) && devices.count == 1 &&
            devices.initialization_failures == 1);
     const auto& device = devices.devices[0];
-    assert(!std::strcmp(device.hardware_id, "ELAN0406") && device.address == 0x15 &&
+    assert(!strcmp(device.hardware_id, "ELAN0406") && device.address == 0x15 &&
            device.max_hz == 400000 && device.pci_controller.resolved &&
            device.pci_controller.slot == 21);
     assert(read(0x11, 0, HidDiscovery::replay_initialization, devices) && !devices.count &&
@@ -1445,7 +1772,7 @@ void composed_i2c_resources() {
     const auto& interrupt = devices.devices[0].interrupt;
     assert(inspect(irq, devices) && devices.count == 1);
     assert(devices.devices[0].address == 0x15 && devices.devices[0].max_hz == 400000 &&
-           !std::strcmp(devices.devices[0].controller, controller));
+           !strcmp(devices.devices[0].controller, controller));
     assert(interrupt.source == Source::gsi && interrupt.line == 45 && !interrupt.edge &&
            interrupt.polarity == Polarity::active_low && interrupt.shared && interrupt.wake);
     assert(inspect({}, devices) && devices.count == 1 && interrupt.source == Source::none);
@@ -1470,7 +1797,7 @@ void composed_i2c_resources() {
     assert(inspect(gpio, devices) && devices.count == 1 && interrupt.source == Source::gpio &&
            interrupt.line == 75 && !interrupt.edge && interrupt.polarity == Polarity::active_low &&
            interrupt.shared && interrupt.wake && interrupt.gpio_debounce == 0x1234 &&
-           interrupt.gpio_pull == 1 && !std::strcmp(interrupt.gpio_controller, gpio_controller));
+           interrupt.gpio_pull == 1 && !strcmp(interrupt.gpio_controller, gpio_controller));
     const Bytes gpio_without_end(gpio.begin(), gpio.end() - 2);
     assert(inspect(sequence({gpio_without_end, irq}), devices) && devices.count == 1 &&
            interrupt.source == Source::gsi && interrupt.line == 45 &&
@@ -1535,6 +1862,11 @@ int main() {
     programmable_cases();
     i2c_hid_cases();
     root_window_cases();
+    embedded_controller_cases();
+    embedded_controller_read_cases();
+    embedded_controller_field_cases();
+    named_package_cases();
+    battery_snapshot_cases();
     motherboard_resource_cases();
     nvs_field_cases();
     diagnostic_pci_cases();

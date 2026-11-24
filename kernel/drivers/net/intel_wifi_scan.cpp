@@ -268,6 +268,13 @@ void observe_passive_scan(PassiveScan& scan, const FirmwarePacket& packet) {
         scan.status = PassiveScan::Status::malformed;
 }
 
+void PassiveScanExchange::restart(uint16_t new_sequence, uint64_t now_ms) {
+    sequence = new_sequence;
+    phase_start = now_ms;
+    result = ScanOutcome::pending;
+    accepted = false;
+}
+
 void PassiveScanExchange::expire(uint64_t now_ms) {
     const unsigned timeout_ms = accepted ? 12000 : 2000;
     if (result == ScanOutcome::pending && now_ms - phase_start >= timeout_ms)

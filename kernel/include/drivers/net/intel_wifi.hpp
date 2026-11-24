@@ -47,6 +47,15 @@ struct FirmwareImage {
 // The returned sections borrow the firmware bytes. A rejected image leaves output intact.
 const char* parse_firmware(const uint8_t*, size_t, FirmwareImage&);
 
-enum class FirmwareCheck { stage, start, nvm, scan_config, regulatory, passive_scan, rescan };
+enum class FirmwareCheck {
+    stage,
+    start,
+    nvm,
+    scan_config,
+    regulatory,
+    passive_scan,
+    rescan,
+    live_scan
+};
 void check_firmware(bool probe_pci, FirmwareCheck);
 } // namespace ax::IntelWifi

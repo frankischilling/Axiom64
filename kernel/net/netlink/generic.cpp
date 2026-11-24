@@ -122,12 +122,13 @@ void number(uint8_t*& tail, uint16_t type, uint32_t value) {
 size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t port, bool dump,
                        uint16_t family) {
     // A control dump can carry both descriptions in the same datagram.
-    static_assert((20 + 44 + 24 + 28) + (20 + 44 + 64) <= generic_family_reply_size);
+    static_assert((20 + 44 + 24 + 28) + (20 + 44 + 84 + 28) <= generic_family_reply_size);
     auto tail = output + sizeof(NetlinkHeader);
     const GenericHeader header{new_family, 2, 0};
     memcpy(tail, &header, sizeof(header));
     tail += sizeof(header);
     const bool wireless = family == nl80211_family;
+    const bool trigger = wireless && wireless_trigger_available();
     if (wireless)
         attribute(tail, family_name, wireless_name, sizeof(wireless_name));
     else
@@ -137,24 +138,31 @@ size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t p
     number(tail, 4, 0);                  // No family-specific header.
     number(tail, 5, wireless ? 174 : 0); // NL80211_ATTR_SPLIT_WIPHY_DUMP.
 
-    constexpr uint8_t commands[]{nl80211_get_wiphy, nl80211_get_interface, nl80211_get_scan};
+    constexpr uint8_t commands[]{nl80211_get_wiphy, nl80211_get_interface, nl80211_get_scan,
+                                 nl80211_trigger_scan};
+    const unsigned count = wireless ? sizeof(commands) - !trigger : 1;
     uint8_t operations[20 * sizeof(commands)];
     auto entries = operations;
-    for (unsigned i = 0; i < (wireless ? sizeof(commands) : 1); ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         uint8_t operation[16];
         auto item = operation;
         number(item, 1, wireless ? commands[i] : get_family);
-        number(item, 2, wireless && commands[i] == nl80211_get_scan ? 4 : 6);
+        const unsigned flags = !wireless || i < 2 ? 6 : commands[i] == nl80211_get_scan ? 4 : 3;
+        number(item, 2, flags);
         attribute(entries, uint16_t(i + 1), operation, sizeof(operation));
     }
     attribute(tail, 6, operations, entries - operations);
 
-    if (!wireless) {
+    if (!wireless || trigger) {
         uint8_t group[20], indexed_group[24];
         auto item = group;
         constexpr char notify[] = "notify";
-        attribute(item, 1, notify, sizeof(notify));
-        number(item, 2, control_family);
+        constexpr char scan[] = "scan";
+        if (wireless)
+            attribute(item, 1, scan, sizeof(scan));
+        else
+            attribute(item, 1, notify, sizeof(notify));
+        number(item, 2, wireless ? nl80211_scan_group : control_family);
         item = indexed_group;
         attribute(item, 1, group, sizeof(group));
         attribute(tail, 7, indexed_group, sizeof(indexed_group));
@@ -168,16 +176,16 @@ size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t p
 }
 } // namespace
 
-size_t generic_reply(const void* data, uint32_t port, bool capped, void* reply, void* followup,
-                     size_t& followup_length, WirelessDump& cursor) {
+size_t generic_reply(const void* data, uint32_t port, bool capped, bool privileged, void* reply,
+                     void* followup, size_t& followup_length, WirelessDump& cursor) {
     auto input = static_cast<const uint8_t*>(data);
     NetlinkHeader request;
     memcpy(&request, input, sizeof(request));
     if (!(request.flags & 1) || request.type < 16)
         return 0;
     if (request.type == nl80211_family)
-        return wireless_reply(data, request, port, capped, reply, followup, followup_length,
-                              cursor);
+        return wireless_reply(data, request, port, capped, privileged, reply, followup,
+                              followup_length, cursor);
     bool dump = (request.flags & 0x300) == 0x300;
     const bool wireless = wireless_scan_available();
     const int selected =

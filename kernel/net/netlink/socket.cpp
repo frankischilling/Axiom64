@@ -245,6 +245,11 @@ void netlink_broadcast_uevent(const void* data, size_t length) {
     broadcast_notification(uevent_protocol, nullptr, data, length, {16, 0, 0, kernel_uevent_group});
 }
 
+void netlink_broadcast_scan(const void* data, size_t length) {
+    constexpr uint32_t group = 1u << (nl80211_scan_group - 1);
+    broadcast_notification(generic_protocol, nullptr, data, length, {16, 0, 0, group});
+}
+
 void netlink_link_event(const NetInfo& info, uint32_t changed_flags) {
     uint8_t bytes[128];
     size_t length = netlink_format_link_event(info, changed_flags, bytes, sizeof(bytes));
@@ -416,7 +421,8 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         size_t tail = 0;
         size_t size =
             generic
-                ? generic_reply(input, socket->port, socket->capped, reply.data + 1,
+                ? generic_reply(input, socket->port, socket->capped,
+                                capable(task.credentials, Capability::net_admin), reply.data + 1,
                                 reply.end ? reply.end + 1 : nullptr, tail, socket->wireless_dump)
                 : routing_reply(input, socket->port, socket->capped, reply.data + 1,
                                 capable(task.credentials, Capability::net_admin), socket->strict);

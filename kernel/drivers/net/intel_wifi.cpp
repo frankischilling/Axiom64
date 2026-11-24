@@ -8,12 +8,14 @@
  * Copyright (C) 2026 frankischilling
  */
 #include "core/time.hpp"
-#include "drivers/net/intel_wifi_start.hpp"
+#include "drivers/net/intel_wifi_live.hpp"
 #include "drivers/platform/fb_console.hpp"
 #include "drivers/platform/pci.hpp"
 #include "fs/vfs.hpp"
 #include "mm/dma.hpp"
 #include "net/ethernet.hpp"
+#include "net/netlink_wireless.hpp"
+#include <new>
 
 namespace ax::IntelWifi {
 namespace {
@@ -29,11 +31,14 @@ PciFunction adapter{};
 volatile uint32_t* adapter_registers;
 bool start_requested;
 PassiveScan completed_scan{};
+uint32_t completed_generation = 1;
+void poll_runtime(NetAdapter&);
+void stop_runtime(NetAdapter&);
 NetAdapter scanned_adapter{
     .info{.live = true, .stats{}, .wireless = true},
-    .poll = [](NetAdapter&) {},
+    .poll = poll_runtime,
     .send = [](NetAdapter&, const void*, size_t) { return -95; },
-    .stop = [](NetAdapter&) {},
+    .stop = stop_runtime,
     .data = nullptr,
     .receive_only_diagnostic = true,
 };
@@ -274,36 +279,24 @@ struct AdapterBoot {
     const BootQueues& queues;
 };
 
-void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
-                     const AntennaMasks& antennas) {
-    const bool nvm = check >= FirmwareCheck::nvm;
-    if (nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
-        report("command buffer allocation failed");
-        return;
-    }
-    const auto original = adapter.read16(pci_command);
+bool enable_registers(AdapterBoot& boot, uint16_t& original) {
+    original = adapter.read16(pci_command);
     if ((original & bus_master) || !device_powered(adapter) || !interrupts_inactive(adapter)) {
         report("PCI function is not idle for startup");
-        return;
+        return false;
     }
-    ScanElementStorage* elements = nullptr;
-    if (check >= FirmwareCheck::passive_scan) {
-        elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
-        if (!elements) {
-            report("scan result allocation failed");
-            return;
-        }
-    }
-    AdapterBoot boot{uint16_t(original | memory_space | intx_disable), queues};
+    boot.command = original | memory_space | intx_disable;
     adapter.write16(pci_command, boot.command);
     if (adapter.read16(pci_command) != boot.command) {
         adapter.write16(pci_command, original);
         report("cannot enable PCI register access");
-        release(elements);
-        return;
+        return false;
     }
+    return true;
+}
 
-    const FirmwareBootIo io{
+FirmwareBootIo boot_io(AdapterBoot& boot) {
+    return {
         &boot,
         [](void*, unsigned offset) { return adapter_registers[offset / sizeof(uint32_t)]; },
         [](void*, unsigned offset, uint32_t value) {
@@ -324,23 +317,61 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
                 align_down(queues.receive_map.data<BootQueues::ReceiveDescriptors>()[id - 1])));
         },
     };
+}
+
+FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
     FirmwareBootMemory memory{queues.context.address, &queues.status.data<ReceiveStatus>(),
                               queues.used_ring.data<BootQueues::UsedRing>()};
-    if (check == FirmwareCheck::rescan) {
+    if (check >= FirmwareCheck::rescan) {
         memory.free_ring = queues.free_ring.data<BootQueues::FreeRing>();
         memory.receive_descriptors = queues.receive_map.data<BootQueues::ReceiveDescriptors>();
     }
-    if (nvm) {
+    if (check >= FirmwareCheck::nvm) {
         memory.commands = queues.commands.data<BootQueues::Commands>();
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
+    return memory;
+}
+
+bool restore_registers(BootQueues& queues, StagedImage& staged, uint16_t original, bool idle) {
+    const auto restore = idle ? original : uint16_t(original | intx_disable);
+    adapter.write16(pci_command, restore);
+    const bool restored = adapter.read16(pci_command) == restore;
+    if (!idle || !restored) {
+        queues.pin_until_reboot();
+        staged.retain = true;
+        report("DMA buffers reserved until reboot");
+    }
+    return restored;
+}
+
+void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
+                     const AntennaMasks& antennas) {
+    if (check >= FirmwareCheck::nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
+        report("command buffer allocation failed");
+        return;
+    }
+    ScanElementStorage* elements = nullptr;
+    if (check >= FirmwareCheck::passive_scan) {
+        elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
+        if (!elements) {
+            report("scan result allocation failed");
+            return;
+        }
+    }
+    AdapterBoot boot{0, queues};
+    uint16_t original;
+    if (!enable_registers(boot, original)) {
+        release(elements);
+        return;
+    }
+    const auto io = boot_io(boot);
+    const auto memory = boot_memory(queues, check);
     const ScanChecks scan{antennas, check, elements};
     const auto result =
         start_and_stop_quz(io, memory, check >= FirmwareCheck::scan_config ? &scan : nullptr);
-    const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
-    adapter.write16(pci_command, restore);
-    const bool restored = adapter.read16(pci_command) == restore;
+    const bool restored = restore_registers(queues, staged, original, result.dma_idle);
     log("iwlwifi: %s, DMA idle=%u, PCI command restored=%u\n", result.status,
         uint64_t(result.dma_idle), uint64_t(restored));
     report(result.status);
@@ -380,13 +411,124 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         }
     }
     release(elements);
-    if (!result.dma_idle || !restored) {
-        queues.pin_until_reboot();
-        staged.retain = true;
-        report("DMA buffers reserved until reboot");
-    } else if (result.alive) {
+    if (result.dma_idle && restored && result.alive) {
         report("adapter reset and stopped");
     }
+}
+
+bool prepare_image(const FirmwareImage& image, StagedImage& staged, BootQueues& queues) {
+    if (!staged.copy(image)) {
+        report("DMA staging allocation failed");
+        return false;
+    }
+    if (!staged.matches(image)) {
+        report("DMA staging readback failed");
+        return false;
+    }
+    if (!queues.prepare(image, staged.addresses)) {
+        report("boot context preparation failed");
+        return false;
+    }
+    const auto& context = queues.context.data<BootContext>();
+    log("iwlwifi: boot context dwords=%u RX=%u buffers=%u commands=%u\n", uint64_t(context.dwords),
+        uint64_t(rx_ring_entries), uint64_t(queues.receive_count), uint64_t(command_ring_entries));
+    log("iwlwifi: DMA staged API=%u LMAC=%u UMAC=%u paging=%u paging_bytes=%u\n",
+        uint64_t(image.version[0]), uint64_t(image.regions[lmac].count),
+        uint64_t(image.regions[umac].count), uint64_t(image.regions[paging].count),
+        uint64_t(image.paging_bytes));
+    report("firmware and boot queues staged in memory");
+    return true;
+}
+
+struct RuntimeRadio {
+    StagedImage staged;
+    BootQueues queues;
+    AdapterBoot boot{0, queues};
+    FirmwareBootIo io = boot_io(boot);
+    FirmwareBootMemory memory{};
+    LiveScanSession session{io, memory};
+    uint16_t original_pci = 0;
+    ScanElementStorage* pending = nullptr;
+
+    ~RuntimeRadio() {
+        release(pending);
+    }
+};
+
+RuntimeRadio* radio;
+
+void stop_runtime(NetAdapter& device) {
+    if (!radio)
+        return;
+    const bool idle = stop_live_quz(radio->session);
+    restore_registers(radio->queues, radio->staged, radio->original_pci, idle);
+    radio->~RuntimeRadio();
+    release(radio);
+    radio = nullptr;
+    device.receive_only_diagnostic = true;
+    device.info.live = false;
+}
+
+void poll_runtime(NetAdapter& device) {
+    if (!radio)
+        return;
+    const bool active = radio->session.active;
+    const auto outcome = poll_live_scan(radio->session, clock_monotonic_ns() / 1000000);
+    if (outcome == ScanOutcome::pending)
+        return;
+    const bool complete = outcome == ScanOutcome::complete;
+    if (complete) {
+        release(completed_scan.elements);
+        completed_scan = radio->session.scan;
+        radio->pending = nullptr;
+        ++completed_generation;
+    } else {
+        release(radio->pending);
+        radio->pending = nullptr;
+    }
+    radio->session.scan.elements = nullptr;
+    // A timeout or bad receive state leaves command and DMA ownership uncertain.
+    if (!complete && outcome != ScanOutcome::rejected && outcome != ScanOutcome::aborted) {
+        log("iwlwifi: stopping live scan after firmware error %u\n", uint64_t(outcome));
+        stop_runtime(device);
+    }
+    if (active)
+        wireless_scan_finished(device.info.index, complete);
+}
+
+void launch_live_firmware(const FirmwareImage& image) {
+    void* storage = alloc(sizeof(RuntimeRadio));
+    if (!storage) {
+        report("live radio allocation failed");
+        return;
+    }
+    auto* device = new (storage) RuntimeRadio;
+    bool prepared = prepare_image(image, device->staged, device->queues);
+    if (prepared && !device->queues.command_payloads.allocate(sizeof(CommandPayloads))) {
+        report("command buffer allocation failed");
+        prepared = false;
+    }
+    if (prepared && enable_registers(device->boot, device->original_pci)) {
+        device->memory = boot_memory(device->queues, FirmwareCheck::live_scan);
+        const auto result = start_live_quz(device->session, image.antennas);
+        report(result.status);
+        if (result.successful) {
+            radio = device;
+            memcpy(scanned_adapter.info.mac, device->session.station_address,
+                   sizeof(device->session.station_address));
+            if (net_register(scanned_adapter, "iwlwifi", &adapter)) {
+                scanned_adapter.receive_only_diagnostic = false;
+                completed_scan.status = PassiveScan::Status::complete;
+            } else {
+                report("cannot register the live scan interface");
+                stop_runtime(scanned_adapter);
+            }
+            return;
+        }
+        restore_registers(device->queues, device->staged, device->original_pci, result.dma_idle);
+    }
+    device->~RuntimeRadio();
+    release(device);
 }
 
 void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
@@ -419,32 +561,13 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report("firmware lacks the supported passive scan commands");
         return;
     }
+    if (check == FirmwareCheck::live_scan) {
+        launch_live_firmware(image);
+        return;
+    }
     StagedImage staged;
-    if (!staged.copy(image)) {
-        log("iwlwifi: DMA staging allocation failed\n");
-        report("DMA staging allocation failed");
-        return;
-    }
-    if (!staged.matches(image)) {
-        log("iwlwifi: DMA staging readback failed\n");
-        report("DMA staging readback failed");
-        return;
-    }
     BootQueues queues;
-    if (!queues.prepare(image, staged.addresses)) {
-        log("iwlwifi: boot context preparation failed\n");
-        report("boot context preparation failed");
-        return;
-    }
-    const auto& context = queues.context.data<BootContext>();
-    log("iwlwifi: boot context dwords=%u RX=%u buffers=%u commands=%u\n", uint64_t(context.dwords),
-        uint64_t(rx_ring_entries), uint64_t(queues.receive_count), uint64_t(command_ring_entries));
-    log("iwlwifi: DMA staged API=%u LMAC=%u UMAC=%u paging=%u paging_bytes=%u\n",
-        uint64_t(image.version[0]), uint64_t(image.regions[lmac].count),
-        uint64_t(image.regions[umac].count), uint64_t(image.regions[paging].count),
-        uint64_t(image.paging_bytes));
-    report("firmware and boot queues staged in memory");
-    if (check != FirmwareCheck::stage)
+    if (prepare_image(image, staged, queues) && check != FirmwareCheck::stage)
         launch_firmware(queues, staged, check, image.antennas);
 }
 } // namespace
@@ -455,6 +578,34 @@ const PassiveScan* passive_scan_snapshot() {
 
 unsigned passive_scan_interface() {
     return scanned_adapter.info.index;
+}
+
+uint32_t passive_scan_generation() {
+    return completed_generation;
+}
+
+bool live_scan_available() {
+    return radio != nullptr;
+}
+
+int trigger_live_scan() {
+    if (!radio)
+        return -95;
+    if (!scanned_adapter.info.administrative)
+        return -100;
+    if (radio->pending)
+        return -16;
+    auto* elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
+    if (!elements)
+        return -12;
+    const int error = submit_live_scan(radio->session, *elements, clock_monotonic_ns() / 1000000);
+    if (error) {
+        radio->session.scan.elements = nullptr;
+        release(elements);
+        return error;
+    }
+    radio->pending = elements;
+    return 0;
 }
 
 void check_firmware(bool probe_pci, FirmwareCheck check) {

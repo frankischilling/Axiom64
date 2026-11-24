@@ -7,7 +7,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_rx.hpp"
+#include "drivers/net/intel_wifi_live.hpp"
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -261,6 +261,7 @@ struct StartupFixture {
     uint64_t descriptors[rx_ring_entries - 1]{};
     uint8_t buffer[ax::page_size]{};
     uint8_t replies[9][ax::page_size]{};
+    Bytes live_replies;
     CommandDescriptor commands[command_ring_entries]{};
     CommandPayloads payloads{};
     unsigned commands_sent = 0;
@@ -324,15 +325,24 @@ struct StartupFixture {
         }
     }
 
-    void command_reply(unsigned index) {
-        assert(index == ++commands_sent && index <= 9);
-        const unsigned slot = index - 1;
+    uint8_t* reply_buffer(unsigned slot) {
+        if (!live_replies.empty())
+            return live_replies.data() + slot * ax::page_size;
+        return slot < 9 ? replies[slot] : nullptr;
+    }
+
+    void command_reply(unsigned tail) {
+        const unsigned index = ++commands_sent;
+        assert(tail == (index & (command_sequence_count - 1)));
+        assert(index <= (live_replies.empty() ? 9u : live_replies.size() / ax::page_size));
+        const unsigned sequence = (index - 1) & (command_sequence_count - 1);
+        const unsigned slot = sequence & (command_ring_entries - 1);
         const auto& command = payloads[slot];
         const bool scanning = passive != ScanCase::unused;
         const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
         uint8_t expected[command_slot_bytes]{};
         uint16_t payload_bytes = 4;
-        expected[2] = uint8_t(slot);
+        expected[2] = uint8_t(sequence);
         expected[1] = 1;
         if (index <= 3) {
             const uint8_t codes[]{3, 0, 2};
@@ -366,7 +376,7 @@ struct StartupFixture {
         } else {
             expected[0] = 0xd;
             payload_bytes = 1940;
-            expected[8] = uint8_t(index - 8);
+            expected[8] = uint8_t((index - 8) & 1);
             expected[12] = 6;
             expected[16] = 2;
             expected[17] = 8;
@@ -391,7 +401,7 @@ struct StartupFixture {
             assert(commands[slot].buffers[1].address == 0xa014 + slot * command_slot_bytes);
         }
 
-        auto* reply = replies[slot];
+        auto* reply = reply_buffer(index - 1);
         const bool backlog = index == 8 && passive == ScanCase::busy_queue;
         if (backlog) {
             for (unsigned offset = 0; offset < ax::page_size; offset += 64) {
@@ -400,7 +410,7 @@ struct StartupFixture {
                 reply[offset + 7] = 0x80;
             }
             used[index + 1] = index + 2;
-            reply = replies[slot + 1];
+            reply = reply_buffer(index);
         }
         if (index == 2) {
             // INIT complete and the command reply share a receive buffer.
@@ -436,7 +446,7 @@ struct StartupFixture {
                 data[76] = 0x01;
         }
         if (index >= 8)
-            scan_notifications(reply, uint8_t(index - 8));
+            scan_notifications(reply, uint8_t((index - 8) & 1));
         used[index] = index + 1;
         receive_status.closed_buffer = uint16_t(index + 1 + backlog);
     }
@@ -491,8 +501,8 @@ struct StartupFixture {
         }
     }
 
-    FirmwareBootResult run(bool nvm = false, const ScanChecks* scan = nullptr) {
-        const FirmwareBootIo io{
+    FirmwareBootIo make_io() {
+        return {
             this,
             [](void* ptr, unsigned offset) {
                 return static_cast<StartupFixture*>(ptr)->csr[offset / 4];
@@ -520,11 +530,14 @@ struct StartupFixture {
                 auto& model = *static_cast<StartupFixture*>(ptr);
                 if (id == 1)
                     return model.buffer;
-                return id >= 2 && id <= 10 ? model.replies[id - 2] : nullptr;
+                return id >= 2 ? model.reply_buffer(id - 2) : nullptr;
             },
         };
+    }
+
+    FirmwareBootMemory make_memory(bool nvm, bool repost) {
         FirmwareBootMemory memory{0x9000, &receive_status, used};
-        recycle = scan && scan->check == FirmwareCheck::rescan;
+        recycle = repost;
         if (recycle) {
             initial_receive_descriptors(free_ring, descriptors);
             memory.free_ring = free_ring;
@@ -535,6 +548,12 @@ struct StartupFixture {
             memory.command_payloads = &payloads;
             memory.command_dma = 0xa000;
         }
+        return memory;
+    }
+
+    FirmwareBootResult run(bool nvm = false, const ScanChecks* scan = nullptr) {
+        const auto io = make_io();
+        const auto memory = make_memory(nvm, scan && scan->check == FirmwareCheck::rescan);
         return start_and_stop_quz(io, memory, scan);
     }
 };
@@ -697,6 +716,37 @@ void check_startup() {
     std::puts("AX201_REPEAT_SCAN_MODEL_PASS");
 }
 
+void check_live_scans() {
+    StartupFixture model(StartupCase::good);
+    model.regulatory = RegulatoryCase::valid;
+    model.passive = ScanCase::early_completion;
+    model.live_replies.resize(300 * ax::page_size);
+    const auto io = model.make_io();
+    const auto memory = model.make_memory(true, true);
+    LiveScanSession session(io, memory);
+    const auto boot = start_live_quz(session, {1, 2});
+    assert(boot.successful && !boot.dma_idle && session.running && model.master);
+    assert(model.commands_sent == 7 && session.next_command == 7 && !session.active);
+
+    ScanElementStorage elements{};
+    for (unsigned scan = 0; scan < 260; ++scan) {
+        const uint64_t now = 10000 + 20000ull * scan;
+        assert(submit_live_scan(session, elements, now) == 0 && session.active);
+        assert(submit_live_scan(session, elements, now) == -16);
+        assert(poll_live_scan(session, now + 50) == ScanOutcome::complete && !session.active);
+        assert(session.scan.access_point_count == 1 && session.scan.id == (scan & 1));
+        assert(!model.scan_delays && session.running && model.master);
+    }
+    assert(model.commands_sent == 267 && session.next_command == 11);
+    model.passive = ScanCase::timeout;
+    assert(submit_live_scan(session, elements, 6000000) == 0);
+    assert(poll_live_scan(session, 6000001) == ScanOutcome::pending);
+    assert(poll_live_scan(session, 6012001) == ScanOutcome::completion_timeout);
+    assert(stop_live_quz(session) && !session.running && model.reset_after_dma && !model.master);
+    assert(submit_live_scan(session, elements, 6012002) == -95);
+    std::puts("AX201_LIVE_SCAN_MODEL_PASS scans=260");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -811,6 +861,7 @@ int main(int argc, char** argv) {
            image.regions[paging].sections[1].data[4095] == 11);
     check_boot_queues(image);
     check_startup();
+    check_live_scans();
     check_receive_recycling();
     check_access_points();
 

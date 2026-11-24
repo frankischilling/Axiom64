@@ -10,7 +10,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_rx.hpp"
+#include "drivers/net/intel_wifi_live.hpp"
 #include "mm/dma.hpp"
 
 namespace ax::IntelWifi {
@@ -220,7 +220,7 @@ enum class WaitFor { reply, initialization };
 struct CommandSession {
     const Registers& reg;
     ReceiveReader& rx;
-    uint16_t index = 0;
+    uint16_t& index;
     bool init_complete = false;
 
     bool acknowledge_pending() const {
@@ -263,14 +263,15 @@ struct CommandSession {
 
     bool submit(uint8_t group, uint8_t opcode, const uint8_t* payload, size_t bytes) {
         const auto& memory = rx.memory;
-        const unsigned slot = index;
-        if (slot >= command_ring_entries ||
-            !prepare_host_command((*memory.command_payloads)[slot],
+        const unsigned slot = index & (command_ring_entries - 1);
+        if (!prepare_host_command((*memory.command_payloads)[slot],
                                   memory.command_dma + slot * command_slot_bytes,
                                   memory.commands[slot], index, group, opcode, payload, bytes))
             return false;
         __atomic_thread_fence(__ATOMIC_RELEASE);
-        reg.write(command_write_pointer, ++index);
+        // The firmware doorbell and reply sequence wrap independently of the DMA slots.
+        index = (index + 1) & (command_sequence_count - 1);
+        reg.write(command_write_pointer, index);
         return true;
     }
 
@@ -300,6 +301,18 @@ struct CommandSession {
             }
             exchange.observe(packet, now_ms);
         }
+    }
+
+    bool poll_idle() {
+        if (!acknowledge_pending())
+            return false;
+        for (unsigned i = 0; i < 64; ++i) {
+            FirmwarePacket packet{};
+            const auto result = rx.next(packet);
+            if (result != PacketRead::packet)
+                return result == PacketRead::end;
+        }
+        return true;
     }
 };
 
@@ -426,13 +439,26 @@ AlivePacket read_alive_notification(const uint8_t* data, size_t length) {
     return received == PacketRead::end ? AlivePacket::missing : AlivePacket::malformed;
 }
 
-FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
-                                      const ScanChecks* scan) {
+static bool stop_adapter(const Registers& reg, bool request_dma) {
+    reg.write(interrupt_mask, 0);
+    bool idle = true;
+    if (request_dma) {
+        const bool stopped = reg.update(reset, stop_master) &&
+                             reg.wait(reset, master_disabled, master_disabled, 200);
+        const bool disabled = reg.io.bus_master(reg.io.context, false);
+        idle = stopped && disabled;
+    }
+    const bool reset_done = reset_adapter(reg);
+    return !request_dma || (idle && reset_done);
+}
+
+static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
+                                   const ScanChecks* scan, LiveScanSession* live) {
     if (!memory.context_address || memory.context_address != align_down(memory.context_address) ||
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
         return {"invalid startup DMA addresses", false, true};
-    if (bool(memory.free_ring) != bool(memory.receive_descriptors))
+    if (bool(memory.free_ring) != bool(memory.receive_descriptors) || (live && !memory.free_ring))
         return {"invalid receive recycling addresses", false, true};
     if ((scan && !memory.commands) ||
         (memory.commands && (!memory.command_payloads || !memory.command_dma ||
@@ -464,11 +490,13 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             reg.write(context_base + 4, 0);
             reg.write(interrupt_mask, alive_interrupt | rx_interrupt | error_interrupts);
             reg.write_peripheral(cpu_start, 1);
-            ReceiveReader rx{io, memory};
+            ReceiveReader temporary{io, memory};
+            auto& rx = live ? live->receive : temporary;
             error = wait_for_alive(reg, rx);
             alive = !error;
             if (alive && memory.commands) {
-                CommandSession commands{reg, rx};
+                uint16_t index = 0;
+                CommandSession commands{reg, rx, live ? live->next_command : index};
                 error = request_nvm(commands, info);
                 if (!error && passive_check)
                     error = configure_tx_antennas(commands, info, scan->antennas);
@@ -479,6 +507,13 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
                 if (!error && passive_check) {
                     uint8_t address[6];
                     error = configure_scan_station(commands, address);
+                    if (!error && live) {
+                        live->nvm = info;
+                        live->regulatory = regulatory;
+                        memcpy(live->station_address, address, sizeof(address));
+                        live->running = true;
+                        return {"live passive scan ready", alive, false, true, info, regulatory};
+                    }
                     const unsigned scans = scan->check == FirmwareCheck::rescan ? 2 : 1;
                     while (!error && completed_scans < scans) {
                         error = run_passive_scan(commands, info, regulatory, address, passive,
@@ -491,15 +526,7 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         }
     }
 
-    reg.write(interrupt_mask, 0);
-    bool idle = true;
-    if (request_dma) {
-        const bool stopped = reg.update(reset, stop_master) &&
-                             reg.wait(reset, master_disabled, master_disabled, 200);
-        const bool disabled = io.bus_master(io.context, false);
-        idle = stopped && disabled;
-    }
-    const bool reset_done = reset_adapter(reg);
+    const bool idle = stop_adapter(reg, request_dma);
     const char* success = "firmware ALIVE received";
     if (scan && scan->check == FirmwareCheck::rescan)
         success = "two firmware passive scans complete";
@@ -511,13 +538,60 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         success = "firmware scan configuration accepted";
     else if (memory.commands)
         success = "firmware NVM read passed";
-    return {error ? error : success,
-            alive,
-            !request_dma || (idle && reset_done),
-            !error,
-            info,
-            regulatory,
-            passive,
+    return {error ? error : success, alive, idle, !error, info, regulatory, passive,
             completed_scans};
+}
+
+FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
+                                      const ScanChecks* scan) {
+    return boot_quz(io, memory, scan, nullptr);
+}
+
+FirmwareBootResult start_live_quz(LiveScanSession& session, const AntennaMasks& antennas) {
+    const ScanChecks check{antennas, FirmwareCheck::live_scan};
+    return boot_quz(session.io, session.receive.memory, &check, &session);
+}
+
+bool stop_live_quz(LiveScanSession& session) {
+    if (!session.running)
+        return true;
+    session.running = false;
+    session.active = false;
+    return stop_adapter(Registers{session.io}, true);
+}
+
+int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uint64_t now_ms) {
+    if (!session.running)
+        return -95;
+    if (session.active)
+        return -16;
+
+    uint8_t request[passive_request_bytes];
+    session.scan.elements = &elements;
+    if (!prepare_passive_scan(session.nvm, session.regulatory, session.scan, request,
+                              session.next_scan_id))
+        return -22;
+    memcpy(session.scan.station_address, session.station_address, sizeof(session.station_address));
+    session.exchange.restart(session.next_command, now_ms);
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    if (!commands.submit(1, 0xd, request, sizeof(request)))
+        return -5;
+    session.active = true;
+    session.next_scan_id ^= 1;
+    return 0;
+}
+
+ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
+    if (!session.running)
+        return ScanOutcome::receive_failed;
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    if (!session.active)
+        return commands.poll_idle() ? ScanOutcome::pending : ScanOutcome::receive_failed;
+    commands.poll_scan(session.exchange, now_ms);
+    const auto outcome = session.exchange.outcome();
+    session.active = outcome == ScanOutcome::pending;
+    return outcome;
 }
 } // namespace ax::IntelWifi

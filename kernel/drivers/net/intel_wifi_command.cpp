@@ -52,7 +52,7 @@ bool prepare_host_command(uint8_t (&slot)[command_slot_bytes], uint64_t dma,
         return false;
     const auto command_bytes = uint16_t(header_bytes + payload_bytes);
     if (!dma || dma % alignof(uint64_t) || !Dma::fits(dma, command_bytes, Dma::pci) ||
-        index >= command_ring_entries || !group)
+        index >= command_sequence_count || !group)
         return false;
     memset(slot, 0, sizeof(slot));
     slot[0] = opcode;

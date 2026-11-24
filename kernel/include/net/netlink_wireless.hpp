@@ -14,16 +14,23 @@ namespace ax {
 struct NetlinkHeader;
 inline constexpr uint16_t nl80211_family = 17;
 inline constexpr uint8_t nl80211_get_wiphy = 1, nl80211_get_interface = 5, nl80211_get_scan = 32;
+inline constexpr uint8_t nl80211_trigger_scan = 33;
+inline constexpr unsigned nl80211_scan_group = 17;
 
 struct WirelessDump {
     uint32_t sequence = 0;
+    uint32_t generation = 0;
     unsigned next = 0;
     bool active = false;
 };
 
 bool wireless_scan_available();
-size_t wireless_reply(const void*, const NetlinkHeader&, uint32_t port, bool capped, void*,
-                      void* followup, size_t& followup_length, WirelessDump&);
+bool wireless_trigger_available();
+size_t wireless_reply(const void*, const NetlinkHeader&, uint32_t port, bool capped,
+                      bool privileged, void*, void* followup, size_t& followup_length,
+                      WirelessDump&);
 size_t wireless_dump_record(const WirelessDump&, uint32_t port, void* output);
 void wireless_dump_advance(WirelessDump&);
+void wireless_scan_finished(unsigned ifindex, bool complete);
+void netlink_broadcast_scan(const void*, size_t);
 } // namespace ax

@@ -74,7 +74,7 @@ enum class ScanOutcome {
 // The transport supplies timestamps and notifications. Each call returns without waiting.
 class PassiveScanExchange {
     PassiveScan& scan;
-    const uint16_t sequence;
+    uint16_t sequence;
     uint64_t phase_start;
     ScanOutcome result = ScanOutcome::pending;
     bool accepted = false;
@@ -88,13 +88,17 @@ class PassiveScanExchange {
         return result;
     }
 
+    void restart(uint16_t new_sequence, uint64_t now_ms);
+
     void expire(uint64_t now_ms);
     void observe(const FirmwarePacket&, uint64_t now_ms);
     void receive_failed();
 };
 
-// The boot diagnostic publishes a completed snapshot after stopping the adapter.
-// Its information elements remain owned by the driver for the rest of the boot.
+// Borrow the most recently published scan while holding the kernel lock.
 const PassiveScan* passive_scan_snapshot();
 unsigned passive_scan_interface();
+uint32_t passive_scan_generation();
+bool live_scan_available();
+int trigger_live_scan();
 } // namespace ax::IntelWifi

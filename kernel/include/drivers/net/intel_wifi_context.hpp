@@ -14,6 +14,7 @@ namespace ax::IntelWifi {
 inline constexpr uint16_t quz_mac_revision = 0x0351;
 inline constexpr unsigned rx_ring_entries = 2048;
 inline constexpr unsigned command_ring_entries = 32;
+inline constexpr unsigned command_sequence_count = 256;
 inline constexpr uint64_t rx_buffer_id_mask = 0xfff;
 inline constexpr unsigned invalid_command_size = 8;
 

@@ -7,6 +7,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
+#include "core/time.hpp"
 #include "drivers/net/intel_wifi_live.hpp"
 #include "net/netlink.hpp"
 #include "net/netlink_wireless.hpp"
@@ -75,6 +76,7 @@ enum BssAttribute : uint16_t {
     information_elements = 6,
     signal_mbm = 7,
     bss_status = 9,
+    seen_ms_ago = 10,
     beacon_elements = 11,
     probe_response_data = 14,
 };
@@ -750,6 +752,7 @@ size_t station_reply(const IntelWifi::LiveStationInfo& link, unsigned index,
 } // namespace
 
 bool wireless_scan_available() {
+    IntelWifi::expire_passive_scan();
     return IntelWifi::passive_scan_snapshot() && IntelWifi::passive_scan_interface();
 }
 
@@ -937,6 +940,10 @@ size_t wireless_dump_record(const WirelessDump& cursor, uint32_t port, void* out
     message.value(frequency, uint32_t(point.frequency_mhz));
     message.value(beacon_interval, point.beacon_interval_tu);
     message.value(capability, point.capability);
+    if (point.seen_ms) {
+        const auto age = clock_monotonic_ns() / 1000000 - point.seen_ms;
+        message.value(seen_ms_ago, uint32_t(min(age, uint64_t(UINT32_MAX))));
+    }
     if (IntelWifi::live_bss_associated(point))
         message.value(bss_status, uint32_t(1)); // NL80211_BSS_STATUS_ASSOCIATED.
     if (point.signal_dbm != IntelWifi::scan_signal_unavailable)

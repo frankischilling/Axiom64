@@ -1687,7 +1687,14 @@ void check_live_connection() {
             peer.capability |= 0x10;
             model.secured_association = true;
         }
-        assert(submit_live_join(session, session.scan, request) == 0);
+        ScanElementStorage next_scan_elements{};
+        PassiveScan next_scan{};
+        next_scan.elements = &next_scan_elements;
+        next_scan.status = PassiveScan::Status::complete;
+        assert(submit_live_join(session, next_scan, request) == -2);
+        session.scan.access_points[0].seen_ms = 1;
+        update_scan_history(next_scan, session.scan, 2, nullptr);
+        assert(submit_live_join(session, next_scan, request) == 0);
         assert(submit_live_scan(session, scan, 2) == -16 && model.commands_sent == 8);
         assert(submit_live_join(session, session.scan, request) == -16);
 

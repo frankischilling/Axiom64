@@ -816,5 +816,25 @@ void check_intel_wifi_access_points() {
     assert(replacement.access_point_count == 1 && replacement.access_points[0].signal_dbm == -59 &&
            !memcmp(retained_elements.records[0].probe, probe, sizeof(probe)) &&
            !memcmp(retained_elements.records[0].beacon, later_beacon, sizeof(later_beacon)));
+
+    // A scan of a different channel keeps the earlier result and its IEs.
+    constexpr uint64_t first_scan = 1000, second_scan = 1200;
+    point.seen_ms = first_scan;
+    scan.access_points[1].seen_ms = first_scan;
+    replacement.access_points[0] = scan.access_points[1];
+    retained_elements.records[0] = elements.records[1];
+    update_scan_history(replacement, scan, second_scan, nullptr);
+    assert(replacement.access_point_count == 2);
+    assert(replacement.access_points[0].seen_ms == second_scan &&
+           replacement.access_points[1].seen_ms == first_scan);
+    assert(!memcmp(retained_elements.records[1].probe, probe, sizeof(probe)));
+    assert(!expire_scan_history(replacement, first_scan + scan_cache_lifetime_ms - 1, nullptr));
+    assert(expire_scan_history(replacement, first_scan + scan_cache_lifetime_ms, nullptr));
+    assert(replacement.access_point_count == 1 &&
+           replacement.access_points[0].frequency_mhz == 5180);
+    assert(!expire_scan_history(replacement, second_scan + scan_cache_lifetime_ms,
+                                &scan.access_points[1]));
+    assert(expire_scan_history(replacement, second_scan + scan_cache_lifetime_ms, nullptr));
+    assert(replacement.access_point_count == 0);
     std::puts("AX201_ACCESS_POINT_MODEL_PASS");
 }

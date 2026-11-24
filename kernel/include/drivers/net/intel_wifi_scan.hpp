@@ -19,6 +19,7 @@ void prepare_scan_station(const uint8_t (&address)[6], uint8_t (&command)[mac_co
 
 inline constexpr int16_t scan_signal_unavailable = -128;
 inline constexpr unsigned scan_access_point_limit = 32;
+inline constexpr uint64_t scan_cache_lifetime_ms = 30000;
 inline constexpr unsigned scan_channel_limit = 51;
 inline constexpr uint64_t all_scan_channels = (uint64_t(1) << scan_channel_limit) - 1;
 inline constexpr unsigned scan_ssid_limit = 20;
@@ -65,6 +66,7 @@ struct ScanElementStorage {
 };
 
 struct AccessPoint {
+    uint64_t seen_ms = 0;
     uint8_t bssid[6]{};
     uint8_t ssid[32]{};
     uint8_t ssid_length = 0;
@@ -94,6 +96,8 @@ struct PassiveScan {
 bool prepare_scan_phase(const ScanChannelList&, PassiveScan&, uint8_t (&wire)[scan_request_bytes],
                         uint32_t id, uint64_t channels, const ScanSsids&, bool associated = false);
 void retain_associated_access_point(PassiveScan&, const PassiveScan&, const AccessPoint&);
+void update_scan_history(PassiveScan&, const PassiveScan&, uint64_t now_ms, const AccessPoint*);
+bool expire_scan_history(PassiveScan&, uint64_t now_ms, const AccessPoint*);
 constexpr size_t scan_abort_bytes = 8;
 void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]);
 void observe_passive_scan(PassiveScan&, const FirmwarePacket&);
@@ -141,6 +145,7 @@ class PassiveScanExchange {
 
 // Borrow the most recently published scan while holding the kernel lock.
 const PassiveScan* passive_scan_snapshot();
+void expire_passive_scan();
 const ScanChannelList& scan_channel_inventory();
 unsigned passive_scan_interface();
 uint32_t passive_scan_generation();

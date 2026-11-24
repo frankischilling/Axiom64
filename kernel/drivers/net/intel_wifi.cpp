@@ -594,6 +594,13 @@ void recover_runtime(NetAdapter& device) {
     release(bytes);
 }
 
+const AccessPoint* associated_access_point() {
+    if (!radio || !radio->session.station.queue.id ||
+        radio->session.leave.phase != LeavePhase::idle)
+        return nullptr;
+    return &radio->session.station.peer;
+}
+
 int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
     if (!radio)
         return -95;
@@ -697,14 +704,13 @@ void poll_runtime(NetAdapter& device) {
             return;
     }
     const bool active = radio->session.active;
-    const auto outcome = poll_live_scan(radio->session, clock_monotonic_ns() / 1000000);
+    const auto now_ms = clock_monotonic_ns() / 1000000;
+    const auto outcome = poll_live_scan(radio->session, now_ms);
     if (outcome == ScanOutcome::pending)
         return;
     const bool complete = outcome == ScanOutcome::complete;
     if (complete) {
-        if (radio->session.station.queue.id && radio->session.leave.phase == LeavePhase::idle)
-            retain_associated_access_point(radio->session.scan, completed_scan,
-                                           radio->session.station.peer);
+        update_scan_history(radio->session.scan, completed_scan, now_ms, associated_access_point());
         release(completed_scan.elements);
         completed_scan = radio->session.scan;
         radio->pending = nullptr;
@@ -776,6 +782,8 @@ void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
                 ++completed_generation;
                 if (open) {
                     completed_scan = result.passive;
+                    for (unsigned i = 0; i < completed_scan.access_point_count; ++i)
+                        completed_scan.access_points[i].seen_ms = clock_monotonic_ns() / 1000000;
                     device->pending = nullptr;
                 } else {
                     completed_scan.status = PassiveScan::Status::complete;
@@ -855,6 +863,12 @@ const PassiveScan* passive_scan_snapshot() {
     return completed_scan.status == PassiveScan::Status::complete ? &completed_scan : nullptr;
 }
 
+void expire_passive_scan() {
+    if (radio && expire_scan_history(completed_scan, clock_monotonic_ns() / 1000000,
+                                     associated_access_point()))
+        ++completed_generation;
+}
+
 unsigned passive_scan_interface() {
     return scanned_adapter.info.index;
 }
@@ -888,6 +902,7 @@ int request_live_connection(const StationRequest& request, unsigned owner) {
         return -95;
     if (!scanned_adapter.info.administrative)
         return -100;
+    expire_passive_scan();
     const int status = submit_live_join(radio->session, completed_scan, request);
     if (!status)
         radio->owner_port = owner;

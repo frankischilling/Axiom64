@@ -335,21 +335,26 @@ bool prepare_scan_phase(const ScanChannelList& list, PassiveScan& scan,
     return true;
 }
 
+static bool same_access_point(const AccessPoint& point, const AccessPoint& peer) {
+    return point.frequency_mhz == peer.frequency_mhz &&
+           !memcmp(point.bssid, peer.bssid, sizeof(peer.bssid)) &&
+           point.ssid_length == peer.ssid_length &&
+           !memcmp(point.ssid, peer.ssid, peer.ssid_length);
+}
+
+static bool recent(const AccessPoint& point, uint64_t now_ms) {
+    return point.seen_ms && now_ms - point.seen_ms < scan_cache_lifetime_ms;
+}
+
 void retain_associated_access_point(PassiveScan& scan, const PassiveScan& previous,
                                     const AccessPoint& peer) {
     if (!scan.elements || !previous.elements)
         return;
-    const auto matches = [&](const AccessPoint& item) {
-        return item.frequency_mhz == peer.frequency_mhz &&
-               !memcmp(item.bssid, peer.bssid, sizeof(peer.bssid)) &&
-               item.ssid_length == peer.ssid_length &&
-               !memcmp(item.ssid, peer.ssid, peer.ssid_length);
-    };
     for (unsigned i = 0; i < scan.access_point_count; ++i)
-        if (matches(scan.access_points[i]))
+        if (same_access_point(scan.access_points[i], peer))
             return;
     for (unsigned i = 0; i < previous.access_point_count; ++i) {
-        if (!matches(previous.access_points[i]))
+        if (!same_access_point(previous.access_points[i], peer))
             continue;
         const bool full = scan.access_point_count == scan_access_point_limit;
         const unsigned next = full ? scan_access_point_limit - 1 : scan.access_point_count++;
@@ -359,6 +364,52 @@ void retain_associated_access_point(PassiveScan& scan, const PassiveScan& previo
         scan.elements->records[next] = previous.elements->records[i];
         return;
     }
+}
+
+void update_scan_history(PassiveScan& scan, const PassiveScan& previous, uint64_t now_ms,
+                         const AccessPoint* associated) {
+    for (unsigned i = 0; i < scan.access_point_count; ++i)
+        scan.access_points[i].seen_ms = now_ms;
+    if (!scan.elements || !previous.elements)
+        return;
+    if (associated)
+        retain_associated_access_point(scan, previous, *associated);
+    for (unsigned i = 0; i < previous.access_point_count; ++i) {
+        const auto& point = previous.access_points[i];
+        if (!recent(point, now_ms))
+            continue;
+        bool known = false;
+        for (unsigned j = 0; j < scan.access_point_count && !known; ++j)
+            known = same_access_point(scan.access_points[j], point);
+        if (known)
+            continue;
+        if (scan.access_point_count == scan_access_point_limit) {
+            scan.access_points_truncated = true;
+            return;
+        }
+        const unsigned slot = scan.access_point_count++;
+        scan.access_points[slot] = point;
+        scan.elements->records[slot] = previous.elements->records[i];
+    }
+}
+
+bool expire_scan_history(PassiveScan& scan, uint64_t now_ms, const AccessPoint* associated) {
+    if (!scan.elements)
+        return false;
+    unsigned retained = 0;
+    for (unsigned i = 0; i < scan.access_point_count; ++i) {
+        const auto& point = scan.access_points[i];
+        if (!recent(point, now_ms) && !(associated && same_access_point(point, *associated)))
+            continue;
+        if (retained != i) {
+            scan.access_points[retained] = point;
+            scan.elements->records[retained] = scan.elements->records[i];
+        }
+        ++retained;
+    }
+    const bool changed = retained != scan.access_point_count;
+    scan.access_point_count = retained;
+    return changed;
 }
 
 void observe_passive_scan(PassiveScan& scan, const FirmwarePacket& packet) {

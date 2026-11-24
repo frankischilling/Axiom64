@@ -30,6 +30,11 @@ Use **System Settings → Region & Language** to choose a language or regional
 format, then sign out and back in. Run `localectl list-locales` to see the
 installed musl locales. Locale changes are made in Plasma.
 
+The installed Plasma desktop includes PowerDevil and its **Power and Battery**
+widget. The widget uses battery and charger data from UPower. On supported
+laptops, the tray shows the battery even at full charge. You can hide it
+under **Power and Battery** in System Tray Settings.
+
 New accounts get an `auto-eduroam` folder with the setup helper and its
 instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.

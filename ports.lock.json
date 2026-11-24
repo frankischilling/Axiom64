@@ -668,6 +668,19 @@
       "installed_only": true
     },
     {
+      "name": "ddcutil",
+      "version": "2.2.0-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ddcutil-2.2.0-r1.apk",
+      "archive": "ddcutil-2.2.0-r1.apk",
+      "sha256": "199d4fcd69e9bdc2640b618645d6cc89a843a934640d19b59a1051016233d53c",
+      "license": "GPL-2.0-only",
+      "upstream": "https://github.com/rockowitz/ddcutil",
+      "origin": "ddcutil",
+      "source_commit": "7a21d29ceff59ea0a8486a9dc2033d49a6f877a6",
+      "installed_only": true
+    },
+    {
       "name": "desktop-file-utils",
       "version": "0.28-r0",
       "repository": "community",
@@ -6765,6 +6778,32 @@
       "installed_only": true
     },
     {
+      "name": "powerdevil",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/powerdevil-6.3.6-r0.apk",
+      "archive": "powerdevil-6.3.6-r0.apk",
+      "sha256": "965ff991c759ff7519ebd733e4ee5ccd0aee0f49d845f29737beb190b1567ec3",
+      "license": "GPL-2.0-or-later AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only)",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "powerdevil",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
+      "name": "powerdevil-libs",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/powerdevil-libs-6.3.6-r0.apk",
+      "archive": "powerdevil-libs-6.3.6-r0.apk",
+      "sha256": "b6f1b491d82f7b18ddddb7170aedc84ff1e6a509149001b348554c5cf3358abb",
+      "license": "GPL-2.0-or-later AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only)",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "powerdevil",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
       "name": "prison",
       "version": "6.13.0-r0",
       "repository": "community",
@@ -6892,6 +6931,19 @@
       "upstream": "https://www.python.org/",
       "origin": "python3",
       "source_commit": "712199df117586aee4a5a8138360636deafcae27",
+      "installed_only": true
+    },
+    {
+      "name": "qcoro",
+      "version": "0.12.0-r3",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/qcoro-0.12.0-r3.apk",
+      "archive": "qcoro-0.12.0-r3.apk",
+      "sha256": "0184ee931482b38657926e3842b01dd413113227d7a28c6fa23bf73a041421cf",
+      "license": "MIT",
+      "upstream": "https://qcoro.dvratil.cz",
+      "origin": "qcoro",
+      "source_commit": "d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c",
       "installed_only": true
     },
     {
@@ -7282,6 +7334,19 @@
       "upstream": "https://qt.io/",
       "origin": "qt6-qtwebengine",
       "source_commit": "74d00335e1163dbce8170812ffcdd09c80e7805f",
+      "installed_only": true
+    },
+    {
+      "name": "qt6-qtwebsockets-libs",
+      "version": "6.8.3-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/qt6-qtwebsockets-libs-6.8.3-r0.apk",
+      "archive": "qt6-qtwebsockets-libs-6.8.3-r0.apk",
+      "sha256": "129fcf42098e2d3df7b7d6e48a08a262a8e441a9d4397f05cde9d78e0c57f38e",
+      "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
+      "upstream": "https://qt.io/",
+      "origin": "qt6-qtwebsockets",
+      "source_commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
       "installed_only": true
     },
     {

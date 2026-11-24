@@ -2270,6 +2270,23 @@
       ]
     },
     {
+      "origin": "ddcutil",
+      "commit": "7a21d29ceff59ea0a8486a9dc2033d49a6f877a6",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7a21d29ceff59ea0a8486a9dc2033d49a6f877a6/community/ddcutil/APKBUILD",
+      "recipe_sha256": "38bc7da37b5a2447cd7f046ebdf8d0057d94d6901717c9cc7c8467ce95f548a3",
+      "files": [
+        {
+          "name": "ddcutil-2.2.0.tar.gz",
+          "sha512": "e650f1743e1d807b4a7030389729f0aac4e2558bc5374ea9a27a16c97818ba9ede87ddfe38aebffbb9e182c8efbfab913ba729f8cc5b8ccffe44a62280e2037c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/ddcutil-2.2.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7a21d29ceff59ea0a8486a9dc2033d49a6f877a6/community/ddcutil/ddcutil-2.2.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "desktop-file-utils",
       "commit": "d219babac2540b2418a91177836c9490e1388683",
       "license": "GPL-2.0-or-later",
@@ -11049,6 +11066,23 @@
       ]
     },
     {
+      "origin": "powerdevil",
+      "commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "license": "GPL-2.0-or-later AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only)",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/powerdevil/APKBUILD",
+      "recipe_sha256": "90738a86762c1b07001705d59cdd90eee976f4cc05def9c2aeb29d1985feb602",
+      "files": [
+        {
+          "name": "powerdevil-6.3.6.tar.xz",
+          "sha512": "9143c70cb5238cab1d9bd302516c44c66f8d750593005e435a65a0103c6485a11945c30d30a241d130d3c101e0ae84291d1d8471f1cb92c87f80e361a3fa17a0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/powerdevil-6.3.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/powerdevil/powerdevil-6.3.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "prison",
       "commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
       "license": "MIT",
@@ -11333,6 +11367,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/qca-2.3.10.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/a693b2774aa9748fa962853e39d9fee923931185/community/qca/qca-2.3.10.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "qcoro",
+      "commit": "d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c",
+      "license": "MIT",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c/community/qcoro/APKBUILD",
+      "recipe_sha256": "c700c9253958f08414aa8cca7ebf493b10f59a0057fec5bf6ad50527b925628e",
+      "files": [
+        {
+          "name": "qcoro-v0.12.0.tar.gz",
+          "sha512": "f1da90c4a9bec5f52ec9f40caa30c8465658c6ff005c6c7e89aeb97acc4aefd5e34030493b7e51313a6d2b3fc59114f6ed6751f31f1c132ece173f0e22154c37",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/qcoro-v0.12.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d8dd27d8079fd4fd655bd0e1e405f8bbefa19e3c/community/qcoro/qcoro-v0.12.0.tar.gz"
           ]
         }
       ]
@@ -12111,6 +12162,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/x64-fixup-backport-CVE-2025-12441.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/74d00335e1163dbce8170812ffcdd09c80e7805f/community/qt6-qtwebengine/x64-fixup-backport-CVE-2025-12441.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "qt6-qtwebsockets",
+      "commit": "2a4d0d253cd2886bd694c45b5602c927676096b3",
+      "license": "LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1.0",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/2a4d0d253cd2886bd694c45b5602c927676096b3/community/qt6-qtwebsockets/APKBUILD",
+      "recipe_sha256": "4f5cfd5ec689f97304f031b1c99b5fdcc863ede0b45f2c46e2ab42a36189de23",
+      "files": [
+        {
+          "name": "qtwebsockets-everywhere-src-6.8.3.tar.xz",
+          "sha512": "7453c6657e9885393d57df3ebaf9d3ad12237b5fb848ac3547cc6c6ed607562d58564667a7fd10133d4cdb94151aa5c21660e33c7f48f01a4061001a47f85b60",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/qtwebsockets-everywhere-src-6.8.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2a4d0d253cd2886bd694c45b5602c927676096b3/community/qt6-qtwebsockets/qtwebsockets-everywhere-src-6.8.3.tar.xz"
           ]
         }
       ]

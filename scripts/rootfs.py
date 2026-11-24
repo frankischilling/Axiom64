@@ -286,6 +286,18 @@ if installed_desktop:
     if desktop.count(command) != 1:
         raise ValueError(f'{autostart} does not have the expected Plasma shell command')
     files[autostart] = mode, desktop.replace(command, b'\nExec=/usr/libexec/axiom64-plasma-shell\n')
+    # The tray treats a passive applet as hidden. Keep a present laptop battery
+    # visible at full charge unless the user has hidden the applet explicitly.
+    battery_applet = 'usr/share/plasma/plasmoids/org.kde.plasma.battery/contents/ui/main.qml'
+    mode, qml = files[battery_applet]
+    condition = b'if (batteryControl.hasCumulative && (batteryControl.state === '
+    replacement = (
+        b'if (batteryControl.hasCumulative && (batteryControl.hasInternalBatteries\n'
+        b'                || batteryControl.state === '
+    )
+    if qml.count(condition) != 1:
+        raise ValueError(f'{battery_applet} does not have the expected tray visibility condition')
+    files[battery_applet] = mode, qml.replace(condition, replacement)
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)

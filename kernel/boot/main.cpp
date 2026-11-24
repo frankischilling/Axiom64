@@ -145,7 +145,8 @@ BootInfo boot_info;
     const bool usb_keyboard = arguments.has("usb.xhci=keyboard");
     if (!usb_keyboard && (usb_keyboard_probe || arguments.has("usb.xhci=probe")))
         xhci_probe(usb_keyboard_probe);
-    devices_init(arguments.has("fbconsole"), arguments.has("virtio.gpu=2d"));
+    devices_init(arguments.has("fbconsole"), arguments.has("virtio.gpu=2d"),
+                 arguments.has("drm.scanout"));
     if (usb_keyboard)
         xhci_keyboard_init();
     if (arguments.has("lpss.i2c.input"))

@@ -50,7 +50,8 @@ enum class Device {
     input_uevent,
     network_uevent,
     power_supply_uevent,
-    pci_uevent
+    pci_uevent,
+    drm_scanout
 };
 
 struct Terminal {
@@ -75,7 +76,7 @@ struct Pty {
     uint16_t rows, columns;
 };
 
-void devices_init(bool display_console, bool virtio_graphics);
+void devices_init(bool display_console, bool virtio_graphics, bool drm);
 void inventory_device_added(Node*, bool synthetic);
 void inventory_device_changed(Node*);
 const ControlFileOps* inventory_uevent_control(Node*);

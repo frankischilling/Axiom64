@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "drivers/graphics/drm_scanout.hpp"
 #include "drivers/platform/virtual_console.hpp"
 #include "drivers/graphics/virtio_gpu.hpp"
 #include "drivers/platform/inventory.hpp"
@@ -340,7 +341,8 @@ static Node& tag(const char* path, Device type, unsigned id = 0) {
     n->device = type;
     n->device_id = id;
     if (type == Device::serial || type == Device::vt || type == Device::keyboard ||
-        type == Device::mouse || type == Device::framebuffer || type == Device::parallel) {
+        type == Device::mouse || type == Device::framebuffer || type == Device::parallel ||
+        type == Device::drm_scanout) {
         n->mode = character | 0600;
         n->uid = n->gid = 0;
     }
@@ -513,13 +515,18 @@ static bool controller_wait(bool output) {
     return false;
 }
 
-void devices_init(bool display_console, bool virtio_graphics) {
+void devices_init(bool display_console, bool virtio_graphics, bool drm) {
     framebuffer = virtio_graphics ? virtio_gpu_scanout_init() : nullptr;
     virtio_framebuffer = framebuffer != nullptr;
     if (!framebuffer && boot_info.framebuffer.address)
         framebuffer = &boot_info.framebuffer;
     if (framebuffer) {
         tag("/dev/fb0", Device::framebuffer);
+        if (drm && DrmScanout::init(*framebuffer, virtio_framebuffer)) {
+            if (!lookup("/dev/dri") && !make_node("/dev/dri", directory | 0755))
+                panic("DRM device directory");
+            tag("/dev/dri/card0", Device::drm_scanout);
+        }
         // Expose the firmware framebuffer through the platform device interface.
         const char* paths[] = {"/sys",
                                "/sys/class",
@@ -646,6 +653,8 @@ uint64_t device_number(Node* node) {
         return 0x400 | node->device_id;
     case Device::framebuffer:
         return 0x1d00;
+    case Device::drm_scanout:
+        return 0xe200;
     case Device::keyboard:
         return 0x0d40;
     case Device::mouse:
@@ -673,6 +682,8 @@ int device_open(Handle* h) {
     if (!h->node)
         return 0;
     auto kind = h->node->device;
+    if (kind == Device::drm_scanout)
+        return DrmScanout::open(*h);
     if (kind == Device::block && (h->flags & 0200)) // O_EXCL
         return block_claim(h->node->device_id, h);
     if (kind == Device::dsp)
@@ -763,6 +774,10 @@ int device_open(Handle* h) {
 }
 
 void device_close(Handle* h) {
+    if (h->drm) {
+        DrmScanout::close(*h);
+        return;
+    }
     if (h->node && h->node->device == Device::block) {
         block_unclaim(h->node->device_id, h);
         return;
@@ -1131,6 +1146,8 @@ static int64_t touchpad_ioctl(Handle& handle, uint64_t request, uint64_t arg) {
 
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
+    if (kind == Device::drm_scanout)
+        return DrmScanout::ioctl(*h, request, arg);
     if (kind == Device::touchpad)
         return touchpad_ioctl(*h, request, arg);
     if (kind == Device::dsp)

@@ -1406,8 +1406,8 @@
       "id": "F22",
       "title": "Virtio GPU and accelerated graphics",
       "milestone": "M6",
-      "state": "planned",
-      "current": "Display uses a fixed boot framebuffer without acceleration.",
+      "state": "partial",
+      "current": "Virtio 2D and UEFI firmware graphics can display pixels through the framebuffer or an experimental fixed-mode DRM node.",
       "scope": [
         "Virtio GPU resource/scanout/cursor operations",
         "Display modes, buffer ownership, hotplug, and multihead groundwork",
@@ -1426,7 +1426,9 @@
         "F19",
         "F21"
       ],
-      "evidence": [],
+      "evidence": [
+        "QEMU pixel captures for framebuffer and DRM scanout on BIOS and UEFI Virtio GPU and the UEFI firmware fallback"
+      ],
       "branch": "feature/f22-virtio-gpu-and-accelerated-graphics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/22"
     },

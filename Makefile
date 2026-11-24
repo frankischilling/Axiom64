@@ -1011,9 +1011,11 @@ build/designware-i2c-tests: kernel/tests/drivers/platform/designware_i2c.cpp ker
 test-designware-i2c: build/designware-i2c-tests
 	./build/designware-i2c-tests
 
-.PHONY: test-virtio-gpu
+.PHONY: test-virtio-gpu test-drm-scanout
 test-virtio-gpu: build/axiom64.elf
 	$(PYTHON) scripts/virtio_gpu_test.py
+test-drm-scanout: build/axiom64.elf
+	$(PYTHON) scripts/virtio_gpu_test.py --drm
 
 .PHONY: test-acpi-routing
 build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_objects.cpp kernel/firmware/aml_resources.cpp kernel/firmware/embedded_controller.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)

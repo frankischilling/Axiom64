@@ -74,6 +74,11 @@ and a UEFI guest draw two patterns through `/dev/fb0`. The host checks the
 pixels QEMU displays after a refresh request and after writes through the
 mapping alone. A UEFI guest without a Virtio GPU checks firmware fallback.
 
+Run `make test-drm-scanout` to check the same outputs through `/dev/dri/card0`.
+The guest sets the initial mode, submits damage for a second frame, and
+checks buffer ownership, mapping lifetime, and failure at the page
+reference limit. QEMU captures both frames for pixel comparison.
+
 `make test-suite SUITE=mmio` runs the boot-time mapper against simulated
 page tables with address and undefined behavior sanitizers. It checks physical
 address limits, boot memory reservations, uncacheable mappings, existing

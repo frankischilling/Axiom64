@@ -30,14 +30,13 @@ bool prepare_slot(CcmpKeySlot slot, uint8_t action, uint8_t (&wire)[key_command_
 }
 } // namespace
 
-bool prepare_ccmp_key_install(CcmpKeySlot slot, const uint8_t (&key)[ccmp_key_bytes],
-                              uint64_t receive_sequence, uint64_t transmit_sequence,
-                              uint8_t (&wire)[key_command_bytes]) {
+bool prepare_ccmp_key_install(CcmpKeySlot slot, const uint8_t* key, uint64_t receive_sequence,
+                              uint64_t transmit_sequence, uint8_t (&wire)[key_command_bytes]) {
     constexpr uint64_t sequence_limit = uint64_t(1) << 48;
-    if (receive_sequence >= sequence_limit || transmit_sequence >= sequence_limit ||
+    if (!key || receive_sequence >= sequence_limit || transmit_sequence >= sequence_limit ||
         !prepare_slot(slot, 1, wire))
         return false;
-    memcpy(wire + 16, key, sizeof(key));
+    memcpy(wire + 16, key, ccmp_key_bytes);
     put_le(wire + 64, receive_sequence, 8);
     put_le(wire + 72, transmit_sequence, 8);
     return true;

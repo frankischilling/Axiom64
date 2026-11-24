@@ -484,6 +484,60 @@ static void check_station_ack(int fd, const struct packet* request, int error) {
     check_error(message, error);
 }
 
+static void check_key_ack(int fd, const struct packet* request, int error) {
+    alignas(struct nlmsghdr) uint8_t buffer[1024];
+    send_packet(fd, request);
+    const int length = receive(fd, buffer, sizeof(buffer), 0);
+    const struct nlmsghdr* reply = (const struct nlmsghdr*)buffer;
+    check_error(reply, error);
+    require(length == (int)NLMSG_LENGTH(sizeof(struct nlmsgerr)) &&
+                reply->nlmsg_seq == request->header.nlmsg_seq &&
+                (reply->nlmsg_flags & NLM_F_CAPPED),
+            "key acknowledgement omits key bytes even when uncapped acknowledgements are enabled");
+}
+
+static void check_key_requests(int fd, unsigned family, unsigned index, const uint8_t* peer) {
+    const uint32_t cipher = 0x000fac04;
+    const uint8_t material[16] = {0x71, 0x52, 0x33};
+    const uint8_t sequence[6] = {6, 5, 4, 3, 2, 1};
+    const uint8_t pairwise_index = 0, group_index = 1;
+    struct packet pairwise = make_request(family, NL80211_CMD_NEW_KEY, NLM_F_ACK, 93);
+    append_attribute(&pairwise, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&pairwise, NL80211_ATTR_MAC, peer, 6);
+    append_attribute(&pairwise, NL80211_ATTR_KEY_IDX, &pairwise_index, sizeof(pairwise_index));
+    append_attribute(&pairwise, NL80211_ATTR_KEY_DATA, material, sizeof(material));
+    check_key_ack(fd, &pairwise, EINVAL); /* Missing cipher. */
+    struct packet unsupported = pairwise;
+    const uint32_t tkip = 0x000fac02;
+    append_attribute(&unsupported, NL80211_ATTR_KEY_CIPHER, &tkip, sizeof(tkip));
+    unsupported.header.nlmsg_seq++;
+    check_key_ack(fd, &unsupported, EOPNOTSUPP);
+    append_attribute(&pairwise, NL80211_ATTR_KEY_CIPHER, &cipher, sizeof(cipher));
+    pairwise.header.nlmsg_seq += 2;
+    check_key_ack(fd, &pairwise, 0);
+
+    struct packet group = make_request(family, NL80211_CMD_NEW_KEY, NLM_F_ACK, 96);
+    append_attribute(&group, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    struct packet fields = make_request(0, 0, 0, 0);
+    append_attribute(&fields, NL80211_KEY_IDX, &group_index, sizeof(group_index));
+    append_attribute(&fields, NL80211_KEY_DATA, material, sizeof(material));
+    append_attribute(&fields, NL80211_KEY_CIPHER, &cipher, sizeof(cipher));
+    append_attribute(&fields, NL80211_KEY_SEQ, sequence, sizeof(sequence));
+    const size_t base = NLMSG_LENGTH(GENL_HDRLEN);
+    append_attribute(&group, NL80211_ATTR_KEY | NLA_F_NESTED, (uint8_t*)&fields + base,
+                     fields.header.nlmsg_len - base);
+    check_key_ack(fd, &group, 0);
+    group.header.nlmsg_seq++;
+    append_attribute(&group, NL80211_ATTR_KEY_IDX, &group_index, sizeof(group_index));
+    check_key_ack(fd, &group, EINVAL); /* Mixed nested and legacy fields. */
+
+    struct packet remove = make_request(family, NL80211_CMD_DEL_KEY, NLM_F_ACK, 98);
+    append_attribute(&remove, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&remove, NL80211_ATTR_KEY_IDX, &group_index, sizeof(group_index));
+    check_key_ack(fd, &remove, 0);
+    puts("WIRELESS_CCMP_KEY_API_PASS");
+}
+
 static void check_station_event(int fd, unsigned family, unsigned index, unsigned command,
                                 uint16_t expected, const uint8_t* peer, int extra) {
     alignas(struct nlmsghdr) uint8_t bytes[1024];
@@ -628,6 +682,7 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&owned, NL80211_ATTR_MLO_SUPPORT, NULL, 0);
     check_station_ack(owner, &owned, 0);
     check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer, 1);
+    check_key_requests(fd, family, index, peer);
     leave.header.nlmsg_seq++;
     check_station_ack(fd, &leave, EPERM);
     struct packet authorize = make_request(family, NL80211_CMD_SET_STATION, NLM_F_ACK, 60);
@@ -656,6 +711,11 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     check_station_ack(fd, &leave, EPERM);
     authorize.header.nlmsg_seq++;
     check_station_ack(fd, &authorize, EPERM);
+    struct packet remove_key = make_request(family, NL80211_CMD_DEL_KEY, NLM_F_ACK, 107);
+    const uint8_t key_index = 1;
+    append_attribute(&remove_key, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&remove_key, NL80211_ATTR_KEY_IDX, &key_index, sizeof(key_index));
+    check_key_ack(fd, &remove_key, EPERM);
     puts("WIRELESS_LIVE_CONNECT_PASS");
     puts("WIRELESS_LIVE_DISCONNECT_PASS");
     puts("WIRELESS_CONTROLLED_PORT_PASS");

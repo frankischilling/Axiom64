@@ -9,6 +9,7 @@
  */
 #include "drivers/net/intel_wifi_auth.hpp"
 #include "drivers/net/intel_wifi_key.hpp"
+#include "drivers/net/intel_wifi_live.hpp"
 #include "drivers/net/intel_wifi_scan.hpp"
 #include <cassert>
 #include <cstdio>
@@ -188,6 +189,134 @@ void check_intel_wifi_key_codec() {
     erase_key_bytes(command, sizeof(command));
     assert(!memcmp(command, empty, sizeof(command)));
     std::puts("AX201_CCMP_KEY_CODEC_PASS");
+}
+
+namespace {
+struct StationKeyFixture {
+    ReceiveStatus status{};
+    uint32_t used[rx_ring_entries]{};
+    CommandDescriptor descriptors[command_ring_entries]{};
+    CommandPayloads payloads{};
+    uint8_t pages[8][ax::page_size]{};
+    unsigned next_page = 0, commands = 0, completions = 0, received = 0;
+    enum class Reply { acknowledge, reject, withhold } reply = Reply::acknowledge;
+    const FirmwareBootMemory memory{0, &status, used, descriptors, &payloads, 0x200000};
+    const FirmwareBootIo io{
+        this,
+        [](void*, unsigned offset) { return offset == 0x24 ? 1u << 27 : 0; },
+        [](void* context, unsigned offset, uint32_t value) {
+            auto& self = *static_cast<StationKeyFixture*>(context);
+            if (offset == 0x1c80)
+                return;
+            assert(offset == 0x460 && value == ++self.commands);
+            const auto& data = self.payloads[value - 1];
+            assert(data[0] == key_command_opcode && data[1] == key_command_group);
+            assert(data[2] == value - 1 && data[4] == key_command_bytes);
+            if (self.reply == Reply::acknowledge)
+                self.packet(key_command_opcode, key_command_group, uint16_t(value - 1), 0);
+            if (self.reply == Reply::reject)
+                self.packet(2, 0, uint16_t(value - 1), 0);
+        },
+        [](void*, unsigned us) { return us == 1000; },
+        nullptr,
+        [](void* context, unsigned id) {
+            auto& self = *static_cast<StationKeyFixture*>(context);
+            assert(id && id <= self.next_page);
+            return self.pages[id - 1];
+        },
+    };
+
+    uint8_t* packet(uint8_t opcode, uint8_t group, uint16_t sequence, uint8_t length) {
+        assert(next_page < sizeof(pages) / sizeof(pages[0]));
+        auto* bytes = pages[next_page];
+        bytes[0] = length + 4;
+        bytes[4] = opcode;
+        bytes[5] = group;
+        bytes[6] = uint8_t(sequence);
+        bytes[7] = uint8_t(sequence >> 8);
+        used[next_page] = next_page + 1;
+        status.closed_buffer = ++next_page;
+        return bytes + 8;
+    }
+
+    StationKeyResult change(LiveScanSession& session, const StationKeyRequest& request) {
+        return change_station_key(
+            session, request, 10, this,
+            [](void* context, const uint8_t* frame, size_t bytes) {
+                assert(bytes == 15 && frame[12] == 0x88 && frame[13] == 0x8e);
+                ++static_cast<StationKeyFixture*>(context)->received;
+            },
+            [](void* context, size_t bytes, bool failed) {
+                auto& self = *static_cast<StationKeyFixture*>(context);
+                assert(bytes == 15 && !failed && !self.commands);
+                ++self.completions;
+            });
+    }
+};
+} // namespace
+
+void check_intel_wifi_station_keys() {
+    constexpr uint8_t material[ccmp_key_bytes]{0x91, 0xf2};
+    constexpr uint8_t peer[6]{2, 0, 0, 0, 0, 1};
+    constexpr uint8_t station[6]{2, 0, 0, 0, 0, 2};
+    StationKeyFixture model;
+    LiveScanSession session(model.io, model.memory);
+    session.running = session.security_keys = session.station.ccmp = true;
+    session.station.queue.id = 1;
+    session.station.channel = 1;
+    memcpy(session.station.peer.bssid, peer, sizeof(peer));
+    memcpy(session.station_address, station, sizeof(station));
+    session.receive.post_initial();
+    assert(model.change(session, {nullptr, 0, {}, 4, true}).status == -2);
+    auto* tx = model.packet(0x1c, 0, 0x100, 48);
+    tx[0] = tx[36] = tx[40] = tx[44] = 1;
+    session.station.pending_bytes = 15;
+    auto* rx = model.packet(0xc1, 0, 0x8000, 48 + 24 + 9);
+    rx[0] = 24 + 9;
+    rx[12] = 3;
+    rx[34] = 1;
+    auto* hdr = rx + 48;
+    hdr[0] = 8;
+    hdr[1] = 2;
+    memcpy(hdr + 4, station, sizeof(station));
+    memcpy(hdr + 10, peer, sizeof(peer));
+    memcpy(hdr + 16, peer, sizeof(peer));
+    const uint8_t eapol[]{0xaa, 0xaa, 3, 0, 0, 0, 0x88, 0x8e, 1};
+    memcpy(hdr + 24, eapol, sizeof(eapol));
+
+    StationKeyRequest request{material, 0x123456, {2, 0, 0, 0, 0, 1}};
+    assert(model.change(session, request).status == 0);
+    auto& key = session.station.keys.pairwise;
+    const uint8_t cleared[command_slot_bytes]{};
+    assert(!memcmp(model.payloads[0], cleared, sizeof(cleared)));
+    assert(model.commands == 1 && model.completions == 1 && model.received == 1 && key.installed);
+    assert(key.packet_number[0] == 0x123456 && key.packet_number[15] == 0x123456);
+    key.packet_number[0] += 1;
+    assert(model.change(session, request).status == 0 && model.commands == 1);
+    assert(key.packet_number[0] == 0x123457);
+    request.material = nullptr;
+    model.reply = StationKeyFixture::Reply::reject;
+    assert(model.change(session, request).status == -5 && key.installed);
+    assert(!memcmp(model.payloads[1], cleared, sizeof(cleared)));
+    model.reply = StationKeyFixture::Reply::acknowledge;
+    assert(model.change(session, request).status == 0 && !key.installed);
+    assert(!session.station.port_authorized);
+    request.material = material;
+    assert(model.change(session, request).status == -114 && model.commands == 3);
+    request.group = true;
+    request.index = 1;
+    assert(model.change(session, request).status == 0);
+    assert(session.station.keys.group[1].installed);
+    session.leave.phase = LeavePhase::remove_keys;
+    const auto completed = [](void*, size_t, bool) { assert(false); };
+    assert(poll_live_leave(session, 11, nullptr, completed) == LeaveOutcome::pending);
+    assert(!session.station.keys.group[1].installed && !session.station.keys.group[1].known);
+    session.leave = {};
+    model.reply = StationKeyFixture::Reply::withhold;
+    const auto result = model.change(session, request);
+    assert(result.status == -110 && result.link_lost && !session.station.keys.group[1].installed);
+    assert(model.commands == 6 && !memcmp(model.payloads[5] + 24, material, sizeof(material)));
+    std::puts("AX201_STATION_KEYS_MODEL_PASS");
 }
 
 void check_intel_wifi_scan_channels() {

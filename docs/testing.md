@@ -2447,7 +2447,10 @@ code.
 The host tests cover the AX201's CCMP transmit command and receive path. They
 check that receive delivery rejects frames with a bad integrity check, a replayed
 packet number, or no matching key, and allows EAPOL during authentication.
-Secured connections still require association and userspace key management.
+The key tests send pairwise and group key requests in both nl80211 attribute
+formats. The firmware model checks that a key becomes active after its
+acknowledgement, that a repeated install preserves replay counters, and that a
+timeout closes the link. Secured connections still require RSN association.
 
 Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
 disconnect event on the `mlme` group before scanning or connecting again.

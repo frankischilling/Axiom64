@@ -21,6 +21,7 @@ struct LiveStation {
     uint64_t transmit_deadline = 0, beacon_deadline = 0;
     bool port_authorized = true;
     bool ccmp = false;
+    bool key_busy = false;
     StationCcmpKeys keys{};
 };
 
@@ -79,6 +80,7 @@ enum class LeavePhase : uint8_t {
     clear_mac,
     remove_data,
     remove_management,
+    remove_keys,
     remove_peer,
     unbind,
     remove_phy,
@@ -91,6 +93,7 @@ struct StationLeave {
     uint16_t reason = 0, command_sequence = 0;
     uint8_t group = 0, opcode = 0;
     bool submitted = false;
+    unsigned key_slot = 0;
     uint64_t deadline = 0;
 };
 
@@ -110,6 +113,7 @@ struct LiveScanSession {
     StationLeave leave{};
     AntennaMasks antennas{};
     bool dual_lmac = false;
+    bool security_keys = false;
     const FirmwareBootIo& io;
 
     LiveScanSession(const FirmwareBootIo& io, const FirmwareBootMemory& memory)
@@ -136,4 +140,14 @@ int submit_live_data(LiveScanSession&, const uint8_t*, size_t, uint64_t now_ms);
 bool poll_live_station(LiveScanSession&, uint64_t now_ms, void* context,
                        void (*receive)(void*, const uint8_t*, size_t),
                        void (*complete)(void*, size_t, bool));
+
+struct StationKeyResult {
+    int status;
+    bool link_lost = false;
+};
+
+StationKeyResult change_station_key(LiveScanSession&, const StationKeyRequest&, uint64_t now_ms,
+                                    void* context, void (*receive)(void*, const uint8_t*, size_t),
+                                    void (*complete)(void*, size_t, bool));
+int request_live_key(const StationKeyRequest&);
 } // namespace ax::IntelWifi

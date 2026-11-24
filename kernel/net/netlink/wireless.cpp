@@ -20,6 +20,10 @@ enum Attribute : uint16_t {
     ifname = 4,
     iftype = 5,
     mac = 6,
+    key_data = 7,
+    key_index = 8,
+    key_cipher = 9,
+    key_sequence = 10,
     wiphy_bands = 22,
     ht_capability = 31,
     supported_iftypes = 32,
@@ -34,12 +38,14 @@ enum Attribute : uint16_t {
     ssid = 52,
     auth_type = 53,
     reason_code = 54,
+    key_type = 55,
     timed_out = 65,
     station_flags = 67,
     control_port = 68,
     status_code = 72,
     request_ies = 77,
     response_ies = 78,
+    key_bundle = 80,
     control_port_ethertype = 102,
     ht_capability_mask = 148,
     wdev = 153,
@@ -307,6 +313,151 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
     return 0;
 }
 
+enum KeyField : unsigned { material = 1, index_field, cipher, sequence, type_field = 7, mode = 9 };
+
+struct KeyAttributes {
+    IntelWifi::StationKeyRequest request{};
+    uint32_t type = 0;
+    unsigned fields = 0;
+};
+
+int unpack_key_field(KeyAttributes& key, unsigned field, const uint8_t* bytes, size_t size) {
+    if (field != material && field != index_field && field != cipher && field != sequence &&
+        field != type_field && field != mode)
+        return -95;
+    if (key.fields & (1u << field))
+        return -22;
+    key.fields |= 1u << field;
+    switch (field) {
+    case material:
+        if (size != IntelWifi::ccmp_key_bytes)
+            return -22;
+        key.request.material = bytes;
+        break;
+    case index_field:
+        if (size != 1)
+            return -22;
+        key.request.index = bytes[0];
+        break;
+    case sequence:
+        if (size != 6)
+            return -22;
+        for (unsigned i = 0; i < size; ++i)
+            key.request.receive_sequence |= uint64_t(bytes[i]) << (8 * i);
+        break;
+    case mode:
+        if (size != 1)
+            return -22;
+        if (bytes[0])
+            return -95;
+        break;
+    case cipher:
+    case type_field: {
+        uint32_t value;
+        if (size != sizeof(value))
+            return -22;
+        memcpy(&value, bytes, size);
+        if (field == cipher && value != 0x000fac04) // CCMP-128.
+            return -95;
+        if (field == type_field) {
+            if (value > 1)
+                return -95;
+            key.type = value;
+        }
+        break;
+    }
+    }
+    return 0;
+}
+
+int select_key_request(const uint8_t* bytes, size_t length, unsigned expected_index, bool install,
+                       KeyAttributes& key) {
+    bool interface = false, device = false, peer = false, nested = false;
+    const uint8_t* inner = nullptr;
+    size_t inner_bytes = 0;
+    while (length || inner_bytes) {
+        if (!length) {
+            bytes = inner;
+            length = inner_bytes;
+            inner_bytes = 0;
+            nested = true;
+        }
+        if (length < sizeof(AttributeHeader))
+            return -22;
+        AttributeHeader attr;
+        memcpy(&attr, bytes, sizeof(attr));
+        const size_t aligned = (size_t(attr.length) + 3) & ~size_t(3);
+        if (attr.length < sizeof(attr) || aligned > length)
+            return -22;
+        const auto* value = bytes + sizeof(attr);
+        const size_t size = attr.length - sizeof(attr);
+        bytes += aligned;
+        length -= aligned;
+        if (nested) {
+            if (const int error = unpack_key_field(key, attr.type, value, size))
+                return error;
+            continue;
+        }
+        switch (attr.type) {
+        case ifindex: {
+            uint32_t id;
+            if (interface || size != sizeof(id))
+                return -22;
+            memcpy(&id, value, size);
+            if (id != expected_index)
+                return -19;
+            interface = true;
+            break;
+        }
+        case wdev: {
+            uint64_t id;
+            if (device || size != sizeof(id))
+                return -22;
+            memcpy(&id, value, size);
+            if (id != device_id)
+                return -19;
+            device = true;
+            break;
+        }
+        case mac:
+            if (peer || size != sizeof(key.request.peer) || (value[0] & 1))
+                return -22;
+            memcpy(key.request.peer, value, size);
+            peer = true;
+            break;
+        case key_bundle:
+        case key_bundle | 0x8000:
+            if (inner || !size || key.fields)
+                return -22;
+            inner = value;
+            inner_bytes = size;
+            break;
+        default: {
+            if (inner)
+                return -22;
+            const unsigned field = attr.type >= key_data && attr.type <= key_sequence
+                                       ? attr.type - key_data + material
+                                   : attr.type == key_type ? unsigned(type_field)
+                                                           : 0;
+            if (const int error = unpack_key_field(key, field, value, size))
+                return error;
+            break;
+        }
+        }
+    }
+    constexpr unsigned identity = (1u << index_field) | (1u << type_field);
+    constexpr unsigned install_fields = (1u << material) | (1u << cipher);
+    if ((!interface && !device) || !(key.fields & (1u << index_field)) || key.request.index >= 8 ||
+        (install ? (key.fields & install_fields) != install_fields : (key.fields & ~identity)))
+        return -22;
+    key.request.group = (key.fields & (1u << type_field)) ? key.type == 0 : !peer;
+    if (key.request.group == peer)
+        return -22;
+    if (install && (key.request.index >= 4 || (!key.request.group && key.request.index)))
+        return -95;
+    return 0;
+}
+
 int select_frequencies(const uint8_t* bytes, size_t length, uint64_t& channels) {
     constexpr size_t entry_bytes = sizeof(AttributeHeader) + sizeof(uint32_t);
     if (!length || length % entry_bytes)
@@ -521,14 +672,27 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
                       bool privileged, void* reply, void* followup, size_t& followup_length,
                       WirelessDump& cursor) {
     const auto* bytes = static_cast<const uint8_t*>(data);
-    const auto* info = net_info(IntelWifi::passive_scan_interface());
-    if (!info || !wireless_scan_available())
-        return netlink_ack(data, request, port, -2, capped, reply);
     constexpr size_t header = sizeof(request) + 4;
     if (request.length < header)
         return netlink_ack(data, request, port, -22, capped, reply);
     const uint8_t command = bytes[sizeof(request)];
+    const bool key_command = command == nl80211_new_key || command == nl80211_del_key;
+    const auto* info = net_info(IntelWifi::passive_scan_interface());
+    if (!info || !wireless_scan_available())
+        return netlink_ack(data, request, port, -2, capped || key_command, reply);
     const bool dump = (request.flags & dump_flags) == dump_flags;
+    if (key_command) {
+        int error = dump ? -95 : privileged ? 0 : -1;
+        KeyAttributes key;
+        if (!error)
+            error = select_key_request(bytes + header, request.length - header, info->index,
+                                       command == nl80211_new_key, key);
+        if (!error)
+            error = IntelWifi::request_live_key(key.request);
+        // An error ACK must never echo the key material.
+        return error || (request.flags & 4) ? netlink_ack(data, request, port, error, true, reply)
+                                            : 0;
+    }
     const bool trigger = command == nl80211_trigger_scan;
     if (command == nl80211_connect || command == nl80211_disconnect ||
         command == nl80211_set_station) {

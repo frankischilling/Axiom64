@@ -19,6 +19,7 @@ void check_intel_wifi_association_codec();
 void check_intel_wifi_ccmp_data();
 void check_intel_wifi_key_codec();
 void check_intel_wifi_scan_channels();
+void check_intel_wifi_station_keys();
 
 namespace {
 using namespace ax::IntelWifi;
@@ -1887,6 +1888,7 @@ int main(int argc, char** argv) {
     check_intel_wifi_scan_channels();
     check_channel_contexts();
     check_intel_wifi_key_codec();
+    check_intel_wifi_station_keys();
     check_intel_wifi_ccmp_data();
     check_security_key_commands();
     check_peer_queues();

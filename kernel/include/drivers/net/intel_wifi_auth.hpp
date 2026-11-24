@@ -8,6 +8,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #pragma once
+#include "drivers/net/intel_wifi_key.hpp"
 #include "drivers/net/intel_wifi_peer.hpp"
 
 namespace ax::IntelWifi {
@@ -54,7 +55,9 @@ enum class AuthEvent { unrelated, accepted, denied, malformed, ended };
 struct CcmpReceiveKey {
     // Non-QoS data shares the priority-zero replay counter with QoS TID 0.
     uint64_t packet_number[16]{};
-    bool installed = false;
+    // Remember the last key material until disconnect to detect repeated installation.
+    uint8_t material[ccmp_key_bytes]{};
+    bool installed = false, known = false;
 };
 
 struct StationCcmpKeys {

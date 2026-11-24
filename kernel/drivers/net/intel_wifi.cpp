@@ -688,6 +688,7 @@ void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
                            device->pending, image.dual_lmac);
         report(result.status);
         if (result.successful) {
+            device->session.security_keys = image.security_key_version == 1;
             radio = device;
             memcpy(scanned_adapter.info.mac, device->session.station_address,
                    sizeof(device->session.station_address));
@@ -834,8 +835,38 @@ int authorize_live_station(const uint8_t (&peer)[6], bool authorized) {
         return -2;
     if (session.leave.phase != LeavePhase::idle)
         return -16;
+    if (authorized && session.station.ccmp && !session.station.keys.pairwise.installed)
+        return -13;
     session.station.port_authorized = authorized;
     return 0;
+}
+
+int request_live_key(const StationKeyRequest& request) {
+    if (!live_connect_available())
+        return -95;
+    auto& device = scanned_adapter;
+    if (!device.info.administrative)
+        return -100;
+    if (radio->polling)
+        return -16;
+    radio->polling = true;
+    const auto result = change_station_key(
+        radio->session, request, clock_monotonic_ns() / 1000000, &device,
+        [](void* target, const uint8_t* bytes, size_t length) {
+            net_receive(*static_cast<NetAdapter*>(target), bytes, length);
+        },
+        [](void* target, size_t length, bool failed) {
+            auto& adapter = *static_cast<NetAdapter*>(target);
+            adapter.info.writable = true;
+            net_tx_complete(adapter, length, failed);
+        });
+    radio->polling = false;
+    if (result.link_lost) {
+        stop_runtime(device);
+        ++completed_generation;
+        wireless_disconnected(device.info.index);
+    }
+    return result.status;
 }
 
 bool live_bss_associated(const AccessPoint& point) {

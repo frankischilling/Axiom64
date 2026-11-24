@@ -1108,7 +1108,13 @@ bool stop_live_quz(LiveScanSession& session) {
     session.join.phase = JoinPhase::idle;
     session.leave.phase = LeavePhase::idle;
     session.passive_channels = 0;
-    return stop_adapter(Registers{session.io}, true);
+    const bool idle = stop_adapter(Registers{session.io}, true);
+    if (session.station.ccmp && idle) {
+        auto* payloads = session.receive.memory.command_payloads;
+        erase_key_bytes(payloads, sizeof(*payloads));
+    }
+    erase_key_bytes(&session.station.keys, sizeof(session.station.keys));
+    return idle;
 }
 
 static int submit_scan_phase(LiveScanSession& session, CommandSession& commands, uint64_t now_ms,
@@ -1467,6 +1473,16 @@ int submit_live_leave(LiveScanSession& session, uint16_t reason) {
 }
 
 namespace {
+constexpr unsigned station_key_slots = 5;
+
+CcmpReceiveKey& station_key(LiveStation& station, CcmpKeySlot slot) {
+    return slot.group ? station.keys.group[slot.index] : station.keys.pairwise;
+}
+
+CcmpKeySlot leave_key_slot(unsigned slot) {
+    return {0, uint8_t(slot ? slot - 1 : 0), slot != 0};
+}
+
 bool begin_leave_phase(LiveScanSession& session, CommandSession& commands, uint64_t now_ms) {
     auto& leave = session.leave;
     const auto& station = session.station;
@@ -1495,6 +1511,12 @@ bool begin_leave_phase(LiveScanSession& session, CommandSession& commands, uint6
         const auto tid = leave.phase == LeavePhase::remove_data ? non_qos_tid : management_tid;
         return prepare_remove_station_queue(0, wire, tid) &&
                submit_operation(commands, leave, 5, 0x17, wire, sizeof(wire));
+    }
+    case LeavePhase::remove_keys: {
+        uint8_t wire[key_command_bytes];
+        return prepare_ccmp_key_remove(leave_key_slot(leave.key_slot), wire) &&
+               submit_operation(commands, leave, key_command_group, key_command_opcode, wire,
+                                sizeof(wire));
     }
     case LeavePhase::remove_peer: {
         uint8_t wire[remove_peer_bytes];
@@ -1553,6 +1575,13 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
         else
             leave.deadline = station.transmit_deadline;
     }
+    if (leave.phase == LeavePhase::remove_keys && !leave.submitted) {
+        while (leave.key_slot < station_key_slots &&
+               !station_key(station, leave_key_slot(leave.key_slot)).installed)
+            ++leave.key_slot;
+        if (leave.key_slot == station_key_slots)
+            leave.phase = LeavePhase::remove_peer;
+    }
     if (leave.phase != LeavePhase::drain && !leave.submitted &&
         !begin_leave_phase(session, commands, now_ms))
         return LeaveOutcome::failed;
@@ -1575,9 +1604,16 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
             complete(context, bytes, event == AuthEvent::denied);
         }
         if (leave.phase == LeavePhase::remove_phy) {
+            erase_key_bytes(&station.keys, sizeof(station.keys));
             station = {};
             leave = {};
             return LeaveOutcome::disconnected;
+        }
+        if (leave.phase == LeavePhase::remove_keys) {
+            auto& key = station_key(station, leave_key_slot(leave.key_slot++));
+            erase_key_bytes(&key, sizeof(key));
+            leave.submitted = false;
+            return LeaveOutcome::pending;
         }
         leave.phase = LeavePhase(unsigned(leave.phase) + 1);
         leave.submitted = false;
@@ -1606,7 +1642,7 @@ int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t leng
         return -13;
     if (station.ccmp && is_eapol(frame, length) && memcmp(frame, station.peer.bssid, 6))
         return -13;
-    if (station.pending_bytes)
+    if (station.key_busy || station.pending_bytes)
         return -11;
     if (!prepare_station_data(session.receive.memory.data_transmit, station.queue, station.rate,
                               session.station_address, station.peer.bssid, frame, length,
@@ -1622,6 +1658,46 @@ int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t leng
     return 0;
 }
 
+namespace {
+struct StationEvents {
+    void* context;
+    void (*receive)(void*, const uint8_t*, size_t);
+    void (*complete)(void*, size_t, bool);
+};
+
+uint64_t station_beacon_timeout(const LiveStation& station) {
+    return max(3000u, 8u * station.peer.beacon_interval_tu * 1024 / 1000);
+}
+
+bool observe_station_packet(LiveScanSession& session, const FirmwarePacket& packet, uint64_t now_ms,
+                            const StationEvents& events) {
+    auto& station = session.station;
+    if (observe_station_disconnect(packet, session.station_address, station.peer, station.channel))
+        return false;
+    if (station.pending_bytes) {
+        const auto tx = observe_authentication_tx(packet, station.queue);
+        if (tx == AuthEvent::malformed)
+            return false;
+        if (tx == AuthEvent::accepted || tx == AuthEvent::denied) {
+            const auto bytes = station.pending_bytes;
+            station.pending_bytes = 0;
+            ++station.queue.write_pointer;
+            events.complete(events.context, bytes, tx == AuthEvent::denied);
+        }
+    }
+    AssociationTiming timing;
+    if (observe_association_beacon(packet, station.peer, station.channel, timing))
+        station.beacon_deadline = now_ms + station_beacon_timeout(station);
+    uint8_t frame[station_frame_bytes];
+    if (const auto bytes =
+            receive_station_data(packet, session.station_address, station.peer.bssid,
+                                 station.channel, frame, station.ccmp ? &station.keys : nullptr);
+        bytes && allows_station_data(station, frame, bytes))
+        events.receive(events.context, frame, bytes);
+    return true;
+}
+} // namespace
+
 bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
                        void (*receive)(void*, const uint8_t*, size_t),
                        void (*complete)(void*, size_t, bool)) {
@@ -1632,10 +1708,8 @@ bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
     CommandSession commands{reg, session.receive, session.next_command};
     if (!commands.acknowledge_pending())
         return false;
-    const uint64_t beacon_timeout = max(3000u, 8u * station.peer.beacon_interval_tu * 1024 / 1000);
     if (!station.beacon_deadline)
-        station.beacon_deadline = now_ms + beacon_timeout;
-    uint8_t frame[station_frame_bytes];
+        station.beacon_deadline = now_ms + station_beacon_timeout(station);
     for (unsigned i = 0; i < 64; ++i) {
         FirmwarePacket packet{};
         const auto result = session.receive.next(packet);
@@ -1643,30 +1717,103 @@ bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
             return false;
         if (result == PacketRead::end)
             break;
-        if (observe_station_disconnect(packet, session.station_address, station.peer,
-                                       station.channel))
+        if (!observe_station_packet(session, packet, now_ms, {context, receive, complete}))
             return false;
-        if (station.pending_bytes) {
-            const auto tx = observe_authentication_tx(packet, station.queue);
-            if (tx == AuthEvent::malformed)
-                return false;
-            if (tx == AuthEvent::accepted || tx == AuthEvent::denied) {
-                const auto bytes = station.pending_bytes;
-                station.pending_bytes = 0;
-                ++station.queue.write_pointer;
-                complete(context, bytes, tx == AuthEvent::denied);
-            }
-        }
-        AssociationTiming timing;
-        if (observe_association_beacon(packet, station.peer, station.channel, timing))
-            station.beacon_deadline = now_ms + beacon_timeout;
-        if (const auto bytes = receive_station_data(packet, session.station_address,
-                                                    station.peer.bssid, station.channel, frame,
-                                                    station.ccmp ? &station.keys : nullptr);
-            bytes && allows_station_data(station, frame, bytes))
-            receive(context, frame, bytes);
     }
     return now_ms < station.beacon_deadline &&
            (!station.pending_bytes || now_ms < station.transmit_deadline);
+}
+
+StationKeyResult change_station_key(LiveScanSession& session, const StationKeyRequest& request,
+                                    uint64_t now_ms, void* context,
+                                    void (*receive)(void*, const uint8_t*, size_t),
+                                    void (*complete)(void*, size_t, bool)) {
+    auto& station = session.station;
+    if (!session.running || !session.security_keys)
+        return {-95};
+    if (!station.queue.id || !station.ccmp)
+        return {request.material ? -107 : -2};
+    if (station.key_busy || session.leave.phase != LeavePhase::idle)
+        return {-16};
+    if (request.index >= 4 || (!request.group && request.index))
+        return {request.material ? -95 : -2};
+    if (request.receive_sequence >= (uint64_t(1) << 48))
+        return {-22};
+    if (!request.group && memcmp(request.peer, station.peer.bssid, sizeof(request.peer)))
+        return {-2};
+    const CcmpKeySlot slot{0, request.index, request.group};
+    auto& key = station_key(station, slot);
+    const bool install = request.material;
+    if (!install && !key.installed)
+        return {-2};
+    if (install && key.known && !memcmp(key.material, request.material, sizeof(key.material)))
+        return {key.installed ? 0 : -114}; // Reusing a removed key would reset the firmware PN.
+
+    struct BusyGuard {
+        bool& busy;
+
+        ~BusyGuard() {
+            busy = false;
+        }
+    } guard{station.key_busy};
+
+    station.key_busy = true;
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    uint16_t sequence = 0;
+    bool submitted = false;
+    for (unsigned elapsed = 0; elapsed < 200; ++elapsed) {
+        if (!commands.acknowledge_pending())
+            return {-5, true};
+        if (!submitted && !station.pending_bytes) {
+            uint8_t wire[key_command_bytes];
+            const bool prepared = install
+                                      ? prepare_ccmp_key_install(slot, request.material,
+                                                                 request.receive_sequence, 0, wire)
+                                      : prepare_ccmp_key_remove(slot, wire);
+            sequence = commands.index;
+            submitted = prepared &&
+                        commands.submit(key_command_group, key_command_opcode, wire, sizeof(wire));
+            erase_key_bytes(wire, sizeof(wire));
+            if (!submitted)
+                return {-5, true};
+        }
+        for (unsigned i = 0; i < 64; ++i) {
+            FirmwarePacket packet{};
+            const auto result = session.receive.next(packet);
+            if (result == PacketRead::malformed)
+                return {-5, true};
+            if (result == PacketRead::end)
+                break;
+            if (submitted && packet.sequence == sequence) {
+                const bool matched =
+                    packet.group == key_command_group && packet.opcode == key_command_opcode;
+                const bool rejected = packet.group == 0 && packet.opcode == 2;
+                if (matched || rejected) {
+                    auto& payload = (*commands.rx.memory
+                                          .command_payloads)[sequence & (command_ring_entries - 1)];
+                    erase_key_bytes(payload, sizeof(payload));
+                    if (rejected)
+                        return {-5};
+                    key.installed = install;
+                    if (install) {
+                        key.known = true;
+                        memcpy(key.material, request.material, sizeof(key.material));
+                        for (auto& counter : key.packet_number)
+                            counter = request.receive_sequence;
+                    } else if (!request.group) {
+                        station.port_authorized = false;
+                    }
+                    return {0};
+                }
+            }
+            if (!observe_station_packet(session, packet, now_ms + elapsed,
+                                        {context, receive, complete}))
+                return {-5, true};
+        }
+        if (!reg.delay(1000))
+            return {-5, true};
+    }
+    return submitted ? StationKeyResult{-110, true} : StationKeyResult{-16};
 }
 } // namespace ax::IntelWifi

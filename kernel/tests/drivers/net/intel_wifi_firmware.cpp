@@ -14,6 +14,9 @@
 #include <iterator>
 #include <vector>
 
+void check_intel_wifi_access_points();
+void check_intel_wifi_key_codec();
+
 namespace {
 using namespace ax::IntelWifi;
 using Bytes = std::vector<uint8_t>;
@@ -140,6 +143,7 @@ enum class AuthCase {
 };
 enum class AssocCase { unused, accepted, refused, invalid_id, secured, bad_beacon, leave_failed };
 enum class ArpCase { unused, accepted, reply_first, wrong_peer, rejected_tx, missing_completion };
+enum class KeyCase { unused, complete, refused_removal, missing_install };
 enum class ScanCase {
     unused,
     complete,
@@ -296,6 +300,7 @@ struct StartupFixture {
     AssocCase assoc_case = AssocCase::unused;
     ArpCase arp_case = ArpCase::unused;
     bool open_station = false;
+    KeyCase key_case = KeyCase::unused;
     bool extra_association_elements = false;
     uint16_t disconnect_reason = 0;
     unsigned rejoin_command_offset = 0, rejoin_rx_offset = 0;
@@ -475,6 +480,46 @@ struct StartupFixture {
         return 36;
     }
 
+    unsigned expect_key_check_command(unsigned index, uint8_t* expected) const {
+        if (index <= 11)
+            return expect_channel_command(index, expected);
+        const uint8_t address[]{2, 0x11, 0x22, 0x33, 0x44, 0x55};
+        const uint8_t fixture[]{2, 0x11, 0x22, 0x33, 0x44, 0x54};
+        if (index == 12) {
+            expected[0] = 0x28;
+            expected[12] = 2;
+            expected[16] = 5;
+            memcpy(expected + 24, address, sizeof(address));
+            memcpy(expected + 32, fixture, sizeof(fixture));
+            expected[40] = 0xf;
+            expected[44] = 0x15;
+            expected[60] = 0x44;
+            expected[124] = 100;
+            expected[140] = 1;
+            return 148;
+        }
+        if (index == 13) {
+            const unsigned length = expect_peer_command(13, expected);
+            memcpy(expected + 16, fixture, sizeof(fixture));
+            return length;
+        }
+        if (index >= 18)
+            return expect_peer_command(index - 2, expected);
+        const bool group = index == 15 || index == 16;
+        expected[0] = 0x18;
+        expected[1] = 5;
+        expected[8] = index < 16 ? 1 : 3;
+        expected[12] = 1;
+        expected[16] = group;
+        expected[20] = group ? 0x42 : 2;
+        if (index < 16) {
+            for (unsigned i = 0; i < 16; ++i)
+                expected[24 + i] = uint8_t(i + 1);
+            expected[72] = group;
+        }
+        return 80;
+    }
+
     void authentication_doorbell(uint32_t value) {
         const auto step = authentication_rx_buffers - data_rx_buffers;
         const bool synced = step == 2 && assoc_case != AssocCase::bad_beacon;
@@ -646,7 +691,8 @@ struct StartupFixture {
         const unsigned sequence = (actual - 1) & (command_sequence_count - 1);
         const unsigned slot = sequence & (command_ring_entries - 1);
         const auto& command = payloads[slot];
-        const bool scanning = check_channels || passive != ScanCase::unused;
+        const bool key_check = key_case != KeyCase::unused;
+        const bool scanning = check_channels || key_check || passive != ScanCase::unused;
         const bool auth = auth_case != AuthCase::unused;
         const bool association = assoc_case != AssocCase::unused;
         const bool data = arp_case != ArpCase::unused;
@@ -701,6 +747,8 @@ struct StartupFixture {
             } else {
                 payload_bytes = expect_peer_command(actual - 7, expected);
             }
+        } else if (key_check) {
+            payload_bytes = expect_key_check_command(index, expected);
         } else if (check_channels) {
             payload_bytes = expect_channel_command(index, expected);
         } else if (auth &&
@@ -806,6 +854,8 @@ struct StartupFixture {
             assert(commands[slot].buffers[1].address == 0xa014 + slot * command_slot_bytes);
         }
 
+        if (index == 15 && key_case == KeyCase::missing_install)
+            return;
         const unsigned rx_index = actual + authentication_rx_buffers + rejoin_rx_offset;
         auto* reply = reply_buffer(rx_index - 1);
         const bool backlog = index == 8 && passive == ScanCase::busy_queue;
@@ -836,11 +886,13 @@ struct StartupFixture {
             reply += 64;
         }
         const bool peer = peer_case != PeerCase::unused;
-        const bool binding = (check_channels || peer) && index >= 8 && command[0] == 0x2b;
+        const bool binding =
+            (check_channels || peer || key_check) && index >= 8 && command[0] == 0x2b;
+        const bool add_peer = (peer || key_check) && peer_index == 13 && command[0] == 0x18;
         const unsigned length = binding ? (index == short_binding_status ? 7 : 8)
-                                : leaving && actual >= 21 && actual <= 22        ? 12
-                                : data_queue                                     ? 12
-                                : peer && peer_index == 13 && command[0] == 0x18 ? 8
+                                : leaving && actual >= 21 && actual <= 22 ? 12
+                                : data_queue                              ? 12
+                                : add_peer                                ? 8
                                 : peer && peer_index == 14 && command[0] == 0x17
                                     ? (peer_case == PeerCase::short_queue ? 11 : 12)
                                 : peer && peer_index == 15 && command[0] == 0x17 ? 12
@@ -849,7 +901,8 @@ struct StartupFixture {
                                              : 4;
         reply[0] = uint8_t(length);
         reply[1] = uint8_t(length >> 8);
-        const bool reject = index == 4 && reject_scan_config;
+        const bool reject = (index == 4 && reject_scan_config) ||
+                            (index == 16 && key_case == KeyCase::refused_removal);
         reply[4] = reject ? 2 : command[0];
         reply[5] = reject ? 0 : command[1];
         reply[6] = index == 3 && wrong_sequence ? 0xff : command[2];
@@ -876,7 +929,7 @@ struct StartupFixture {
         }
         if (binding && index == bad_binding_status)
             reply[11] = 1;
-        if (peer && peer_index == 13 && command[0] == 0x18) {
+        if (add_peer) {
             reply[8] = peer_case == PeerCase::station_denied ? 2 : 1;
             reply[11] = 0x80; // The ADD_STA status occupies the low byte.
         }
@@ -893,7 +946,7 @@ struct StartupFixture {
             reply[9] = 1;
             reply[12] = 0x37;
         }
-        if (!check_channels && index >= 8 && (!peer || index == 8))
+        if (!check_channels && !key_check && index >= 8 && (!peer || index == 8))
             scan_notifications(reply, uint8_t((index - 8 + (rejoin_command_offset != 0)) & 1));
         used[rx_index] = rx_index + 1;
         receive_status.closed_buffer = uint16_t(rx_index + 1 + backlog);
@@ -1321,6 +1374,42 @@ void check_channel_contexts() {
     std::puts("AX201_CHANNEL_CONTEXT_MODEL_PASS");
 }
 
+void check_security_key_commands() {
+    constexpr struct {
+        StartupCase startup;
+        KeyCase key;
+        unsigned commands;
+        const char* status;
+    } cases[]{
+        {StartupCase::good, KeyCase::complete, 20,
+         "CCMP pairwise and group key commands acknowledged"},
+        {StartupCase::good, KeyCase::refused_removal, 16,
+         "firmware did not acknowledge group key removal"},
+        {StartupCase::good, KeyCase::missing_install, 15,
+         "firmware did not acknowledge group key installation"},
+        {StartupCase::stop_failed, KeyCase::missing_install, 15,
+         "firmware did not acknowledge group key installation"},
+    };
+
+    for (const auto& test : cases) {
+        StartupFixture model(test.startup);
+        model.regulatory = RegulatoryCase::valid;
+        model.key_case = test.key;
+        model.live_replies.resize(20 * ax::page_size);
+        const ScanChecks request{{1, 2}, FirmwareCheck::security_key};
+        const auto result = model.run(true, &request);
+        const bool stopped = test.startup == StartupCase::good;
+        assert(result.alive && result.dma_idle == stopped && model.reset_after_dma);
+        assert(result.successful == (test.key == KeyCase::complete));
+        assert(!result.completed_scans && model.commands_sent == test.commands);
+        assert(!strcmp(result.status, test.status));
+        const uint8_t blank[command_slot_bytes]{};
+        assert(!memcmp(model.payloads[13], blank, sizeof(blank)));
+        assert((memcmp(model.payloads[14], blank, sizeof(blank)) == 0) == stopped);
+    }
+    std::puts("AX201_SECURITY_KEY_COMMAND_MODEL_PASS");
+}
+
 void check_peer_queues() {
     const ScanChecks request{{1, 2}, FirmwareCheck::peer_queue};
     {
@@ -1737,73 +1826,6 @@ void check_live_connection() {
     std::puts("AX201_LIVE_CONNECTION_MODEL_PASS");
 }
 
-void check_access_points() {
-    PassiveScan scan{};
-    ScanElementStorage elements{};
-    scan.elements = &elements;
-    scan.channels[0] = 1;
-    scan.channels[1] = 6;
-    scan.channels[2] = 36;
-    scan.channel_count = 3;
-    auto observe = [&](bool probe, uint8_t channel, uint8_t advertised, uint8_t bssid_tail,
-                       uint8_t energy, const Bytes& name, bool truncated = false) {
-        constexpr unsigned descriptor = 48, fixed_frame = 36;
-        const auto frame_bytes = fixed_frame + 2 + name.size() + 3;
-        uint8_t packet[128]{};
-        packet[0] = uint8_t(frame_bytes);
-        packet[12] = 3;
-        packet[32] = energy;
-        packet[33] = 85;
-        packet[34] = channel;
-        auto* frame = packet + descriptor;
-        frame[0] = probe ? 0x50 : 0x80;
-        frame[16] = 2;
-        frame[21] = bssid_tail;
-        frame[32] = 100;
-        frame[34] = 0x31;
-        frame[35] = 0x04;
-        frame[37] = uint8_t(name.size());
-        for (unsigned i = 0; i < name.size(); ++i)
-            frame[38 + i] = name[i];
-        const auto ds = 38 + name.size();
-        frame[ds] = 3;
-        frame[ds + 1] = truncated ? 2 : 1;
-        frame[ds + 2] = advertised;
-        observe_passive_scan(scan, {0xc1, 0, 0x8000, packet, descriptor + frame_bytes});
-    };
-    observe(false, 1, 12, 1, 48, {'X'}); // Channel outside the selected profile.
-    observe(false, 1, 1, 1, 48, {'X'}, true);
-    assert(scan.access_point_count == 0);
-    observe(false, 1, 6, 1, 35, {});
-    assert(scan.access_point_count == 1);
-    auto& point = scan.access_points[0];
-    assert(point.frequency_mhz == 2437 && point.signal_dbm == scan_signal_unavailable);
-    observe(true, 6, 6, 1, 62, {'A', 0, 0xff});
-    assert(scan.access_point_count == 1 && point.probe_response && point.ssid_length == 3);
-    assert(point.ssid[0] == 'A' && point.ssid[1] == 0 && point.ssid[2] == 0xff);
-    assert(point.signal_dbm == -62 && point.beacon_interval_tu == 100 && point.capability == 0x431);
-    const uint8_t probe[]{0, 3, 'A', 0, 0xff, 3, 1, 6};
-    const uint8_t original_beacon[]{0, 0, 3, 1, 6};
-    assert(point.probe_ie_bytes == sizeof(probe) &&
-           point.beacon_ie_bytes == sizeof(original_beacon));
-    assert(!memcmp(elements.records[0].probe, probe, sizeof(probe)) &&
-           !memcmp(elements.records[0].beacon, original_beacon, sizeof(original_beacon)));
-    observe(false, 6, 6, 1, 41, {0, 0, 0});
-    assert(scan.access_point_count == 1 && point.probe_response && point.ssid_length == 3 &&
-           point.signal_dbm == -41);
-    const uint8_t later_beacon[]{0, 3, 0, 0, 0, 3, 1, 6};
-    assert(point.beacon_ie_bytes == sizeof(later_beacon));
-    assert(!memcmp(elements.records[0].beacon, later_beacon, sizeof(later_beacon)));
-    observe(true, 6, 6, 1, 52, {});
-    assert(point.probe_ie_bytes == sizeof(probe) &&
-           !memcmp(elements.records[0].probe, probe, sizeof(probe)));
-    observe(false, 36, 36, 1, 60, {'B'});
-    assert(scan.access_point_count == 2 && scan.access_points[1].frequency_mhz == 5180);
-    for (uint8_t address = 2; address <= 32; ++address)
-        observe(false, 6, 6, address, 80, {'Z'});
-    assert(scan.access_point_count == 32 && scan.access_points_truncated);
-    std::puts("AX201_ACCESS_POINT_MODEL_PASS");
-}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1828,6 +1850,7 @@ int main(int argc, char** argv) {
     word(file, binding_version, 0x0102012b);
     word(file, append(file, 48, 4), 0x020c0118);
     word(file, append(file, 48, 4), 0x00020119);
+    word(file, append(file, 48, 4), 0x00010518);
     const auto scheduler_version = append(file, 48, 4);
     word(file, scheduler_version, 0x02030517);
     word(file, append(file, 48, 4), 0x0709011c);
@@ -1875,6 +1898,8 @@ int main(int argc, char** argv) {
     check_active_scan();
     check_scan_channels();
     check_channel_contexts();
+    check_intel_wifi_key_codec();
+    check_security_key_commands();
     check_peer_queues();
     check_authentication_exchange();
     check_association_exchange();
@@ -1882,7 +1907,7 @@ int main(int argc, char** argv) {
     check_open_station();
     check_live_connection();
     check_receive_recycling();
-    check_access_points();
+    check_intel_wifi_access_points();
 
     auto reject = [&](const Bytes& invalid) {
         FirmwareImage prior{};
@@ -1908,6 +1933,9 @@ int main(int argc, char** argv) {
     Bytes duplicate_binding = file;
     word(duplicate_binding, append(duplicate_binding, 48, 4), 0x0102012b);
     reject(duplicate_binding);
+    Bytes duplicate_security_key = file;
+    word(duplicate_security_key, append(duplicate_security_key, 48, 4), 0x00010518);
+    reject(duplicate_security_key);
     Bytes short_binding = file;
     word(short_binding, binding_version, 0x0002012b);
     FirmwareImage unsupported_binding{};
@@ -1955,6 +1983,7 @@ int main(int argc, char** argv) {
         assert(image.channel_context_supported && !image.dual_lmac);
         assert(image.peer_queue_supported);
         assert(image.authentication_supported);
+        assert(image.security_key_version == 1);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

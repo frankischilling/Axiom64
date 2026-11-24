@@ -37,6 +37,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 test-intel-wifi-firmware: build/intel-wifi-firmware-test
 	./build/intel-wifi-firmware-test
 build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp \
+	kernel/tests/drivers/net/intel_wifi_codecs.cpp \
 	kernel/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_context.cpp \
 	kernel/drivers/net/intel_wifi_start.cpp kernel/drivers/net/intel_wifi_command.cpp \
 	kernel/drivers/net/intel_wifi_rx.cpp kernel/include/drivers/net/intel_wifi_rx.hpp \
@@ -45,6 +46,7 @@ build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp
 	kernel/drivers/net/intel_wifi_channel.cpp kernel/include/drivers/net/intel_wifi_channel.hpp \
 	kernel/drivers/net/intel_wifi_peer.cpp kernel/include/drivers/net/intel_wifi_peer.hpp \
 	kernel/drivers/net/intel_wifi_auth.cpp kernel/include/drivers/net/intel_wifi_auth.hpp \
+	kernel/drivers/net/intel_wifi_key.cpp kernel/include/drivers/net/intel_wifi_key.hpp \
 	kernel/include/net/ipv4_wire.hpp \
 	kernel/include/drivers/net/intel_wifi.hpp kernel/include/drivers/net/intel_wifi_context.hpp \
 	kernel/include/drivers/net/intel_wifi_start.hpp kernel/include/drivers/net/intel_wifi_command.hpp \

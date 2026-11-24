@@ -2382,6 +2382,12 @@ status, removes each binding and PHY in order, and stops DMA. The serial
 log gives the number of completed channel checks. This check sends no
 authentication frames.
 
+Use `iwlwifi.key-check` to test the AX201's CCMP-128 firmware commands.
+The check creates a temporary local peer, installs and removes pairwise
+and group test keys, then resets the adapter. It sends no Wi-Fi frames
+and can run without an access point. A passing report confirms that the
+firmware acknowledged the commands. Protected traffic needs its own test.
+
 Use `iwlwifi.peer-queue-check` for the next check. It listens for access
 points and selects an infrastructure network on a channel where firmware
 permits active operation. The check binds the operating channel, adds the

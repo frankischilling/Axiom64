@@ -10,6 +10,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #include "drivers/net/intel_wifi.hpp"
+#include "drivers/net/intel_wifi_key.hpp"
 
 namespace ax::IntelWifi {
 namespace {
@@ -97,6 +98,7 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     auto region = lmac;
     bool seen_version = false, seen_cpu_count = false, seen_paging_size = false, seen_alive = false;
     bool seen_nvm = false, seen_phy_sku = false, seen_scan_config = false, seen_mcc = false;
+    bool seen_security_key = false;
     bool mcc_v1_v5 = false;
     uint32_t api_flags[3]{}, capabilities[3]{};
     unsigned seen_scan_apis = 0, supported_scan_apis = 0;
@@ -158,6 +160,12 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
             if (length % 4)
                 return "invalid firmware command versions";
             for (unsigned i = 0; i < length; i += 4) {
+                if (payload[i] == key_command_opcode && payload[i + 1] == key_command_group) {
+                    if (seen_security_key)
+                        return "duplicate firmware security key version";
+                    seen_security_key = true;
+                    image.security_key_version = payload[i + 2];
+                }
                 unsigned flag = 1;
                 for (const auto& required : scan_versions) {
                     if (payload[i] == required.opcode && payload[i + 1] == required.group) {

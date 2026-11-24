@@ -12,6 +12,7 @@
  */
 #include "drivers/net/intel_wifi_live.hpp"
 #include "drivers/net/intel_wifi_channel.hpp"
+#include "drivers/net/intel_wifi_key.hpp"
 #include "mm/dma.hpp"
 
 namespace ax::IntelWifi {
@@ -439,6 +440,75 @@ const char* check_channel_contexts(CommandSession& commands, const ScanChannelLi
         ++checked;
     }
     return checked ? nullptr : "no permitted 2.4 or 5 GHz channels";
+}
+
+bool send_key_command(CommandSession& commands, uint8_t (&wire)[key_command_bytes]) {
+    const unsigned slot = commands.index & (command_ring_entries - 1);
+    FirmwarePacket response{};
+    const auto reply =
+        commands.send(key_command_group, key_command_opcode, wire, sizeof(wire), response);
+    erase_key_bytes(wire, sizeof(wire));
+    // Matching replies return the command buffer to the host. On timeout the caller
+    // stops DMA before releasing it.
+    if (reply == Reply::matched || reply == Reply::rejected) {
+        auto& payload = (*commands.rx.memory.command_payloads)[slot];
+        erase_key_bytes(payload, sizeof(payload));
+    }
+    return reply == Reply::matched;
+}
+
+const char* check_security_keys(CommandSession& commands, const ScanChannelList& channels,
+                                const uint8_t (&address)[6], uint8_t rx_mask, bool dual_lmac) {
+    const ScanChannel* channel = nullptr;
+    for (unsigned i = 0; i < channels.count; ++i) {
+        if (channels.entries[i].allowed && channels.entries[i].active) {
+            channel = &channels.entries[i];
+            break;
+        }
+    }
+    if (!channel)
+        return "no permitted channel for the security key check";
+    if (const auto* error =
+            apply_channel_context(commands, *channel, rx_mask, dual_lmac, true, true))
+        return error;
+
+    // Create a local unassociated peer without querying or transmitting to an AP.
+    AccessPoint peer{};
+    memcpy(peer.bssid, address, sizeof(peer.bssid));
+    peer.bssid[0] |= 2;
+    peer.bssid[5] ^= 1;
+    peer.beacon_interval_tu = 100;
+    uint8_t mac[mac_context_bytes];
+    prepare_authentication_mac(address, peer, mac);
+    FirmwarePacket response{};
+    if (commands.send(1, 0x28, mac, sizeof(mac), response) != Reply::matched)
+        return "firmware rejected the security test MAC context";
+    constexpr uint8_t station = 0;
+    uint8_t add[peer_station_bytes];
+    if (!prepare_peer_station(peer, station, add) ||
+        commands.send(1, 0x18, add, sizeof(add), response) != Reply::matched ||
+        !peer_station_added(response))
+        return "firmware rejected the security test peer";
+
+    uint8_t wire[key_command_bytes]{};
+    constexpr CcmpKeySlot pairwise{station, 0, false}, group{station, 1, true};
+    constexpr uint8_t test_key[ccmp_key_bytes]{1, 2,  3,  4,  5,  6,  7,  8,
+                                               9, 10, 11, 12, 13, 14, 15, 16};
+    if (!prepare_ccmp_key_install(pairwise, test_key, 0, 0, wire) ||
+        !send_key_command(commands, wire))
+        return "firmware did not acknowledge pairwise key installation";
+    if (!prepare_ccmp_key_install(group, test_key, 1, 0, wire) || !send_key_command(commands, wire))
+        return "firmware did not acknowledge group key installation";
+    if (!prepare_ccmp_key_remove(group, wire) || !send_key_command(commands, wire))
+        return "firmware did not acknowledge group key removal";
+    if (!prepare_ccmp_key_remove(pairwise, wire) || !send_key_command(commands, wire))
+        return "firmware did not acknowledge pairwise key removal";
+
+    uint8_t remove[remove_peer_bytes];
+    prepare_remove_peer(station, remove);
+    if (commands.send(1, 0x19, remove, sizeof(remove), response) != Reply::matched)
+        return "firmware did not remove the security test peer";
+    return apply_channel_context(commands, *channel, rx_mask, dual_lmac, false);
 }
 
 template <typename Observe>
@@ -870,6 +940,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     uint16_t association_id = 0;
     const bool passive_check = scan && scan->check >= FirmwareCheck::passive_scan;
     const bool channel_check = scan && scan->check == FirmwareCheck::channel_context;
+    const bool key_check = scan && scan->check == FirmwareCheck::security_key;
     NvmInfo info{};
     RegulatoryProfile regulatory{};
     PassiveScan passive{};
@@ -918,7 +989,11 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                                 "live passive scan ready", alive, false, true, info, regulatory};
                         }
                     }
-                    if (!error && channel_check) {
+                    if (!error && key_check) {
+                        error = check_security_keys(commands, channels, address,
+                                                    info.rx_chains & scan->antennas.rx,
+                                                    scan->dual_lmac);
+                    } else if (!error && channel_check) {
                         error = check_channel_contexts(commands, channels,
                                                        info.rx_chains & scan->antennas.rx,
                                                        scan->dual_lmac, checked_channels);
@@ -957,8 +1032,12 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     }
 
     const bool idle = stop_adapter(reg, request_dma);
+    if (key_check && idle)
+        erase_key_bytes(memory.command_payloads, sizeof(*memory.command_payloads));
     if (channel_check && !idle && !error)
         error = "operating channel check could not stop DMA";
+    if (key_check && !idle && !error)
+        error = "security key check could not stop DMA";
     if (authenticate && !idle && !error)
         error = "authentication check could not stop DMA";
     else if (peer_check && !idle && !error)
@@ -972,6 +1051,8 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
         success = "open-system authentication exchange passed";
     else if (peer_check)
         success = "peer station and management queue check passed";
+    else if (key_check)
+        success = "CCMP pairwise and group key commands acknowledged";
     else if (channel_check)
         success = "operating channel binding check passed";
     else if (scan && scan->check == FirmwareCheck::rescan)

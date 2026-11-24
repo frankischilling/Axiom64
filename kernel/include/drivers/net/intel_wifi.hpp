@@ -39,6 +39,7 @@ struct FirmwareImage {
     uint8_t alive_version;
     uint8_t nvm_version;
     uint8_t scan_config_version;
+    uint8_t security_key_version;
     AntennaMasks antennas;
     bool current_regulatory_profile;
     bool passive_scan_supported;
@@ -60,6 +61,7 @@ enum class FirmwareCheck {
     passive_scan,
     rescan,
     channel_context,
+    security_key,
     peer_queue,
     authenticate,
     associate,

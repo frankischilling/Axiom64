@@ -437,6 +437,8 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         uint64_t(result.dma_idle), uint64_t(restored));
     if (result.successful && peer_test && !restored)
         report("peer check could not restore PCI state");
+    else if (result.successful && check == FirmwareCheck::security_key && !restored)
+        report("security key check could not restore PCI state");
     else
         report(result.status);
     if (check == FirmwareCheck::rescan)
@@ -736,6 +738,11 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check,
     }
     if (check == FirmwareCheck::channel_context && !image.channel_context_supported) {
         report("firmware lacks the supported operating channel commands");
+        return;
+    }
+    if (check == FirmwareCheck::security_key &&
+        (!image.peer_queue_supported || image.security_key_version != 1)) {
+        report("firmware lacks the required peer or security key command version");
         return;
     }
     if (check == FirmwareCheck::peer_queue && !image.peer_queue_supported) {

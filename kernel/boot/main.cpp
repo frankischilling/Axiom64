@@ -195,6 +195,8 @@ BootInfo boot_info;
         wifi_check = IntelWifi::FirmwareCheck::peer_queue;
     else if (arguments.has("iwlwifi.channel-check"))
         wifi_check = IntelWifi::FirmwareCheck::channel_context;
+    else if (arguments.has("iwlwifi.key-check"))
+        wifi_check = IntelWifi::FirmwareCheck::security_key;
     else if (arguments.has("iwlwifi.rescan-check"))
         wifi_check = IntelWifi::FirmwareCheck::rescan;
     else if (arguments.has("iwlwifi.passive-scan"))

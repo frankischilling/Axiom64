@@ -44,6 +44,41 @@ struct Attribute {
     uint16_t length, type;
 };
 
+int link_query_attributes(const uint8_t* bytes, size_t size, bool direct, const char*& name) {
+    bool extended_mask = false;
+    while (size) {
+        Attribute field{};
+        if (size < sizeof(field))
+            return -22;
+        memcpy(&field, bytes, sizeof(field));
+        if (field.length < sizeof(field) || field.length > size)
+            return -22;
+        const auto length = field.length - sizeof(field);
+        const auto* value = bytes + sizeof(field);
+        switch (field.type & 0x3fff) {
+        case 3: // IFLA_IFNAME
+            if (!direct || name || length < 2 || length > sizeof(NetInfo::name) ||
+                value[length - 1] || strlen(reinterpret_cast<const char*>(value)) != length - 1)
+                return -22;
+            name = reinterpret_cast<const char*>(value);
+            break;
+        case 29: // IFLA_EXT_MASK requests optional fields this inventory does not emit.
+            if (extended_mask || length != sizeof(uint32_t))
+                return -22;
+            extended_mask = true;
+            break;
+        default:
+            return -95;
+        }
+        const size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
+        if (aligned > size)
+            return -22;
+        bytes += aligned;
+        size -= aligned;
+    }
+    return 0;
+}
+
 static_assert(sizeof(LinkHeader) == 16 && sizeof(AddressHeader) == 8);
 static_assert((max_net_devices + 1) * 128 + 20 <= netlink_family_reply);
 static_assert((ipv4_address_capacity + 1) * 96 + 20 <= netlink_family_reply);
@@ -205,23 +240,28 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         return -22;
     size_t body = request.length - sizeof(request);
     size_t complete = request.type == 18 ? sizeof(LinkHeader) : sizeof(AddressHeader);
-    if (!body || (body > 4 && body != complete) || ((strict || direct) && body != complete))
+    if (!body || (body > 4 && body < complete) || ((strict || direct) && body < complete) ||
+        (body > complete && request.type != 18))
         return -22;
     auto input = static_cast<const uint8_t*>(data) + sizeof(request);
     if (input[0] && input[0] != 2 && input[0] != 10 && !(request.type == 18 && input[0] == 17))
         return -97;
     int32_t selected = 0;
+    const char* name = nullptr;
+    if (body > complete)
+        if (int error = link_query_attributes(input + complete, body - complete, direct, name))
+            return error;
     if (direct) {
         memcpy(&selected, input + 4, sizeof(selected));
-        if (selected <= 0)
+        if (selected < 0 || (!selected && !name))
             return -22;
-        if (unsigned(selected) != ipv4_loopback && !net_info(unsigned(selected)))
+        if (selected && unsigned(selected) != ipv4_loopback && !net_info(unsigned(selected)))
             return -19;
     }
     // rtgenmsg contains only the family; legacy senders leave its alignment bytes uninitialized.
-    for (size_t i = 1; body == complete && i < body; i++)
+    for (size_t i = 1; body >= complete && i < complete; i++)
         if (input[i] && !(direct && i >= 4 && i < 8))
-            return -22; // Filtered inventories and additional attributes remain unsupported.
+            return -22;
     Writer output(reply);
     for (unsigned index = 1; index <= ipv4_loopback; index++) {
         bool loopback = index == ipv4_loopback;
@@ -230,7 +270,8 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         memcpy(lo.name, "lo", 3);
         lo.mtu = 65536;
         auto info = loopback ? &lo : net_info(index);
-        if (!info || (direct && index != unsigned(selected)))
+        if (!info ||
+            (direct && (selected ? index != unsigned(selected) : strcmp(info->name, name))))
             continue;
         if (request.type == 18) {
             if (!link(output, request, port, *info, loopback, !direct, !direct && input[0] == 10))
@@ -247,6 +288,8 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
                           ipv6_address_cache(*entry)))
                 return -90;
     if (direct) {
+        if (!output.size)
+            return -19;
         if (request.flags & 4) {
             NetlinkHeader acknowledgement{36, 2, 0x100, request.sequence, port};
             int status = 0;

@@ -19,6 +19,17 @@ source archives, and build recipes. CMake recognizes Axiom64 and uses the ELF
 shared-library settings for its Linux ABI. Git, CMake, and ripgrep manual
 pages are under `/usr/share/man`.
 
+The installed desktop also includes Micro, the OpenSSH clients, GDB, strace,
+iproute2's `ip` and `ss`, and BIND's `dig`. GDB can inspect ELF files.
+Tracing or attaching to a running program requires the kernel's remaining
+`ptrace` support. Try `man 2 open` or `man 1 less` to read the bundled
+Linux manual and program manuals through mandoc.
+
+The installed Plasma desktop includes PowerDevil and its **Power and Battery**
+widget. The widget uses battery and charger data from UPower. On supported
+laptops, the tray shows the battery even at full charge. You can hide it
+under **Power and Battery** in System Tray Settings.
+
 New accounts get an `auto-eduroam` folder with the setup helper and its
 instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.

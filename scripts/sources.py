@@ -39,10 +39,11 @@ def resolve():
         base = f"https://raw.githubusercontent.com/alpinelinux/aports/{commit}/{package['repository']}/{origin}"
         recipe = download(base + "/APKBUILD", CACHE / origin / commit / "APKBUILD")
         checksums = re.search(r'sha512sums="(.*?)"', recipe.read_text(), re.S)
-        if not checksums:
+        # krb5-conf writes its only file from a heredoc in APKBUILD.
+        if not checksums and origin != "krb5-conf":
             raise RuntimeError(f"{origin}: missing source checksums")
         files = []
-        for line in checksums[1].splitlines():
+        for line in checksums[1].splitlines() if checksums else ():
             if not line.strip():
                 continue
             digest, name = line.split()

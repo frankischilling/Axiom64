@@ -207,6 +207,9 @@ if installed_desktop:
     files["usr/bin/ss"] = (0o120777, b"/sbin/ss")
     xorg_config("xorg-udev.conf")
     regular("usr/libexec/axiom64-input-coldplug", ROOT / "userspace/services/input-coldplug.sh")
+    regular("usr/libexec/axiom64-networkmanager", ROOT / "userspace/services/networkmanager.sh")
+    regular("etc/NetworkManager/NetworkManager.conf",
+            ROOT / "userspace/services/networkmanager.conf", 0o100644)
 # Package shell-registration hooks are not run. Supply the conventional list
 # explicitly so clients using getusershell retain the authenticated shell.
 shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',

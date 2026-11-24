@@ -606,9 +606,41 @@ static void wire(unsigned lane) {
     printf("IPV6_SOCKETS_WIRE_PASS lane=%u raw=1 UDP=4 scoped=1 error=1\n", lane);
 }
 
+static void multicast_hop_options(void) {
+    const int types[] = {SOCK_RAW, SOCK_DGRAM};
+    for (unsigned n = 0; n < sizeof(types) / sizeof(types[0]); n++) {
+        int fd = create(types[n]);
+        int value = 0, readback = 0;
+        socklen_t size = sizeof(readback);
+        check(getsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &readback, &size) == 0 &&
+                  size == sizeof(readback) && readback == 1,
+              "default IPv6 multicast hop limit");
+        int alias = dup(fd);
+        check(alias >= 0, "duplicate IPv6 multicast socket");
+        value = 255;
+        check(setsockopt(alias, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &value, sizeof(value)) == 0,
+              "set neighbor discovery multicast hop limit");
+        value = 256;
+        check(setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &value, sizeof(value)) == -1 &&
+                  errno == EINVAL,
+              "reject invalid IPv6 multicast hop limit");
+        check(getsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &readback, &size) == 0 &&
+                  readback == 255,
+              "shared IPv6 multicast hop limit survives rejection");
+        value = -1;
+        check(setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &value, sizeof(value)) == 0 &&
+                  getsockopt(alias, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &readback, &size) == 0 &&
+                  readback == 1,
+              "restore default IPv6 multicast hop limit");
+        check(close(alias) == 0 && close(fd) == 0, "close IPv6 multicast aliases");
+    }
+    puts("IPV6_MULTICAST_HOPS_PASS");
+}
+
 int main(void) {
     int control = fixture_interfaces();
     abi_contract();
+    multicast_hop_options();
     local_contract();
     for (unsigned lane = 0; lane < 2; lane++)
         wire(lane);

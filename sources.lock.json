@@ -9621,6 +9621,23 @@
       ]
     },
     {
+      "origin": "modemmanager-qt",
+      "commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
+      "license": "LGPL-2.1-only OR LGPL-3.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/d27137ba98af5d9e9ec49e472477d2c5458f6fe3/community/modemmanager-qt/APKBUILD",
+      "recipe_sha256": "47ee4bd31b0b801774beb99d687d1f735beb641634fc668254c74d6eace6e32c",
+      "files": [
+        {
+          "name": "modemmanager-qt-6.13.0.tar.xz",
+          "sha512": "e5f20cf5cdb046a69773d161352f5cdcf6f6f80ecebabf484916b81cca8f88e6938a7da7239ea675f145e4f5d349fcfd26cf4bb5c40af38e13541c763ad9a1de",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/modemmanager-qt-6.13.0.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/d27137ba98af5d9e9ec49e472477d2c5458f6fe3/community/modemmanager-qt/modemmanager-qt-6.13.0.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "mpc1",
       "commit": "84a227baf001b6e0208e3352b294e4d7a40e93de",
       "license": "LGPL-3.0-or-later",
@@ -10722,6 +10739,31 @@
       ]
     },
     {
+      "origin": "pcsc-lite",
+      "commit": "aca6cb57574714704f08b228f4db8c49fd1487de",
+      "license": "BSD-3-Clause AND BSD-2-Clause AND ISC",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/aca6cb57574714704f08b228f4db8c49fd1487de/main/pcsc-lite/APKBUILD",
+      "recipe_sha256": "068fc934341e6a686e0b77cf5f0107aee9d029516cd5d730e7c77aa595240b79",
+      "files": [
+        {
+          "name": "pcsc-lite-2.3.3.tar.xz",
+          "sha512": "96a62364eb0221828a5e3f65d500f8b83acc27cdc0c40fad2b0f807b399c1a465524421175bd7c05fa4ece152f9afe7f8b60c57ee20fa948af7d8899543a2d12",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcsc-lite-2.3.3.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/aca6cb57574714704f08b228f4db8c49fd1487de/main/pcsc-lite/pcsc-lite-2.3.3.tar.xz"
+          ]
+        },
+        {
+          "name": "pcscd.initd",
+          "sha512": "5a8b3cb5b4ed9884c1032ec3c4c51167b8771185e8ea4122e40de4a92135cc3687a1df43bc877cf5ebcfe9392a17035873d8c052d58243eb681a3e93a44c5773",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/pcscd.initd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/aca6cb57574714704f08b228f4db8c49fd1487de/main/pcsc-lite/pcscd.initd"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "phonon",
       "commit": "0a422083a4ec5f7a1a7b75f372954e42680dbb3f",
       "license": "LGPL-2.1-or-later",
@@ -10918,6 +10960,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/plasma-integration-6.3.6.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/plasma-integration/plasma-integration-6.3.6.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "plasma-nm",
+      "commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "license": "(LGPL-2.1-only OR LGPL-3.0-only) AND LGPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/plasma-nm/APKBUILD",
+      "recipe_sha256": "4a674a0340630b4c18662fd0a6af110cb25be7b88a91aec3faeb24867e0774f7",
+      "files": [
+        {
+          "name": "plasma-nm-6.3.6.tar.xz",
+          "sha512": "c3c5ed93005c00e3dd405adcbf3248523a9ad7d3ce45addaab5783d406adf21fd14dc35ab757a98c224535431fa645780fd8161c2b179776d6e6e337ce2cd846",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/plasma-nm-6.3.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/plasma-nm/plasma-nm-6.3.6.tar.xz"
           ]
         }
       ]
@@ -14072,6 +14131,95 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/wireplumber.initd",
             "https://raw.githubusercontent.com/alpinelinux/aports/e15133bb60d1e9ad7711acf2e066ffffa78d1f6f/community/wireplumber/wireplumber.initd"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "wpa_supplicant",
+      "commit": "734553e64effd8acbcee741df4d1651dcce1c440",
+      "license": "BSD-3-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/APKBUILD",
+      "recipe_sha256": "08397e80852b756afd1224bff36e1120fec37e03a55c009c60298936e229d1c4",
+      "files": [
+        {
+          "name": "wpa_supplicant-2.11.tar.gz",
+          "sha512": "9a0a3a9d6fa2235903c40aa57b5955f0c9dd1dccfd0e3825a3b6f92b3e32db8d464b3ea0aef3285ba3ee109e7b190560cedd744902e954f0003cdba543e277b2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_supplicant-2.11.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_supplicant-2.11.tar.gz"
+          ]
+        },
+        {
+          "name": "wpa_supplicant.initd",
+          "sha512": "8e5f0958f6086c465d7a13e793be7dedc021fae2162f0f3b29d00919c355f13e1c257744ae99ae063cca525fb8fa03abd5c117efe0ba9c6812b560ce62366846",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_supplicant.initd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_supplicant.initd"
+          ]
+        },
+        {
+          "name": "wpa_supplicant.confd",
+          "sha512": "24bc4d46f3a8923890f233e433928c3f1204ab5f15a1c32b21dca220af89e2474026059e1040834db88cd3d8f6b61c46abb5cf18bda906e78dcd8fccd0f2a382",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_supplicant.confd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_supplicant.confd"
+          ]
+        },
+        {
+          "name": "wpa_cli.confd",
+          "sha512": "c3db077fa78dd296d90d07626cb4e684f87618a77ffd51c1ae04b47be7bc0db1e9a3e0f7442acef21c081f6bb782f150cbbd3d0bf245d6ab43f19da3899b53b9",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_cli.confd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_cli.confd"
+          ]
+        },
+        {
+          "name": "wpa_cli.initd",
+          "sha512": "f4b9c86530a2b10cd50e6014c9bee1d143714ab9f86bf29119dcd2c86dec5239c356518a36147d6418e4eb31aa4a7df3e5c86647779d2b4626bffcfe6685f362",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_cli.initd",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_cli.initd"
+          ]
+        },
+        {
+          "name": "0001-nl80211-add-extra-ies-only-if-allowed-by-driver.patch",
+          "sha512": "fb328872087268056b035802f71df2f7af8d11699822fe68611201a07dc693c4fdb8c50dd4fd509ed6db4cca89f6003ce3303770951686a35633977f466f4fb5",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0001-nl80211-add-extra-ies-only-if-allowed-by-driver.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/0001-nl80211-add-extra-ies-only-if-allowed-by-driver.patch"
+          ]
+        },
+        {
+          "name": "0002-AP-guard-FT-SAE-code-with-CONFIG_IEEE80211R_AP.patch",
+          "sha512": "d70b2d98b1ffefb1c9023e693d02e1adf21ba21535f7fb76f69f30cb95fb9ab393561d59f27517874108088f0e9061ab88333f65e25d70fab760d4c0d8366dc4",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0002-AP-guard-FT-SAE-code-with-CONFIG_IEEE80211R_AP.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/0002-AP-guard-FT-SAE-code-with-CONFIG_IEEE80211R_AP.patch"
+          ]
+        },
+        {
+          "name": "wpa_supplicant-2.11-Revert-Mark-authorization-completed-on-driver-indica.patch",
+          "sha512": "5d54d6e5a06bb8d0612b2178a3c6ddf27b9bca142e3c512f67df0ace9e650ae343170ea05f47156717c717484c85e5b890706a92ad353046a8a61e8aae8dc1c2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_supplicant-2.11-Revert-Mark-authorization-completed-on-driver-indica.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_supplicant-2.11-Revert-Mark-authorization-completed-on-driver-indica.patch"
+          ]
+        },
+        {
+          "name": "config",
+          "sha512": "9b8b1a914038e84ae2bf162d819d58aa449d249f3684bb86ecda6178956163941d4fc4e92fd14cc4ff3eec17a14e03f20c3a59e94841ed5b9811aef37fa9910e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/config",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/config"
+          ]
+        },
+        {
+          "name": "wpa_cli.sh",
+          "sha512": "212c4265afce2e72b95a32cd785612d6c3e821b47101ead154136d184ac4add01434ada6c87edbb9a98496552e76e1a4d79c6b5840e3a5cfe5e6d602fceae576",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/wpa_cli.sh",
+            "https://raw.githubusercontent.com/alpinelinux/aports/734553e64effd8acbcee741df4d1651dcce1c440/main/wpa_supplicant/wpa_cli.sh"
           ]
         }
       ]

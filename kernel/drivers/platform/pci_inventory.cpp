@@ -23,12 +23,12 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/pci_inventory.hpp"
+#include "drivers/platform/inventory.hpp"
 #include "drivers/platform/pci.hpp"
 #include "fs/vfs.hpp"
 
 namespace ax {
 namespace {
-constexpr char device_root[] = "/sys/devices/pci";
 constexpr char bus_devices[] = "/sys/bus/pci/devices";
 constexpr size_t address_length = sizeof("0000:00:00.0") - 1;
 
@@ -48,22 +48,6 @@ char* hex(char* out, uint32_t value, unsigned width, bool uppercase = false) {
         *out++ = digits[(value >> (4 * (width - i - 1))) & 0xf];
     *out = 0;
     return out;
-}
-
-char* address_name(char* out, const PciAddress& address) {
-    out = hex(out, address.segment, 4);
-    *out++ = ':';
-    out = hex(out, address.bus, 2);
-    *out++ = ':';
-    out = hex(out, address.slot, 2);
-    *out++ = '.';
-    return hex(out, address.function, 1);
-}
-
-bool ensure_directory(const char* path) {
-    if (auto node = lookup(path, false))
-        return (node->mode & 0170000) == directory;
-    return make_node(path, directory | 0755);
 }
 
 bool link_at(Node* parent, const char* name, const char* target) {
@@ -96,35 +80,6 @@ bool publish_hex(Node* parent, const char* name, uint32_t value, unsigned width)
     auto end = hex(append(line, "0x"), value, width);
     *end++ = '\n';
     return publish_file(parent, name, line, end - line);
-}
-
-Node* canonical_device(const PciAddress& address, char (&path)[sizeof(Path::text)]) {
-    constexpr size_t root_length = sizeof(device_root) - 1 + sizeof("0000:00") - 1;
-    PciAddress chain[(sizeof(path) - root_length - 1) / (address_length + 1)];
-    size_t depth = 1;
-    chain[0] = address;
-    PciAddress parent{};
-    for (;;) {
-        const auto result = pci_bus_parent(address.segment, chain[depth - 1].bus, parent);
-        if (result == PciBusParent::root)
-            break;
-        if (result == PciBusParent::ambiguous || depth == sizeof(chain) / sizeof(*chain))
-            return nullptr;
-        chain[depth++] = parent;
-    }
-
-    auto end = hex(append(path, device_root), address.segment, 4);
-    *end++ = ':';
-    end = hex(end, chain[depth - 1].bus, 2);
-    if (!ensure_directory(path))
-        return nullptr;
-    while (depth) {
-        *end++ = '/';
-        end = address_name(end, chain[--depth]);
-        if (!ensure_directory(path))
-            return nullptr;
-    }
-    return lookup(path, false);
 }
 
 uint32_t dword(const uint8_t* config, unsigned offset) {
@@ -161,11 +116,13 @@ bool publish_function(const PciFunction& function) {
             subsystem = function.read32(capability + 4);
     }
 
-    const PciAddress address{function.segment, function.bus, function.slot, function.function};
     char name[address_length + 1];
-    address_name(name, address);
+    function.format_address(name);
     char path[sizeof(Path::text)];
-    auto node = canonical_device(address, path);
+    if (!pci_device_path(function, path, sizeof(path)) ||
+        !DeviceInventory::inventory_directories(path))
+        return false;
+    auto node = lookup(path, false);
     if (!node)
         return false;
     char modalias[64];
@@ -196,7 +153,7 @@ void publish_pci_inventory() {
     constexpr const char* directories[] = {"/sys", "/sys/bus", "/sys/bus/pci", bus_devices,
                                            "/sys/devices"};
     for (auto path : directories)
-        if (!ensure_directory(path)) {
+        if (!DeviceInventory::inventory_directory(path)) {
             log("PCI inventory: cannot create %s\n", path);
             return;
         }

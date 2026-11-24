@@ -25,6 +25,7 @@
  */
 #include "drivers/platform/devices.hpp"
 #include "drivers/graphics/virtio_gpu.hpp"
+#include "drivers/platform/inventory.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/block/floppy.hpp"
@@ -353,73 +354,6 @@ static void tag_audio(const char* path, Device type) {
     node->gid = 29; // audio
 }
 
-static void number_path(char* out, const char* prefix, unsigned number) {
-    size_t length = strlen(prefix);
-    memcpy(out, prefix, length);
-    char digits[16];
-    size_t count = 0;
-    do {
-        digits[count++] = '0' + number % 10;
-        number /= 10;
-    } while (number);
-    while (count)
-        out[length++] = digits[--count];
-    out[length] = 0;
-}
-
-static bool inventory_directory(const char* path) {
-    if (auto node = lookup(path, false))
-        return (node->mode & 0170000) == directory;
-    return make_node(path, directory | 0755);
-}
-
-static Node* inventory_attribute(const char* parent, const char* name, const char* value) {
-    char path[64];
-    const size_t prefix = strlen(parent), suffix = strlen(name);
-    if (prefix + suffix + 2 > sizeof(path))
-        return nullptr;
-    memcpy(path, parent, prefix);
-    path[prefix] = '/';
-    memcpy(path + prefix + 1, name, suffix + 1);
-    const size_t length = strlen(value);
-    auto bytes = static_cast<uint8_t*>(alloc(length + 1));
-    if (!bytes)
-        return nullptr;
-    auto node = make_node(path, regular_file | 0444);
-    if (!node) {
-        release(bytes);
-        return nullptr;
-    }
-    memcpy(bytes, value, length);
-    bytes[length] = '\n';
-    node->data = bytes;
-    node->size = node->capacity = length + 1;
-    node->owned = true;
-    return node;
-}
-
-static bool inventory_path(char (&out)[64], const char* parent, const char* name) {
-    const size_t prefix = strlen(parent);
-    const size_t length = strlen(name);
-    if (prefix + length + 2 > sizeof(out))
-        return false;
-    memcpy(out, parent, prefix);
-    out[prefix] = '/';
-    memcpy(out + prefix + 1, name, length + 1);
-    return true;
-}
-
-static bool inventory_link(const char* parent, const char* name, const char* target) {
-    char text[64];
-    if (!inventory_path(text, parent, name))
-        return false;
-    Path path;
-    path.base = root_node;
-    memcpy(path.text, text, strlen(text) + 1);
-    Node* link = nullptr;
-    return !create_node(path, symlink | 0777, link, target);
-}
-
 static void input_bitmap_text(Device kind, unsigned request, char* out) {
     uint8_t bitmap[input_bitmap_bytes]{};
     input_capabilities(kind, request, bitmap);
@@ -456,22 +390,24 @@ static bool publish_input_inventory(Node& node, unsigned index, const char* name
                                         "/sys/devices/virtual",
                                         "/sys/devices/virtual/input"};
     for (const auto* path : directories)
-        if (!inventory_directory(path))
+        if (!DeviceInventory::inventory_directory(path))
             return false;
     char input[64], event[16], child[64], capabilities[64], dev[16];
-    number_path(input, "/sys/devices/virtual/input/input", index);
-    number_path(event, "event", index);
+    DeviceInventory::number_path(input, "/sys/devices/virtual/input/input", index);
+    DeviceInventory::number_path(event, "event", index);
     char input_link[64], event_link[64];
-    if (!inventory_path(child, input, event) ||
-        !inventory_path(capabilities, input, "capabilities") ||
-        !inventory_path(input_link, "../..", input + sizeof("/sys/") - 1) ||
-        !inventory_path(event_link, input_link, event))
+    if (!DeviceInventory::inventory_path(child, input, event) ||
+        !DeviceInventory::inventory_path(capabilities, input, "capabilities") ||
+        !DeviceInventory::inventory_path(input_link, "../..", input + sizeof("/sys/") - 1) ||
+        !DeviceInventory::inventory_path(event_link, input_link, event))
         return false;
     const auto number = device_number(&node);
-    number_path(dev, "13:", device_minor(number));
-    if (!inventory_directory(input) || !inventory_directory(child) ||
-        !inventory_directory(capabilities) || !inventory_attribute(input, "name", name) ||
-        !inventory_attribute(child, "dev", dev))
+    DeviceInventory::number_path(dev, "13:", device_minor(number));
+    if (!DeviceInventory::inventory_directory(input) ||
+        !DeviceInventory::inventory_directory(child) ||
+        !DeviceInventory::inventory_directory(capabilities) ||
+        !DeviceInventory::inventory_attribute(input, "name", name) ||
+        !DeviceInventory::inventory_attribute(child, "dev", dev))
         return false;
 
     constexpr struct {
@@ -482,7 +418,7 @@ static bool publish_input_inventory(Node& node, unsigned index, const char* name
     char bits[input_bitmap_bytes * 2 + input_bitmap_bytes / sizeof(uint64_t) + 1];
     for (const auto& attribute : attributes) {
         input_bitmap_text(node.device, attribute.request, bits);
-        if (!inventory_attribute(capabilities, attribute.name, bits))
+        if (!DeviceInventory::inventory_attribute(capabilities, attribute.name, bits))
             return false;
     }
     input_bitmap_text(node.device, 0x09, bits);
@@ -492,26 +428,25 @@ static bool publish_input_inventory(Node& node, unsigned index, const char* name
     const size_t name_end = sizeof(parent_prefix) - 1 + strlen(name);
     memcpy(parent_event + sizeof(parent_prefix) - 1, name, strlen(name));
     memcpy(parent_event + name_end, "\"", 2);
-    number_path(child_event, "MAJOR=13\nMINOR=", device_minor(number));
+    DeviceInventory::number_path(child_event, "MAJOR=13\nMINOR=", device_minor(number));
     const size_t minor_end = strlen(child_event);
     constexpr char event_suffix[] = "\nDEVNAME=input/";
     memcpy(child_event + minor_end, event_suffix, sizeof(event_suffix) - 1);
     memcpy(child_event + minor_end + sizeof(event_suffix) - 1, event, strlen(event) + 1);
-    auto* uevent = inventory_attribute(child, "uevent", child_event);
-    if (!uevent || !inventory_attribute(input, "properties", bits) ||
-        !inventory_attribute(input, "uevent", parent_event) ||
-        !inventory_link(input, "subsystem", "../../../../class/input") ||
-        !inventory_link(child, "subsystem", "../../../../../class/input") ||
-        !inventory_link(child, "device", "..") ||
-        !inventory_link("/sys/class/input", input + sizeof("/sys/devices/virtual/input/") - 1,
-                        input_link) ||
-        !inventory_link("/sys/class/input", event, event_link) ||
-        !inventory_link("/sys/dev/char", dev, event_link))
+    auto* uevent = DeviceInventory::inventory_attribute(child, "uevent", child_event);
+    if (!uevent || !DeviceInventory::inventory_attribute(input, "properties", bits) ||
+        !DeviceInventory::inventory_attribute(input, "uevent", parent_event) ||
+        !DeviceInventory::inventory_link(input, "subsystem", "../../../../class/input") ||
+        !DeviceInventory::inventory_link(child, "subsystem", "../../../../../class/input") ||
+        !DeviceInventory::inventory_link(child, "device", "..") ||
+        !DeviceInventory::inventory_link(
+            "/sys/class/input", input + sizeof("/sys/devices/virtual/input/") - 1, input_link) ||
+        !DeviceInventory::inventory_link("/sys/class/input", event, event_link) ||
+        !DeviceInventory::inventory_link("/sys/dev/char", dev, event_link))
         return false;
     uevent->mode = regular_file | 0644;
     uevent->device = Device::input_uevent;
-    uevent->device_id = index;
-    input_device_added(index, false);
+    inventory_device_added(uevent, false);
     return true;
 }
 
@@ -554,15 +489,16 @@ static void publish_nvme_inventory() {
             continue;
         if (!parent_ready) {
             for (const auto path : parents)
-                if (!inventory_directory(path))
+                if (!DeviceInventory::inventory_directory(path))
                     return;
             parent_ready = true;
         }
         char path[64];
-        number_path(path, "/sys/class/nvme/nvme", controller);
-        if (!inventory_directory(path) || !inventory_attribute(path, "model", identity.model) ||
-            !inventory_attribute(path, "serial", identity.serial) ||
-            !inventory_attribute(path, "firmware_rev", identity.firmware))
+        DeviceInventory::number_path(path, "/sys/class/nvme/nvme", controller);
+        if (!DeviceInventory::inventory_directory(path) ||
+            !DeviceInventory::inventory_attribute(path, "model", identity.model) ||
+            !DeviceInventory::inventory_attribute(path, "serial", identity.serial) ||
+            !DeviceInventory::inventory_attribute(path, "firmware_rev", identity.firmware))
             log("nvme: could not publish identity for controller=%u\n", uint64_t(controller));
     }
 }
@@ -771,7 +707,7 @@ int device_open(Handle* h) {
                 p.rows = 24;
                 p.columns = 80;
                 char name[16];
-                number_path(name, "", p.id);
+                DeviceInventory::number_path(name, "", p.id);
                 auto parent = lookup("/dev/pts");
                 if (!parent || (parent->mode & 0170000) != directory) {
                     p.used = false;

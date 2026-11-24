@@ -173,6 +173,8 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.packet_length += request.vectors[i].length;
     if (!request.write)
         return 0;
+    const bool cooked = request.handle->packet && packet_cooked(request.handle->packet);
+    const size_t link_header = cooked ? ethernet_header : 0;
     if (request.handle->netlink) {
         if (int error = netlink_target(task, request.handle->netlink, request.netlink_destination))
             return error;
@@ -198,9 +200,9 @@ static int prepare_packet(Task& task, IoRequest& request) {
     } else {
         if (!request.destination_index || !net_info(request.destination_index))
             return -6;
-        if (request.packet_length > max_ethernet_frame)
+        if (request.packet_length > max_ethernet_frame - link_header)
             return -90;
-        if (request.packet_length < ethernet_header)
+        if (cooked ? !address : request.packet_length < ethernet_header)
             return -22;
     }
     if (request.handle->inet6) {
@@ -240,14 +242,20 @@ static int prepare_packet(Task& task, IoRequest& request) {
         // that were inspected above only for protocol admission.
         return 0;
     }
-    if (request.packet_length) {
-        request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
+    if (request.packet_length + link_header) {
+        request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length + link_header));
         if (!request.packet_data)
             return -12;
     }
-    if (prefix) {
-        memcpy(request.packet_data, protocol_bytes, prefix);
+    if (cooked) {
+        if (int error = packet_ethernet_header(request.destination, request.packet_length,
+                                               request.packet_data))
+            return error;
+        return copy_packet(task, request, 0, request.packet_length,
+                           request.packet_data + link_header);
     }
+    if (prefix)
+        memcpy(request.packet_data, protocol_bytes, prefix);
     return copy_packet(task, request, prefix, request.packet_length - prefix);
 }
 
@@ -283,20 +291,23 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             return inet6_send(request.handle->inet6, request.inet6_destination, request.packet_data,
                               request.packet_length, request.inet_destination_named,
                               &request.inet6_output, request.flags & 0x8000);
-        int result = net_send(request.destination_index, request.packet_data, request.packet_length,
+        size_t wire_length = request.packet_length;
+        if (packet_cooked(request.handle->packet))
+            wire_length += ethernet_header;
+        int result = net_send(request.destination_index, request.packet_data, wire_length,
                               request.handle->packet);
         return result ? result : int64_t(request.packet_length);
     }
     if (!request.socket && !request.packet_length)
         return 0;
-    if (request.handle->netlink)
-        if (int error = netlink_error(request.handle->netlink, true))
-            return -error;
     if (request.handle->inet)
         if (int error = inet_error(request.handle->inet, true))
             return -error;
     if (request.handle->inet6)
         if (int error = inet6_error(request.handle->inet6, true))
+            return -error;
+    if (request.handle->netlink)
+        if (int error = netlink_error(request.handle->netlink, true))
             return -error;
     auto frame = request.handle->packet ? packet_front(request.handle->packet) : nullptr;
     auto ip = request.handle->inet ? inet_front(request.handle->inet) : nullptr;
@@ -376,6 +387,10 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             control_length =
                 inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
                                       request.control_capacity, message_flags);
+        else if (frame)
+            control_length = packet_receive_control(task, request.handle->packet, *frame,
+                                                    request.control_pointer,
+                                                    request.control_capacity, message_flags);
     }
     if ((ip || ip6) && request.address_pointer) {
         // Linux stores the full source length before copying any address bytes.

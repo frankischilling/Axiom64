@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file    kernel/drivers/input/uevent.cpp
- * @brief   Publishes evdev additions and handles input coldplug requests.
+ * @file    kernel/drivers/platform/uevent.cpp
+ * @brief   Device inventory add events.
  * @author  frankischilling
  * @date    2026-11-23
  *
- * Sends device additions on the kernel uevent multicast group after the
- * input node and its discovery attributes are available.
+ * Exposes coldplug controls and publishes the device path and properties.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -32,11 +31,11 @@ namespace {
 uint64_t sequence;
 
 struct Message {
-    char data[256];
+    char data[768];
     size_t size = 0;
 
     void text(const char* value) {
-        const auto length = strlen(value);
+        size_t length = strlen(value);
         memcpy(data + size, value, length);
         size += length;
     }
@@ -54,19 +53,12 @@ struct Message {
 
     void field(const char* value) {
         text(value);
-        end();
-    }
-
-    void end() {
         data[size++] = 0;
     }
 
-    void path(unsigned index) {
-        text("/devices/virtual/input/input");
-        number(index);
-        text("/event");
-        number(index);
-        end();
+    void properties(const uint8_t* properties, size_t length) {
+        for (size_t offset = 0; offset < length; ++offset)
+            data[size++] = properties[offset] == '\n' ? 0 : char(properties[offset]);
     }
 };
 
@@ -88,7 +80,7 @@ int64_t read(Handle* handle, void* output, size_t length) {
 int64_t write(Handle* handle, const void* data, size_t length) {
     if (!((length == 3 && !memcmp(data, "add", 3)) || (length == 4 && !memcmp(data, "add\n", 4))))
         return -22;
-    input_device_added(handle->node->device_id, true);
+    inventory_device_added(handle->node, true);
     return length;
 }
 
@@ -99,33 +91,38 @@ int truncate(Node*, size_t length) {
 constexpr ControlFileOps control{access, read, write, truncate};
 } // namespace
 
-void input_device_added(unsigned index, bool synthetic) {
-    // All fields are fixed apart from the evdev index and the 64-bit sequence.
-    if (index >= 3)
+void inventory_device_added(Node* node, bool synthetic) {
+    char path[256]{};
+    node_path(node, path, sizeof(path), false, root_node);
+    size_t length = strlen(path);
+    constexpr char endpoint[] = "/uevent";
+    if (length <= sizeof(endpoint) + 4 || memcmp(path, "/sys/devices/", 13) ||
+        strcmp(path + length - (sizeof(endpoint) - 1), endpoint))
         return;
+    path[length - (sizeof(endpoint) - 1)] = 0;
+    const char* relative = path + 4;
     Message event;
+    // Reserve space for two terminated paths, the properties and fixed fields.
+    size_t prefix_bytes = 2 * strlen(relative) + 100;
+    if (prefix_bytes > sizeof(event.data) || node->size > sizeof(event.data) - prefix_bytes)
+        return;
     event.text("add@");
-    event.path(index);
+    event.field(relative);
     event.field("ACTION=add");
     event.text("DEVPATH=");
-    event.path(index);
-    event.field("SUBSYSTEM=input");
-    event.field("MAJOR=13");
-    event.text("MINOR=");
-    event.number(64 + index);
-    event.end();
-    event.text("DEVNAME=input/event");
-    event.number(index);
-    event.end();
+    event.field(relative);
+    event.field(node->device == Device::network_uevent ? "SUBSYSTEM=net" : "SUBSYSTEM=input");
+    event.properties(node->data, node->size);
     if (synthetic)
         event.field("SYNTH_UUID=0");
     event.text("SEQNUM=");
     event.number(++sequence);
-    event.end();
+    event.field("");
     netlink_broadcast_uevent(event.data, event.size);
 }
 
-const ControlFileOps* input_uevent_control(Node* node) {
-    return node->device == Device::input_uevent ? &control : nullptr;
+const ControlFileOps* inventory_uevent_control(Node* node) {
+    return node->device == Device::input_uevent || node->device == Device::network_uevent ? &control
+                                                                                          : nullptr;
 }
 } // namespace ax

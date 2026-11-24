@@ -17,6 +17,9 @@ until test -S /run/udev/control; do
 done
 
 /sbin/udevadm trigger --action=add --subsystem-match=input --sysname-match='event*'
+if test -d /sys/class/net && ! /sbin/udevadm trigger --action=add --subsystem-match=net; then
+    printf '%s\n' 'udev: network coldplug failed' >&2
+fi
 
 input_classified() {
     found=no

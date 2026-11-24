@@ -53,6 +53,12 @@ includes the pinned Alpine recipes, the Go runtime and modules linked into
 `kitten`, and the release archive for its bundled symbol font. The full and
 desktop profiles use the smaller framebuffer session with xterm.
 
+The installed desktop includes NetworkManager 1.52.1, `nmcli`, and the
+Plasma 6.3.6 network applet. The package and source locks include the Wi-Fi
+backend, wpa_supplicant, the applet, and its libraries. See
+[persistent root boot](disk-root.md) for service startup and connection storage.
+Wi-Fi association on the Blade needs the Intel wireless driver.
+
 The installed desktop also ships btop 1.4.0. It reads live CPU and memory data,
 process names and arguments, and mounted filesystem capacity. The first desktop
 login adds a btop shortcut and creates a default configuration that uses the

@@ -51,6 +51,24 @@ struct PciFunction {
     uint16_t segment;
     volatile uint8_t* configuration;
 
+    void format_address(char (&address)[13]) const {
+        constexpr char digits[] = "0123456789abcdef";
+        const char value[]{digits[segment >> 12],
+                           digits[(segment >> 8) & 15],
+                           digits[(segment >> 4) & 15],
+                           digits[segment & 15],
+                           ':',
+                           digits[bus >> 4],
+                           digits[bus & 15],
+                           ':',
+                           digits[slot >> 4],
+                           digits[slot & 15],
+                           '.',
+                           digits[function & 15],
+                           0};
+        memcpy(address, value, sizeof(address));
+    }
+
     uint32_t read32(uint16_t offset) const;
 
     uint16_t read16(uint16_t offset) const;
@@ -129,7 +147,7 @@ void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci, uint32_t li
 Acpi::ReadRegions pci_firmware_read_regions();
 void pci_scan(void (*visit)(const PciFunction&));
 void pci_scan(void (*visit)(const PciFunction&, void*), void* context);
-PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress&);
+bool pci_device_path(const PciFunction&, char*, size_t capacity);
 // Records occupied configuration-space ranges without writing to the device.
 void pci_record_memory(const PciFunction&, PciMemoryInventory&);
 void pci_memory_inventory(PciMemoryInventory&);

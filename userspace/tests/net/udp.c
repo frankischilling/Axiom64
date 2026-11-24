@@ -29,6 +29,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/filter.h>
 #include <net/if.h>
 #include <netpacket/packet.h>
 #include <poll.h>
@@ -1063,6 +1064,40 @@ static void device_fault(void) {
     puts("UDP_OTHER_NIC_PASS");
 }
 
+static void datagram_filter(void) {
+    struct sockaddr_in local, peer;
+    int receiver = endpoint(0x7f000001, &local);
+    int sender = endpoint(0x7f000001, &peer);
+    check(connect(sender, (struct sockaddr*)&local, sizeof(local)) == 0, "UDP filter peer");
+    struct sock_filter code[] = {BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 0),
+                                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ntohs(peer.sin_port), 0, 3),
+                                 BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 8),
+                                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 'A', 0, 1),
+                                 BPF_STMT(BPF_RET | BPF_K, 10),
+                                 BPF_STMT(BPF_RET | BPF_K, 0)};
+    struct sock_fprog program = {.len = sizeof(code) / sizeof(code[0]), .filter = code};
+    check(setsockopt(receiver, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
+          "UDP attach filter to the receiver");
+    int alias = dup(receiver);
+    check(alias >= 0 && close(receiver) == 0, "UDP filter follows the open description");
+    check(write(sender, "deny", 4) == 4 && write(sender, "Allow", 5) == 5,
+          "UDP send both rejected and accepted data");
+    readable(alias);
+    char data[8];
+    check(recv(alias, data, sizeof(data), 0) == 2 && !memcmp(data, "Al", 2),
+          "UDP filter sees the header and snapshots the payload");
+    empty(alias);
+    int zero = 0;
+    check(setsockopt(alias, SOL_SOCKET, SO_DETACH_FILTER, &zero, sizeof(zero)) == 0,
+          "UDP detach filter");
+    check(write(sender, "deny", 4) == 4, "UDP send after detach");
+    readable(alias);
+    check(recv(alias, data, sizeof(data), 0) == 4 && !memcmp(data, "deny", 4),
+          "UDP detach restores ordinary delivery");
+    check(close(alias) == 0 && close(sender) == 0, "UDP filter descriptors close");
+    puts("UDP_SOCKET_FILTER_PASS");
+}
+
 static void loopback(void) {
     struct sockaddr_in local, peer, source;
     int server = endpoint(0x7f000001, &local);
@@ -1220,6 +1255,7 @@ int main(int argc, char** argv) {
     bindings();
     zero_peer();
     loopback();
+    datagram_filter();
     payload_limits();
     reuse();
     shutdowns();

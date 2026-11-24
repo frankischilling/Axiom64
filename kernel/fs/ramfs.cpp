@@ -323,7 +323,8 @@ static int removexattr(Node* node, const XattrName& name) {
 }
 
 const FilesystemOps ramfs_ops = {
-    find,     create,    link,     remove,      rename,  read,    write,   truncate,
-    setattr,  readdir,   sync,     map_shared,  stats,   destroy, nullptr, nullptr,
-    getxattr, listxattr, setxattr, removexattr, nullptr, nullptr, nullptr, input_uevent_control};
+    find,     create,      link,    remove,  rename,   read,
+    write,    truncate,    setattr, readdir, sync,     map_shared,
+    stats,    destroy,     nullptr, nullptr, getxattr, listxattr,
+    setxattr, removexattr, nullptr, nullptr, nullptr,  inventory_uevent_control};
 } // namespace ax

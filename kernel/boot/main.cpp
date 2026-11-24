@@ -29,11 +29,13 @@
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/platform/inventory.hpp"
 #include "drivers/platform/intel_lpss.hpp"
 #include "drivers/platform/pci_inventory.hpp"
 #include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
+#include "net/netlink.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
 #include "firmware/acpi.hpp"
@@ -140,8 +142,13 @@ BootInfo boot_info;
         xhci_keyboard_init();
     if (arguments.has("lpss.i2c.input"))
         intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, LpssProbe::input);
-    net_init();
     publish_pci_inventory();
+    DeviceInventory::network_inventory_init();
+    net_init(DeviceInventory::publish_ethernet);
+    net_observe_links(netlink_link_event);
+    ipv4_observe_addresses(netlink_ipv4_address_event);
+    ipv4_observe_routes(netlink_ipv4_route_event);
+    ipv6_observe_addresses(netlink_ipv6_address_event);
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

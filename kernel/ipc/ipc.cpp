@@ -363,11 +363,15 @@ uint32_t readiness(Handle* h, const Task* task) {
         events |= h->inotify ? inotify_read_events : 1;
     if (handle_ready(h, true, task))
         events |= 4;
-    if (h->netlink && netlink_error(h->netlink))
-        events |= 8;
     if (h->packet) {
         auto info = net_info(packet_interface(h->packet));
         if (info && !info->live)
+            events |= 8;
+    }
+    if (h->netlink) {
+        if (!netlink_front(h->netlink))
+            events &= ~1u;
+        if (netlink_error(h->netlink))
             events |= 8;
     }
     if (h->inet) {

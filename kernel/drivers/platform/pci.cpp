@@ -808,7 +808,7 @@ void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint
     }
 }
 
-PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress& address) {
+static PciBusParent pci_bus_parent(uint16_t segment, uint8_t bus, PciAddress& address) {
     if (!bus)
         return PciBusParent::root;
     discover_bridges();
@@ -839,5 +839,46 @@ void pci_scan(void (*visit)(const PciFunction&, void*), void* context) {
     discover_bridges();
     const auto call = [&](const PciFunction& pci) { visit(pci, context); };
     log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(call)));
+}
+
+bool pci_device_path(const PciFunction& function, char* output, size_t capacity) {
+    if (bridges.overflow)
+        return false;
+    // An upstream bridge always reduces the bus number. There are at most
+    // 256 buses in a PCI segment.
+    PciAddress chain[256]{{function.segment, function.bus, function.slot, function.function}};
+    unsigned depth = 1;
+    for (;;) {
+        PciAddress parent{};
+        const auto result = pci_bus_parent(function.segment, chain[depth - 1].bus, parent);
+        if (result == PciBusParent::root)
+            break;
+        if (result == PciBusParent::ambiguous || depth == sizeof(chain) / sizeof(*chain))
+            return false;
+        chain[depth++] = parent;
+    }
+
+    constexpr char prefix[] = "/sys/devices/pci";
+    constexpr size_t root_length = 7; // PCI domain and root bus.
+    constexpr size_t component = 13;  // Slash and PCI domain:bus:slot.function.
+    size_t offset = sizeof(prefix) - 1 + root_length;
+    if (offset + depth * component + 1 > capacity)
+        return false;
+    char address[13];
+    auto format = [&](const PciAddress& part) {
+        PciFunction{part.bus, part.slot, part.function, part.segment, nullptr}.format_address(
+            address);
+    };
+    format(chain[depth - 1]);
+    memcpy(output, prefix, sizeof(prefix) - 1);
+    memcpy(output + sizeof(prefix) - 1, address, root_length);
+    while (depth) {
+        format(chain[--depth]);
+        output[offset++] = '/';
+        memcpy(output + offset, address, sizeof(address) - 1);
+        offset += sizeof(address) - 1;
+    }
+    output[offset] = 0;
+    return true;
 }
 } // namespace ax

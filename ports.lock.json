@@ -5932,6 +5932,19 @@
       "source_commit": "d3b558e1b8572decb53ac74fe4f3a5393fdb2eb9"
     },
     {
+      "name": "modemmanager-qt",
+      "version": "6.13.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/modemmanager-qt-6.13.0-r0.apk",
+      "archive": "modemmanager-qt-6.13.0-r0.apk",
+      "sha256": "8b5c934c79b41900ba4499663a43d8328093a04d5a4c626ec98f0d8591d161fe",
+      "license": "LGPL-2.1-only OR LGPL-3.0-only",
+      "upstream": "https://community.kde.org/Frameworks",
+      "origin": "modemmanager-qt",
+      "source_commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
+      "installed_only": true
+    },
+    {
       "name": "mpc1",
       "version": "1.3.1-r1",
       "repository": "main",
@@ -6106,6 +6119,19 @@
       "installed_only": true
     },
     {
+      "name": "networkmanager-cli",
+      "version": "1.52.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/networkmanager-cli-1.52.1-r0.apk",
+      "archive": "networkmanager-cli-1.52.1-r0.apk",
+      "sha256": "c0830b81070497d2f126a69055dc1d505337561a713c1182a4f81791abb6131a",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://wiki.gnome.org/Projects/NetworkManager",
+      "origin": "networkmanager",
+      "source_commit": "cead0149994fd25246c88b86b2fc45dc9d5cc070",
+      "installed_only": true
+    },
+    {
       "name": "networkmanager-qt",
       "version": "6.13.0-r0",
       "repository": "community",
@@ -6116,6 +6142,19 @@
       "upstream": "https://community.kde.org/Frameworks",
       "origin": "networkmanager-qt",
       "source_commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
+      "installed_only": true
+    },
+    {
+      "name": "networkmanager-wifi",
+      "version": "1.52.1-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/networkmanager-wifi-1.52.1-r0.apk",
+      "archive": "networkmanager-wifi-1.52.1-r0.apk",
+      "sha256": "4692d68ab701ed9efc704865476c2d5f40e2e80355e3d175deb5ae2ca779da7f",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://wiki.gnome.org/Projects/NetworkManager",
+      "origin": "networkmanager",
+      "source_commit": "cead0149994fd25246c88b86b2fc45dc9d5cc070",
       "installed_only": true
     },
     {
@@ -6455,6 +6494,19 @@
       "source_commit": "f5ca111ded52f3c1f4298b09e118af54fba80aa1"
     },
     {
+      "name": "pcsc-lite-libs",
+      "version": "2.3.3-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/pcsc-lite-libs-2.3.3-r0.apk",
+      "archive": "pcsc-lite-libs-2.3.3-r0.apk",
+      "sha256": "9862422f75217786477698fc58586a931a8b82dec45fec243ccfa28113fe5dfc",
+      "license": "BSD-3-Clause AND BSD-2-Clause AND ISC",
+      "upstream": "https://pcsclite.apdu.fr/",
+      "origin": "pcsc-lite",
+      "source_commit": "aca6cb57574714704f08b228f4db8c49fd1487de",
+      "installed_only": true
+    },
+    {
       "name": "phonon-qt6",
       "version": "4.12.0-r0",
       "repository": "community",
@@ -6605,6 +6657,19 @@
       "license": "(LGPL-2.1-only OR LGPL-3.0-only) AND LGPL-2.1-only AND ((LGPL-2.1-only WITH Nokia-Qt-exception-1.1) OR (GPL-3.0-only WITH Nokia-Qt-exception-1.1))",
       "upstream": "https://kde.org/plasma-desktop/",
       "origin": "plasma-integration",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
+      "name": "plasma-nm",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/plasma-nm-6.3.6-r0.apk",
+      "archive": "plasma-nm-6.3.6-r0.apk",
+      "sha256": "28149d19a395f1426f3f7944a16dd1c4637226ae86d160ac649c99af79cbcb16",
+      "license": "(LGPL-2.1-only OR LGPL-3.0-only) AND LGPL-2.0-or-later",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "plasma-nm",
       "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
       "installed_only": true
     },
@@ -8242,6 +8307,19 @@
       "upstream": "https://pipewire.org/",
       "origin": "wireplumber",
       "source_commit": "e15133bb60d1e9ad7711acf2e066ffffa78d1f6f",
+      "installed_only": true
+    },
+    {
+      "name": "wpa_supplicant",
+      "version": "2.11-r2",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/wpa_supplicant-2.11-r2.apk",
+      "archive": "wpa_supplicant-2.11-r2.apk",
+      "sha256": "f813cb8764dbe493c47d29037b10491798c3fd17a0602a88e7ee1f66ba599377",
+      "license": "BSD-3-Clause",
+      "upstream": "https://w1.fi/wpa_supplicant/",
+      "origin": "wpa_supplicant",
+      "source_commit": "734553e64effd8acbcee741df4d1651dcce1c440",
       "installed_only": true
     },
     {

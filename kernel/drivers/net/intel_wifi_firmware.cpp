@@ -34,18 +34,22 @@ constexpr ScanVersion scan_versions[]{
 };
 constexpr unsigned scan_api_mask = (1u << (sizeof(scan_versions) / sizeof(*scan_versions))) - 1;
 
-struct ChannelVersion {
+struct ConfigurationVersion {
     uint8_t opcode, group, command, response;
 };
 
-constexpr ChannelVersion channel_versions[]{
-    {0x08, 1, 4, 0}, // PHY context.
-    {0x08, 5, 2, 0}, // Radio link control.
-    {0xd1, 1, 3, 0}, // Smart FIFO.
-    {0x2b, 1, 2, 1}, // MAC to PHY binding and status.
+constexpr ConfigurationVersion configuration_versions[]{
+    {0x08, 1, 4, 0},  // PHY context.
+    {0x08, 5, 2, 0},  // Radio link control.
+    {0xd1, 1, 3, 0},  // Smart FIFO.
+    {0x2b, 1, 2, 1},  // MAC to PHY binding and status.
+    {0x18, 1, 12, 2}, // Peer station add and status.
+    {0x19, 1, 2, 0},  // Peer station remove.
+    {0x17, 5, 3, 2},  // Management queue scheduler and allocation reply.
 };
-constexpr unsigned channel_api_mask =
-    (1u << (sizeof(channel_versions) / sizeof(*channel_versions))) - 1;
+constexpr unsigned channel_api_mask = (1u << 4) - 1;
+constexpr unsigned peer_api_mask =
+    (1u << (sizeof(configuration_versions) / sizeof(*configuration_versions))) - 1;
 
 uint32_t load32(const uint8_t* bytes) {
     return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) | (uint32_t(bytes[2]) << 16) |
@@ -161,10 +165,10 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
                     flag <<= 1;
                 }
                 flag = 1;
-                for (const auto& required : channel_versions) {
+                for (const auto& required : configuration_versions) {
                     if (payload[i] == required.opcode && payload[i + 1] == required.group) {
                         if (seen_channel_apis & flag)
-                            return "duplicate firmware channel context version";
+                            return "duplicate firmware channel or peer version";
                         seen_channel_apis |= flag;
                         if (payload[i + 2] == required.command &&
                             payload[i + 3] == required.response)
@@ -231,9 +235,11 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     constexpr uint32_t binding_cdb = 1u << (39 - 32), concurrent_bands = 1u << (40 - 32);
     constexpr uint32_t smart_fifo_offload = 1u << (68 - 64);
     image.dual_lmac = capabilities[1] & concurrent_bands;
-    image.channel_context_supported = supported_channel_apis == channel_api_mask &&
-                                      (capabilities[1] & binding_cdb) &&
-                                      !(api_flags[2] & smart_fifo_offload);
+    image.channel_context_supported =
+        (supported_channel_apis & channel_api_mask) == channel_api_mask &&
+        (capabilities[1] & binding_cdb) && !(api_flags[2] & smart_fifo_offload);
+    image.peer_queue_supported =
+        image.channel_context_supported && supported_channel_apis == peer_api_mask;
     output = image;
     return nullptr;
 }

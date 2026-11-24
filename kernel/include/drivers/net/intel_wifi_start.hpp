@@ -8,7 +8,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #pragma once
-#include "drivers/net/intel_wifi_scan.hpp"
+#include "drivers/net/intel_wifi_peer.hpp"
 
 namespace ax::IntelWifi {
 struct FirmwareBootIo {
@@ -29,6 +29,7 @@ struct FirmwareBootMemory {
     uint64_t command_dma = 0;
     uint64_t* free_ring = nullptr;
     const uint64_t* receive_descriptors = nullptr;
+    PeerQueueMemory peer_queue{};
 };
 
 enum class AlivePacket { missing, success, rejected, malformed };
@@ -44,6 +45,7 @@ struct FirmwareBootResult {
     PassiveScan passive{};
     unsigned completed_scans = 0;
     unsigned checked_channels = 0;
+    PeerQueue peer_queue{};
 };
 
 struct ScanChecks {

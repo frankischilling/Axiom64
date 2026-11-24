@@ -43,6 +43,7 @@ struct FirmwareImage {
     bool current_regulatory_profile;
     bool passive_scan_supported;
     bool channel_context_supported;
+    bool peer_queue_supported;
     bool dual_lmac;
 };
 
@@ -58,6 +59,7 @@ enum class FirmwareCheck {
     passive_scan,
     rescan,
     channel_context,
+    peer_queue,
     live_scan
 };
 void check_firmware(bool probe_pci, FirmwareCheck);

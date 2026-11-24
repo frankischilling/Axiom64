@@ -214,14 +214,17 @@ struct BootQueues {
     using InvalidCommand = uint8_t[invalid_command_size];
     using UsedRing = uint32_t[rx_ring_entries];
     using ReceiveDescriptors = uint64_t[rx_ring_entries - 1];
+    using ManagementDescriptors = CommandDescriptor[management_queue_entries];
 
     DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
     DmaBuffer command_payloads, receive_map;
+    DmaBuffer management_ring, management_byte_counts;
     unsigned receive_count = 0;
 
     void pin_until_reboot() {
-        DmaBuffer* buffers[] = {&free_ring,       &used_ring, &status,          &commands,
-                                &invalid_command, &context,   &command_payloads};
+        DmaBuffer* buffers[] = {&free_ring,        &used_ring,       &status,
+                                &commands,         &invalid_command, &context,
+                                &command_payloads, &management_ring, &management_byte_counts};
         for (auto* buffer : buffers)
             buffer->retain = true;
     }
@@ -332,6 +335,8 @@ FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
+    if (check == FirmwareCheck::peer_queue)
+        memory.peer_queue = {queues.management_ring.address, queues.management_byte_counts.address};
     return memory;
 }
 
@@ -353,8 +358,17 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         report("command buffer allocation failed");
         return;
     }
+    if (check == FirmwareCheck::peer_queue &&
+        (!queues.management_ring.allocate(sizeof(BootQueues::ManagementDescriptors)) ||
+         !queues.management_byte_counts.allocate(transmit_byte_count_bytes) ||
+         !initialize_transmit_ring(queues.invalid_command.address,
+                                   queues.management_ring.data<BootQueues::ManagementDescriptors>(),
+                                   management_queue_entries))) {
+        report("management queue allocation failed");
+        return;
+    }
     ScanElementStorage* elements = nullptr;
-    if (check >= FirmwareCheck::passive_scan && check != FirmwareCheck::channel_context) {
+    if (check == FirmwareCheck::passive_scan || check == FirmwareCheck::rescan) {
         elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
         if (!elements) {
             report("scan result allocation failed");
@@ -375,11 +389,17 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     const bool restored = restore_registers(queues, staged, original, result.dma_idle);
     log("iwlwifi: %s, DMA idle=%u, PCI command restored=%u\n", result.status,
         uint64_t(result.dma_idle), uint64_t(restored));
-    report(result.status);
+    if (result.successful && check == FirmwareCheck::peer_queue && !restored)
+        report("peer queue check could not restore PCI state");
+    else
+        report(result.status);
     if (check == FirmwareCheck::rescan)
         log("iwlwifi: completed scans=%u\n", uint64_t(result.completed_scans));
     if (check == FirmwareCheck::channel_context)
         log("iwlwifi: checked operating channels=%u\n", uint64_t(result.checked_channels));
+    if (check == FirmwareCheck::peer_queue && result.peer_queue.id)
+        log("iwlwifi: management queue=%u initial pointer=%u\n", uint64_t(result.peer_queue.id),
+            uint64_t(result.peer_queue.write_pointer));
     if (result.nvm.version)
         log("iwlwifi: NVM version=%x channels=%u bands=%x TX=%x RX=%x\n",
             uint64_t(result.nvm.version), uint64_t(result.nvm.channel_count),
@@ -388,7 +408,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     if (result.regulatory.country[0])
         log("iwlwifi: regulatory domain=%s permitted=%u slots=%u\n", result.regulatory.country,
             uint64_t(result.regulatory.valid_channels), uint64_t(result.regulatory.channel_slots));
-    if (result.successful && result.dma_idle && restored &&
+    if (check != FirmwareCheck::peer_queue && result.successful && result.dma_idle && restored &&
         result.passive.status == PassiveScan::Status::complete) {
         release(completed_scan.elements);
         completed_scan = result.passive;
@@ -568,6 +588,10 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
     }
     if (check == FirmwareCheck::channel_context && !image.channel_context_supported) {
         report("firmware lacks the supported operating channel commands");
+        return;
+    }
+    if (check == FirmwareCheck::peer_queue && !image.peer_queue_supported) {
+        report("firmware lacks the supported peer station and scheduler commands");
         return;
     }
     if (check == FirmwareCheck::live_scan) {

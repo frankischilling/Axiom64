@@ -389,43 +389,106 @@ const char* configure_scan_station(CommandSession& commands, uint8_t (&address)[
     return nullptr;
 }
 
-const char* check_channel_contexts(CommandSession& commands, const ScanChannelList& list,
-                                   uint8_t rx_mask, bool dual_lmac, unsigned& checked) {
+const char* apply_channel_context(CommandSession& commands, const ScanChannel& channel,
+                                  uint8_t rx_mask, bool dual_lmac, bool attach,
+                                  bool initialize_fifo = false) {
     if (!rx_mask)
         return "firmware and NVM receive antenna masks do not overlap";
 
     constexpr struct {
         ChannelStep step;
+        bool attach;
         const char* failure;
     } steps[]{
-        {ChannelStep::add_phy, "PHY context add failed"},
-        {ChannelStep::rx_chains, "radio chain configuration failed"},
-        {ChannelStep::initialize_fifo, "unassociated receive FIFO setup failed"},
-        {ChannelStep::bind, "station channel binding failed"},
-        {ChannelStep::unbind, "station channel unbind failed"},
-        {ChannelStep::remove_phy, "PHY context removal failed"},
+        {ChannelStep::add_phy, true, "PHY context add failed"},
+        {ChannelStep::rx_chains, true, "radio chain configuration failed"},
+        {ChannelStep::initialize_fifo, true, "unassociated receive FIFO setup failed"},
+        {ChannelStep::bind, true, "station channel binding failed"},
+        {ChannelStep::unbind, false, "station channel unbind failed"},
+        {ChannelStep::remove_phy, false, "PHY context removal failed"},
     };
 
+    for (const auto& step : steps) {
+        if (step.attach != attach ||
+            (!initialize_fifo && step.step == ChannelStep::initialize_fifo))
+            continue;
+        const auto command = channel_command(step.step, channel, rx_mask, dual_lmac);
+        FirmwarePacket reply{};
+        if (commands.send(command.group, command.opcode, command.bytes, command.size, reply) !=
+                Reply::matched ||
+            (command.has_status && !binding_succeeded(reply)))
+            return step.failure;
+    }
+    return nullptr;
+}
+
+const char* check_channel_contexts(CommandSession& commands, const ScanChannelList& list,
+                                   uint8_t rx_mask, bool dual_lmac, unsigned& checked) {
     bool bands[2]{};
     for (unsigned i = 0; i < list.count; ++i) {
         const auto& channel = list.entries[i];
         const bool high = channel.frequency_mhz >= 5000;
         if (!channel.allowed || bands[high])
             continue;
-        for (const auto& step : steps) {
-            if (checked && step.step == ChannelStep::initialize_fifo)
-                continue;
-            const auto command = channel_command(step.step, channel, rx_mask, dual_lmac);
-            FirmwarePacket reply{};
-            if (commands.send(command.group, command.opcode, command.bytes, command.size, reply) !=
-                    Reply::matched ||
-                (command.has_status && !binding_succeeded(reply)))
-                return step.failure;
-        }
+        if (const auto* error =
+                apply_channel_context(commands, channel, rx_mask, dual_lmac, true, !checked))
+            return error;
+        if (const auto* error = apply_channel_context(commands, channel, rx_mask, dual_lmac, false))
+            return error;
         bands[high] = true;
         ++checked;
     }
     return checked ? nullptr : "no permitted 2.4 or 5 GHz channels";
+}
+
+const char* check_peer_queue(CommandSession& commands, const ScanChannelList& channels,
+                             const PassiveScan& scan, uint8_t rx_mask, bool dual_lmac,
+                             PeerQueue& queue) {
+    const AccessPoint* peer = nullptr;
+    const ScanChannel* channel = nullptr;
+    for (unsigned i = 0; i < scan.access_point_count; ++i) {
+        const auto& ap = scan.access_points[i];
+        if ((ap.capability & 3) != 1 || (peer && ap.signal_dbm <= peer->signal_dbm))
+            continue;
+        for (unsigned j = 0; j < channels.count; ++j) {
+            const auto& candidate = channels.entries[j];
+            if (candidate.allowed && candidate.active &&
+                candidate.frequency_mhz == ap.frequency_mhz) {
+                peer = &ap;
+                channel = &candidate;
+                break;
+            }
+        }
+    }
+    if (!peer)
+        return "no infrastructure access point on a channel permitted for active operation";
+    if (const auto* error =
+            apply_channel_context(commands, *channel, rx_mask, dual_lmac, true, true))
+        return error;
+
+    constexpr uint8_t station = 0;
+    uint8_t add_station[peer_station_bytes];
+    FirmwarePacket reply{};
+    if (!prepare_peer_station(*peer, station, add_station) ||
+        commands.send(1, 0x18, add_station, sizeof(add_station), reply) != Reply::matched ||
+        !peer_station_added(reply))
+        return "firmware rejected the unassociated peer station";
+
+    uint8_t scheduler[scheduler_command_bytes];
+    if (!prepare_add_management_queue(commands.rx.memory.peer_queue, station, scheduler) ||
+        commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
+        !parse_management_queue(reply, queue))
+        return "firmware management queue allocation failed";
+    if (!prepare_remove_management_queue(station, scheduler) ||
+        commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
+        !management_queue_removed(reply))
+        return "firmware management queue removal failed";
+
+    uint8_t remove_station[remove_peer_bytes];
+    prepare_remove_peer(station, remove_station);
+    if (commands.send(1, 0x19, remove_station, sizeof(remove_station), reply) != Reply::matched)
+        return "firmware peer station removal failed";
+    return apply_channel_context(commands, *channel, rx_mask, dual_lmac, false);
 }
 
 const char* run_passive_scan(CommandSession& commands, const ScanChannelList& channels,
@@ -495,6 +558,9 @@ static bool stop_adapter(const Registers& reg, bool request_dma) {
 
 static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
                                    const ScanChecks* scan, LiveScanSession* live) {
+    const bool peer_check = scan && scan->check == FirmwareCheck::peer_queue;
+    if (peer_check && !valid_peer_queue_memory(memory.peer_queue))
+        return {"invalid management queue DMA addresses", false, true};
     if (!memory.context_address || memory.context_address != align_down(memory.context_address) ||
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
@@ -517,6 +583,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     bool alive = false;
     unsigned completed_scans = 0;
     unsigned checked_channels = 0;
+    PeerQueue peer_queue{};
     const bool passive_check = scan && scan->check >= FirmwareCheck::passive_scan;
     const bool channel_check = scan && scan->check == FirmwareCheck::channel_context;
     NvmInfo info{};
@@ -569,6 +636,10 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                             if (!error)
                                 ++completed_scans;
                         }
+                        if (!error && peer_check)
+                            error = check_peer_queue(commands, channels, passive,
+                                                     info.rx_chains & scan->antennas.rx,
+                                                     scan->dual_lmac, peer_queue);
                     }
                 }
             }
@@ -578,8 +649,12 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     const bool idle = stop_adapter(reg, request_dma);
     if (channel_check && !idle && !error)
         error = "operating channel check could not stop DMA";
+    if (peer_check && !idle && !error)
+        error = "peer queue check could not stop DMA";
     const char* success = "firmware ALIVE received";
-    if (channel_check)
+    if (peer_check)
+        success = "peer station and management queue check passed";
+    else if (channel_check)
         success = "operating channel binding check passed";
     else if (scan && scan->check == FirmwareCheck::rescan)
         success = "two firmware passive scans complete";
@@ -591,8 +666,16 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
         success = "firmware scan configuration accepted";
     else if (memory.commands)
         success = "firmware NVM read passed";
-    return {error ? error : success, alive,           idle, !error, info, regulatory, passive,
-            completed_scans,         checked_channels};
+    return {error ? error : success,
+            alive,
+            idle,
+            !error,
+            info,
+            regulatory,
+            passive,
+            completed_scans,
+            checked_channels,
+            peer_queue};
 }
 
 FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,

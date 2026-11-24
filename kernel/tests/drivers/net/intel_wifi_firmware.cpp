@@ -119,6 +119,15 @@ enum class StartupCase {
 };
 
 enum class RegulatoryCase { unused, valid, bad_count, disallowed, disabled, rejected };
+enum class PeerCase {
+    unused,
+    success,
+    passive_only,
+    station_denied,
+    short_queue,
+    queue_denied,
+    remove_denied
+};
 enum class ScanCase {
     unused,
     complete,
@@ -270,6 +279,7 @@ struct StartupFixture {
     bool probe_expected = false;
     bool check_channels = false;
     bool dual_lmac = false;
+    PeerCase peer_case = PeerCase::unused;
     unsigned bad_binding_status = 0;
     unsigned short_binding_status = 0;
     unsigned scan_delays = 0;
@@ -315,6 +325,8 @@ struct StartupFixture {
             beacon[0] = 0x80;
             beacon[16] = 0x02;
             beacon[21] = uint8_t((id ? 0x20 : 0x10) + (offset == 384 ? 2 : 1));
+            if (peer_case != PeerCase::unused)
+                beacon[34] = 1; // ESS capability.
             // Zero-length SSID is valid for a hidden network.
         }
         if (passive != ScanCase::timeout) {
@@ -386,6 +398,40 @@ struct StartupFixture {
         }
     }
 
+    unsigned expect_peer_command(unsigned index, uint8_t* expected) const {
+        if (index <= 12)
+            return expect_channel_command(index - 1, expected);
+        if (index >= 17)
+            return expect_channel_command(index - 5, expected);
+        if (index == 13) {
+            expected[0] = 0x18;
+            expected[10] = expected[11] = 0xff;
+            expected[16] = 2;
+            expected[21] = 0x11;
+            expected[34] = 2;
+            expected[35] = 0x3c;
+            return 48;
+        }
+        if (index == 16) {
+            expected[0] = 0x19;
+            return 4;
+        }
+        assert(index == 14 || index == 15);
+        expected[0] = 0x17;
+        expected[1] = 5;
+        expected[12] = 1;
+        expected[16] = 15;
+        if (index == 14) {
+            expected[24] = 1;
+            expected[29] = 0x10;
+            expected[30] = 0x05;
+            expected[38] = 0x05;
+        } else {
+            expected[8] = 1;
+        }
+        return 36;
+    }
+
     void command_reply(unsigned tail) {
         const unsigned index = ++commands_sent;
         assert(tail == (index & (command_sequence_count - 1)));
@@ -430,6 +476,8 @@ struct StartupFixture {
             expected[60] = 0x44;
         } else if (check_channels) {
             payload_bytes = expect_channel_command(index, expected);
+        } else if (peer_case != PeerCase::unused && index > 8) {
+            payload_bytes = expect_peer_command(index, expected);
         } else {
             expected[0] = 0xd;
             payload_bytes = 1940;
@@ -500,11 +548,16 @@ struct StartupFixture {
             reply[7] = 0x80;
             reply += 64;
         }
-        const bool binding = check_channels && index >= 8 && command[0] == 0x2b;
-        const unsigned length = binding      ? (index == short_binding_status ? 7 : 8)
-                                : mcc        ? (scanning ? 84 : 32)
-                                : index == 3 ? 472
-                                             : 4;
+        const bool peer = peer_case != PeerCase::unused;
+        const bool binding = (check_channels || peer) && index >= 8 && command[0] == 0x2b;
+        const unsigned length = binding               ? (index == short_binding_status ? 7 : 8)
+                                : peer && index == 13 ? 8
+                                : peer && index == 14
+                                    ? (peer_case == PeerCase::short_queue ? 11 : 12)
+                                : peer && index == 15 ? 12
+                                : mcc                 ? (scanning ? 84 : 32)
+                                : index == 3          ? 472
+                                                      : 4;
         reply[0] = uint8_t(length);
         reply[1] = uint8_t(length >> 8);
         const bool reject = index == 4 && reject_scan_config;
@@ -527,12 +580,26 @@ struct StartupFixture {
             data[0] = regulatory == RegulatoryCase::rejected ? 4 : 0;
             data[16] = scanning ? 15 : regulatory == RegulatoryCase::bad_count ? 3 : 2;
             data[20] = regulatory == RegulatoryCase::disallowed ? 0 : 0x09;
+            if (peer_case == PeerCase::passive_only)
+                data[20] = 1;
             if (scanning)
                 data[76] = 0x01;
         }
         if (binding && index == bad_binding_status)
             reply[11] = 1;
-        if (!check_channels && index >= 8)
+        if (peer && index == 13) {
+            reply[8] = peer_case == PeerCase::station_denied ? 2 : 1;
+            reply[11] = 0x80; // The ADD_STA status occupies the low byte.
+        }
+        if (peer && index == 14) {
+            reply[8] = reply[9] = 1;
+            reply[10] = peer_case == PeerCase::queue_denied;
+            reply[12] = 0x34;
+            reply[13] = 0x12;
+        }
+        if (peer && index == 15)
+            reply[10] = peer_case == PeerCase::remove_denied;
+        if (!check_channels && index >= 8 && (!peer || index == 8))
             scan_notifications(reply, uint8_t((index - 8) & 1));
         used[index] = index + 1;
         receive_status.closed_buffer = uint16_t(index + 1 + backlog);
@@ -640,7 +707,9 @@ struct StartupFixture {
 
     FirmwareBootResult run(bool nvm = false, const ScanChecks* scan = nullptr) {
         const auto io = make_io();
-        const auto memory = make_memory(nvm, scan && scan->check >= FirmwareCheck::rescan);
+        auto memory = make_memory(nvm, scan && scan->check >= FirmwareCheck::rescan);
+        if (peer_case != PeerCase::unused)
+            memory.peer_queue = {0x50000, 0x51000};
         return start_and_stop_quz(io, memory, scan);
     }
 };
@@ -946,6 +1015,71 @@ void check_channel_contexts() {
     std::puts("AX201_CHANNEL_CONTEXT_MODEL_PASS");
 }
 
+void check_peer_queues() {
+    const ScanChecks request{{1, 2}, FirmwareCheck::peer_queue};
+    {
+        StartupFixture model(StartupCase::good);
+        const auto io = model.make_io();
+        auto memory = model.make_memory(true, true);
+        memory.peer_queue = {0x51000, 0x51000};
+        const auto result = start_and_stop_quz(io, memory, &request);
+        assert(!strcmp(result.status, "invalid management queue DMA addresses"));
+        assert(!model.requested_master && !model.commands_sent && result.dma_idle);
+    }
+    assert(!valid_peer_queue_memory({0x50001, 0x51000}));
+    assert(!valid_peer_queue_memory({0x100000000, 0x51000}));
+    assert(valid_peer_queue_memory({0x50000, 0x51000}));
+
+    struct Case {
+        StartupCase startup;
+        PeerCase response;
+        unsigned commands;
+        bool queue_allocated;
+        const char* status;
+    };
+
+    const Case cases[]{
+        {StartupCase::good, PeerCase::success, 18, true,
+         "peer station and management queue check passed"},
+        {StartupCase::good, PeerCase::passive_only, 8, false,
+         "no infrastructure access point on a channel permitted for active operation"},
+        {StartupCase::good, PeerCase::station_denied, 13, false,
+         "firmware rejected the unassociated peer station"},
+        {StartupCase::good, PeerCase::short_queue, 14, false,
+         "firmware management queue allocation failed"},
+        {StartupCase::good, PeerCase::queue_denied, 14, false,
+         "firmware management queue allocation failed"},
+        {StartupCase::good, PeerCase::remove_denied, 15, true,
+         "firmware management queue removal failed"},
+        {StartupCase::stop_failed, PeerCase::success, 18, true,
+         "peer queue check could not stop DMA"},
+    };
+    for (const auto& test : cases) {
+        StartupFixture model(test.startup);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = test.response;
+        model.live_replies.resize(18 * ax::page_size);
+        const auto result = model.run(true, &request);
+        assert(model.commands_sent == test.commands);
+        assert(!strcmp(result.status, test.status));
+        const bool stopped = test.startup != StartupCase::stop_failed;
+        assert(result.dma_idle == stopped && !model.master && model.reset_after_dma);
+        assert(result.alive && result.completed_scans == 1);
+        assert(result.successful == (stopped && test.response == PeerCase::success));
+        assert(result.peer_queue.id == (test.queue_allocated ? 257 : 0));
+        assert(result.peer_queue.write_pointer == (test.queue_allocated ? 0x34 : 0));
+    }
+
+    uint8_t allocation[8]{};
+    PeerQueue queue{23, 0x40};
+    assert(!parse_management_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
+    allocation[1] = 2; // One beyond the last supported queue.
+    assert(!parse_management_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
+    assert(queue.id == 23 && queue.write_pointer == 0x40);
+    std::puts("AX201_PEER_QUEUE_MODEL_PASS");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -1035,6 +1169,10 @@ int main(int argc, char** argv) {
     word(file, append(file, 48, 4), 0x000301d1);
     const auto binding_version = append(file, 48, 4);
     word(file, binding_version, 0x0102012b);
+    word(file, append(file, 48, 4), 0x020c0118);
+    word(file, append(file, 48, 4), 0x00020119);
+    const auto scheduler_version = append(file, 48, 4);
+    word(file, scheduler_version, 0x02030517);
     word(file, append(file, 29, 8) + 4, 1u << 9);
     word(file, append(file, 30, 8) + 4, 1u << 1);
     const auto binding_caps = append(file, 30, 8);
@@ -1060,6 +1198,7 @@ int main(int argc, char** argv) {
     assert(image.current_regulatory_profile);
     assert(image.passive_scan_supported);
     assert(image.channel_context_supported && image.dual_lmac);
+    assert(image.peer_queue_supported);
     assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
            image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
@@ -1073,6 +1212,7 @@ int main(int argc, char** argv) {
     check_active_scan();
     check_scan_channels();
     check_channel_contexts();
+    check_peer_queues();
     check_receive_recycling();
     check_access_points();
 
@@ -1110,6 +1250,11 @@ int main(int argc, char** argv) {
     word(old_binding, binding_caps + 4, 0);
     assert(!parse_firmware(old_binding.data(), old_binding.size(), unsupported_binding));
     assert(!unsupported_binding.channel_context_supported && !unsupported_binding.dual_lmac);
+    Bytes old_scheduler = file;
+    word(old_scheduler, scheduler_version, 0x02010517);
+    FirmwareImage unsupported_queue{};
+    assert(!parse_firmware(old_scheduler.data(), old_scheduler.size(), unsupported_queue));
+    assert(unsupported_queue.channel_context_supported && !unsupported_queue.peer_queue_supported);
     Bytes no_regulatory = file;
     word(no_regulatory, regulatory_caps + 4, 0);
     FirmwareImage without_mcc{};
@@ -1135,6 +1280,7 @@ int main(int argc, char** argv) {
         assert(image.current_regulatory_profile);
         assert(image.passive_scan_supported);
         assert(image.channel_context_supported && !image.dual_lmac);
+        assert(image.peer_queue_supported);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

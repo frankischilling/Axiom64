@@ -2379,3 +2379,11 @@ unassociated station MAC to the PHY. It checks the firmware's binding
 status, removes each binding and PHY in order, and stops DMA. The serial
 log gives the number of completed channel checks. This check sends no
 authentication frames.
+
+Use `iwlwifi.peer-queue-check` for the next check. It listens for access
+points and selects an infrastructure network on a channel where firmware
+permits active operation. The check binds the operating channel, adds the
+unassociated peer to the firmware, and allocates a management transmit
+queue. It reports the queue ID and initial write pointer in the serial
+log. It removes the queue and peer before tearing down the binding and
+stopping DMA. The check posts no transmit frames.

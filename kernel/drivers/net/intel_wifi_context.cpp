@@ -70,18 +70,25 @@ bool encode_receive_buffer(uint64_t address, unsigned id, uint64_t& descriptor) 
     return true;
 }
 
+bool initialize_transmit_ring(uint64_t invalid_command, CommandDescriptor* ring, unsigned entries) {
+    if (!valid_dma_page(invalid_command, invalid_command_size))
+        return false;
+    for (unsigned i = 0; i < entries; ++i) {
+        auto& descriptor = ring[i];
+        descriptor = {};
+        descriptor.buffer_count = 1;
+        descriptor.buffers[0] = {invalid_command_size, invalid_command};
+    }
+    return true;
+}
+
 bool prepare_command_ring(uint64_t invalid_command, uint8_t (&payload)[invalid_command_size],
                           CommandDescriptor (&ring)[command_ring_entries]) {
-    if (!valid_dma_page(invalid_command, sizeof(payload)))
+    if (!initialize_transmit_ring(invalid_command, ring, command_ring_entries))
         return false;
     // A debug command with an invalid sequence protects unused slots from stray fetches.
     const uint8_t invalid_header[invalid_command_size] = {6, 15, 0xff, 0xff, 0, 0, 0, 0};
     memcpy(payload, invalid_header, sizeof(payload));
-    for (auto& descriptor : ring) {
-        descriptor = {};
-        descriptor.buffer_count = 1;
-        descriptor.buffers[0] = {sizeof(payload), invalid_command};
-    }
     return true;
 }
 } // namespace ax::IntelWifi

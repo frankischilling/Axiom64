@@ -69,6 +69,7 @@ static_assert(offsetof(CommandDescriptor, buffers) == 2);
 bool make_boot_context(const FirmwareImage&, const FirmwareAddresses&, ReceiveQueues,
                        uint64_t command_ring, BootContext&);
 bool encode_receive_buffer(uint64_t address, unsigned id, uint64_t& descriptor);
+bool initialize_transmit_ring(uint64_t invalid_command, CommandDescriptor*, unsigned entries);
 bool prepare_command_ring(uint64_t invalid_command, uint8_t (&payload)[invalid_command_size],
                           CommandDescriptor (&ring)[command_ring_entries]);
 } // namespace ax::IntelWifi

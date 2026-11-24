@@ -2426,3 +2426,9 @@ frequency. The acknowledgment means the driver accepted the request.
 The result arrives separately in the `mlme` multicast group after the
 firmware exchange. Carrier comes up after a successful result. A failed
 exchange stops the radio so the firmware can release its DMA buffers.
+
+Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
+disconnect event on the `mlme` group before scanning or connecting again.
+An explicit disconnect keeps the radio running after it clears the
+association. If firmware does not confirm cleanup, the driver stops the
+radio to protect the DMA buffers.

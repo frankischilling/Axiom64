@@ -122,8 +122,8 @@ class Message {
     }
 };
 
-int select_connection(const uint8_t* bytes, size_t length, unsigned index,
-                      IntelWifi::StationRequest& connection) {
+int select_station_request(const uint8_t* bytes, size_t length, unsigned index, bool disconnect,
+                           IntelWifi::StationRequest& connection, uint16_t& reason) {
     uint64_t seen = 0;
     while (length) {
         if (length < sizeof(AttributeHeader))
@@ -135,6 +135,8 @@ int select_connection(const uint8_t* bytes, size_t length, unsigned index,
             return -22;
         const auto* value = bytes + sizeof(field);
         const size_t size = field.length - sizeof(field);
+        if (disconnect && field.type != ifindex && field.type != wdev && field.type != reason_code)
+            return -95;
         unsigned slot;
         switch (field.type) {
         case ifindex:
@@ -181,6 +183,16 @@ int select_connection(const uint8_t* bytes, size_t length, unsigned index,
             connection.ssid.length = uint8_t(size);
             slot = ssid;
             break;
+        case reason_code:
+            if (!disconnect)
+                return -95;
+            if (size != sizeof(reason))
+                return -22;
+            memcpy(&reason, value, sizeof(reason));
+            if (!reason)
+                return -22;
+            slot = reason_code;
+            break;
         default:
             return -95;
         }
@@ -191,7 +203,8 @@ int select_connection(const uint8_t* bytes, size_t length, unsigned index,
         bytes += aligned;
         length -= aligned;
     }
-    return (seen & ((uint64_t(1) << ifindex) | 1)) && connection.ssid.length ? 0 : -22;
+    return (seen & ((uint64_t(1) << ifindex) | 1)) && (disconnect || connection.ssid.length) ? 0
+                                                                                             : -22;
 }
 
 int select_frequencies(const uint8_t* bytes, size_t length, uint64_t& channels) {
@@ -416,16 +429,19 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
     const uint8_t command = bytes[sizeof(request)];
     const bool dump = (request.flags & dump_flags) == dump_flags;
     const bool trigger = command == nl80211_trigger_scan;
-    if (command == nl80211_connect) {
+    const bool disconnect = command == nl80211_disconnect;
+    if (command == nl80211_connect || disconnect) {
         if (dump || !wireless_connect_available())
             return netlink_ack(data, request, port, -95, capped, reply);
         if (!privileged)
             return netlink_ack(data, request, port, -1, capped, reply);
         IntelWifi::StationRequest connection;
-        int error =
-            select_connection(bytes + header, request.length - header, info->index, connection);
+        uint16_t reason = 3; // Station is leaving.
+        int error = select_station_request(bytes + header, request.length - header, info->index,
+                                           disconnect, connection, reason);
         if (!error)
-            error = IntelWifi::request_live_connection(connection);
+            error = disconnect ? IntelWifi::request_live_disconnect(reason)
+                               : IntelWifi::request_live_connection(connection);
         return error || (request.flags & 4) ? netlink_ack(data, request, port, error, capped, reply)
                                             : 0;
     }
@@ -476,8 +492,10 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
             unsigned entry = 1;
             if (live)
                 message.value(entry++, uint32_t(nl80211_trigger_scan));
-            if (wireless_connect_available())
-                message.value(entry, uint32_t(nl80211_connect));
+            if (wireless_connect_available()) {
+                message.value(entry++, uint32_t(nl80211_connect));
+                message.value(entry, uint32_t(nl80211_disconnect));
+            }
             message.end_nested(commands);
         }
         return message.finish(new_wiphy, request.sequence, port, dump);
@@ -554,12 +572,12 @@ void wireless_connection_finished(unsigned index, const uint8_t (&bssid)[6], boo
     netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
 }
 
-void wireless_disconnected(unsigned index) {
+void wireless_disconnected(unsigned index, uint16_t reason) {
     uint8_t bytes[64];
     Message event(bytes);
     event.value(wiphy, uint32_t(0));
     event.value(ifindex, uint32_t(index));
-    event.value(reason_code, uint16_t(1)); // Unspecified link loss.
+    event.value(reason_code, reason);
     const size_t size = event.finish(nl80211_disconnect, 0, 0, false);
     netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
 }

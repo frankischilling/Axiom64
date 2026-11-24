@@ -54,7 +54,7 @@ bool prepare_association_request(const AccessPoint&, const uint8_t* ies, unsigne
                                  bool high_band, AssociationRequest&);
 bool prepare_management_frame(const AuthenticationDma&, PeerQueue, uint32_t,
                               const uint8_t (&station)[6], const AccessPoint&, ManagementFrame,
-                              const AssociationRequest&, uint16_t sequence);
+                              const AssociationRequest&, uint16_t sequence, uint16_t reason = 3);
 bool prepare_arp_request(const AuthenticationDma&, PeerQueue, uint32_t, const uint8_t (&station)[6],
                          const AuthenticationTarget&, uint16_t sequence);
 bool observe_arp_response(const FirmwarePacket&, const uint8_t (&station)[6], uint8_t channel,

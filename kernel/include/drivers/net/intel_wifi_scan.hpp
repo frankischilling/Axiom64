@@ -140,5 +140,6 @@ int trigger_live_scan(const ScanRequest&);
 struct StationRequest;
 bool live_connect_available();
 int request_live_connection(const StationRequest&);
+int request_live_disconnect(uint16_t reason);
 bool live_bss_associated(const AccessPoint&);
 } // namespace ax::IntelWifi

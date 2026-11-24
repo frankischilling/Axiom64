@@ -359,9 +359,9 @@ static bool prepare_station_frame(const AuthenticationDma& dma, PeerQueue queue,
 bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
                               const uint8_t (&station)[6], const AccessPoint& peer,
                               ManagementFrame kind, const AssociationRequest& association,
-                              uint16_t sequence) {
+                              uint16_t sequence, uint16_t reason) {
     constexpr uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
-    constexpr uint8_t leave_body[]{3, 0}; // Station is leaving.
+    const uint8_t leave_body[]{uint8_t(reason), uint8_t(reason >> 8)};
     const uint8_t* body = auth_body;
     unsigned length = sizeof(auth_body);
     if (kind == ManagementFrame::associate) {

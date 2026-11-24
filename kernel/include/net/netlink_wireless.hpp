@@ -37,6 +37,6 @@ void wireless_dump_advance(WirelessDump&);
 void wireless_scan_finished(unsigned ifindex, bool complete);
 void wireless_connection_finished(unsigned ifindex, const uint8_t (&bssid)[6], bool success,
                                   bool timeout);
-void wireless_disconnected(unsigned ifindex);
+void wireless_disconnected(unsigned ifindex, uint16_t reason = 1);
 void netlink_broadcast_wireless(unsigned group, const void*, size_t);
 } // namespace ax

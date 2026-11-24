@@ -13,7 +13,7 @@
 namespace ax::IntelWifi {
 struct LiveStation {
     AccessPoint peer{};
-    PeerQueue queue{};
+    PeerQueue queue{}, management{};
     uint8_t channel = 0;
     uint32_t rate = 0;
     uint16_t next_sequence = 0;
@@ -61,6 +61,28 @@ struct StationJoin {
     uint64_t deadline = 0;
 };
 
+enum class LeavePhase : uint8_t {
+    idle,
+    drain,
+    deauthenticate,
+    clear_mac,
+    remove_data,
+    remove_management,
+    remove_peer,
+    unbind,
+    remove_phy,
+};
+
+enum class LeaveOutcome { pending, disconnected, failed };
+
+struct StationLeave {
+    LeavePhase phase = LeavePhase::idle;
+    uint16_t reason = 0, command_sequence = 0;
+    uint8_t group = 0, opcode = 0;
+    bool submitted = false;
+    uint64_t deadline = 0;
+};
+
 struct LiveScanSession {
     ReceiveReader receive;
     ScanChannelList channels{};
@@ -73,6 +95,7 @@ struct LiveScanSession {
     PassiveScanExchange exchange{scan, 0, 0};
     LiveStation station{};
     StationJoin join{};
+    StationLeave leave{};
     AntennaMasks antennas{};
     bool dual_lmac = false;
     const FirmwareBootIo& io;
@@ -94,6 +117,9 @@ int submit_live_scan(LiveScanSession&, ScanElementStorage&, uint64_t now_ms,
 ScanOutcome poll_live_scan(LiveScanSession&, uint64_t now_ms);
 int submit_live_join(LiveScanSession&, const PassiveScan&, const StationRequest&);
 JoinOutcome poll_live_join(LiveScanSession&, uint64_t now_ms);
+int submit_live_leave(LiveScanSession&, uint16_t reason);
+LeaveOutcome poll_live_leave(LiveScanSession&, uint64_t now_ms, void* context,
+                             void (*complete)(void*, size_t, bool));
 int submit_live_data(LiveScanSession&, const uint8_t*, size_t, uint64_t now_ms);
 bool poll_live_station(LiveScanSession&, uint64_t now_ms, void* context,
                        void (*receive)(void*, const uint8_t*, size_t),

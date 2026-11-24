@@ -78,7 +78,7 @@ size_t routing_capacity(const NetlinkHeader&, const void* request = nullptr);
 size_t routing_reply(const void*, uint32_t port, bool capped, void* output, bool privileged,
                      bool strict = false);
 struct WirelessDump;
-constexpr size_t generic_family_reply_size = 320;
+constexpr size_t generic_family_reply_size = 384;
 size_t generic_reply(const void*, uint32_t port, bool capped, bool privileged, void* reply,
                      void* followup, size_t& followup_length, WirelessDump&);
 

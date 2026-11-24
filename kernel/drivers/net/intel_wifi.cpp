@@ -560,6 +560,27 @@ int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
 void poll_runtime(NetAdapter& device) {
     if (!radio || radio->polling)
         return;
+    if (radio->session.leave.phase != LeavePhase::idle) {
+        if (device.info.carrier)
+            ++completed_generation;
+        device.info.carrier = device.info.writable = false;
+        const auto reason = radio->session.leave.reason;
+        radio->polling = true;
+        const auto result =
+            poll_live_leave(radio->session, clock_monotonic_ns() / 1000000, &device,
+                            [](void* target, size_t length, bool failed) {
+                                net_tx_complete(*static_cast<NetAdapter*>(target), length, failed);
+                            });
+        radio->polling = false;
+        if (result == LeaveOutcome::pending)
+            return;
+        if (result == LeaveOutcome::failed) {
+            log("iwlwifi: stopping radio after incomplete station teardown\n");
+            stop_runtime(device);
+        }
+        wireless_disconnected(device.info.index, reason);
+        return;
+    }
     if (radio->session.join.phase != JoinPhase::idle) {
         const auto result = poll_live_join(radio->session, clock_monotonic_ns() / 1000000);
         if (result == JoinOutcome::pending)
@@ -758,8 +779,14 @@ int request_live_connection(const StationRequest& request) {
     return submit_live_join(radio->session, completed_scan, request);
 }
 
+int request_live_disconnect(uint16_t reason) {
+    if (!live_connect_available())
+        return -95;
+    return submit_live_leave(radio->session, reason);
+}
+
 bool live_bss_associated(const AccessPoint& point) {
-    if (!radio || !radio->session.station.queue.id)
+    if (!radio || !scanned_adapter.info.carrier || !radio->session.station.queue.id)
         return false;
     const auto& peer = radio->session.station.peer;
     return point.frequency_mhz == peer.frequency_mhz &&

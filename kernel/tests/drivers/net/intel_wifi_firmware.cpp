@@ -296,6 +296,8 @@ struct StartupFixture {
     AssocCase assoc_case = AssocCase::unused;
     ArpCase arp_case = ArpCase::unused;
     bool open_station = false;
+    uint16_t disconnect_reason = 0;
+    unsigned rejoin_command_offset = 0, rejoin_rx_offset = 0;
     CommandDescriptor management_ring[management_queue_entries]{};
     uint16_t management_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
     CommandDescriptor data_ring[management_queue_entries]{};
@@ -347,7 +349,8 @@ struct StartupFixture {
             auto* beacon = mpdu + 48;
             beacon[0] = 0x80;
             beacon[16] = 0x02;
-            beacon[21] = uint8_t((id ? 0x20 : 0x10) + (offset == 384 ? 2 : 1));
+            const unsigned first_peer = id && !rejoin_command_offset ? 0x20 : 0x10;
+            beacon[21] = uint8_t(first_peer + (offset == 384 ? 2 : 1));
             if (peer_case != PeerCase::unused)
                 beacon[34] = 1; // ESS capability.
             if (auth_case != AuthCase::unused) {
@@ -474,8 +477,11 @@ struct StartupFixture {
     void authentication_doorbell(uint32_t value) {
         const auto step = authentication_rx_buffers - data_rx_buffers;
         const bool synced = step == 2 && assoc_case != AssocCase::bad_beacon;
-        const unsigned command_count = data_rx_buffers ? 19 : synced ? 17 : 16;
-        assert(auth_case != AuthCase::unused && commands_sent == command_count && step <= 2);
+        const unsigned command_count = (disconnect_reason && step == 2) || data_rx_buffers ? 19
+                                       : synced                                            ? 17
+                                                                                           : 16;
+        assert(auth_case != AuthCase::unused &&
+               commands_sent == command_count + rejoin_command_offset && step <= 2);
         assert(!step || assoc_case != AssocCase::unused);
         assert(value == 0x01010035 + step);
         const auto slot = 4 + step;
@@ -483,7 +489,8 @@ struct StartupFixture {
         const uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
         const uint8_t assoc_body[]{1,  0,  1,  0,  0,  3,  'l', 'a', 'b', 1,  8,  2,  4,
                                    11, 22, 12, 18, 24, 36, 50,  4,   48,  72, 96, 108};
-        const uint8_t leave_body[]{3, 0};
+        const auto reason = disconnect_reason ? disconnect_reason : 3;
+        const uint8_t leave_body[]{uint8_t(reason), uint8_t(reason >> 8)};
         const uint8_t* body = step == 0 ? auth_body : step == 1 ? assoc_body : leave_body;
         const uint16_t length = step == 0   ? sizeof(auth_body)
                                 : step == 1 ? sizeof(assoc_body)
@@ -502,7 +509,7 @@ struct StartupFixture {
         assert(!memcmp(authentication_payload + 64, second, sizeof(second)));
         assert(!memcmp(authentication_payload + 128, body, length));
 
-        auto* buffer = reply_buffer(commands_sent + authentication_rx_buffers);
+        auto* buffer = reply_buffer(commands_sent + authentication_rx_buffers + rejoin_rx_offset);
         const bool first_reply = auth_case == AuthCase::reply_first && step != 2;
         auto* tx = buffer + (first_reply ? 128 : 0);
         tx[0] = 52;
@@ -563,7 +570,7 @@ struct StartupFixture {
             }
         }
         ++authentication_rx_buffers;
-        const unsigned index = commands_sent + authentication_rx_buffers;
+        const unsigned index = commands_sent + authentication_rx_buffers + rejoin_rx_offset;
         used[index] = index + 1;
         receive_status.closed_buffer = uint16_t(index + 1);
     }
@@ -630,16 +637,18 @@ struct StartupFixture {
     }
 
     void command_reply(unsigned tail) {
-        const unsigned index = ++commands_sent;
-        assert(tail == (index & (command_sequence_count - 1)));
-        assert(index <= (live_replies.empty() ? 9u : live_replies.size() / ax::page_size));
-        const unsigned sequence = (index - 1) & (command_sequence_count - 1);
+        const unsigned actual = ++commands_sent;
+        const unsigned index = actual - rejoin_command_offset;
+        assert(tail == (actual & (command_sequence_count - 1)));
+        assert(actual <= (live_replies.empty() ? 9u : live_replies.size() / ax::page_size));
+        const unsigned sequence = (actual - 1) & (command_sequence_count - 1);
         const unsigned slot = sequence & (command_ring_entries - 1);
         const auto& command = payloads[slot];
         const bool scanning = check_channels || passive != ScanCase::unused;
         const bool auth = auth_case != AuthCase::unused;
         const bool association = assoc_case != AssocCase::unused;
         const bool data = arp_case != ArpCase::unused;
+        const bool leaving = disconnect_reason && actual >= 20 && actual <= 25;
         const unsigned clear_association = data ? 20 : 18;
         const unsigned release_session = open_station  ? 19
                                          : association ? clear_association + 1
@@ -671,10 +680,10 @@ struct StartupFixture {
             payload_bytes = 12;
             expected[12] = 1;
             expected[16] = 2;
-        } else if (index == 7) {
+        } else if (index == 7 || (leaving && actual == 20)) {
             expected[0] = 0x28;
             payload_bytes = 148;
-            expected[12] = 1;
+            expected[12] = leaving ? 2 : 1;
             expected[16] = 5;
             const uint8_t address[]{2, 0x11, 0x22, 0x33, 0x44, 0x55};
             memcpy(expected + 24, address, sizeof(address));
@@ -682,6 +691,14 @@ struct StartupFixture {
             expected[40] = 0xf;
             expected[44] = 0x15;
             expected[60] = 0x44;
+        } else if (leaving) {
+            if (actual <= 22) {
+                payload_bytes = expect_peer_command(15, expected);
+                if (actual == 21)
+                    expected[16] = 0;
+            } else {
+                payload_bytes = expect_peer_command(actual - 7, expected);
+            }
         } else if (check_channels) {
             payload_bytes = expect_channel_command(index, expected);
         } else if (auth &&
@@ -738,7 +755,7 @@ struct StartupFixture {
         } else {
             expected[0] = 0xd;
             payload_bytes = 1940;
-            expected[8] = uint8_t((index - 8) & 1);
+            expected[8] = uint8_t((index - 8 + (rejoin_command_offset != 0)) & 1);
             expected[12] = 6;
             expected[16] = 2;
             expected[17] = probe_expected ? 0 : 8;
@@ -787,7 +804,8 @@ struct StartupFixture {
             assert(commands[slot].buffers[1].address == 0xa014 + slot * command_slot_bytes);
         }
 
-        auto* reply = reply_buffer(index - 1 + authentication_rx_buffers);
+        const unsigned rx_index = actual + authentication_rx_buffers + rejoin_rx_offset;
+        auto* reply = reply_buffer(rx_index - 1);
         const bool backlog = index == 8 && passive == ScanCase::busy_queue;
         if (backlog) {
             for (unsigned offset = 0; offset < ax::page_size; offset += 64) {
@@ -817,8 +835,9 @@ struct StartupFixture {
         }
         const bool peer = peer_case != PeerCase::unused;
         const bool binding = (check_channels || peer) && index >= 8 && command[0] == 0x2b;
-        const unsigned length = binding      ? (index == short_binding_status ? 7 : 8)
-                                : data_queue ? 12
+        const unsigned length = binding ? (index == short_binding_status ? 7 : 8)
+                                : leaving && actual >= 21 && actual <= 22        ? 12
+                                : data_queue                                     ? 12
                                 : peer && peer_index == 13 && command[0] == 0x18 ? 8
                                 : peer && peer_index == 14 && command[0] == 0x17
                                     ? (peer_case == PeerCase::short_queue ? 11 : 12)
@@ -873,9 +892,9 @@ struct StartupFixture {
             reply[12] = 0x37;
         }
         if (!check_channels && index >= 8 && (!peer || index == 8))
-            scan_notifications(reply, uint8_t((index - 8) & 1));
-        used[index + authentication_rx_buffers] = index + 1 + authentication_rx_buffers;
-        receive_status.closed_buffer = uint16_t(index + 1 + backlog + authentication_rx_buffers);
+            scan_notifications(reply, uint8_t((index - 8 + (rejoin_command_offset != 0)) & 1));
+        used[rx_index] = rx_index + 1;
+        receive_status.closed_buffer = uint16_t(rx_index + 1 + backlog);
     }
 
     void write(unsigned offset, uint32_t value) {
@@ -1594,24 +1613,87 @@ void check_open_station() {
     std::puts("AX201_OPEN_STATION_MODEL_PASS");
 }
 
+void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanElementStorage& scan,
+                          const StationRequest& request, ArpCase pending) {
+    const uint8_t arp[]{
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0x11, 0x22, 0x33, 0x44, 0x55, 8,    6,
+        0,    1,    8,    0,    6,    4,    0, 1,    2,    0x11, 0x22, 0x33, 0x44, 0x55,
+        192,  0,    2,    10,   0,    0,    0, 0,    0,    0,    192,  0,    2,    1,
+    };
+    if (pending != ArpCase::unused)
+        assert(submit_live_data(session, arp, sizeof(arp), 25) == 0);
+    model.disconnect_reason = 8;
+    assert(submit_live_leave(session, 0) == -22);
+    assert(submit_live_leave(session, model.disconnect_reason) == 0);
+    assert(submit_live_leave(session, model.disconnect_reason) == -16);
+    assert(submit_live_join(session, session.scan, request) == -16);
+    assert(submit_live_scan(session, scan, 26) == -16);
+    assert(submit_live_data(session, arp, sizeof(arp), 26) == -95);
+    assert(model.commands_sent == 19 && model.authentication_rx_buffers <= 3);
+
+    unsigned completions = 0;
+    const auto complete = [](void* context, size_t length, bool failed) {
+        assert(length == 42 && failed);
+        ++*static_cast<unsigned*>(context);
+    };
+    auto result = poll_live_leave(session, 27, &completions, complete);
+    if (pending == ArpCase::missing_completion) {
+        assert(result == LeaveOutcome::pending);
+        assert(poll_live_leave(session, 1025, &completions, complete) == LeaveOutcome::failed);
+        assert(!completions && session.station.pending_bytes == sizeof(arp));
+        assert(model.commands_sent == 19 && model.authentication_rx_buffers == 3);
+        return;
+    }
+    for (uint64_t now = 28; now < 100 && result == LeaveOutcome::pending; ++now)
+        result = poll_live_leave(session, now, &completions, complete);
+    assert(result == LeaveOutcome::disconnected && completions == (pending != ArpCase::unused));
+    assert(!session.station.queue.id && !session.station.management.id && !model.requested_stop);
+    assert(model.commands_sent == 25 && submit_live_leave(session, 3) == 0);
+
+    model.rejoin_command_offset = model.commands_sent - 7;
+    model.rejoin_rx_offset = model.authentication_rx_buffers;
+    model.authentication_rx_buffers = model.data_rx_buffers = 0;
+    assert(submit_live_scan(session, scan, 100) == 0);
+    assert(poll_live_scan(session, 101) == ScanOutcome::complete);
+    assert(submit_live_join(session, session.scan, request) == 0);
+    auto joined = JoinOutcome::pending;
+    for (uint64_t now = 102; now < 200 && joined == JoinOutcome::pending; ++now)
+        joined = poll_live_join(session, now);
+    assert(joined == JoinOutcome::connected && model.commands_sent == 37);
+    assert(session.station.queue.id == 0x102 && session.station.next_sequence == 2);
+}
+
 void check_live_connection() {
-    for (const auto authentication : {AuthCase::accepted, AuthCase::reply_first,
-                                      AuthCase::denied_ap, AuthCase::reply_timeout}) {
+    constexpr struct {
+        AuthCase authentication;
+        ArpCase pending;
+    } cases[]{
+        {AuthCase::accepted, ArpCase::rejected_tx},
+        {AuthCase::accepted, ArpCase::missing_completion},
+        {AuthCase::reply_first, ArpCase::unused},
+        {AuthCase::denied_ap, ArpCase::unused},
+        {AuthCase::reply_timeout, ArpCase::unused},
+    };
+
+    for (const auto& [authentication, pending] : cases) {
         StartupFixture model(StartupCase::good);
         model.regulatory = RegulatoryCase::valid;
         model.passive = ScanCase::complete;
         model.peer_case = PeerCase::success;
         model.auth_case = authentication;
-        model.assoc_case = AssocCase::accepted;
-        model.arp_case = ArpCase::accepted;
+        model.assoc_case = pending == ArpCase::unused && authentication == AuthCase::reply_first
+                               ? AssocCase::leave_failed
+                               : AssocCase::accepted;
+        model.arp_case = pending == ArpCase::unused ? ArpCase::accepted : pending;
         model.open_station = true;
-        model.live_replies.resize(32 * ax::page_size);
+        model.live_replies.resize(48 * ax::page_size);
         const auto io = model.make_io();
         const auto memory = model.make_memory(true, true);
         LiveScanSession session(io, memory);
         assert(start_live_quz(session, {1, 2}).successful);
         ScanElementStorage scan{};
         StationRequest request{{{'l', 'a', 'b'}, 3}, {2, 0, 0, 0, 0, 0x11}, 2412};
+        assert(submit_live_leave(session, 3) == 0);
         assert(submit_live_join(session, session.scan, request) == -2);
         assert(submit_live_scan(session, scan, 0) == 0);
         assert(submit_live_join(session, session.scan, request) == -16);
@@ -1620,6 +1702,7 @@ void check_live_connection() {
         assert(submit_live_join(session, session.scan, request) == -2);
         request.bssid[5] = 0x11;
         assert(submit_live_join(session, session.scan, request) == 0);
+        assert(submit_live_leave(session, 3) == -16);
         assert(submit_live_scan(session, scan, 2) == -16 && model.commands_sent == 8);
         assert(submit_live_join(session, session.scan, request) == -16);
 
@@ -1631,6 +1714,7 @@ void check_live_connection() {
             assert(session.station.queue.id == 0x102 && session.station.channel == 1);
             assert(session.station.next_sequence == 2 && session.join.aid == 42);
             assert(submit_live_join(session, session.scan, request) == -106);
+            check_live_departure(model, session, scan, request, pending);
         } else {
             assert(!session.station.queue.id && model.commands_sent == 16);
             assert(outcome == (authentication == AuthCase::reply_timeout ? JoinOutcome::timeout

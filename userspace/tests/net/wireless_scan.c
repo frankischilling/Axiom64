@@ -470,13 +470,34 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
     puts("WIRELESS_LIVE_SCAN_PASS");
 }
 
-static void connect_request(int fd, const struct packet* request, int error) {
+static void check_station_ack(int fd, const struct packet* request, int error) {
     alignas(struct nlmsghdr) uint8_t bytes[1024];
     send_packet(fd, request);
     receive(fd, bytes, sizeof(bytes), 0);
     const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
-    require(message->nlmsg_seq == request->header.nlmsg_seq, "connect acknowledgment sequence");
+    require(message->nlmsg_seq == request->header.nlmsg_seq, "station acknowledgment sequence");
     check_error(message, error);
+}
+
+static void check_station_event(int fd, unsigned family, unsigned index, unsigned command,
+                                uint16_t expected, const uint8_t* peer) {
+    alignas(struct nlmsghdr) uint8_t bytes[1024];
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    const struct genlmsghdr* event = NLMSG_DATA(message);
+    require(message->nlmsg_type == family && !message->nlmsg_seq && !message->nlmsg_pid &&
+                event->cmd == command,
+            "asynchronous station event");
+    require(read_u32(message_attribute(message, NL80211_ATTR_IFINDEX)) == index,
+            "station event identifies interface");
+    if (peer)
+        require(!memcmp(payload(message_attribute(message, NL80211_ATTR_MAC), 6), peer, 6),
+                "connect event identifies peer");
+    const unsigned field =
+        command == NL80211_CMD_CONNECT ? NL80211_ATTR_STATUS_CODE : NL80211_ATTR_REASON_CODE;
+    uint16_t status;
+    memcpy(&status, payload(message_attribute(message, field), sizeof(status)), sizeof(status));
+    require(status == expected, "station event carries expected status or reason");
 }
 
 static void check_connection(int fd, unsigned family, unsigned index) {
@@ -499,49 +520,71 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     receive(fd, bytes, sizeof(bytes), 0);
     const struct nlattr* commands = message_attribute(message, NL80211_ATTR_SUPPORTED_COMMANDS);
     require(read_u32(nested(commands, 2)) == NL80211_CMD_CONNECT, "radio advertises connect");
+    require(read_u32(nested(commands, 3)) == NL80211_CMD_DISCONNECT, "radio advertises disconnect");
 
     struct packet request = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 17);
     const uint8_t peer[] = {2, 0, 0, 0, 0, 1};
     const uint32_t frequency = 2412;
     append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
-    connect_request(fd, &request, EINVAL);
+    check_station_ack(fd, &request, EINVAL);
     append_attribute(&request, NL80211_ATTR_SSID, "lab", 3);
     append_attribute(&request, NL80211_ATTR_MAC, peer, sizeof(peer));
     append_attribute(&request, NL80211_ATTR_WIPHY_FREQ, &frequency, sizeof(frequency));
     request.header.nlmsg_seq++;
-    connect_request(fd, &request, ENETDOWN);
+    check_station_ack(fd, &request, ENETDOWN);
     bring_up_interface();
     struct packet privacy = request;
     privacy.header.nlmsg_seq++;
     append_attribute(&privacy, NL80211_ATTR_PRIVACY, NULL, 0);
-    connect_request(fd, &privacy, EOPNOTSUPP);
+    check_station_ack(fd, &privacy, EOPNOTSUPP);
     struct packet duplicate = request;
     duplicate.header.nlmsg_seq += 2;
     append_attribute(&duplicate, NL80211_ATTR_SSID, "lab", 3);
-    connect_request(fd, &duplicate, EINVAL);
+    check_station_ack(fd, &duplicate, EINVAL);
+
+    struct packet leave = make_request(family, NL80211_CMD_DISCONNECT, NLM_F_ACK, 40);
+    check_station_ack(fd, &leave, EINVAL);
+    append_attribute(&leave, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    leave.header.nlmsg_seq++;
+    check_station_ack(fd, &leave, 0); /* Already disconnected. */
+    duplicate = leave;
+    duplicate.header.nlmsg_seq++;
+    const uint16_t invalid = 0;
+    append_attribute(&duplicate, NL80211_ATTR_REASON_CODE, &invalid, sizeof(invalid));
+    check_station_ack(fd, &duplicate, EINVAL);
 
     request.header.nlmsg_seq += 3;
-    connect_request(fd, &request, 0);
+    check_station_ack(fd, &request, 0);
     request.header.nlmsg_seq++;
-    connect_request(fd, &request, EBUSY);
-    receive(fd, bytes, sizeof(bytes), 0);
-    const struct genlmsghdr* event = NLMSG_DATA(message);
-    require(message->nlmsg_type == family && !message->nlmsg_seq && !message->nlmsg_pid &&
-                event->cmd == NL80211_CMD_CONNECT,
-            "asynchronous kernel connect result");
-    require(read_u32(message_attribute(message, NL80211_ATTR_IFINDEX)) == index &&
-                !memcmp(payload(message_attribute(message, NL80211_ATTR_MAC), 6), peer, 6),
-            "connect result identifies interface and peer");
-    uint16_t status;
-    memcpy(&status, payload(message_attribute(message, NL80211_ATTR_STATUS_CODE), sizeof(status)),
-           sizeof(status));
-    require(!status, "connection succeeded");
+    check_station_ack(fd, &request, EBUSY);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer);
     request.header.nlmsg_seq++;
-    connect_request(fd, &request, EISCONN);
+    check_station_ack(fd, &request, EISCONN);
+
+    const uint16_t reason = 8;
+    leave.header.nlmsg_seq += 2;
+    struct packet explicit_reason = leave;
+    append_attribute(&explicit_reason, NL80211_ATTR_REASON_CODE, &reason, sizeof(reason));
+    check_station_ack(fd, &explicit_reason, 0);
+    explicit_reason.header.nlmsg_seq++;
+    check_station_ack(fd, &explicit_reason, EBUSY);
+    request.header.nlmsg_seq++;
+    check_station_ack(fd, &request, EBUSY);
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, reason, NULL);
+
+    request.header.nlmsg_seq++;
+    check_station_ack(fd, &request, 0);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer);
+    leave.header.nlmsg_seq += 2;
+    check_station_ack(fd, &leave, 0);
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL);
     require(setgid(1000) == 0 && setuid(1000) == 0, "drop connection privileges");
     request.header.nlmsg_seq++;
-    connect_request(fd, &request, EPERM);
+    check_station_ack(fd, &request, EPERM);
+    leave.header.nlmsg_seq++;
+    check_station_ack(fd, &leave, EPERM);
     puts("WIRELESS_LIVE_CONNECT_PASS");
+    puts("WIRELESS_LIVE_DISCONNECT_PASS");
 }
 
 int main(int argc, char** argv) {

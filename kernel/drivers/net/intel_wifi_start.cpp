@@ -638,6 +638,7 @@ const char* run_management_exchange(CommandSession& commands, PeerQueue queue, u
                 return sync_error;
             if (!allocate_data_queue(commands, 0, queue, open->queue))
                 return "firmware data queue allocation failed";
+            open->management = queue;
             open->peer = peer;
             open->peer.beacon_interval_tu = timing.beacon_interval_tu;
             open->channel = channel.number;
@@ -1010,6 +1011,7 @@ FirmwareBootResult start_live_quz(LiveScanSession& session, const AntennaMasks& 
                            elements, dual_lmac, open ? *open : AuthenticationTarget{}};
     session.station = {};
     session.join = {};
+    session.leave = {};
     return boot_quz(session.io, session.receive.memory, &check, &session);
 }
 
@@ -1019,6 +1021,7 @@ bool stop_live_quz(LiveScanSession& session) {
     session.running = false;
     session.active = false;
     session.join.phase = JoinPhase::idle;
+    session.leave.phase = LeavePhase::idle;
     session.passive_channels = 0;
     return stop_adapter(Registers{session.io}, true);
 }
@@ -1097,6 +1100,8 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
         !valid_authentication_dma(session.receive.memory.authentication) ||
         !valid_authentication_dma(session.receive.memory.data_transmit))
         return -95;
+    if (session.leave.phase != LeavePhase::idle)
+        return -16;
     if (session.station.queue.id)
         return -106;
     if (session.active || session.join.phase != JoinPhase::idle)
@@ -1147,11 +1152,12 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
 }
 
 namespace {
-bool join_submit(CommandSession& commands, StationJoin& join, uint8_t group, uint8_t opcode,
-                 const uint8_t* bytes, size_t length) {
-    join.command_sequence = commands.index;
-    join.group = group;
-    join.opcode = opcode;
+template <typename Operation>
+bool submit_operation(CommandSession& commands, Operation& operation, uint8_t group, uint8_t opcode,
+                      const uint8_t* bytes, size_t length) {
+    operation.command_sequence = commands.index;
+    operation.group = group;
+    operation.opcode = opcode;
     return commands.submit(group, opcode, bytes, length);
 }
 
@@ -1170,7 +1176,7 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
         const auto step = steps[unsigned(join.phase) - unsigned(JoinPhase::phy)];
         const auto cmd =
             channel_command(step, join.channel, session.antennas.rx, session.dual_lmac);
-        return join_submit(commands, join, cmd.group, cmd.opcode, cmd.bytes, cmd.size);
+        return submit_operation(commands, join, cmd.group, cmd.opcode, cmd.bytes, cmd.size);
     }
     case JoinPhase::select_mac:
     case JoinPhase::associated_mac: {
@@ -1179,12 +1185,12 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
             prepare_authentication_mac(session.station_address, join.peer, wire);
         else
             prepare_associated_mac(session.station_address, join.peer, join.aid, join.timing, wire);
-        return join_submit(commands, join, 1, 0x28, wire, sizeof(wire));
+        return submit_operation(commands, join, 1, 0x28, wire, sizeof(wire));
     }
     case JoinPhase::add_peer: {
         uint8_t wire[peer_station_bytes];
         return prepare_peer_station(join.peer, 0, wire) &&
-               join_submit(commands, join, 1, 0x18, wire, sizeof(wire));
+               submit_operation(commands, join, 1, 0x18, wire, sizeof(wire));
     }
     case JoinPhase::management_queue:
     case JoinPhase::data_queue: {
@@ -1193,13 +1199,13 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
         uint8_t wire[scheduler_command_bytes];
         return prepare_add_station_queue(data ? memory.data_queue : memory.peer_queue, 0, wire,
                                          data ? non_qos_tid : management_tid) &&
-               join_submit(commands, join, 5, 0x17, wire, sizeof(wire));
+               submit_operation(commands, join, 5, 0x17, wire, sizeof(wire));
     }
     case JoinPhase::protect:
     case JoinPhase::release_protection: {
         uint8_t wire[session_protection_bytes];
         prepare_session_protection(join.phase == JoinPhase::protect, wire);
-        return join_submit(commands, join, 3, 5, wire, sizeof(wire));
+        return submit_operation(commands, join, 3, 5, wire, sizeof(wire));
     }
     case JoinPhase::authenticate:
     case JoinPhase::associate: {
@@ -1323,6 +1329,7 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
                 session.station.peer = join.peer;
                 session.station.peer.beacon_interval_tu = join.timing.beacon_interval_tu;
                 session.station.queue = join.data;
+                session.station.management = join.management;
                 session.station.channel = join.channel.number;
                 session.station.rate = join.rate;
                 session.station.next_sequence = join.sequence;
@@ -1337,10 +1344,143 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
     return now_ms < join.deadline ? JoinOutcome::pending : JoinOutcome::timeout;
 }
 
+int submit_live_leave(LiveScanSession& session, uint16_t reason) {
+    if (!reason)
+        return -22;
+    if (session.leave.phase != LeavePhase::idle || session.join.phase != JoinPhase::idle)
+        return -16;
+    if (!session.running)
+        return -95;
+    if (!session.station.queue.id)
+        return 0;
+    session.leave = {LeavePhase::drain, reason};
+    return 0;
+}
+
+namespace {
+bool begin_leave_phase(LiveScanSession& session, CommandSession& commands, uint64_t now_ms) {
+    auto& leave = session.leave;
+    const auto& station = session.station;
+    leave.submitted = true;
+    leave.deadline = now_ms + 1000;
+    switch (leave.phase) {
+    case LeavePhase::deauthenticate:
+        if (!prepare_management_frame(commands.rx.memory.authentication, station.management,
+                                      station.rate, session.station_address, station.peer,
+                                      ManagementFrame::leave, {}, station.next_sequence,
+                                      leave.reason))
+            return false;
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        commands.reg.write(command_write_pointer, uint8_t(station.management.write_pointer + 1) |
+                                                      (uint32_t(station.management.id) << 16));
+        return true;
+    case LeavePhase::clear_mac: {
+        uint8_t wire[mac_context_bytes];
+        prepare_scan_station(session.station_address, wire);
+        wire[4] = 2; // Modify the existing MAC context.
+        return submit_operation(commands, leave, 1, 0x28, wire, sizeof(wire));
+    }
+    case LeavePhase::remove_data:
+    case LeavePhase::remove_management: {
+        uint8_t wire[scheduler_command_bytes];
+        const auto tid = leave.phase == LeavePhase::remove_data ? non_qos_tid : management_tid;
+        return prepare_remove_station_queue(0, wire, tid) &&
+               submit_operation(commands, leave, 5, 0x17, wire, sizeof(wire));
+    }
+    case LeavePhase::remove_peer: {
+        uint8_t wire[remove_peer_bytes];
+        prepare_remove_peer(0, wire);
+        return submit_operation(commands, leave, 1, 0x19, wire, sizeof(wire));
+    }
+    case LeavePhase::unbind:
+    case LeavePhase::remove_phy: {
+        ScanChannel channel{};
+        channel.number = station.channel;
+        channel.frequency_mhz = station.peer.frequency_mhz;
+        const auto step =
+            leave.phase == LeavePhase::unbind ? ChannelStep::unbind : ChannelStep::remove_phy;
+        const auto command = channel_command(step, channel, session.antennas.rx, session.dual_lmac);
+        return submit_operation(commands, leave, command.group, command.opcode, command.bytes,
+                                command.size);
+    }
+    case LeavePhase::drain:
+    case LeavePhase::idle:
+        return false;
+    }
+    __builtin_unreachable();
+}
+
+AuthEvent observe_leave_packet(const LiveScanSession& session, const FirmwarePacket& packet) {
+    const auto& leave = session.leave;
+    if (leave.phase == LeavePhase::drain)
+        return observe_authentication_tx(packet, session.station.queue);
+    if (leave.phase == LeavePhase::deauthenticate)
+        return observe_authentication_tx(packet, session.station.management);
+    if (packet.sequence != leave.command_sequence)
+        return AuthEvent::unrelated;
+    if (packet.group == 0 && packet.opcode == 2)
+        return AuthEvent::malformed;
+    if (packet.group != leave.group || packet.opcode != leave.opcode)
+        return AuthEvent::unrelated;
+    if (((leave.phase == LeavePhase::remove_data || leave.phase == LeavePhase::remove_management) &&
+         !station_queue_removed(packet)) ||
+        (leave.phase == LeavePhase::unbind && !binding_succeeded(packet)))
+        return AuthEvent::malformed;
+    return AuthEvent::accepted;
+}
+} // namespace
+
+LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* context,
+                             void (*complete)(void*, size_t, bool)) {
+    auto& leave = session.leave;
+    auto& station = session.station;
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    if (!commands.acknowledge_pending())
+        return LeaveOutcome::failed;
+    if (leave.phase == LeavePhase::drain) {
+        if (!station.pending_bytes)
+            leave.phase = LeavePhase::deauthenticate;
+        else
+            leave.deadline = station.transmit_deadline;
+    }
+    if (leave.phase != LeavePhase::drain && !leave.submitted &&
+        !begin_leave_phase(session, commands, now_ms))
+        return LeaveOutcome::failed;
+    for (unsigned i = 0; i < 64; ++i) {
+        FirmwarePacket packet{};
+        const auto result = session.receive.next(packet);
+        if (result == PacketRead::malformed)
+            return LeaveOutcome::failed;
+        if (result == PacketRead::end)
+            break;
+        const auto event = observe_leave_packet(session, packet);
+        if (event == AuthEvent::unrelated)
+            continue;
+        if (event != AuthEvent::accepted && event != AuthEvent::denied)
+            return LeaveOutcome::failed;
+        // A failed over-the-air transmission still returns its DMA buffer.
+        if (leave.phase == LeavePhase::drain) {
+            const auto bytes = station.pending_bytes;
+            station.pending_bytes = 0;
+            complete(context, bytes, event == AuthEvent::denied);
+        }
+        if (leave.phase == LeavePhase::remove_phy) {
+            station = {};
+            leave = {};
+            return LeaveOutcome::disconnected;
+        }
+        leave.phase = LeavePhase(unsigned(leave.phase) + 1);
+        leave.submitted = false;
+        return LeaveOutcome::pending;
+    }
+    return now_ms < leave.deadline ? LeaveOutcome::pending : LeaveOutcome::failed;
+}
+
 int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t length,
                      uint64_t now_ms) {
     auto& station = session.station;
-    if (!session.running || !station.queue.id)
+    if (!session.running || !station.queue.id || session.leave.phase != LeavePhase::idle)
         return -95;
     if (station.pending_bytes)
         return -11;

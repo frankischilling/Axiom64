@@ -95,6 +95,12 @@ Run `make test-cross-toolchain CROSS_TOOLCHAIN_PREFIX=/path/to/install` to verif
 
 `dependencies.json` pins the bootloader, protocol header, BusyBox, libcap and OpenSSL by SHA-256. `ports.lock.json` pins APK URLs, versions, SHA-256, license labels, upstream sites, origins, and source commits. A package can also declare a checked `vendored_archive` under [`vendor/ports`](../vendor/ports/README.md), preserving its original bytes when an upstream repository stops serving that version. Root filesystem assembly treats package contents as data and never runs installation hooks. Font indexes are generated explicitly. Mesa's renderer, LLVM, and SPIR-V payloads are omitted because the image uses fbdev with GLX disabled.
 
+The installed desktop ships the unmodified Intel QuZ/HR API 77 firmware.
+The image builder checks the firmware and Intel's license against
+`dependencies.json` before copying them to `/lib/firmware` and
+`/usr/share/licenses/Intel-AX201`. The source bundle keeps both files
+exactly as distributed upstream.
+
 Upstream libcap 2.78 supplies installed `getcap` and `setcap` tools, linked against the runtime musl provider. The build elects libcap's BSD-3-Clause option, retains its complete upstream `License`, and includes the SHA256-verified archive in the source bundle. Static and dynamic fixture tools use the explicit build provider; native Linux tools retain their actual libc and startup inputs. [File capability verification](file-capabilities.md#upstream-tools-and-verification) records the tool, source and runtime provenance.
 
 OpenSSL 3.5.9 builds from its pinned upstream archive. Static and shared target builds use the explicit musl providers and verified Linux UAPI headers; the native comparison records its actual libc and startup inputs. Both ordinary rootfs profiles install the runtime provider's shared libraries, executable, headers, configuration and legacy module. The upstream archive, detached release signature, build recipe and complete Apache-2.0 notices are retained. The recipe selects OS seed sources and checks the executable interpreter and dependencies. [Runtime verification](random.md#verification-and-remaining-work) covers real TLS 1.2/1.3 clients, certificate rejection, key generation, package signatures, initialization waits and actual provider loading in native comparisons and both firmware/transport variants.

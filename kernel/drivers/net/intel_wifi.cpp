@@ -905,21 +905,15 @@ int trigger_live_scan(const ScanRequest& request) {
     return 0;
 }
 
-void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTarget& target) {
-    const bool start = check != FirmwareCheck::stage;
-    if (probe_pci || start) {
-        start_requested = start;
-        probe = Probe::absent;
-        pci_scan(probe_adapter);
-        if (probe != Probe::identified) {
-            const char* status =
-                probe == Probe::absent ? "AX201 PCI function absent" : "unsupported PCI function";
-            log("iwlwifi: %s\n", status);
-            report(status);
-            return;
-        }
-    }
-    Node* file = lookup(firmware_file);
+namespace {
+bool identify_firmware_device(bool start) {
+    start_requested = start;
+    probe = Probe::absent;
+    pci_scan(probe_adapter);
+    return probe == Probe::identified;
+}
+
+void load_firmware(Node* file, FirmwareCheck check, const AuthenticationTarget& target) {
     if (!file || (file->mode & 0170000) != regular_file || !file->size ||
         file->size > max_firmware_bytes) {
         log("iwlwifi: firmware missing or invalid: %s\n", firmware_file);
@@ -940,5 +934,24 @@ void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTar
         report("firmware read failed");
     }
     release(bytes);
+}
+} // namespace
+
+void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTarget& target) {
+    const bool start = check != FirmwareCheck::stage;
+    if ((probe_pci || start) && !identify_firmware_device(start)) {
+        const char* status =
+            probe == Probe::absent ? "AX201 PCI function absent" : "unsupported PCI function";
+        log("iwlwifi: %s\n", status);
+        report(status);
+        return;
+    }
+    load_firmware(lookup(firmware_file), check, target);
+}
+
+void start_if_available() {
+    auto* file = lookup(firmware_file);
+    if (file && identify_firmware_device(true))
+        load_firmware(file, FirmwareCheck::live_scan, {});
 }
 } // namespace ax::IntelWifi

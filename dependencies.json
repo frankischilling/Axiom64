@@ -106,6 +106,21 @@
       "x11-navigation-keys.patch": "99cb9bc03a3428d30eca4844fba218e19343df6ad982e7cb962a535b500be8f6"
     }
   },
+  "intel_ax201_firmware": {
+    "release": "20251021",
+    "version": "74.30b1cbd8.0",
+    "api": 77,
+    "firmware": {
+      "name": "iwlwifi-QuZ-a0-hr-b0-77.ucode",
+      "url": "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/20251021/intel/iwlwifi/iwlwifi-QuZ-a0-hr-b0-77.ucode",
+      "sha256": "ad2f6202b0920db7cc5942d13253db322e0cab4adb135f26bcf4a984735a3b7c"
+    },
+    "license": {
+      "name": "LICENCE.iwlwifi_firmware",
+      "url": "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/20251021/LICENCE.iwlwifi_firmware",
+      "sha256": "16d5040c7cf851fc693b7542e20870935b99802533ea1bfd231c377a2305e5c5"
+    }
+  },
   "freedoom": {
     "version": "0.13.0",
     "revision": "cfb8644b1a8dc7d7d2177e6a892ccaa2922bdaae",

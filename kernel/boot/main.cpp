@@ -209,11 +209,15 @@ BootInfo boot_info;
         wifi_check = IntelWifi::FirmwareCheck::nvm;
     else if (arguments.has("iwlwifi.start-check"))
         wifi_check = IntelWifi::FirmwareCheck::start;
-    if (wifi_check_error)
+    if (arguments.has("iwlwifi.disable"))
+        log("iwlwifi: disabled by boot option\n");
+    else if (wifi_check_error)
         log(wifi_check_error);
     else if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
              arguments.has("iwlwifi.firmware-check"))
         IntelWifi::check_firmware(probe_wifi, wifi_check, auth_target);
+    else
+        IntelWifi::start_if_available();
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

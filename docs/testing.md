@@ -2285,12 +2285,15 @@ and checks the final ext2 image with e2fsck.
 
 ## Intel AX201 firmware staging
 
+The installed desktop includes the Intel AX201 firmware and its license.
+On the supported QuZ/HR adapter, a normal boot loads the firmware from
+`/lib/firmware` after mounting the system root. Use `iwlwifi.disable` on
+the boot command line to skip AX201 startup. The diagnostic options below
+are available for testing individual steps.
+
 `make test-intel-wifi-firmware` checks the firmware parser, boot context, and
-queue descriptors with address and undefined-behavior sanitizers. To check the
-adapter's actual image, run
-`build/intel-wifi-firmware-test /path/to/iwlwifi-QuZ-a0-hr-b0-77.ucode` after
-building the test. Use the unmodified file from the Linux Firmware `20251021`
-release and keep `LICENCE.iwlwifi_firmware` alongside any redistributed copy.
+queue descriptors with address and undefined-behavior sanitizers. It runs the
+synthetic cases and checks the bundled API 77 firmware.
 
 In a test initramfs, put the firmware in `/lib/firmware`. Boot with
 `iwlwifi.firmware-check` to validate the image, compare staged sections with

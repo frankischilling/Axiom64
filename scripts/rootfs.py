@@ -25,7 +25,7 @@
 """Create a deterministic newc initramfs without privileged filesystem tools."""
 from pathlib import Path
 import subprocess
-from fetch import ROOT, LOCK
+from fetch import ROOT, LOCK, verify_archive
 from newc import write_cpio
 from ports import overlay_tar, packages
 from build_musl import loader, runtime_files
@@ -202,6 +202,13 @@ xorg_config("xorg.conf")
 regular("usr/libexec/axiom64-xorg-seat", desktop / "xorg-seat.sh")
 regular("etc/X11/system.twmrc", desktop / "system.twmrc", 0o100644)
 if installed_desktop:
+    firmware = ROOT / "vendor/firmware/intel-ax201"
+    for kind, target in (("firmware", "lib/firmware"), ("license", "usr/share/licenses/Intel-AX201")):
+        entry = LOCK["intel_ax201_firmware"][kind]
+        source = firmware / entry["name"]
+        verify_archive(source, entry["sha256"])
+        files.setdefault(target, (0o40755, b""))
+        regular(f"{target}/{entry['name']}", source, 0o100644)
     files["bin/man"] = (0o120777, b"/usr/bin/man")
     files["usr/bin/ip"] = (0o120777, b"/sbin/ip")
     files["usr/bin/ss"] = (0o120777, b"/sbin/ss")

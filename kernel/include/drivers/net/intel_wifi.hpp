@@ -83,4 +83,5 @@ struct AuthenticationTarget {
 bool parse_authentication_target(const char*, AuthenticationTarget&);
 bool parse_data_probe_target(const char*, AuthenticationTarget&);
 void check_firmware(bool probe_pci, FirmwareCheck, const AuthenticationTarget& = {});
+void start_if_available();
 } // namespace ax::IntelWifi

@@ -190,12 +190,33 @@ files["etc/network"] = (0o40700, b"")
 # Keep the shell built from our pinned upstream source after importing packages.
 regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")
+desktop = ROOT / "userspace/desktop"
+framebuffer = (desktop / "xorg-fbdev.conf").read_bytes()
+
+
+def xorg_config(name):
+    files[f"etc/X11/{name}"] = (0o100644, framebuffer + b"\n" + (desktop / name).read_bytes())
+
+
+xorg_config("xorg.conf")
+regular("usr/libexec/axiom64-xorg-seat", desktop / "xorg-seat.sh")
+regular("etc/X11/system.twmrc", desktop / "system.twmrc", 0o100644)
 if installed_desktop:
+    firmware = ROOT / "vendor/firmware/intel-ax201"
+    for kind, target in (("firmware", "lib/firmware"), ("license", "usr/share/licenses/Intel-AX201")):
+        entry = LOCK["intel_ax201_firmware"][kind]
+        source = firmware / entry["name"]
+        verify_archive(source, entry["sha256"])
+        files.setdefault(target, (0o40755, b""))
+        regular(f"{target}/{entry['name']}", source, 0o100644)
     files["bin/man"] = (0o120777, b"/usr/bin/man")
     files["usr/bin/ip"] = (0o120777, b"/sbin/ip")
     files["usr/bin/ss"] = (0o120777, b"/sbin/ss")
-for filename in ["xorg.conf", "system.twmrc"]:
-    regular(f"etc/X11/{filename}", ROOT / "userspace/desktop" / filename, 0o100644)
+    xorg_config("xorg-udev.conf")
+    regular("usr/libexec/axiom64-input-coldplug", ROOT / "userspace/services/input-coldplug.sh")
+    regular("usr/libexec/axiom64-networkmanager", ROOT / "userspace/services/networkmanager.sh")
+    regular("etc/NetworkManager/NetworkManager.conf",
+            ROOT / "userspace/services/networkmanager.conf", 0o100644)
 # Package shell-registration hooks are not run. Supply the conventional list
 # explicitly so clients using getusershell retain the authenticated shell.
 shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',
@@ -217,15 +238,16 @@ verify_archive(eduroam_archive, eduroam_pin["sha256"])
 with tarfile.open(eduroam_archive) as source:
     entry = f"auto-eduroam-{eduroam_pin['revision']}/connect-eduroam.sh"
     with source.extractfile(entry) as script:
-        files[eduroam_home + "/connect-eduroam.sh"] = (0o100755, script.read())
-regular(eduroam_home + "/connect-eduroam-verified.sh", eduroam / "connect-eduroam.sh")
+        files[eduroam_home + "/connect-eduroam-upstream.sh"] = (0o100755, script.read())
+regular(eduroam_home + "/connect-eduroam.sh", eduroam / "connect-eduroam.sh")
 for name in ("README.md", "LICENSE"):
     regular(eduroam_home + "/" + name, eduroam / name, 0o100644)
 for path in ("root/auto-eduroam", "etc/skel/auto-eduroam"):
     files[path] = (0o120777, ("/" + eduroam_home).encode())
 files["usr/bin/connect-eduroam"] = (0o120777, f"/{eduroam_home}/connect-eduroam.sh".encode())
-files["usr/bin/connect-eduroam-verified"] = (
-    0o120777, f"/{eduroam_home}/connect-eduroam-verified.sh".encode()
+files["usr/bin/connect-eduroam-verified"] = files["usr/bin/connect-eduroam"]
+files["usr/bin/connect-eduroam-upstream"] = (
+    0o120777, f"/{eduroam_home}/connect-eduroam-upstream.sh".encode()
 )
 for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
@@ -233,6 +255,14 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
 if installed_desktop:
     for module in sorted((ROOT / "vendor/cmake").glob("*.cmake")):
         regular("usr/share/cmake/Modules/Platform/" + module.name, module, 0o100644)
+    regular("usr/bin/localectl", ROOT / "userspace/desktop/localectl.sh")
+    # Plasma looks for locale names directly in this directory.
+    locale_root = "usr/share/i18n/locales"
+    for path, (mode, _) in tuple(files.items()):
+        if (mode & 0o170000 == 0o100000 and path.startswith(locale_root + "/musl/")
+                and path.endswith(".UTF-8")):
+            name = Path(path).name
+            files.setdefault(f"{locale_root}/{name}", (0o120777, f"musl/{name}".encode()))
     for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
     files.setdefault("etc/xdg", (0o40755, b""))
@@ -256,9 +286,22 @@ if installed_desktop:
     for path in (session_root, session_root + '/display-sessions', session_root + '/native-wayland-sessions'):
         directory(path)
     regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    if 'usr/lib/security/pam_elogind.so' not in files:
+        raise ValueError('Installed Plasma login requires the elogind PAM module')
     for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
         regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
                 0o100644)
+    regular('etc/pam.d/polkit-1', ROOT / 'userspace/desktop/pam/polkit-1.conf', 0o100644)
+    polkit_helper = 'usr/lib/polkit-1/polkit-agent-helper-1'
+    mode, helper = files[polkit_helper]
+    if mode != 0o104755:
+        raise ValueError('Unexpected mode for the packaged PolicyKit helper')
+    # The native PAM store requires effective root user and group credentials.
+    files[polkit_helper] = (mode | 0o2000, helper)
+    regular('etc/polkit-1/rules.d/49-axiom64-admin.rules',
+            ROOT / 'userspace/desktop/polkit-admin.rules', 0o100644)
+    files.setdefault('etc/localtime', (0o120777, b'/usr/share/zoneinfo/Etc/UTC'))
+    files.setdefault('etc/timezone', (0o100644, b'Etc/UTC\n'))
     regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
     regular(session_root + '/display-sessions/plasma.desktop',
             ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)

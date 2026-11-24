@@ -105,6 +105,11 @@ bool Address::link_local() const {
     return bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80;
 }
 
+bool Address::interface_scoped() const {
+    const unsigned scope = bytes[1] & 15;
+    return link_local() || (multicast() && (scope == 1 || scope == 2));
+}
+
 bool Address::mapped() const {
     for (unsigned n = 0; n < 10; n++)
         if (bytes[n])

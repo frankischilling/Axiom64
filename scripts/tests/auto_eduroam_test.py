@@ -33,9 +33,15 @@ if args[-2:] == ["device", "status"]:
 elif "list" in args:
     print("eduroam")
 elif args[-2:] == ["connection", "show"]:
-    if case == "existing":
+    if "UUID" in args and case == "activation-fails":
+        print("00112233-4455-6677-8899-aabbccddeeff")
+    elif "UUID" in args and case == "profile-missing":
+        print("ffffffff-ffff-ffff-ffff-ffffffffffff")
+    elif case == "existing":
         print("Axiom64 eduroam")
-elif "up" in args and case == "activation-fails":
+    elif case == "stale-setup":
+        print("Axiom64 eduroam setup ffffffff-ffff-ffff-ffff-ffffffffffff")
+elif "up" in args and case in ("activation-fails", "profile-missing"):
     sys.exit(4)
 """
 
@@ -93,19 +99,34 @@ class EduroamTest(unittest.TestCase):
     def test_verified_profile_leaves_password_to_nmcli(self):
         result, calls, certificate = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stderr)
-        add, up = calls[-2:]
+        add, up, save = calls[-3:]
         self.assertEqual(add[:3], ["--ask", "connection", "add"])
+        self.assertEqual(add[add.index("save") + 1], "no")
+        self.assertEqual(add[add.index("con-name") + 1], f"Axiom64 eduroam setup {UUID}")
         self.assertEqual(add[add.index("802-1x.ca-cert") + 1], str(certificate))
         self.assertEqual(add[add.index("802-1x.domain-suffix-match") + 1], "auth.example.edu")
         self.assertEqual(add[add.index("802-1x.password-flags") + 1], "not-saved")
         self.assertNotIn("802-1x.password", add)
         self.assertEqual(up, ["--ask", "--wait", "60", "connection", "up", "uuid", UUID,
                               "ifname", "wlan0"])
+        self.assertEqual(save, ["--ask", "connection", "modify", "uuid", UUID,
+                                "connection.id", "Axiom64 eduroam"])
 
     def test_failed_connection_cleans_up_only_its_own_profile(self):
         result, calls, _ = self.run_fixture("activation-fails")
         self.assertEqual(result.returncode, 4)
-        self.assertEqual(calls[-1], ["--wait", "5", "connection", "delete", "uuid", UUID])
+        self.assertEqual(calls[-1], ["--ask", "--wait", "30", "connection", "delete", "uuid", UUID])
+        self.assertFalse(any("modify" in call for call in calls))
+
+    def test_cleanup_skips_profiles_with_a_different_uuid(self):
+        result, calls, _ = self.run_fixture("profile-missing")
+        self.assertEqual(result.returncode, 4)
+        self.assertFalse(any("delete" in call for call in calls))
+
+    def test_temporary_profile_does_not_block_retry(self):
+        result, calls, _ = self.run_fixture("stale-setup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any("add" in call for call in calls))
 
     def test_missing_device_certificate_or_existing_profile_blocks_mutation(self):
         for scenario, ca in (("no-wifi", True), ("existing", True), ("success", False)):

@@ -407,8 +407,10 @@ static BootMemory limine_memory(const void* context, size_t index) {
         kind = BootMemoryKind::reserved;
         break;
     case LIMINE_MEMMAP_ACPI_RECLAIMABLE:
-    case LIMINE_MEMMAP_ACPI_NVS:
         kind = BootMemoryKind::firmware;
+        break;
+    case LIMINE_MEMMAP_ACPI_NVS:
+        kind = BootMemoryKind::acpi_nvs;
         break;
     case LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE:
         kind = BootMemoryKind::retained;

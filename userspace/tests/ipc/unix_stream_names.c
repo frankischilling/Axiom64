@@ -48,6 +48,13 @@
 
 static int length_first;
 
+static void check_acceptconn(int socket_fd, int expected) {
+    int value = -1;
+    socklen_t size = sizeof(value);
+    CHECK(!getsockopt(socket_fd, SOL_SOCKET, SO_ACCEPTCONN, &value, &size));
+    CHECK(size == sizeof(value) && value == expected);
+}
+
 static int native_length_first(void) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     CHECK(fd >= 0);
@@ -123,11 +130,14 @@ static void connected_names(unsigned kind) {
     int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
     int client = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
     CHECK(listener >= 0 && client >= 0);
+    check_acceptconn(listener, 0);
+    check_acceptconn(client, 0);
     check_name(client, 0, &remote, header);
     struct sockaddr_un peer;
     socklen_t capacity = sizeof(peer);
     CHECK(getpeername(client, (struct sockaddr*)&peer, &capacity) == -1 && errno == ENOTCONN);
     CHECK(!bind(listener, (struct sockaddr*)&local, local_length) && !listen(listener, 1));
+    check_acceptconn(listener, 1);
     CHECK(bind(listener, (struct sockaddr*)&local, local_length) == -1 &&
           errno == (kind == 0 ? EADDRINUSE : EINVAL));
     CHECK(!bind(listener, (struct sockaddr*)&local, header));
@@ -152,6 +162,8 @@ static void connected_names(unsigned kind) {
     capacity = sizeof(peer);
     int accepted = accept(listener, (struct sockaddr*)&peer, &capacity);
     CHECK(accepted >= 0 && capacity == remote_length && !memcmp(&peer, &remote, remote_length));
+    check_acceptconn(accepted, 0);
+    check_acceptconn(client, 0);
     check_name(accepted, 0, &local, local_length);
     check_name(accepted, 1, &remote, remote_length);
     CHECK(!close(listener));

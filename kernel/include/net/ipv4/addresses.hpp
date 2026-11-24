@@ -39,12 +39,14 @@ class AddressBook {
   public:
     const Ipv4Address* at(unsigned position) const;
 
+    const Ipv4Address* find(unsigned index, uint32_t address, uint32_t mask) const;
+
     const Ipv4Address* label(unsigned index, const char*, uint32_t hint = 0) const;
 
     const Ipv4Address* preferred(unsigned index, uint32_t destination = 0) const;
 
     int add(unsigned index, const char* label, const Ipv4Config&, uint64_t now = 0,
-            Ipv4AddressLifetimes = {}, bool replace = false);
+            Ipv4AddressLifetimes = {}, bool replace = false, bool suppress_prefix_route = false);
 
     int set(unsigned index, const char* label, const Ipv4Config&, uint64_t now = 0,
             bool promote = false);

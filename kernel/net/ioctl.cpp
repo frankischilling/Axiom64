@@ -146,6 +146,34 @@ static int list(Task& task, uint64_t pointer) {
     config.length = copied;
     return task.memory->space.copy_out(pointer, &config, sizeof(config)) ? 0 : -14;
 }
+
+static int ethtool(Task& task, const NetInfo& info, const Ifreq& request) {
+    uint64_t output;
+    uint32_t command;
+    memcpy(&output, request.value, sizeof(output));
+    if (!task.memory->space.copy_in(&command, output, sizeof(command)))
+        return -14;
+    if (!info.driver)
+        return -95;
+    if (command == 0x0a) { // ETHTOOL_GLINK
+        const uint32_t result[]{command, info.live && info.administrative && info.carrier};
+        return task.memory->space.copy_out(output, result, sizeof(result)) ? 0 : -14;
+    }
+    if (command != 3) // ETHTOOL_GDRVINFO
+        return -95;
+
+    struct DriverInfo {
+        uint32_t command;
+        char driver[32], version[32], firmware[32], bus[32], expansion_rom[32], padding[12];
+        uint32_t private_flags, statistics, test_length, eeprom_length, register_length;
+    } result{};
+
+    static_assert(sizeof(DriverInfo) == 196 && offsetof(DriverInfo, bus) == 100);
+    result.command = command;
+    memcpy(result.driver, info.driver, min(strlen(info.driver), sizeof(result.driver) - 1));
+    memcpy(result.bus, info.bus_address, sizeof(info.bus_address));
+    return task.memory->space.copy_out(output, &result, sizeof(result)) ? 0 : -14;
+}
 } // namespace
 
 int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
@@ -172,6 +200,8 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
     if (!info)
         return -19;
     switch (request) {
+    case 0x8946: // SIOCETHTOOL
+        return ethtool(task, *info, req);
     case 0x8910:
         memcpy(req.name, info->name, 16);
         break;

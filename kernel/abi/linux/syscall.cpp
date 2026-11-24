@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "drivers/graphics/drm_scanout.hpp"
 #include "boot/boot.hpp"
 #include "abi/linux/wall_clock.hpp"
 #include "drivers/audio/alsa_pcm.hpp"
@@ -36,6 +37,7 @@
 #include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
+#include "process/clock_sleep.hpp"
 #include "process/task.hpp"
 #include "process/scheduler.hpp"
 #include "process/cpu.hpp"
@@ -460,6 +462,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         return -12;
     Handle* h = nullptr;
     bool framebuffer = false;
+    uint64_t drm_address = 0;
     if (!(flags & 0x20)) {
         h = fd_handle(fd);
         if (!h)
@@ -469,8 +472,12 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         return -17;
     if (h) {
         framebuffer = h->node && h->node->device == Device::framebuffer;
-        if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file))
+        if (h->node && h->node->device == Device::drm_scanout) {
+            if (int error = DrmScanout::mapping(*h, off, len, prot, flags, drm_address))
+                return error;
+        } else if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file)) {
             return -19;
+        }
         if (!framebuffer && h->node->mount->ops == &procfs_ops)
             return -19;
         if (!framebuffer && h->node->mount->ops == &posix_queue_filesystem())
@@ -505,6 +512,15 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
             return error;
         }
         return space.map_anonymous_reservation(addr, len, prot) ? complete() : -12;
+    }
+    if (drm_address) {
+        if (replace_existing && !space.prepare_mapping(addr, len))
+            return -12;
+        if (int error = replace()) {
+            space.trim_page_tables(addr, len);
+            return error;
+        }
+        return space.map_physical(addr, drm_address, len, prot, false) ? complete() : -12;
     }
     if (framebuffer) {
         int error = replace();
@@ -1039,7 +1055,7 @@ static int64_t scheduler_parameter(unsigned request, int pid, int policy, uint64
     return policy ? -95 : 0;
 }
 
-static int64_t dispatch(Frame* f, Task* running) {
+int64_t dispatch_linux_syscall(Frame* f, Task* running) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
     case 188:
@@ -1275,24 +1291,8 @@ static int64_t dispatch(Frame* f, Task* running) {
     }
     case 33:
         return dup_fd(a, b);
-    case 35: {
-        Timespec ts;
-        if (!running->memory->space.copy_in(&ts, a, sizeof(ts)))
-            return -14;
-        if (ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1000000000)
-            return -22;
-        if (running->deadline && ticks >= running->deadline) {
-            running->deadline = 0;
-            return 0;
-        }
-        if (!running->deadline)
-            running->deadline = ticks + uint64_t(ts.sec) * 100 + (ts.nsec + 9999999) / 10000000;
-        if (running->deadline == ticks) {
-            running->deadline = 0;
-            return 0;
-        }
-        return block(Wait::sleep);
-    }
+    case 35:
+        return linux_clock_nanosleep(*running, 1, 0, a, b);
     case 39:
         return running->process->pid;
     case 186:
@@ -1749,6 +1749,11 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 228: {
         if (a > 7)
             return -22;
+        if (a == 1 || a == 4 || a == 7) {
+            uint64_t now = clock_monotonic_ns();
+            Timespec ts{int64_t(now / 1000000000), int64_t(now % 1000000000)};
+            return copy_result(b, &ts, sizeof(ts));
+        }
         uint64_t now = a == 2 || a == 3   ? cpu_ticks(*running, a == 3)
                        : a == 0 || a == 5 ? clock_realtime_ticks()
                                           : ticks;
@@ -1758,9 +1763,12 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 229: {
         if (a > 7)
             return -22;
-        Timespec ts{0, 10000000};
+        Timespec ts{0, a == 1 || a == 4 || a == 7 ? int64_t(clock_monotonic_resolution_ns())
+                                                  : 10000000};
         return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
+    case 230:
+        return linux_clock_nanosleep(*running, int32_t(a), int32_t(b), c, d);
     case 137: {
         Path path;
         if (!path_at(-100, a, path))
@@ -1787,11 +1795,11 @@ static int64_t dispatch(Frame* f, Task* running) {
         if (c && !running->memory->space.string(c, type, sizeof(type)))
             return -14;
         bool check_dirty = false;
+        char options[1024]{};
         if (e) {
-            char options[1024];
             if (!running->memory->space.string(e, options, sizeof(options)))
                 return -14;
-            if (options[0]) {
+            if (options[0] && strcmp(type, "tmpfs")) {
                 if (!ext_volume_type(type) || (d & 32) || strcmp(options, "recovery=check"))
                     return -22;
                 check_dirty = true;
@@ -1800,7 +1808,7 @@ static int64_t dispatch(Frame* f, Task* running) {
         Path source;
         if (!(d & 32) && ext_volume_type(type) && !path_at(-100, a, source))
             return source.error;
-        return mount_filesystem(path, source, type, d, check_dirty);
+        return mount_filesystem(path, source, type, d, check_dirty, options);
     }
     case 166: {
         Path path;
@@ -1974,26 +1982,4 @@ static int64_t dispatch(Frame* f, Task* running) {
     }
 }
 
-extern "C" Frame* handle_syscall(Frame* f) {
-    KernelGuard guard;
-    cpu_account(current_task());
-    asm volatile("fxsave64 %0" : "=m"(current_task()->fpu));
-    clock_refresh();
-    uint64_t number = f->rax;
-    if (trace_syscalls)
-        log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(current_task()->pid), number, f->rdi,
-            f->rsi, f->rdx);
-    int64_t result = dispatch(f, current_task());
-    cpu_refresh();
-    epoll_notify();
-    if (trace_syscalls)
-        log("sys result=%d\n", result);
-    if (result == would_block) {
-        f->rip -= 2;
-        f->rax = number;
-    } else if (number != 15)
-        f->rax = result;
-    return schedule(f, number == 24 || result == would_block ||
-                           current_task()->state != State::runnable);
-}
 } // namespace ax

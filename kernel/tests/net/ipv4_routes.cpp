@@ -25,10 +25,62 @@
 #include "net/ipv4/routes.hpp"
 #include <cassert>
 #include <cstdio>
+#include <vector>
 
 using namespace ax;
 
+static void route_notifications() {
+    struct Event {
+        Ipv4Route route;
+        bool removed;
+    };
+
+    static std::vector<Event> events;
+    ip4::AddressBook addresses;
+    ip4::RouteTable routes;
+    routes.observe(
+        [](const Ipv4Route& route, bool removed) { events.push_back({route, removed}); });
+    constexpr uint32_t source = 0x0a170128;
+    const Ipv4Route gateway{0, 0, 0x0a170101, 1, 100, 16, 0, source};
+    assert(!addresses.add(1, "eth0", {source, 0xffffff00, 0}));
+    assert(!routes.synchronize(addresses) && events.size() == 1);
+    assert(!events[0].removed && events[0].route.preferred_source == source);
+    assert(!routes.synchronize(addresses) && events.size() == 1);
+    assert(!routes.insert(gateway, false, true) && events.size() == 2);
+    assert(routes.insert(gateway, false, true) == -17 && events.size() == 2);
+    assert(!events[1].removed && events[1].route.gateway == gateway.gateway &&
+           events[1].route.metric == 100 && events[1].route.preferred_source == source);
+    const Ipv4Route prefix{0x0a170100, 0xffffff00, 0, 1, 0, 2, 253};
+    uint64_t removed = 0;
+    assert(!routes.erase(prefix, true, removed) && events.size() == 3 && events[2].removed);
+    assert(!routes.synchronize(addresses) && events.size() == 3);
+    assert(!addresses.remove(1, source, 0xffffff00) && !routes.synchronize(addresses));
+    assert(events.size() == 3);
+    routes.withdraw_source(source);
+    assert(events.size() == 4 && events[3].removed && events[3].route.gateway == gateway.gateway &&
+           events[3].route.preferred_source == source);
+    routes.withdraw(1);
+    assert(events.size() == 4 && !routes.at(0));
+    events.clear();
+}
+
 int main() {
+    route_notifications();
+    {
+        ip4::AddressBook manual;
+        ip4::RouteTable routes;
+        const Ipv4Config config{0xc6120015, 0xffffff00, 0};
+        assert(!manual.add(1, "eth0", config, 0, {}, false, true));
+        assert(manual.find(1, config.address, config.mask));
+        assert(!routes.synchronize(manual) && !routes.at(0));
+
+        const Ipv4Route prefix{0xc6120000, config.mask, 0, 1, 600, 2, 253, config.address};
+        assert(!routes.insert(prefix, false, true));
+        assert(!manual.add(1, "eth0", config, 1, {90, 120}, true));
+        assert(!routes.synchronize(manual));
+        const auto route = routes.at(0);
+        assert(route && !route->automatic && route->value.metric == 600 && !routes.at(1));
+    }
     {
         ip4::RouteTable aliases;
         Ipv4Route first{0xcb007100, 0xffffff00, 0, 1, 7, 3, 253};

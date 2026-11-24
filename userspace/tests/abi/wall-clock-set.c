@@ -24,6 +24,7 @@
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,57 @@
             _Exit(1);                                                                              \
         }                                                                                          \
     } while (0)
+
+static pid_t start_sleeper(int type, const struct timespec* time, int* done) {
+    int ready[2], result[2];
+    CHECK(pipe(ready) == 0 && pipe(result) == 0);
+    pid_t sleeper = fork();
+    CHECK(sleeper >= 0);
+    if (!sleeper) {
+        close(ready[0]);
+        close(result[0]);
+        CHECK(write(ready[1], "R", 1) == 1);
+        CHECK(clock_nanosleep(CLOCK_REALTIME, type, time, NULL) == 0);
+        CHECK(write(result[1], "D", 1) == 1);
+        _Exit(0);
+    }
+    close(ready[1]);
+    close(result[1]);
+    char byte;
+    CHECK(read(ready[0], &byte, 1) == 1 && byte == 'R');
+    close(ready[0]);
+    *done = result[0];
+    return sleeper;
+}
+
+static void check_sleepers_on_clock_change(const struct timespec* wall) {
+    const struct timespec absolute = {.tv_sec = wall->tv_sec + 30};
+    const struct timespec interval = {.tv_sec = 2};
+    int absolute_done, relative_done;
+    pid_t absolute_pid = start_sleeper(TIMER_ABSTIME, &absolute, &absolute_done);
+    pid_t relative_pid = start_sleeper(0, &interval, &relative_done);
+    struct pollfd sleepers[2] = {{absolute_done, POLLIN, 0}, {relative_done, POLLIN, 0}};
+    CHECK(poll(sleepers, 2, 80) == 0);
+
+    const struct timespec future = {.tv_sec = wall->tv_sec + 60};
+    CHECK(clock_settime(CLOCK_REALTIME, &future) == 0);
+    CHECK(poll(sleepers, 2, 1000) == 1 && sleepers[0].revents & POLLIN && sleepers[1].revents == 0);
+    char result;
+    CHECK(read(absolute_done, &result, 1) == 1 && result == 'D');
+    CHECK(close(absolute_done) == 0);
+    int status;
+    CHECK(waitpid(absolute_pid, &status, 0) == absolute_pid && WIFEXITED(status) &&
+          !WEXITSTATUS(status));
+
+    // The same relative sleep must also survive the clock being set backward.
+    CHECK(clock_settime(CLOCK_REALTIME, wall) == 0);
+    CHECK(poll(sleepers + 1, 1, 3000) == 1 && sleepers[1].revents & POLLIN);
+    CHECK(read(relative_done, &result, 1) == 1 && result == 'D');
+    CHECK(close(relative_done) == 0);
+    CHECK(waitpid(relative_pid, &status, 0) == relative_pid && WIFEXITED(status) &&
+          !WEXITSTATUS(status));
+    puts("CLOCK_SLEEP_WALL_STEP_PASS");
+}
 
 int main(void) {
     struct timespec wall, before, after;
@@ -84,6 +136,9 @@ int main(void) {
           expirations == 1);
     CHECK(read(relative, &expirations, sizeof(expirations)) == -1 && errno == EAGAIN);
     CHECK(close(absolute) == 0 && close(relative) == 0);
+
+    CHECK(clock_settime(CLOCK_REALTIME, &wall) == 0);
+    check_sleepers_on_clock_change(&wall);
 
     // This follows KDE's helper, which uses settimeofday with no timezone.
     struct timeval time = {.tv_sec = wall.tv_sec + 5, .tv_usec = 420000};

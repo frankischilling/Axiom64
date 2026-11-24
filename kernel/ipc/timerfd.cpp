@@ -35,9 +35,11 @@ struct Timerfd {
 
     uint64_t now() const {
         constexpr uint64_t tick_ns = 10000000;
-        uint64_t current =
-            absolute && clock == TimerClock::realtime ? clock_realtime_ticks() : ticks;
-        return current > INT64_MAX / tick_ns ? INT64_MAX : current * tick_ns;
+        if (absolute && clock == TimerClock::realtime) {
+            uint64_t current = clock_realtime_ticks();
+            return current > INT64_MAX / tick_ns ? INT64_MAX : current * tick_ns;
+        }
+        return min(clock_monotonic_ns(), uint64_t(INT64_MAX));
     }
 
     void accrue(uint64_t current) {

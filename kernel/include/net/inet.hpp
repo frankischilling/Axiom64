@@ -107,8 +107,8 @@ void inet_reclaim(InetSocket*, size_t length);
 // An eligible raw listener suppresses protocol-unreachable errors.
 bool inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t);
 
-bool inet_datagram_deliver(const Ipv4ReceiveMetadata&, uint16_t source_port,
-                           uint16_t destination_port, bool broadcast, const void*, size_t);
+bool inet_datagram_deliver(const Ipv4ReceiveMetadata&, bool broadcast, const uint8_t* segment,
+                           size_t length);
 
 size_t inet_receive_control(Task&, InetSocket*, const InetFrame&, uint64_t address,
                             uint64_t capacity, uint32_t& flags);

@@ -48,6 +48,7 @@ struct AddressSlot {
 AddressSlot addresses[ipv6_address_capacity];
 unsigned address_count;
 uint64_t next_address_owner;
+Ipv6AddressObserver address_observer;
 
 bool ready(const Ipv6Address& entry) {
     return !(entry.flags & (0x40 | 8)) && ipv6_address_cache(entry).valid;
@@ -55,6 +56,17 @@ bool ready(const Ipv6Address& entry) {
 
 uint32_t remaining(uint32_t lifetime, uint64_t age) {
     return lifetime == UINT32_MAX ? UINT32_MAX : age >= lifetime ? 0 : lifetime - age;
+}
+
+Ipv6AddressCacheInfo cache_info(const AddressSlot& entry) {
+    uint64_t age = ticks >= entry.updated ? (ticks - entry.updated) / 100 : 0;
+    return {remaining(entry.lifetime.preferred, age), remaining(entry.lifetime.valid, age),
+            uint32_t(entry.created), uint32_t(entry.updated)};
+}
+
+void notify_address(const AddressSlot& entry, bool removed = false) {
+    if (address_observer)
+        address_observer(entry.value, cache_info(entry), removed);
 }
 
 enum class AddressKind : uint8_t { configured, automatic, regenerated };
@@ -172,13 +184,14 @@ Ipv6AddressCacheInfo ipv6_address_cache(const Ipv6Address& value) {
         return {};
     for (unsigned n = 0; n < address_count; n++) {
         const auto& entry = addresses[n];
-        if (entry.value.index == value.index && entry.value.address == value.address) {
-            uint64_t age = ticks >= entry.updated ? (ticks - entry.updated) / 100 : 0;
-            return {remaining(entry.lifetime.preferred, age), remaining(entry.lifetime.valid, age),
-                    uint32_t(entry.created), uint32_t(entry.updated)};
-        }
+        if (entry.value.index == value.index && entry.value.address == value.address)
+            return cache_info(entry);
     }
     return {0, 0, 0, 0};
+}
+
+void ipv6_observe_addresses(Ipv6AddressObserver observer) {
+    address_observer = observer;
 }
 
 static int address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bool replace,
@@ -225,6 +238,8 @@ static int address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, 
         entry.value = updated;
         entry.lifetime = lifetime;
         entry.updated = ticks;
+        if (!(entry.value.flags & 0x40))
+            notify_address(entry);
         return 0;
     }
     if (address_count == ipv6_address_capacity)
@@ -249,8 +264,10 @@ static int address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, 
     int32_t probes = 1;
     ip6::configuration_read(value.index, ip6::ConfigurationKey::dad_transmits, probes);
     entry.required = uint8_t(probes);
-    if (!(value.flags & 2) && probes)
+    if (kind == AddressKind::regenerated || (!(value.flags & 2) && probes))
         entry.value.flags |= 0x40;
+    else
+        notify_address(entry);
     return 0;
 }
 
@@ -261,20 +278,20 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
 int ipv6_address_remove(unsigned index, const ip6::Address& address) {
     for (unsigned n = 0; n < address_count; n++)
         if (addresses[n].value.index == index && addresses[n].value.address == address) {
-            auto removed = addresses[n].value;
-            auto owner = addresses[n].owner;
-            if (addresses[n].prefix_route)
+            const auto removed = addresses[n];
+            if (removed.prefix_route)
                 ip6::prefix_remove(addresses[n].value);
             for (unsigned next = n + 1; next < address_count; next++)
                 addresses[next - 1] = addresses[next];
             addresses[--address_count] = {};
-            if (removed.address.link_local() || !ipv6_owned(0, removed.address)) {
-                ip6::reassembly_discard(&removed.address, index);
-                ip6::path_mtu_cache.discard_source(removed.address,
-                                                   removed.address.link_local() ? index : 0);
+            const auto& local = removed.value.address;
+            if (local.link_local() || !ipv6_owned(0, local)) {
+                ip6::reassembly_discard(&local, index);
+                ip6::path_mtu_cache.discard_source(local, local.link_local() ? index : 0);
             }
-            ip6::router_address_removed(removed, owner);
-            ip6::configuration_address_removed(index, removed.address);
+            notify_address(removed, true);
+            ip6::router_address_removed(removed.value, removed.owner);
+            ip6::configuration_address_removed(index, local);
             return 0;
         }
     return -99;
@@ -308,7 +325,14 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
         return -101;
     Ipv6Route inventory[ipv6_route_capacity + ipv6_address_capacity + 1];
     size_t count = ipv6_routes(inventory, sizeof(inventory) / sizeof(*inventory));
-    const Ipv6Route* best = nullptr;
+    // Link-local multicast uses an on-link Ethernet path before a router exists.
+    Ipv6Route multicast;
+    multicast.index = bound;
+    multicast.prefix = 8;
+    const Ipv6Route* best = destination.multicast() && address_scope(destination) == 2 && bound &&
+                                    bound != ipv6_loopback && ip6::usable(bound)
+                                ? &multicast
+                                : nullptr;
     for (size_t n = 0; n < count; n++) {
         const auto& candidate = inventory[n];
         if ((bound && candidate.index != bound) || !ip6::usable(candidate.index) ||
@@ -373,7 +397,6 @@ static int regenerate_address(unsigned position, const Address& replacement, uns
     if (error)
         return error;
     auto& created = addresses[address_count - 1];
-    created.value.flags |= 0x40;
     if (value.flags & 2)
         created.required = 0;
     created.regenerated = true;
@@ -462,8 +485,11 @@ void address_poll() {
             ipv6_address_remove(value.index, value.address);
             continue;
         }
-        if (!remaining(entry.lifetime.preferred, age))
+        if (!(entry.value.flags & 0x20) && !remaining(entry.lifetime.preferred, age)) {
             entry.value.flags |= 0x20;
+            if (!(entry.value.flags & 0x40))
+                notify_address(entry);
+        }
         if ((entry.value.flags & 0x48) == 0x48 && retire_failed_address(n))
             continue;
         n++;
@@ -490,6 +516,7 @@ void address_poll() {
             continue;
         if (!entry.required || (entry.sent && entry.probes >= entry.required)) {
             entry.value.flags &= ~uint16_t(0x40);
+            notify_address(entry);
             continue;
         }
         int32_t enhanced = 1;
@@ -523,7 +550,11 @@ void address_duplicate(unsigned index, const Address& address, const uint8_t* no
         if (entry.index == index && entry.address == address && (entry.flags & 0x40)) {
             if (nonce && slot.nonce_valid && !memcmp(nonce, slot.nonce, sizeof(slot.nonce)))
                 continue;
+            if (entry.flags & 8)
+                continue;
             entry.flags |= 8;
+            if (entry.flags & 0x80)
+                notify_address(slot);
             log("IPv6 duplicate address index=%u\n", uint64_t(index));
         }
     }

@@ -76,8 +76,9 @@ const Ipv4Address* ipv4_address(unsigned position) {
 }
 
 int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& value,
-                     Ipv4AddressLifetimes lifetime, bool replace) {
-    int error = addresses.add(index, label, value, address_clock, lifetime, replace);
+                     Ipv4AddressLifetimes lifetime, bool replace, bool suppress_prefix_route) {
+    int error =
+        addresses.add(index, label, value, address_clock, lifetime, replace, suppress_prefix_route);
     changes += !error;
     return error;
 }
@@ -137,7 +138,7 @@ static void finite_cacheinfo_request() {
             request.length = 88;
         } else {
             const uint16_t flags_header[]{8, 8};
-            const uint32_t unsupported = 0x200;
+            const uint32_t unsupported = 0x400;
             memcpy(invalid + 68, flags_header, 4);
             memcpy(invalid + 72, &unsupported, 4);
             request.length = 76;
@@ -216,6 +217,20 @@ static void finite_cacheinfo_request() {
         check(!evaluate(fixture) && addresses.label(1, "eth0")->config.broadcast == broadcast,
               "explicit zero and custom broadcast addresses are retained as supplied");
     }
+    addresses = {};
+    request = header;
+    request.length = 56;
+    memcpy(fixture, &request, sizeof(request));
+    memcpy(fixture + 48, flags_header, 4);
+    const uint32_t noprefixroute = 0x200;
+    memcpy(fixture + 52, &noprefixroute, 4);
+    check(!evaluate(fixture) && addresses.label(1, "eth0")->flags == (0x80 | noprefixroute),
+          "extended IPv4 flags retain noprefixroute");
+    request.flags = 0x105;
+    request.length = 48;
+    memcpy(fixture, &request, sizeof(request));
+    check(!evaluate(fixture) && addresses.label(1, "eth0")->flags == (0x80 | noprefixroute),
+          "address refresh preserves noprefixroute");
     std::puts(
         "ADDRESS_LIFETIME_CODEC_PASS cacheinfo short extended normalized flags refresh atomicity");
     addresses = {};

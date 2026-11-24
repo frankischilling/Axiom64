@@ -53,6 +53,18 @@ static int root_helper(void) {
     return getuid() == 0 && geteuid() == 0 && getegid() == 0;
 }
 
+static int authentication_helper(pam_handle_t* handle) {
+    if (geteuid() || getegid())
+        return 0;
+    if (!getuid())
+        return 1;
+    // PolicyKit preserves the requesting user as the real UID. The installed helper
+    // runs with effective root user and group IDs to access the protected account store.
+    const void* service = NULL;
+    return pam_get_item(handle, PAM_SERVICE, &service) == PAM_SUCCESS && service &&
+           strcmp(service, "polkit-1") == 0;
+}
+
 static void free_login(pam_handle_t* handle, void* data, int status) {
     (void)handle;
     (void)status;
@@ -70,7 +82,8 @@ static int failed_login(const char* name) {
 
 static struct pam_login* get_login(pam_handle_t* handle) {
     const void* data = NULL;
-    if (!root_helper() || pam_get_data(handle, login_key, &data) != PAM_SUCCESS || !data)
+    if (!authentication_helper(handle) || pam_get_data(handle, login_key, &data) != PAM_SUCCESS ||
+        !data)
         return NULL;
     struct pam_login* login = (struct pam_login*)data;
     return login->owner == getpid() ? login : NULL;
@@ -107,7 +120,7 @@ PAM_ENTRY int pam_sm_authenticate(pam_handle_t* handle, int flags, int count,
     (void)flags;
     (void)count;
     (void)options;
-    if (!root_helper())
+    if (!authentication_helper(handle))
         return PAM_PERM_DENIED;
     struct pam_login* previous = get_login(handle);
     if (previous && previous->session.lease)
@@ -172,8 +185,10 @@ PAM_ENTRY int pam_sm_acct_mgmt(pam_handle_t* handle, int flags, int count, const
 PAM_ENTRY int pam_sm_setcred(pam_handle_t* handle, int flags, int count, const char** options) {
     (void)count;
     (void)options;
+    if (!root_helper())
+        return PAM_PERM_DENIED;
     if (flags & PAM_DELETE_CRED)
-        return root_helper() ? PAM_SUCCESS : PAM_PERM_DENIED;
+        return PAM_SUCCESS;
     return check_profile(handle);
 }
 
@@ -182,6 +197,8 @@ PAM_ENTRY int pam_sm_open_session(pam_handle_t* handle, int flags, int count,
     (void)flags;
     (void)count;
     (void)options;
+    if (!root_helper())
+        return PAM_PERM_DENIED;
     struct pam_login* login = get_login(handle);
     int result = check_user(handle, login);
     if (result != PAM_SUCCESS)
@@ -200,6 +217,8 @@ PAM_ENTRY int pam_sm_close_session(pam_handle_t* handle, int flags, int count,
     (void)flags;
     (void)count;
     (void)options;
+    if (!root_helper())
+        return PAM_PERM_DENIED;
     struct pam_login* login = get_login(handle);
     if (!login)
         return PAM_PERM_DENIED;

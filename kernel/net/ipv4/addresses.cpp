@@ -55,6 +55,15 @@ const Ipv4Address* AddressBook::at(unsigned position) const {
     return position < count ? &entries[position].value : nullptr;
 }
 
+const Ipv4Address* AddressBook::find(unsigned index, uint32_t address, uint32_t mask) const {
+    for (unsigned n = 0; n < count; ++n) {
+        const auto& entry = entries[n].value;
+        if (entry.index == index && entry.config.address == address && entry.config.mask == mask)
+            return &entry;
+    }
+    return nullptr;
+}
+
 const Ipv4Address* AddressBook::label(unsigned index, const char* name, uint32_t hint) const {
     const Ipv4Address* first = nullptr;
     for (unsigned n = 0; n < count; n++) {
@@ -92,7 +101,7 @@ void AddressBook::renew(Slot& slot, Ipv4AddressLifetimes lifetime, uint64_t now)
 }
 
 int AddressBook::add(unsigned index, const char* name, const Ipv4Config& value, uint64_t now,
-                     Ipv4AddressLifetimes lifetime, bool replace) {
+                     Ipv4AddressLifetimes lifetime, bool replace, bool suppress_prefix_route) {
     if (!valid(index, name, value) || !value.address || !lifetime.valid ||
         lifetime.preferred > lifetime.valid)
         return -22;
@@ -104,8 +113,8 @@ int AddressBook::add(unsigned index, const char* name, const Ipv4Config& value, 
         if (entry.config.address == value.address) {
             if (!replace)
                 return -17;
-            // Linux refreshes the existing address's lifetime; replacement
-            // labels and broadcast bytes do not replace its stored identity.
+            // Linux refreshes the lifetime while keeping the existing address,
+            // including its label, broadcast address and prefix route flag.
             renew(entries[n], lifetime, now);
             return 0;
         }
@@ -133,6 +142,8 @@ int AddressBook::add(unsigned index, const char* name, const Ipv4Config& value, 
     entry.index = index;
     entry.config = captured;
     entry.secondary = secondary;
+    if (suppress_prefix_route)
+        entry.flags |= Ipv4Address::no_prefix_route;
     memcpy(entry.label, captured_name, strlen(captured_name) + 1);
     renew(slot, lifetime, now);
     count++;

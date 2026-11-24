@@ -150,7 +150,7 @@ bool permits(const Range& span, const BootInfo& boot) {
         if (!entry.length || entry.base >= end)
             continue;
         if (entry.kind == BootMemoryKind::reserved || entry.kind == BootMemoryKind::firmware ||
-            entry.kind == BootMemoryKind::mapped_reserved)
+            entry.kind == BootMemoryKind::mapped_reserved || entry.kind == BootMemoryKind::acpi_nvs)
             continue;
         if (entry.base >= span.physical_page || entry.length > span.physical_page - entry.base)
             return false;

@@ -31,6 +31,7 @@ ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-s
 	$(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/newc.py \
 	scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager scripts/configure-busybox.sh build/random-seed-static
+ROOTFS_INPUTS += $(wildcard vendor/auto-eduroam/*)
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py scripts/build_curl.py scripts/ca_bundle.py
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
@@ -54,7 +55,8 @@ build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
-build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam $(wildcard vendor/cmake/*.cmake) | busybox
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam \
+	$(wildcard vendor/cmake/*.cmake) $(AX201_FIRMWARE) $(AX201_LICENSE) | busybox
 	$(PYTHON) scripts/rootfs.py --profile installed-desktop
 
 image: build/axiom64.elf build/rootfs.cpio

@@ -1,8 +1,8 @@
 # Calendar clocks and elapsed kernel waits
 
-The kernel exposes a boot-relative clock with 10 ms resolution. A free-running
-counter supplies elapsed time; the 100 Hz PIT continues to supply scheduling
-interrupts. Reading the clock at syscall entry and exit also accounts for time
+The kernel reports boot-relative time in microseconds when a free-running
+counter is available. The 100 Hz PIT continues to supply scheduling interrupts.
+Reading the clock at syscall entry and exit also accounts for time
 spent in synchronous kernel operations with interrupts disabled.
 
 Previously, the clock counted only PIT interrupts. A real three-second ext2
@@ -37,8 +37,8 @@ read exceeds 64 KiB; root tables have at most 256 entries, and extended RSDP
 records have at most 4096 bytes. Corrupt or unsupported tables fall back without
 following their unchecked sizes or pointers.
 
-`Clock::Counter` copies its scale and initial reading. It carries fractional
-10 ms units across samples, admits small unsigned wrap, ignores ambiguous
+`Clock::Counter` copies its scale and initial reading. It carries the
+fraction of a microsecond across samples, admits small unsigned wrap, ignores ambiguous
 backward differences larger than `INT64_MAX`, and saturates accumulated time.
 Its common path uses bounded 64-bit arithmetic. Large intervals use a quotient
 and remainder calculation with at most 27 steps, avoiding a freestanding
@@ -54,16 +54,32 @@ this change does not promise that an overdue callback can run during them.
 The virtio transport's existing two-second reset and 30-second block-request
 deadlines retain their independently calibrated implementation and policy.
 
-`clock_getres` reports 10 ms for the accepted IDs and permits a null result
-pointer. `CLOCK_REALTIME`, `CLOCK_REALTIME_COARSE`, `gettimeofday`, and the raw
+`clock_getres` reports 1 µs for `CLOCK_MONOTONIC`, `CLOCK_MONOTONIC_RAW`,
+and `CLOCK_BOOTTIME` when an elapsed counter is available. The IRQ-only fallback,
+coarse clocks, calendar clocks and CPU accounting report 10 ms. A null result pointer
+is allowed. `CLOCK_REALTIME`, `CLOCK_REALTIME_COARSE`, `gettimeofday`, and the raw
 Linux `time` syscall use the UTC calendar sampled at boot. Other currently
 accepted IDs retain boot-relative accounting; this does not establish CPU-time
 clock semantics. Absolute `FUTEX_WAIT_BITSET` deadlines with
 `FUTEX_CLOCK_REALTIME` are converted to remaining monotonic time, with expired
 deadlines and expected-word error ordering preserved. Complete
-Linux clock-ID semantics, realtime setting and permissions, ACPI PM timer,
-higher-resolution deadlines, SMP clock handling, power transitions,
+Linux clock-ID semantics, higher-resolution deadlines, power transitions,
 suspend/resume, and synchronization remain unfinished.
+
+## Sleeping until a deadline
+
+`nanosleep` and `clock_nanosleep` use the same task wait. Relative intervals use
+elapsed time and are rounded up for the 10 ms clock. Absolute sleeps use
+`CLOCK_MONOTONIC`, `CLOCK_BOOTTIME`, or `CLOCK_REALTIME` as requested.
+Boottime currently tracks monotonic time because the system does not suspend.
+An absolute realtime waiter checks the current wall clock on wake, so setting
+the clock forward across its deadline expires it. Relative sleeps keep their
+original interval across clock changes.
+
+A caught signal interrupts both sleep calls even with `SA_RESTART`. A relative
+sleep can return the remaining duration. An absolute sleep leaves the caller's
+remaining-time buffer untouched. CPU-time, alarm, TAI, and device-specific
+clocks are outside the current sleep support.
 
 ## Boot calendar
 
@@ -80,8 +96,9 @@ configured yet.
 The accepted seconds become a calendar offset over the existing elapsed
 counter. An unavailable or invalid RTC is reported and leaves calendar calls
 boot-relative; the kernel cannot infer a valid date from that hardware state.
-There is no NTP synchronization, RTC update, suspend correction, or wall-clock
-setting interface yet.
+Privileged callers can adjust the live wall clock with `clock_settime` or
+`settimeofday`. RTC updates, NTP synchronization, and suspend correction
+remain open.
 
 Filesystem creation and mutation timestamps use the same calendar offset.
 RAM files retain the 10 ms clock resolution; classic ext2 stores whole seconds.
@@ -96,8 +113,14 @@ make test-clock
 make test-clock-wall-native
 make test-clock-wall-boundary
 make test-clock-wall
+python3 scripts/wall_clock_set_test.py
 python3 scripts/clock_test.py --firmware bios --transport modern --counter tsc --delay 3
 ```
+
+The clock-setting test boots BIOS and UEFI guests to check authorization and
+absolute realtime and relative waits during wall-clock changes. The sleep
+fixture also runs on native Linux and as static and dynamic musl programs
+under both guest firmware modes.
 
 Native GNU ASAN/UBSAN checks 4096 counter fixtures against independent 128-bit
 arithmetic (49152 samples), fractional intervals, invalid scales, backward
@@ -170,3 +193,22 @@ The calendar checks follow the [Linux RTC reader](https://github.com/torvalds/li
 [QEMU RTC registers](https://github.com/qemu/qemu/blob/v8.2.2/hw/rtc/mc146818rtc.c),
 and [QEMU date offsets](https://github.com/qemu/qemu/blob/v8.2.2/system/rtc.c).
 The firmware era behavior is in the [EDK II RTC conversion and initialization](https://github.com/tianocore/edk2/blob/edk2-stable202402/PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcRtc.c).
+
+## Battery and AC adapter status
+
+Boot with `acpi.power` to expose ACPI batteries and adapters under
+`/sys/class/power_supply`. UPower reads charging state, capacity, and AC
+status from this class. The kernel publishes add events at discovery and
+change events when readings change. Firmware reads have bounded wait
+times. A failed refresh retains the last successful readings.
+
+Boot with `acpi.power.probe fbconsole` to print one firmware sample on
+screen and serial. Both modes can read the firmware-declared embedded
+controller at ports `0x62` and `0x66`. The probe prints
+`4294967295` for an unknown firmware value. Unavailable readings are
+excluded from power-supply events.
+
+After building the kernel and BusyBox, run
+`python3 scripts/acpi_power_test.py` with `iasl` installed. The test checks
+battery and charger files in BIOS and UEFI guests, plus the disabled
+boot option and a guest without battery hardware.

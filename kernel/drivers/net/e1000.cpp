@@ -188,7 +188,7 @@ static bool interrupt(void* context) {
     const auto& info = device.adapter.info;
     uint64_t rx_before = info.stats.rx_packets, tx_before = info.stats.tx_packets;
     bool previous_carrier = info.carrier, previous_live = info.live;
-    poll(device.adapter);
+    net_device_poll(device.adapter);
     if (info.stats.rx_packets != rx_before && !device.irq_rx_reported) {
         device.irq_rx_reported = true;
         log("e1000: %s RX completion index=%u\n", mode, uint64_t(info.index));
@@ -302,7 +302,7 @@ static bool initialize(Controller& device, const PciFunction& pci, uint32_t mode
     device.write(rctl, 2 | (1u << 4) | (1u << 15) | (1u << 26));
     device.adapter.info.live = true;
     poll(device.adapter);
-    if (!device.adapter.info.live || !net_register(device.adapter))
+    if (!device.adapter.info.live || !net_register(device.adapter, "e1000", &pci))
         return false;
     configure_interrupt(device);
     uint64_t index = device.adapter.info.index;

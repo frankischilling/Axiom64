@@ -26,9 +26,9 @@ Tracing or attaching to a running program requires the kernel's remaining
 Linux manual and program manuals through mandoc.
 
 The installed Plasma desktop includes PowerDevil and its **Power and Battery**
-widget. The widget uses the battery and charger data exposed by UPower on
-supported hardware. To keep it visible while charging or fully charged, set
-**Power and Battery** to **Always shown** in System Tray Settings.
+widget. The widget uses battery and charger data from UPower. On supported
+laptops, the tray shows the battery even at full charge. You can hide it
+under **Power and Battery** in System Tray Settings.
 
 New accounts get an `auto-eduroam` folder with the setup helper and its
 instructions. Existing accounts get it at desktop sign-in if that path is

@@ -40,6 +40,9 @@ partition. The boot configuration selects the system partition by its GPT ID.
 On first boot, create the administrator from the console as described in
 [accounts.md](accounts.md). SDDM starts the Breeze sign-in screen when setup
 finishes. It starts KDE Plasma with software rendering on its Xorg display.
+The installed desktop uses udev to discover input devices for both Breeze and
+the console desktop. If udev has not classified the input devices by the time
+Xorg starts, Xorg uses its fixed keyboard and mouse configuration.
 The desktop includes shortcuts for
 Kitty, Thunar, btop, and both Freedoom campaigns. Use `build/rootfs-desktop.cpio`
 for a smaller disk image with twm and xterm.

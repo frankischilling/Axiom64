@@ -30,13 +30,16 @@
 #include "drivers/block/floppy.hpp"
 #include "drivers/block/nvme.hpp"
 #include "drivers/platform/fb_console.hpp"
+#include "drivers/platform/intel_lpss.hpp"
 #include "drivers/usb/xhci.hpp"
+#include "drivers/input/touchpad.hpp"
 #include "drivers/audio/alsa_pcm.hpp"
 #include "drivers/audio/pcm.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
+#include "core/time.hpp"
 #include "core/random/primitives.hpp"
 
 namespace ax {
@@ -61,6 +64,67 @@ struct InputQueue {
 };
 
 static InputQueue keyboard_events, mouse_events;
+static TouchpadInput::State touchpad;
+static uint16_t touchpad_id[4]{};
+static bool touchpad_clickpad;
+static constexpr char touchpad_name[] = "Axiom64 I2C Touchpad";
+static constexpr char touchpad_path[] = "/dev/input/event2";
+static constexpr char keyboard_name[] = "Axiom64 PS/2 keyboard";
+static constexpr char mouse_name[] = "Axiom64 PS/2 mouse";
+
+static constexpr unsigned input_bitmap_bytes = 96;
+
+static unsigned input_capabilities(Device kind, unsigned request, uint8_t* bitmap) {
+    using namespace TouchpadInput;
+    const auto mark = [&](uint16_t code) { bitmap[code / 8] |= 1u << (code % 8); };
+    switch (request) {
+    case 0x09: // EVIOCGPROP
+        if (kind == Device::touchpad)
+            bitmap[0] = 1 | (touchpad_clickpad ? 4 : 0); // POINTER, BUTTONPAD.
+        return 4;
+    case 0x20: // EVIOCGBIT(0)
+        bitmap[0] = (1 << sync) | (1 << key);
+        if (kind == Device::mouse)
+            bitmap[0] |= 1 << 2; // EV_REL.
+        if (kind == Device::touchpad)
+            bitmap[0] |= 1 << absolute;
+        return 4;
+    case 0x21: // EVIOCGBIT(EV_KEY)
+        if (kind == Device::keyboard) {
+            for (unsigned code = 1; code < 128; ++code)
+                mark(code);
+        } else if (kind == Device::mouse) {
+            for (unsigned code = btn_left; code < btn_left + 3; ++code)
+                mark(code);
+        } else {
+            if (touchpad.has_button())
+                mark(btn_left);
+            mark(btn_touch);
+            for (unsigned i = 1; i <= min(touchpad.capacity(), finger_key_limit); ++i)
+                mark(finger_keys[i]);
+        }
+        return input_bitmap_bytes;
+    case 0x22: // EVIOCGBIT(EV_REL)
+        if (kind == Device::mouse) {
+            mark(0); // REL_X.
+            mark(1); // REL_Y.
+            mark(8); // REL_WHEEL.
+        }
+        return 2;
+    case 0x23: // EVIOCGBIT(EV_ABS)
+        if (kind == Device::touchpad)
+            for (auto code : axis_codes)
+                mark(code);
+        return 8;
+    default:
+        return 0;
+    }
+}
+
+static TouchpadInput::Time input_time() {
+    return {ticks, clock_realtime_ticks()};
+}
+
 static uint8_t keys[96], ps2_keys[96], usb_keys[96];
 static bool extended, console_keyboard, console_caps_lock;
 static uint8_t mouse_packet[3], mouse_offset, ps2_mouse_buttons, usb_mouse_buttons;
@@ -265,7 +329,7 @@ static void terminal_input(ByteQueue& input, ByteQueue* echo, const Terminal& te
     }
 }
 
-static void tag(const char* path, Device type, unsigned id = 0) {
+static Node& tag(const char* path, Device type, unsigned id = 0) {
     Node* n = lookup(path);
     if (!n)
         n = make_node(path, character | 0666);
@@ -278,6 +342,7 @@ static void tag(const char* path, Device type, unsigned id = 0) {
         n->mode = character | 0600;
         n->uid = n->gid = 0;
     }
+    return *n;
 }
 
 static void tag_audio(const char* path, Device type) {
@@ -308,29 +373,176 @@ static bool inventory_directory(const char* path) {
     return make_node(path, directory | 0755);
 }
 
-static bool inventory_attribute(const char* parent, const char* name, const char* value) {
+static Node* inventory_attribute(const char* parent, const char* name, const char* value) {
     char path[64];
     const size_t prefix = strlen(parent), suffix = strlen(name);
     if (prefix + suffix + 2 > sizeof(path))
-        return false;
+        return nullptr;
     memcpy(path, parent, prefix);
     path[prefix] = '/';
     memcpy(path + prefix + 1, name, suffix + 1);
     const size_t length = strlen(value);
     auto bytes = static_cast<uint8_t*>(alloc(length + 1));
     if (!bytes)
-        return false;
+        return nullptr;
     auto node = make_node(path, regular_file | 0444);
     if (!node) {
         release(bytes);
-        return false;
+        return nullptr;
     }
     memcpy(bytes, value, length);
     bytes[length] = '\n';
     node->data = bytes;
     node->size = node->capacity = length + 1;
     node->owned = true;
+    return node;
+}
+
+static bool inventory_path(char (&out)[64], const char* parent, const char* name) {
+    const size_t prefix = strlen(parent);
+    const size_t length = strlen(name);
+    if (prefix + length + 2 > sizeof(out))
+        return false;
+    memcpy(out, parent, prefix);
+    out[prefix] = '/';
+    memcpy(out + prefix + 1, name, length + 1);
     return true;
+}
+
+static bool inventory_link(const char* parent, const char* name, const char* target) {
+    char text[64];
+    if (!inventory_path(text, parent, name))
+        return false;
+    Path path;
+    path.base = root_node;
+    memcpy(path.text, text, strlen(text) + 1);
+    Node* link = nullptr;
+    return !create_node(path, symlink | 0777, link, target);
+}
+
+static void input_bitmap_text(Device kind, unsigned request, char* out) {
+    uint8_t bitmap[input_bitmap_bytes]{};
+    input_capabilities(kind, request, bitmap);
+    constexpr char digits[] = "0123456789abcdef";
+    bool started = false;
+    // The sysfs ABI prints the most significant nonzero machine word first.
+    for (unsigned end = input_bitmap_bytes; end; end -= sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, bitmap + end - sizeof(word), sizeof(word));
+        if (!word && !started && end != sizeof(word))
+            continue;
+        if (started)
+            *out++ = ' ';
+        started = true;
+        char reverse[16];
+        unsigned count = 0;
+        do {
+            reverse[count++] = digits[word & 15];
+            word >>= 4;
+        } while (word);
+        while (count)
+            *out++ = reverse[--count];
+    }
+    *out = 0;
+}
+
+static bool publish_input_inventory(Node& node, unsigned index, const char* name) {
+    constexpr const char* directories[]{"/sys",
+                                        "/sys/dev",
+                                        "/sys/dev/char",
+                                        "/sys/class",
+                                        "/sys/class/input",
+                                        "/sys/devices",
+                                        "/sys/devices/virtual",
+                                        "/sys/devices/virtual/input"};
+    for (const auto* path : directories)
+        if (!inventory_directory(path))
+            return false;
+    char input[64], event[16], child[64], capabilities[64], dev[16];
+    number_path(input, "/sys/devices/virtual/input/input", index);
+    number_path(event, "event", index);
+    char input_link[64], event_link[64];
+    if (!inventory_path(child, input, event) ||
+        !inventory_path(capabilities, input, "capabilities") ||
+        !inventory_path(input_link, "../..", input + sizeof("/sys/") - 1) ||
+        !inventory_path(event_link, input_link, event))
+        return false;
+    const auto number = device_number(&node);
+    number_path(dev, "13:", device_minor(number));
+    if (!inventory_directory(input) || !inventory_directory(child) ||
+        !inventory_directory(capabilities) || !inventory_attribute(input, "name", name) ||
+        !inventory_attribute(child, "dev", dev))
+        return false;
+
+    constexpr struct {
+        const char* name;
+        unsigned request;
+    } attributes[]{{"ev", 0x20}, {"key", 0x21}, {"rel", 0x22}, {"abs", 0x23}};
+
+    char bits[input_bitmap_bytes * 2 + input_bitmap_bytes / sizeof(uint64_t) + 1];
+    for (const auto& attribute : attributes) {
+        input_bitmap_text(node.device, attribute.request, bits);
+        if (!inventory_attribute(capabilities, attribute.name, bits))
+            return false;
+    }
+    input_bitmap_text(node.device, 0x09, bits);
+    char parent_event[64], child_event[64];
+    constexpr char parent_prefix[] = "SUBSYSTEM=input\nNAME=\"";
+    memcpy(parent_event, parent_prefix, sizeof(parent_prefix) - 1);
+    const size_t name_end = sizeof(parent_prefix) - 1 + strlen(name);
+    memcpy(parent_event + sizeof(parent_prefix) - 1, name, strlen(name));
+    memcpy(parent_event + name_end, "\"", 2);
+    number_path(child_event, "MAJOR=13\nMINOR=", device_minor(number));
+    const size_t minor_end = strlen(child_event);
+    constexpr char event_suffix[] = "\nDEVNAME=input/";
+    memcpy(child_event + minor_end, event_suffix, sizeof(event_suffix) - 1);
+    memcpy(child_event + minor_end + sizeof(event_suffix) - 1, event, strlen(event) + 1);
+    auto* uevent = inventory_attribute(child, "uevent", child_event);
+    if (!uevent || !inventory_attribute(input, "properties", bits) ||
+        !inventory_attribute(input, "uevent", parent_event) ||
+        !inventory_link(input, "subsystem", "../../../../class/input") ||
+        !inventory_link(child, "subsystem", "../../../../../class/input") ||
+        !inventory_link(child, "device", "..") ||
+        !inventory_link("/sys/class/input", input + sizeof("/sys/devices/virtual/input/") - 1,
+                        input_link) ||
+        !inventory_link("/sys/class/input", event, event_link) ||
+        !inventory_link("/sys/dev/char", dev, event_link))
+        return false;
+    uevent->mode = regular_file | 0644;
+    uevent->device = Device::input_uevent;
+    uevent->device_id = index;
+    input_device_added(index, false);
+    return true;
+}
+
+bool TouchpadInput::register_device(const HidTouchpad::Layouts& layouts, uint16_t vendor,
+                                    uint16_t product, uint16_t revision, bool clickpad) {
+    if (lookup(touchpad_path, false) || !touchpad.configure(layouts))
+        return false;
+    auto* node = make_node(touchpad_path, character | 0600);
+    if (!node) {
+        touchpad = {};
+        return false;
+    }
+    node->device = Device::touchpad;
+    node->uid = node->gid = 0;
+    touchpad_id[0] = 0x18; // BUS_I2C
+    touchpad_id[1] = vendor;
+    touchpad_id[2] = product;
+    touchpad_id[3] = revision;
+    touchpad_clickpad = clickpad && touchpad.has_button();
+
+    if (!publish_input_inventory(*node, 2, touchpad_name))
+        log("Input: cannot publish touchpad discovery attributes\n");
+    return true;
+}
+
+bool TouchpadInput::submit(const HidTouchpad::Frame& frame) {
+    return touchpad.submit(frame, input_time());
+}
+
+void TouchpadInput::reset() {
+    touchpad.reset(input_time());
 }
 
 static void publish_nvme_inventory() {
@@ -437,8 +649,12 @@ void devices_init(bool display_console, bool virtio_graphics) {
         make_node("/dev/pts", directory | 0755);
     if (!lookup("/dev/input"))
         make_node("/dev/input", directory | 0755);
-    tag("/dev/input/event0", Device::keyboard);
-    tag("/dev/input/event1", Device::mouse);
+    auto& keyboard = tag("/dev/input/event0", Device::keyboard);
+    auto& mouse = tag("/dev/input/event1", Device::mouse);
+    const bool keyboard_inventory = publish_input_inventory(keyboard, 0, keyboard_name);
+    const bool mouse_inventory = publish_input_inventory(mouse, 1, mouse_name);
+    if (!keyboard_inventory || !mouse_inventory)
+        log("Input: cannot publish keyboard or mouse discovery attributes\n");
     for (unsigned i = 0; i < 256; i++) {
         uint8_t status = in8(0x64);
         if (status == 0xff)
@@ -496,6 +712,8 @@ uint64_t device_number(Node* node) {
         return 0x0d40;
     case Device::mouse:
         return 0x0d41;
+    case Device::touchpad:
+        return 0x0d42;
     case Device::null:
         return 0x103;
     case Device::zero:
@@ -535,6 +753,8 @@ int device_open(Handle* h) {
     }
     if (kind == Device::keyboard || kind == Device::mouse)
         h->offset = (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
+    else if (kind == Device::touchpad)
+        h->offset = touchpad.position();
     if ((kind == Device::serial || kind == Device::vt) && current_task() && !(h->flags & 0400) &&
         (h->flags & 3) != 1 && !console_sid && !current_task()->process->controlling_pty &&
         !current_task()->process->controlling_console &&
@@ -644,6 +864,7 @@ bool device_has_poll(const Handle& handle) {
     case Device::vt:
     case Device::keyboard:
     case Device::mouse:
+    case Device::touchpad:
     case Device::dsp:
     case Device::alsa_control:
     case Device::alsa_playback:
@@ -675,6 +896,8 @@ bool device_ready(Handle* h, bool write) {
     if (kind == Device::keyboard || kind == Device::mouse)
         return write ||
                h->offset < (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
+    if (kind == Device::touchpad)
+        return !write && touchpad.ready(h->offset, h->input_recovery);
     if (kind == Device::serial || kind == Device::tty || kind == Device::vt)
         return write || canonical_ready(console_input, console_terminal);
     if (kind == Device::random && h->node->device_id == 8)
@@ -774,6 +997,9 @@ int64_t device_read(Handle* h, void* data, size_t len) {
         int error = random_read(data, count, h->node->device_id == 9);
         return error ? int64_t(error) : int64_t(count);
     }
+    case Device::touchpad:
+        return touchpad.read(h->offset, h->input_recovery,
+                             TouchpadInput::EventClock(h->input_clock), data, len, input_time());
     case Device::keyboard:
     case Device::mouse: {
         if (len < sizeof(InputEvent))
@@ -877,8 +1103,98 @@ static int64_t output(uint64_t dst, const void* data, size_t len) {
     return current_task()->memory->space.copy_out(dst, data, len) ? 0 : -14;
 }
 
+static int64_t touchpad_ioctl(Handle& handle, uint64_t request, uint64_t arg) {
+    using namespace TouchpadInput;
+    const unsigned number = request & 255, size = (request >> 16) & 0x3fff;
+    const unsigned direction = (request >> 30) & 3;
+    if (((request >> 8) & 255) != 'E')
+        return -25;
+    auto& memory = current_task()->memory->space;
+    if (direction == 1 && number == 0xa0 && size == sizeof(int32_t)) { // EVIOCSCLOCKID
+        int32_t clock;
+        if (!memory.copy_in(&clock, arg, sizeof(clock)))
+            return -14;
+        if (clock != int(EventClock::realtime) && clock != int(EventClock::monotonic) &&
+            clock != int(EventClock::boottime))
+            return -22;
+        if (handle.input_clock != clock) {
+            handle.input_clock = clock;
+            touchpad.discard_pending(handle.offset, handle.input_recovery);
+        }
+        return 0;
+    }
+    if (direction != 2)
+        return -25;
+    if (number == 1 && size == sizeof(uint32_t)) {
+        const uint32_t version = 0x010001;
+        return output(arg, &version, sizeof(version));
+    }
+    if (number == 2 && size == sizeof(touchpad_id))
+        return output(arg, touchpad_id, sizeof(touchpad_id));
+    if (number == 0x06 || number == 0x07) {
+        const char* name = number == 0x06 ? touchpad_name : "i2c/input0";
+        const size_t length = min(size_t(size), strlen(name) + 1);
+        return output(arg, name, length) ? -14 : int64_t(length);
+    }
+    if (number == 0x08)
+        return -2;        // The device has no unique string.
+    if (number == 0x0a) { // EVIOCGMTSLOTS
+        if (size < sizeof(int32_t) || size % sizeof(int32_t))
+            return -22;
+        uint32_t code;
+        if (!memory.copy_in(&code, arg, sizeof(code)))
+            return -14;
+        int32_t values[max_slots];
+        const unsigned count = min(touchpad.capacity(), unsigned(size / sizeof(code) - 1));
+        if (code > UINT16_MAX || !touchpad.slot_values(code, values, count))
+            return -22;
+        return output(arg + sizeof(code), values, count * sizeof(*values));
+    }
+    if (number >= 0x40 && number < 0x80) { // EVIOCGABS
+        Axis axis;
+        if (size != sizeof(axis) || !touchpad.axis(number - 0x40, axis))
+            return -22;
+        return output(arg, &axis, sizeof(axis));
+    }
+
+    uint8_t bitmap[input_bitmap_bytes]{};
+    unsigned bytes = input_capabilities(Device::touchpad, number, bitmap);
+    if (bytes)
+        return output(arg, bitmap, min(bytes, size)) ? -14 : int64_t(min(bytes, size));
+    // Linux exposes empty bitmaps for event classes a device does not provide.
+    // libevdev still queries these classes while opening a touchpad.
+    switch (number) {
+    case 0x19: // EVIOCGLED
+    case 0x1a: // EVIOCGSND
+    case 0x1b: // EVIOCGSW
+    case 0x24: // EVIOCGBIT(EV_MSC)
+    case 0x25: // EVIOCGBIT(EV_SW)
+    case 0x31: // EVIOCGBIT(EV_LED)
+    case 0x32: // EVIOCGBIT(EV_SND)
+    case 0x35: // EVIOCGBIT(EV_FF)
+        bytes = min(number == 0x35 ? 2 * sizeof(uint64_t) : sizeof(uint64_t), size_t(size));
+        return output(arg, bitmap, bytes) ? -14 : int64_t(bytes);
+    default:
+        break;
+    }
+    if (number != 0x18) // EVIOCGKEY
+        return number >= 0x20 && number < 0x40 ? -22 : -25;
+    const auto mark = [&](uint16_t code) { bitmap[code / 8] |= 1u << (code % 8); };
+    if (touchpad.key_down(btn_left))
+        mark(btn_left);
+    if (touchpad.key_down(btn_touch))
+        mark(btn_touch);
+    for (unsigned i = 1; i <= min(touchpad.capacity(), finger_key_limit); ++i)
+        if (touchpad.key_down(finger_keys[i]))
+            mark(finger_keys[i]);
+    bytes = min(input_bitmap_bytes, size);
+    return output(arg, bitmap, bytes) ? -14 : int64_t(bytes);
+}
+
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
+    if (kind == Device::touchpad)
+        return touchpad_ioctl(*h, request, arg);
     if (kind == Device::dsp)
         return Pcm::ioctl(*h, request, arg);
     if (kind == Device::alsa_control)
@@ -1017,29 +1333,17 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
             memcpy(buffer, id, 8);
         } else if (number == 6 || number == 7) {
             const char* name = number == 7                ? "isa0060/serio0/input0"
-                               : kind == Device::keyboard ? "Axiom64 PS/2 keyboard"
-                                                          : "Axiom64 PS/2 mouse";
+                               : kind == Device::keyboard ? keyboard_name
+                                                          : mouse_name;
             memcpy(buffer, name, min(strlen(name) + 1, size_t(size)));
-        } else if (number == 0x20) {
-            buffer[0] = (1 << 0) | (1 << 1) | (kind == Device::mouse ? 1 << 2 : 0);
-        } else if (number == 0x21) {
-            if (kind == Device::keyboard)
-                for (unsigned key = 1; key < 128; key++)
-                    buffer[key / 8] |= 1 << (key % 8);
-            else
-                for (unsigned key = 272; key < 275; key++)
-                    buffer[key / 8] |= 1 << (key % 8);
-        } else if (number == 0x22) {
-            if (kind == Device::mouse) {
-                buffer[0] = 3; // REL_X and REL_Y.
-                buffer[1] = 1; // REL_WHEEL.
-            }
         } else if (number == 0x18)
             memcpy(buffer, keys, min(sizeof(keys), size_t(size)));
         else if (number == 0x90)
             return 0;
         else if (number >= 0x40 && number < 0x80)
             return -22;
+        else
+            input_capabilities(kind, number, buffer);
         return output(arg, buffer, size) ? -14 : int64_t(size);
     }
     if (!h->pty && kind != Device::serial && kind != Device::tty && kind != Device::vt)
@@ -1280,6 +1584,7 @@ void devices_poll() {
     floppy_poll();
     Pcm::poll();
     xhci_keyboard_poll();
+    intel_lpss_input_poll();
     for (unsigned i = 0; i < 64; i++) {
         int c = serial_read();
         if (c < 0)

@@ -40,6 +40,24 @@ Descriptor reads/writes, vectors, and message calls share the [retained I/O path
 
 Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, complete IPv6 control, policy routing, and general Linux netlink behavior remain required.
 
+## Input device events
+
+`AF_NETLINK` protocol `NETLINK_KOBJECT_UEVENT` exposes kernel input-device
+additions on multicast group 1. A device manager with `CAP_NET_ADMIN` can
+send processed events to group 2 and pass work to another event socket
+by port ID. With `SO_PASSCRED` enabled, `recvmsg` returns the credentials
+captured by the kernel when the datagram was sent. Listeners can adjust
+their receive buffer and independently join or leave either group. If a
+listener loses a multicast event because its queue is full, it receives
+`ENOBUFS`. Route sockets and their port IDs remain independent.
+
+Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`
+to request a coldplug event. The file uses normal owner write permissions.
+Group 1 is reserved for the kernel. Other device actions and ancillary
+credentials supplied by the sender are unsupported.
+The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)
+defines the datagram and coldplug format.
+
 ## Ring 3 configuration adapter
 
 `userspace/net/config/routing.hpp` exposes `ax::net::Routing` behind a private nonblocking kernel-port socket. Route `change` requires a canonical mask, explicit interface, nonzero priority/protocol, and the appropriate link/universe scope. The adapter retains preferred-source and TOS fields when reading routes; host comparisons use them to distinguish independent owners. The guest still rejects preferred-source and TOS route mutations. Address `change` requires the complete canonical tuple and explicit interface. These checks prevent accidental wildcard deletion. Results are positive errno values; requests require a checked acknowledgment within a one-second monotonic deadline.

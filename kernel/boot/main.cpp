@@ -29,6 +29,7 @@
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
+#include "drivers/platform/intel_lpss.hpp"
 #include "drivers/platform/pci_inventory.hpp"
 #include "drivers/usb/xhci.hpp"
 #include "process/task.hpp"
@@ -107,6 +108,16 @@ BootInfo boot_info;
     else
         log("Interrupts: PIC/PIT fallback, no validated MADT\n");
     firmware_configure_pci_interrupts(rsdp, topology, definitions);
+    const bool lpss_bar_test = arguments.has("lpss.i2c.bar-test");
+    const bool lpss_hid_test = arguments.has("lpss.i2c.hid-test");
+    if (lpss_hid_test || lpss_bar_test || arguments.has("lpss.i2c.probe")) {
+        const auto mode = lpss_hid_test   ? LpssProbe::hid
+                          : lpss_bar_test ? LpssProbe::bar
+                                          : LpssProbe::inspect;
+        intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, mode);
+    }
+    if (arguments.has("hid.i2c.probe"))
+        firmware_probe_i2c_hid(definitions);
     random_init(!arguments.has("random.trust_cpu=off"), arguments.has("random.trust_virtio=on"));
     if (!boot_info.initramfs || !boot_info.initramfs_size)
         panic("missing or empty root filesystem module");
@@ -127,6 +138,8 @@ BootInfo boot_info;
     devices_init(arguments.has("fbconsole"), arguments.has("virtio.gpu=2d"));
     if (usb_keyboard)
         xhci_keyboard_init();
+    if (arguments.has("lpss.i2c.input"))
+        intel_lpss_i2c_probe(definitions, have_topology ? &topology : nullptr, LpssProbe::input);
     net_init();
     publish_pci_inventory();
     log("Entering userspace in Ring 3\n");

@@ -25,6 +25,11 @@ Tracing or attaching to a running program requires the kernel's remaining
 `ptrace` support. Try `man 2 open` or `man 1 less` to read the bundled
 Linux manual and program manuals through mandoc.
 
+The installed desktop includes translations for Plasma and System Settings.
+Use **System Settings → Region & Language** to choose a language or regional
+format, then sign out and back in. Run `localectl list-locales` to see the
+installed musl locales. Locale changes are made in Plasma.
+
 New accounts get an `auto-eduroam` folder with the setup helper and its
 instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.

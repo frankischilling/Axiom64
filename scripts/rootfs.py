@@ -223,6 +223,14 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
 if installed_desktop:
     for module in sorted((ROOT / "vendor/cmake").glob("*.cmake")):
         regular("usr/share/cmake/Modules/Platform/" + module.name, module, 0o100644)
+    regular("usr/bin/localectl", ROOT / "userspace/desktop/localectl.sh")
+    # Plasma looks for locale names directly in this directory.
+    locale_root = "usr/share/i18n/locales"
+    for path, (mode, _) in tuple(files.items()):
+        if (mode & 0o170000 == 0o100000 and path.startswith(locale_root + "/musl/")
+                and path.endswith(".UTF-8")):
+            name = Path(path).name
+            files.setdefault(f"{locale_root}/{name}", (0o120777, f"musl/{name}".encode()))
     for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
     files.setdefault("etc/xdg", (0o40755, b""))

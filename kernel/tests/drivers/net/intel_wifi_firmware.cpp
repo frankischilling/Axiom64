@@ -139,6 +139,7 @@ enum class AuthCase {
     wrong_target
 };
 enum class AssocCase { unused, accepted, refused, invalid_id, secured, bad_beacon, leave_failed };
+enum class ArpCase { unused, accepted, reply_first, wrong_peer, rejected_tx };
 enum class ScanCase {
     unused,
     complete,
@@ -293,10 +294,14 @@ struct StartupFixture {
     PeerCase peer_case = PeerCase::unused;
     AuthCase auth_case = AuthCase::unused;
     AssocCase assoc_case = AssocCase::unused;
+    ArpCase arp_case = ArpCase::unused;
     CommandDescriptor management_ring[management_queue_entries]{};
     uint16_t management_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
+    CommandDescriptor data_ring[management_queue_entries]{};
+    uint16_t data_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
     uint8_t authentication_payload[authentication_dma_bytes]{};
     unsigned authentication_rx_buffers = 0;
+    unsigned data_rx_buffers = 0;
     unsigned bad_binding_status = 0;
     unsigned short_binding_status = 0;
     unsigned scan_delays = 0;
@@ -466,9 +471,10 @@ struct StartupFixture {
     }
 
     void authentication_doorbell(uint32_t value) {
-        const auto step = authentication_rx_buffers;
+        const auto step = authentication_rx_buffers - data_rx_buffers;
         const bool synced = step == 2 && assoc_case != AssocCase::bad_beacon;
-        assert(auth_case != AuthCase::unused && commands_sent == (synced ? 17u : 16u) && step <= 2);
+        const unsigned command_count = data_rx_buffers ? 19 : synced ? 17 : 16;
+        assert(auth_case != AuthCase::unused && commands_sent == command_count && step <= 2);
         assert(!step || assoc_case != AssocCase::unused);
         assert(value == 0x01010035 + step);
         const auto slot = 4 + step;
@@ -494,7 +500,7 @@ struct StartupFixture {
         assert(!memcmp(authentication_payload + 64, second, sizeof(second)));
         assert(!memcmp(authentication_payload + 128, body, length));
 
-        auto* buffer = reply_buffer(commands_sent + step);
+        auto* buffer = reply_buffer(commands_sent + authentication_rx_buffers);
         const bool first_reply = auth_case == AuthCase::reply_first && step != 2;
         auto* tx = buffer + (first_reply ? 128 : 0);
         tx[0] = 52;
@@ -560,6 +566,65 @@ struct StartupFixture {
         receive_status.closed_buffer = uint16_t(index + 1);
     }
 
+    void arp_doorbell(uint32_t value) {
+        assert(arp_case != ArpCase::unused && commands_sent == 18 &&
+               authentication_rx_buffers == 2);
+        assert(value == 0x01020038);
+        constexpr unsigned slot = 7;
+        const auto& descriptor = data_ring[slot];
+        const uint8_t body[]{0xaa, 0xaa, 3, 0, 0, 0,    8,    6,    0,    1,    8,   0,
+                             6,    4,    0, 1, 2, 0x11, 0x22, 0x33, 0x44, 0x55, 192, 0,
+                             2,    10,   0, 0, 0, 0,    0,    0,    192,  0,    2,   1};
+        const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {sizeof(body), 0x52080}};
+        assert(descriptor.buffer_count == 3 && data_counts[slot] == 15);
+        assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
+        const uint8_t first[20]{0x1c, 0, slot, 2, 60, 0, 0, 12, 3};
+        const uint8_t header[]{0,    0x40, 0,    0,    8,    1,    0,    0,    2,    0,
+                               0,    0,    0,    0x11, 2,    0x11, 0x22, 0x33, 0x44, 0x55,
+                               0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0,    0};
+        assert(!memcmp(first, authentication_payload, sizeof(first)));
+        assert(!memcmp(header, authentication_payload + 64, sizeof(header)));
+        assert(!memcmp(body, authentication_payload + 128, sizeof(body)));
+
+        auto* buffer = reply_buffer(commands_sent + authentication_rx_buffers);
+        const bool first_reply = arp_case == ArpCase::reply_first;
+        auto* tx = buffer + (first_reply ? 128 : 0);
+        tx[0] = 52;
+        tx[4] = 0x1c;
+        tx[6] = slot;
+        tx[7] = 2;
+        tx[8] = 1;
+        tx[44] = 2;
+        tx[45] = 1;
+        tx[48] = arp_case == ArpCase::rejected_tx ? 0x84 : 1;
+        tx[52] = 0x38;
+
+        auto* rx = buffer + (first_reply ? 0 : 64);
+        rx[0] = 116;
+        rx[4] = 0xc1;
+        rx[7] = 0x80;
+        auto* mpdu = rx + 8;
+        mpdu[0] = 64;
+        mpdu[3] = 0x20; // Receive padding after a QoS header.
+        mpdu[12] = 3;
+        mpdu[34] = 1;
+        const uint8_t response[]{
+            0x88, 2,    0,   0, 2, 0x11, 0x22, 0x33, 0x44, 0x55, 2,    0,    0,    0,    0, 0x11,
+            2,    0,    0,   0, 0, 0x12, 0,    0,    0,    0,    0,    0,    0xaa, 0xaa, 3, 0,
+            0,    0,    8,   6, 0, 1,    8,    0,    6,    4,    0,    2,    2,    0,    0, 0,
+            0,    0x12, 192, 0, 2, 1,    2,    0x11, 0x22, 0x33, 0x44, 0x55, 192,  0,    2, 10,
+        };
+        static_assert(sizeof(response) == 64);
+        memcpy(mpdu + 48, response, sizeof(response));
+        if (arp_case == ArpCase::wrong_peer)
+            mpdu[48 + 53] = 2;
+        ++data_rx_buffers;
+        ++authentication_rx_buffers;
+        const unsigned index = commands_sent + authentication_rx_buffers;
+        used[index] = index + 1;
+        receive_status.closed_buffer = uint16_t(index + 1);
+    }
+
     void command_reply(unsigned tail) {
         const unsigned index = ++commands_sent;
         assert(tail == (index & (command_sequence_count - 1)));
@@ -570,10 +635,13 @@ struct StartupFixture {
         const bool scanning = check_channels || passive != ScanCase::unused;
         const bool auth = auth_case != AuthCase::unused;
         const bool association = assoc_case != AssocCase::unused;
-        const unsigned release_session = association ? 19 : 17;
+        const bool data = arp_case != ArpCase::unused;
+        const unsigned clear_association = data ? 20 : 18;
+        const unsigned release_session = association ? clear_association + 1 : 17;
         const unsigned peer_index = !auth || index <= 13      ? index
-                                    : index > release_session ? index - (association ? 5 : 3)
+                                    : index > release_session ? index - (release_session - 14)
                                                               : index - 1;
+        const bool data_queue = data && (index == 18 || index == 19);
         const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
         uint8_t expected[command_slot_bytes]{};
         uint16_t payload_bytes = 4;
@@ -610,7 +678,8 @@ struct StartupFixture {
             expected[60] = 0x44;
         } else if (check_channels) {
             payload_bytes = expect_channel_command(index, expected);
-        } else if (auth && (index == 13 || (association && (index == 17 || index == 18)))) {
+        } else if (auth &&
+                   (index == 13 || (association && (index == 17 || index == clear_association)))) {
             expected[0] = 0x28;
             expected[12] = 2;
             expected[16] = 5;
@@ -635,6 +704,20 @@ struct StartupFixture {
                 memcpy(expected + 148, gp2, sizeof(gp2));
             }
             payload_bytes = 148;
+        } else if (data_queue) {
+            expected[0] = 0x17;
+            expected[1] = 5;
+            expected[12] = 1;
+            if (index == 18) {
+                expected[24] = 1;
+                expected[29] = 0x40;
+                expected[30] = 5;
+                expected[37] = 0x30;
+                expected[38] = 5;
+            } else {
+                expected[8] = 1;
+            }
+            payload_bytes = 36;
         } else if (auth && (index == 16 || index == release_session)) {
             expected[0] = 5;
             expected[1] = 3;
@@ -728,7 +811,8 @@ struct StartupFixture {
         }
         const bool peer = peer_case != PeerCase::unused;
         const bool binding = (check_channels || peer) && index >= 8 && command[0] == 0x2b;
-        const unsigned length = binding ? (index == short_binding_status ? 7 : 8)
+        const unsigned length = binding      ? (index == short_binding_status ? 7 : 8)
+                                : data_queue ? 12
                                 : peer && peer_index == 13 && command[0] == 0x18 ? 8
                                 : peer && peer_index == 14 && command[0] == 0x17
                                     ? (peer_case == PeerCase::short_queue ? 11 : 12)
@@ -777,6 +861,11 @@ struct StartupFixture {
         }
         if (peer && peer_index == 15 && command[0] == 0x17)
             reply[10] = peer_case == PeerCase::remove_denied;
+        if (data_queue && index == 18) {
+            reply[8] = 2;
+            reply[9] = 1;
+            reply[12] = 0x37;
+        }
         if (!check_channels && index >= 8 && (!peer || index == 8))
             scan_notifications(reply, uint8_t((index - 8) & 1));
         used[index + authentication_rx_buffers] = index + 1 + authentication_rx_buffers;
@@ -829,7 +918,9 @@ struct StartupFixture {
         }
         if (offset == 0x460) {
             assert(master && sent_doorbell);
-            if (value >> 16)
+            if (value >> 16 == 0x102)
+                arp_doorbell(value);
+            else if (value >> 16)
                 authentication_doorbell(value);
             else
                 command_reply(value);
@@ -894,6 +985,10 @@ struct StartupFixture {
         if (auth_case != AuthCase::unused)
             memory.authentication = {management_ring, management_counts, authentication_payload,
                                      0x52000};
+        if (arp_case != ArpCase::unused) {
+            memory.data_queue = {0x53000, 0x54000};
+            memory.data_transmit = {data_ring, data_counts, authentication_payload, 0x52000};
+        }
         return start_and_stop_quz(io, memory, scan);
     }
 };
@@ -1257,9 +1352,9 @@ void check_peer_queues() {
 
     uint8_t allocation[8]{};
     PeerQueue queue{23, 0x40};
-    assert(!parse_management_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
+    assert(!parse_station_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
     allocation[1] = 2; // One beyond the last supported queue.
-    assert(!parse_management_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
+    assert(!parse_station_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
     assert(queue.id == 23 && queue.write_pointer == 0x40);
     std::puts("AX201_PEER_QUEUE_MODEL_PASS");
 }
@@ -1370,6 +1465,41 @@ void check_association_exchange() {
     assert(!prepare_association_request(peer, basic, sizeof(basic), true, request));
     assert(!prepare_association_request(peer, basic, sizeof(basic) - 1, true, request));
     std::puts("AX201_ASSOCIATION_MODEL_PASS");
+}
+
+void check_associated_arp() {
+    AuthenticationTarget target;
+    assert(parse_data_probe_target("02:00:00:00:00:11,192.0.2.10,192.0.2.1", target));
+    assert(!parse_data_probe_target("02:00:00:00:00:11,192.0.2.256,192.0.2.1", target));
+    assert(!parse_data_probe_target("02:00:00:00:00:11,192.0.2.1,192.0.2.1", target));
+    assert(!parse_data_probe_target("02:00:00:00:00:11,192.0.2.10,192.0.2.1,0", target));
+    assert(target.source_ipv4 == 0xc000020a && target.peer_ipv4 == 0xc0000201);
+    for (const auto scenario :
+         {ArpCase::accepted, ArpCase::reply_first, ArpCase::wrong_peer, ArpCase::rejected_tx}) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = PeerCase::success;
+        model.auth_case = AuthCase::accepted;
+        model.assoc_case = AssocCase::accepted;
+        model.arp_case = scenario;
+        model.live_replies.resize(32 * ax::page_size);
+        ScanElementStorage elements{};
+        const ScanChecks request{{1, 2}, FirmwareCheck::data_probe, &elements, false, target};
+        const auto result = model.run(true, &request);
+        const bool success = scenario == ArpCase::accepted || scenario == ArpCase::reply_first;
+        const char* status = success ? "associated ARP exchange and deauthentication passed"
+                             : scenario == ArpCase::wrong_peer
+                                 ? "associated ARP exchange timed out"
+                                 : "firmware did not confirm ARP transmission";
+        assert(!strcmp(result.status, status) && result.successful == success);
+        assert(model.commands_sent == (success ? 25u : 18u));
+        assert(model.authentication_rx_buffers == (success ? 4u : 3u) &&
+               model.data_rx_buffers == 1);
+        assert(result.association_id == 42 && result.alive && result.dma_idle && !model.master &&
+               model.reset_after_dma);
+    }
+    std::puts("AX201_ASSOCIATED_ARP_MODEL_PASS");
 }
 
 void check_access_points() {
@@ -1513,6 +1643,7 @@ int main(int argc, char** argv) {
     check_peer_queues();
     check_authentication_exchange();
     check_association_exchange();
+    check_associated_arp();
     check_receive_recycling();
     check_access_points();
 

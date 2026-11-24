@@ -65,30 +65,31 @@ bool peer_station_added(const FirmwarePacket& packet) {
            packet.payload[0] == 1;
 }
 
-bool prepare_add_management_queue(PeerQueueMemory memory, uint8_t station,
-                                  uint8_t (&command)[scheduler_command_bytes]) {
-    if (!valid_peer_queue_memory(memory) || station >= 32)
+bool prepare_add_station_queue(PeerQueueMemory memory, uint8_t station,
+                               uint8_t (&command)[scheduler_command_bytes], uint8_t tid) {
+    if (!valid_peer_queue_memory(memory) || station >= 32 || tid > management_tid)
         return false;
     memset(command, 0, sizeof(command));
     store_le(command + 4, uint32_t(1) << station, 4);
-    command[8] = management_tid;
+    command[8] = tid;
     command[16] = 1; // log2(16) - 3.
     store_le(command + 20, memory.byte_counts, 8);
     store_le(command + 28, memory.descriptor_ring, 8);
     return true;
 }
 
-bool prepare_remove_management_queue(uint8_t station, uint8_t (&command)[scheduler_command_bytes]) {
-    if (station >= 32)
+bool prepare_remove_station_queue(uint8_t station, uint8_t (&command)[scheduler_command_bytes],
+                                  uint8_t tid) {
+    if (station >= 32 || tid > management_tid)
         return false;
     memset(command, 0, sizeof(command));
     command[0] = 1; // Remove the queue associated with this station and TID.
     store_le(command + 4, uint32_t(1) << station, 4);
-    command[8] = management_tid;
+    command[8] = tid;
     return true;
 }
 
-bool parse_management_queue(const FirmwarePacket& packet, PeerQueue& queue) {
+bool parse_station_queue(const FirmwarePacket& packet, PeerQueue& queue) {
     if (!scheduler_reply(packet) || packet.length != 8 || !packet.payload ||
         load16(packet.payload + 2))
         return false;
@@ -99,7 +100,7 @@ bool parse_management_queue(const FirmwarePacket& packet, PeerQueue& queue) {
     return true;
 }
 
-bool management_queue_removed(const FirmwarePacket& packet) {
+bool station_queue_removed(const FirmwarePacket& packet) {
     return scheduler_reply(packet) && (!packet.length || (packet.length == 8 && packet.payload &&
                                                           !load16(packet.payload + 2)));
 }

@@ -31,6 +31,8 @@ struct FirmwareBootMemory {
     const uint64_t* receive_descriptors = nullptr;
     PeerQueueMemory peer_queue{};
     AuthenticationDma authentication{};
+    PeerQueueMemory data_queue{};
+    AuthenticationDma data_transmit{};
 };
 
 enum class AlivePacket { missing, success, rejected, malformed };

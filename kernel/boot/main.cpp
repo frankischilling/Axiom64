@@ -155,14 +155,23 @@ BootInfo boot_info;
     IntelWifi::AuthenticationTarget auth_target;
     char auth_bssid[18]{};
     char assoc_bssid[18]{};
+    char data_target[50]{};
     const int auth_argument = arguments.read("iwlwifi.auth-check=", auth_bssid, sizeof(auth_bssid));
     const int assoc_argument =
         arguments.read("iwlwifi.assoc-check=", assoc_bssid, sizeof(assoc_bssid));
+    const int data_argument =
+        arguments.read("iwlwifi.data-check=", data_target, sizeof(data_target));
     const bool wants_auth = auth_argument || arguments.has("iwlwifi.auth-check");
     const bool wants_assoc = assoc_argument || arguments.has("iwlwifi.assoc-check");
+    const bool wants_data = data_argument || arguments.has("iwlwifi.data-check");
     const char* wifi_check_error = nullptr;
-    if (wants_auth && wants_assoc) {
-        wifi_check_error = "iwlwifi: select either auth-check or assoc-check\n";
+    if (wants_auth + wants_assoc + wants_data > 1) {
+        wifi_check_error = wants_data ? "iwlwifi: select only one wireless exchange check\n"
+                                      : "iwlwifi: select either auth-check or assoc-check\n";
+    } else if (wants_data) {
+        wifi_check = IntelWifi::FirmwareCheck::data_probe;
+        if (data_argument != 1 || !IntelWifi::parse_data_probe_target(data_target, auth_target))
+            wifi_check_error = "iwlwifi: data-check requires BSSID,source IPv4,peer IPv4\n";
     } else if (wants_assoc) {
         wifi_check = IntelWifi::FirmwareCheck::associate;
         if (assoc_argument != 1 ||

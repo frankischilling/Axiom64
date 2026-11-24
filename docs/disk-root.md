@@ -51,7 +51,8 @@ The installed desktop runs NetworkManager after the system D-Bus socket
 appears. Ethernet uses its internal DHCP client by default. The Plasma network
 applet reads the same D-Bus service. NetworkManager stores saved connections
 under `/etc/NetworkManager/system-connections/`. Test boots that enable
-`debug.ssh` use the [direct-cable network setup](pxe.md).
+`debug.ssh` use the older [direct-cable network setup](pxe.md). Boot without
+`debug.ssh` to use NetworkManager and open Networks in the Plasma system tray.
 
 The serial console remains available for recovery. Create the root-owned
 `/etc/axiom64/console-desktop` file and reboot to have console sign-in start

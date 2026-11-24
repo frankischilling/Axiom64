@@ -2400,5 +2400,13 @@ requests association with the advertised SSID and compatible legacy
 rates, and checks the assigned association ID. It waits for a fresh beacon
 from that access point and uses the beacon's delivery timing to put the
 firmware into the associated state. It then sends a deauthentication
-frame, clears the association, and stops the adapter. Encrypted networks
-and data transfer still need driver support.
+frame, clears the association, and stops the adapter.
+
+For a data-path check, use
+`iwlwifi.data-check=BSSID,source-ipv4,peer-ipv4` with an open test access
+point. Reserve the source address for the Blade and select a peer on the
+same IPv4 subnet. After association, the driver sends one ARP request
+through the access point and checks that the reply came from the selected
+peer. Success requires both the transmit completion and the matching ARP
+reply. The check stops the adapter afterward. Normal IP traffic and
+encrypted networks still need driver support.

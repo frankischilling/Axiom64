@@ -11,6 +11,7 @@
  */
 #include "drivers/net/intel_wifi_auth.hpp"
 #include "mm/dma.hpp"
+#include "net/ipv4_wire.hpp"
 
 namespace ax::IntelWifi {
 namespace {
@@ -18,6 +19,8 @@ constexpr unsigned header_bytes = 24, body_bytes = 6;
 constexpr unsigned first_tb_bytes = 20, second_tb_bytes = 4 + header_bytes;
 constexpr unsigned second_tb_offset = 64, third_tb_offset = 128;
 static_assert(third_tb_offset + association_body_bytes <= authentication_dma_bytes);
+constexpr uint8_t arp_snap[]{0xaa, 0xaa, 3, 0, 0, 0, 8, 6};
+constexpr uint8_t arp_header[]{0, 1, 8, 0, 6, 4};
 
 uint16_t read16(const uint8_t* data) {
     return uint16_t(data[0] | (unsigned(data[1]) << 8));
@@ -43,6 +46,27 @@ uint16_t transmit_sequence(PeerQueue queue) {
     return uint16_t(((queue.id & 31) << 8) |
                     (queue.write_pointer & (management_queue_entries - 1)));
 }
+
+bool parse_probe_ipv4(const char*& cursor, uint32_t& address) {
+    address = 0;
+    for (unsigned octet = 0; octet < 4; ++octet) {
+        unsigned value = 0, digits = 0;
+        while (*cursor >= '0' && *cursor <= '9') {
+            if (++digits > 3)
+                return false;
+            value = value * 10 + unsigned(*cursor++ - '0');
+        }
+        if (!digits || value > 255)
+            return false;
+        address = (address << 8) | value;
+        if (octet < 3) {
+            if (*cursor != '.')
+                return false;
+            ++cursor;
+        }
+    }
+    return ip4::unicast(address) && (address >> 24) != 127;
+}
 } // namespace
 
 bool parse_authentication_target(const char* text, AuthenticationTarget& target) {
@@ -59,6 +83,22 @@ bool parse_authentication_target(const char* text, AuthenticationTarget& target)
         bits |= parsed.bssid[i];
     }
     if (!bits || (parsed.bssid[0] & 1))
+        return false;
+    target = parsed;
+    return true;
+}
+
+bool parse_data_probe_target(const char* text, AuthenticationTarget& target) {
+    if (!text || strlen(text) < 33 || text[17] != ',')
+        return false;
+    char address[18]{};
+    memcpy(address, text, 17);
+    AuthenticationTarget parsed;
+    const char* cursor = text + 18;
+    if (!parse_authentication_target(address, parsed) ||
+        !parse_probe_ipv4(cursor, parsed.source_ipv4) || *cursor != ',' ||
+        !parse_probe_ipv4(++cursor, parsed.peer_ipv4) || *cursor ||
+        parsed.source_ipv4 == parsed.peer_ipv4)
         return false;
     target = parsed;
     return true;
@@ -272,41 +312,26 @@ bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, un
     return true;
 }
 
-bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
-                              const uint8_t (&station)[6], const AccessPoint& peer,
-                              ManagementFrame kind, const AssociationRequest& association) {
-    if (!valid_authentication_dma(dma) || !rate || !queue.id || queue.id >= 512)
+static bool prepare_station_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
+                                  const uint8_t (&header)[header_bytes], const uint8_t* body,
+                                  unsigned length) {
+    if (!valid_authentication_dma(dma) || !rate || !queue.id || queue.id >= 512 || !length ||
+        length > authentication_dma_bytes - third_tb_offset)
         return false;
-    constexpr uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
-    constexpr uint8_t leave_body[]{3, 0}; // Station is leaving.
-    const uint8_t* body = auth_body;
-    unsigned length = sizeof(auth_body);
-    if (kind == ManagementFrame::associate) {
-        body = association.body;
-        length = association.length;
-        if (!length || length > sizeof(association.body))
-            return false;
-    } else if (kind == ManagementFrame::leave) {
-        body = leave_body;
-        length = sizeof(leave_body);
-    }
-    memset(dma.payload, 0, authentication_dma_bytes);
+    memset(dma.payload, 0, third_tb_offset);
     const auto sequence = transmit_sequence(queue);
     dma.payload[0] = 0x1c;
     dma.payload[2] = uint8_t(sequence);
     dma.payload[3] = uint8_t(sequence >> 8);
     dma.payload[4] = uint8_t(header_bytes + length);
+    dma.payload[5] = uint8_t((header_bytes + length) >> 8);
     dma.payload[7] = header_bytes / 2; // Offload MAC header size in words.
     dma.payload[8] = 3;                // Use the command rate and disable encryption.
 
     auto* rate_field = dma.payload + second_tb_offset;
     for (unsigned i = 0; i < 4; ++i)
         rate_field[i] = uint8_t(rate >> (8 * i));
-    auto* header = rate_field + 4;
-    header[0] = uint8_t(kind);
-    memcpy(header + 4, peer.bssid, sizeof(peer.bssid));
-    memcpy(header + 10, station, sizeof(station));
-    memcpy(header + 16, peer.bssid, sizeof(peer.bssid));
+    memcpy(rate_field + 4, header, sizeof(header));
     memcpy(dma.payload + third_tb_offset, body, length);
 
     const unsigned slot = queue.write_pointer & (management_queue_entries - 1);
@@ -318,6 +343,76 @@ bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uin
     descriptor.buffers[2] = {uint16_t(length), dma.address + third_tb_offset};
     dma.byte_counts[slot] = uint16_t((header_bytes + length + 3) / 4);
     return true;
+}
+
+bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
+                              const uint8_t (&station)[6], const AccessPoint& peer,
+                              ManagementFrame kind, const AssociationRequest& association) {
+    constexpr uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
+    constexpr uint8_t leave_body[]{3, 0}; // Station is leaving.
+    const uint8_t* body = auth_body;
+    unsigned length = sizeof(auth_body);
+    if (kind == ManagementFrame::associate) {
+        body = association.body;
+        length = association.length;
+        if (length > sizeof(association.body))
+            return false;
+    } else if (kind == ManagementFrame::leave) {
+        body = leave_body;
+        length = sizeof(leave_body);
+    }
+    uint8_t header[header_bytes]{uint8_t(kind)};
+    memcpy(header + 4, peer.bssid, sizeof(peer.bssid));
+    memcpy(header + 10, station, sizeof(station));
+    memcpy(header + 16, peer.bssid, sizeof(peer.bssid));
+    return prepare_station_frame(dma, queue, rate, header, body, length);
+}
+
+bool prepare_arp_request(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
+                         const uint8_t (&station)[6], const AuthenticationTarget& target) {
+    uint8_t header[header_bytes]{0x08, 0x01}; // Data frame headed to the distribution system.
+    memcpy(header + 4, target.bssid, sizeof(target.bssid));
+    memcpy(header + 10, station, sizeof(station));
+    memset(header + 16, 0xff, 6);
+
+    uint8_t body[sizeof(arp_snap) + 28]{};
+    memcpy(body, arp_snap, sizeof(arp_snap));
+    auto* arp = body + sizeof(arp_snap);
+    memcpy(arp, arp_header, sizeof(arp_header));
+    arp[7] = 1;
+    memcpy(arp + 8, station, sizeof(station));
+    ip4::put32(arp + 14, target.source_ipv4);
+    ip4::put32(arp + 24, target.peer_ipv4);
+    return prepare_station_frame(dma, queue, rate, header, body, sizeof(body));
+}
+
+bool observe_arp_response(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                          uint8_t channel, const AuthenticationTarget& target) {
+    constexpr unsigned descriptor_bytes = 48;
+    if (packet.group || packet.opcode != 0xc1 || !(packet.sequence & 0x8000) || !packet.payload ||
+        packet.length < descriptor_bytes + header_bytes)
+        return false;
+    const auto* rx = packet.payload;
+    const auto* frame = rx + descriptor_bytes;
+    if ((rx[12] & 3) != 3 || (rx[3] & 0x40) || rx[34] != channel ||
+        (frame[0] != 0x08 && frame[0] != 0x88) || (frame[1] & 0xc7) != 2 || (frame[22] & 15) ||
+        memcmp(frame + 4, station, sizeof(station)) ||
+        memcmp(frame + 10, target.bssid, sizeof(target.bssid)))
+        return false;
+    const unsigned body_offset = header_bytes + (frame[0] == 0x88 ? 2 : 0) + (rx[3] & 0x20 ? 2 : 0);
+    const unsigned length = read16(rx);
+    if (length < body_offset + sizeof(arp_snap) + 28 || length > packet.length - descriptor_bytes ||
+        memcmp(frame + body_offset, arp_snap, sizeof(arp_snap)))
+        return false;
+    const auto* arp = frame + body_offset + sizeof(arp_snap);
+    uint8_t sender = 0;
+    for (unsigned i = 0; i < sizeof(station); ++i)
+        sender |= arp[8 + i];
+    return sender && !(arp[8] & 1) && !memcmp(arp, arp_header, sizeof(arp_header)) &&
+           ip4::get16(arp + 6) == 2 && !memcmp(arp + 8, frame + 16, sizeof(station)) &&
+           ip4::get32(arp + 14) == target.peer_ipv4 &&
+           !memcmp(arp + 18, station, sizeof(station)) &&
+           ip4::get32(arp + 24) == target.source_ipv4;
 }
 
 AuthEvent observe_authentication_tx(const FirmwarePacket& packet, PeerQueue queue) {

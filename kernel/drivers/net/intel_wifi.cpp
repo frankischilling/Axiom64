@@ -219,20 +219,15 @@ struct BootQueues {
     DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
     DmaBuffer command_payloads, receive_map;
     DmaBuffer management_ring, management_byte_counts;
+    DmaBuffer data_ring, data_byte_counts;
     DmaBuffer authentication_payload;
     unsigned receive_count = 0;
 
     void pin_until_reboot() {
-        DmaBuffer* buffers[] = {&free_ring,
-                                &used_ring,
-                                &status,
-                                &commands,
-                                &invalid_command,
-                                &context,
-                                &command_payloads,
-                                &management_ring,
-                                &management_byte_counts,
-                                &authentication_payload};
+        DmaBuffer* buffers[] = {&free_ring,        &used_ring,        &status,
+                                &commands,         &invalid_command,  &context,
+                                &command_payloads, &management_ring,  &management_byte_counts,
+                                &data_ring,        &data_byte_counts, &authentication_payload};
         for (auto* buffer : buffers)
             buffer->retain = true;
     }
@@ -353,6 +348,13 @@ FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
                                  queues.authentication_payload.data<Payload>(),
                                  queues.authentication_payload.address};
     }
+    if (check == FirmwareCheck::data_probe) {
+        using Counts = uint16_t[transmit_byte_count_bytes / sizeof(uint16_t)];
+        memory.data_queue = {queues.data_ring.address, queues.data_byte_counts.address};
+        memory.data_transmit = {queues.data_ring.data<BootQueues::ManagementDescriptors>(),
+                                queues.data_byte_counts.data<Counts>(),
+                                memory.authentication.payload, memory.authentication.address};
+    }
     return memory;
 }
 
@@ -387,6 +389,15 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     }
     if (authenticate && !queues.authentication_payload.allocate(authentication_dma_bytes)) {
         report("authentication payload allocation failed");
+        return;
+    }
+    if (check == FirmwareCheck::data_probe &&
+        (!queues.data_ring.allocate(sizeof(BootQueues::ManagementDescriptors)) ||
+         !queues.data_byte_counts.allocate(transmit_byte_count_bytes) ||
+         !initialize_transmit_ring(queues.invalid_command.address,
+                                   queues.data_ring.data<BootQueues::ManagementDescriptors>(),
+                                   management_queue_entries))) {
+        report("data queue allocation failed");
         return;
     }
     ScanElementStorage* elements = nullptr;

@@ -63,17 +63,21 @@ enum class FirmwareCheck {
     peer_queue,
     authenticate,
     associate,
+    data_probe,
     live_scan
 };
 
 inline constexpr bool management_exchange(FirmwareCheck check) {
-    return check == FirmwareCheck::authenticate || check == FirmwareCheck::associate;
+    return check == FirmwareCheck::authenticate || check == FirmwareCheck::associate ||
+           check == FirmwareCheck::data_probe;
 }
 
 struct AuthenticationTarget {
     uint8_t bssid[6]{};
+    uint32_t source_ipv4 = 0, peer_ipv4 = 0;
 };
 
 bool parse_authentication_target(const char*, AuthenticationTarget&);
+bool parse_data_probe_target(const char*, AuthenticationTarget&);
 void check_firmware(bool probe_pci, FirmwareCheck, const AuthenticationTarget& = {});
 } // namespace ax::IntelWifi

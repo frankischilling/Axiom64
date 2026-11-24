@@ -533,17 +533,65 @@ const char* exchange_management(CommandSession& commands, PeerQueue& queue, uint
                     return authentication ? "access point returned an invalid authentication reply"
                                           : "access point returned an invalid association reply";
             }
-            if (observe_session_protection(packet) == AuthEvent::ended)
+            if (!leaving && observe_session_protection(packet) == AuthEvent::ended)
                 return "session protection ended before the management exchange completed";
             done = transmitted && accepted;
             return nullptr;
         });
 }
 
+const char* exchange_arp(CommandSession& commands, PeerQueue& queue, uint32_t rate,
+                         const uint8_t (&station)[6], uint8_t channel,
+                         const AuthenticationTarget& target) {
+    const auto sent = queue;
+    if (!prepare_arp_request(commands.rx.memory.data_transmit, sent, rate, station, target))
+        return "cannot prepare the ARP request";
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    commands.reg.write(command_write_pointer,
+                       uint8_t(sent.write_pointer + 1) | (uint32_t(sent.id) << 16));
+
+    bool transmitted = false, received = false;
+    return wait_authentication(
+        commands, 900, "associated ARP exchange timed out",
+        [&](const FirmwarePacket& packet, bool& done) -> const char* {
+            const auto tx = observe_authentication_tx(packet, sent);
+            if (tx == AuthEvent::accepted) {
+                transmitted = true;
+                queue.write_pointer = uint8_t(sent.write_pointer + 1);
+            } else if (tx == AuthEvent::denied || tx == AuthEvent::malformed) {
+                return "firmware did not confirm ARP transmission";
+            }
+            received |= observe_arp_response(packet, station, channel, target);
+            done = transmitted && received;
+            return nullptr;
+        });
+}
+
+const char* check_associated_data(CommandSession& commands, uint8_t station_id,
+                                  PeerQueue management, uint32_t rate, const uint8_t (&station)[6],
+                                  uint8_t channel, const AuthenticationTarget& target) {
+    uint8_t scheduler[scheduler_command_bytes];
+    FirmwarePacket reply{};
+    PeerQueue data;
+    if (!prepare_add_station_queue(commands.rx.memory.data_queue, station_id, scheduler,
+                                   non_qos_tid) ||
+        commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
+        !parse_station_queue(reply, data) || data.id == management.id)
+        return "firmware data queue allocation failed";
+    if (const auto* error = exchange_arp(commands, data, rate, station, channel, target))
+        return error; // Reset the adapter before reusing the transmit buffer.
+    if (!prepare_remove_station_queue(station_id, scheduler, non_qos_tid) ||
+        commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
+        !station_queue_removed(reply))
+        return "firmware data queue removal failed";
+    return nullptr;
+}
+
 const char* run_management_exchange(CommandSession& commands, PeerQueue queue, uint32_t rate,
                                     const uint8_t (&station)[6], const AccessPoint& peer,
                                     const ScanChannel& channel,
-                                    const AssociationRequest& association, uint16_t& aid) {
+                                    const AssociationRequest& association, uint16_t& aid,
+                                    const AuthenticationTarget* probe) {
     if (const auto* error = start_management_session(commands))
         return error;
     if (const auto* error = exchange_management(commands, queue, rate, station, peer, channel,
@@ -569,6 +617,11 @@ const char* run_management_exchange(CommandSession& commands, PeerQueue queue, u
             prepare_associated_mac(station, peer, aid, timing, mac);
             if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
                 sync_error = "firmware rejected the associated MAC context";
+        }
+        if (probe && !sync_error) {
+            if (const auto* arp_error = check_associated_data(commands, 0, queue, rate, station,
+                                                              channel.number, *probe))
+                return arp_error;
         }
         const auto* leave_error = exchange_management(commands, queue, rate, station, peer, channel,
                                                       ManagementFrame::leave, association, aid);
@@ -627,7 +680,7 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
                                        channel->frequency_mhz >= 5000, usable_antennas.tx);
         if (!rate)
             return "no supported authentication transmit rate";
-        if (checks.check == FirmwareCheck::associate &&
+        if (checks.check != FirmwareCheck::authenticate &&
             !prepare_association_request(*peer, ies.beacon, peer->beacon_ie_bytes,
                                          channel->frequency_mhz >= 5000, association))
             return "association check requires a named open access point with supported legacy "
@@ -652,19 +705,20 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
         return "firmware rejected the unassociated peer station";
 
     uint8_t scheduler[scheduler_command_bytes];
-    if (!prepare_add_management_queue(commands.rx.memory.peer_queue, station, scheduler) ||
+    if (!prepare_add_station_queue(commands.rx.memory.peer_queue, station, scheduler) ||
         commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
-        !parse_management_queue(reply, queue))
+        !parse_station_queue(reply, queue))
         return "firmware management queue allocation failed";
     if (authenticate) {
+        const auto* probe = checks.check == FirmwareCheck::data_probe ? &checks.target : nullptr;
         if (const auto* error =
                 run_management_exchange(commands, queue, rate, scan.station_address, *peer,
-                                        *channel, association, association_id))
+                                        *channel, association, association_id, probe))
             return error;
     }
-    if (!prepare_remove_management_queue(station, scheduler) ||
+    if (!prepare_remove_station_queue(station, scheduler) ||
         commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
-        !management_queue_removed(reply))
+        !station_queue_removed(reply))
         return "firmware management queue removal failed";
 
     uint8_t remove_station[remove_peer_bytes];
@@ -749,6 +803,14 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                          memory.authentication.address == memory.peer_queue.descriptor_ring ||
                          memory.authentication.address == memory.peer_queue.byte_counts))
         return {"invalid authentication DMA addresses", false, true};
+    if (scan && scan->check == FirmwareCheck::data_probe &&
+        (!valid_peer_queue_memory(memory.data_queue) ||
+         !valid_authentication_dma(memory.data_transmit) ||
+         memory.data_transmit.ring == memory.authentication.ring ||
+         memory.data_transmit.byte_counts == memory.authentication.byte_counts ||
+         memory.data_transmit.address != memory.authentication.address ||
+         memory.data_transmit.payload != memory.authentication.payload))
+        return {"invalid data queue DMA addresses", false, true};
     if (!memory.context_address || memory.context_address != align_down(memory.context_address) ||
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
@@ -848,7 +910,9 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     else if (peer_check && !idle && !error)
         error = "peer queue check could not stop DMA";
     const char* success = "firmware ALIVE received";
-    if (scan && scan->check == FirmwareCheck::associate)
+    if (scan && scan->check == FirmwareCheck::data_probe)
+        success = "associated ARP exchange and deauthentication passed";
+    else if (scan && scan->check == FirmwareCheck::associate)
         success = "open-system association, beacon synchronization, and deauthentication passed";
     else if (authenticate)
         success = "open-system authentication exchange passed";

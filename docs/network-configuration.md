@@ -74,6 +74,12 @@ The ownership record has eight-byte magic `AXRSLV01`, little-endian total length
 
 Opening and withdrawing all contributions leaves only the generated comment. The [foreground manager](network-manager.md) coordinates publication with address/routes and hints. Bounded [DNS client acceptance](dns.md) covers UDP queries, TCP fallback, search behavior and query timeouts. The full resolver and networking release remain unfinished.
 
+An install that boots NetworkManager may still have the native service's
+`/etc/resolv.conf` link. When its runtime target is absent, the startup
+service creates a link to NetworkManager's resolver file under a directory
+that regular users can traverse. This lets applications use the DNS servers
+from the active lease.
+
 ## Verification
 
 ```sh

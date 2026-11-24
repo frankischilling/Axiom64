@@ -25,6 +25,11 @@ Tracing or attaching to a running program requires the kernel's remaining
 `ptrace` support. Try `man 2 open` or `man 1 less` to read the bundled
 Linux manual and program manuals through mandoc.
 
+The installed Plasma desktop includes PowerDevil and its **Power and Battery**
+widget. The widget uses the battery and charger data exposed by UPower on
+supported hardware. To keep it visible while charging or fully charged, set
+**Power and Battery** to **Always shown** in System Tray Settings.
+
 New accounts get an `auto-eduroam` folder with the setup helper and its
 instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.

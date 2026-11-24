@@ -132,6 +132,9 @@ BootInfo boot_info;
         poweroff(1);
     }
     vfs_init(boot_info.initramfs, boot_info.initramfs_size);
+    auto wifi_firmware = arguments.has("iwlwifi.boot-firmware") && !arguments.has("iwlwifi.disable")
+                             ? IntelWifi::read_boot_firmware()
+                             : IntelWifi::BootFirmware{};
     block_init();
     boot_root_init(arguments, init);
     const bool usb_keyboard_probe = arguments.has("usb.xhci=keyboard-probe");
@@ -215,9 +218,12 @@ BootInfo boot_info;
         log(wifi_check_error);
     else if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
              arguments.has("iwlwifi.firmware-check"))
-        IntelWifi::check_firmware(probe_wifi, wifi_check, auth_target);
+        IntelWifi::check_firmware(probe_wifi, wifi_check, auth_target, &wifi_firmware);
+    else if (wifi_firmware.bytes)
+        IntelWifi::check_firmware(false, IntelWifi::FirmwareCheck::live_scan, {}, &wifi_firmware);
     else
         IntelWifi::start_if_available();
+    release(wifi_firmware.bytes);
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

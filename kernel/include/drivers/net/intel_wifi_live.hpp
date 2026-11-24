@@ -80,6 +80,7 @@ struct StationJoin {
     bool submitted = false, acknowledged = false, indicated = false;
     bool controlled_port = false, association_sent = false, ccmp = false;
     uint16_t peer_status = 0;
+    QueueResponse queue_response{};
     uint16_t cancel_reason = 0;
     bool protection_ended = false;
     unsigned response_ie_bytes = 0;

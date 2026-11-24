@@ -1149,7 +1149,7 @@ static int partitions_snapshot(Snapshot& output) {
 }
 
 static int ax201_snapshot(Snapshot& output) {
-    constexpr size_t capacity = 512;
+    constexpr size_t capacity = 768;
     auto bytes = static_cast<char*>(alloc(capacity));
     if (!bytes)
         return -12;
@@ -1157,6 +1157,7 @@ static int ax201_snapshot(Snapshot& output) {
     Text text{bytes, 0, capacity};
     text.field("Radio live", state.live);
     text.field("Port authorized", state.authorized);
+    text.field("Recovery image ready", state.recovery_image);
     text.field("Failures", state.failures);
     text.field("Restart attempts", state.restart_attempts);
     text.field("Last join result", state.join_result);
@@ -1168,6 +1169,11 @@ static int ax201_snapshot(Snapshot& output) {
         text.character('-');
     text.number(uint64_t(result < 0 ? -result : result));
     text.character('\n');
+    text.field("Queue reply group", state.queue_response.group);
+    text.field("Queue reply opcode", state.queue_response.opcode);
+    text.field("Queue reply bytes", state.queue_response.bytes);
+    text.field("Queue ID", state.queue_response.id);
+    text.field("Queue flags", state.queue_response.flags);
     text.string("Failure: ");
     text.string(state.failure);
     text.string("\nShutdown: ");

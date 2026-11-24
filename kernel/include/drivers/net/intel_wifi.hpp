@@ -82,8 +82,22 @@ struct AuthenticationTarget {
 
 bool parse_authentication_target(const char*, AuthenticationTarget&);
 bool parse_data_probe_target(const char*, AuthenticationTarget&);
-void check_firmware(bool probe_pci, FirmwareCheck, const AuthenticationTarget& = {});
+
+struct BootFirmware {
+    uint8_t* bytes = nullptr;
+    size_t size = 0;
+};
+
+BootFirmware read_boot_firmware();
+void check_firmware(bool probe_pci, FirmwareCheck, const AuthenticationTarget& = {},
+                    BootFirmware* = nullptr);
 void start_if_available();
+
+struct QueueResponse {
+    unsigned bytes = 0;
+    uint16_t id = 0, flags = 0;
+    uint8_t group = 0, opcode = 0;
+};
 
 struct RadioStatus {
     char firmware[128] = "not started";
@@ -96,8 +110,10 @@ struct RadioStatus {
     unsigned peer_status = 0;
     unsigned fault_phase = 0;
     int fault_result = 0;
+    QueueResponse queue_response{};
     bool live = false;
     bool authorized = false;
+    bool recovery_image = false;
 };
 
 RadioStatus radio_status();

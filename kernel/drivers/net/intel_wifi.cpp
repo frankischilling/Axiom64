@@ -641,6 +641,7 @@ void report_join_outcome(const NetAdapter& device, const LiveScanSession& sessio
     const auto& join = session.join;
     diagnostic.join_result = unsigned(outcome);
     diagnostic.peer_status = join.peer_status;
+    diagnostic.queue_response = join.queue_response;
     if (join.cancel_reason) {
         wireless_connection_finished(device.info.index, join.peer.bssid, 1, true, {}, {});
         return;
@@ -894,6 +895,7 @@ RadioStatus radio_status() {
     RadioStatus status = diagnostic;
     status.live = radio != nullptr;
     status.authorized = radio && radio->session.station.port_authorized;
+    status.recovery_image = live_firmware != nullptr;
     return status;
 }
 
@@ -1065,36 +1067,55 @@ bool identify_firmware_device(bool start) {
     return probe == Probe::identified;
 }
 
-void load_firmware(Node* file, FirmwareCheck check, const AuthenticationTarget& target) {
+BootFirmware read_firmware_file(Node* file) {
     if (!file || (file->mode & 0170000) != regular_file || !file->size ||
         file->size > max_firmware_bytes) {
         log("iwlwifi: firmware missing or invalid: %s\n", firmware_file);
         report("firmware file missing or invalid");
-        return;
+        return {};
     }
     const size_t size = file->size;
     auto* bytes = static_cast<uint8_t*>(alloc(size));
     if (!bytes) {
         log("iwlwifi: firmware allocation failed\n");
         report("firmware allocation failed");
-        return;
+        return {};
     }
-    if (node_read(file, 0, bytes, size) == int64_t(size)) {
-        stage_firmware(bytes, size, check, target);
-        if (radio && check == FirmwareCheck::live_scan && !live_firmware) {
-            live_firmware = bytes;
-            live_firmware_size = size;
-            return;
-        }
-    } else {
-        log("iwlwifi: firmware read failed\n");
-        report("firmware read failed");
-    }
+    if (node_read(file, 0, bytes, size) == int64_t(size))
+        return {bytes, size};
+    log("iwlwifi: firmware read failed\n");
+    report("firmware read failed");
     release(bytes);
+    return {};
+}
+
+void stage_loaded_firmware(BootFirmware& firmware, FirmwareCheck check,
+                           const AuthenticationTarget& target) {
+    stage_firmware(firmware.bytes, firmware.size, check, target);
+    if (radio && check == FirmwareCheck::live_scan && !live_firmware) {
+        live_firmware = firmware.bytes;
+        live_firmware_size = firmware.size;
+        firmware = {};
+    }
+}
+
+void load_firmware(Node* file, FirmwareCheck check, const AuthenticationTarget& target) {
+    auto firmware = read_firmware_file(file);
+    if (firmware.bytes)
+        stage_loaded_firmware(firmware, check, target);
+    release(firmware.bytes);
 }
 } // namespace
 
-void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTarget& target) {
+BootFirmware read_boot_firmware() {
+    const auto firmware = read_firmware_file(lookup(firmware_file));
+    if (firmware.bytes)
+        log("iwlwifi: firmware copied from boot archive bytes=%u\n", uint64_t(firmware.size));
+    return firmware;
+}
+
+void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTarget& target,
+                    BootFirmware* boot) {
     const bool start = check != FirmwareCheck::stage;
     if ((probe_pci || start) && !identify_firmware_device(start)) {
         const char* status =
@@ -1103,7 +1124,12 @@ void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTar
         report(status);
         return;
     }
-    load_firmware(lookup(firmware_file), check, target);
+    if (boot && boot->bytes) {
+        log("iwlwifi: using boot archive firmware\n");
+        stage_loaded_firmware(*boot, check, target);
+    } else {
+        load_firmware(lookup(firmware_file), check, target);
+    }
 }
 
 void start_if_available() {

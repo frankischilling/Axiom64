@@ -1703,6 +1703,9 @@ void check_live_connection() {
         while (now < 1500 && session.join.phase != JoinPhase::idle &&
                outcome == JoinOutcome::pending)
             outcome = poll_live_join(session, now++);
+        const auto& reply = session.join.queue_response;
+        assert(reply.group == 5 && reply.opcode == 0x17 && reply.bytes == 8 && !reply.flags);
+        assert(reply.id == (outcome == JoinOutcome::connected ? 0x102 : 0x101));
         const bool sent =
             authentication == AuthCase::accepted || authentication == AuthCase::reply_first;
         assert(session.join.association_sent == sent);

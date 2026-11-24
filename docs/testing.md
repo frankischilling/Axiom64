@@ -2520,5 +2520,11 @@ cannot be confirmed, the old buffers stay reserved until reboot.
 
 If Wi-Fi disappears, run `cat /proc/axiom64_ax201` on the affected boot.
 This read-only report shows whether the radio is live, its last association
-result and access point status code, and which step stopped firmware recovery.
+result and access point status code, the firmware's queue response, and which
+step stopped firmware recovery.
 The report is available from a local terminal when the wired link is down.
+
+A PXE archive can supply the firmware to an installed root. Include the
+firmware at its usual path in the archive and pass `iwlwifi.boot-firmware`.
+After the radio starts, the driver keeps that image for recovery. The status
+report shows whether the image is ready.

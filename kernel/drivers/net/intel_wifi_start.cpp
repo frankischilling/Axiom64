@@ -1419,6 +1419,19 @@ JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket&
         return join.indicated ? JoinProgress::ready : JoinProgress::waiting;
     }
     if (packet.sequence == join.command_sequence) {
+        const bool queue_phase =
+            join.phase == JoinPhase::management_queue || join.phase == JoinPhase::data_queue;
+        const bool scheduler = packet.group == 5 && packet.opcode == 0x17;
+        const bool command_error = packet.group == 0 && packet.opcode == 2;
+        if (queue_phase && (scheduler || command_error)) {
+            auto& response = join.queue_response;
+            response = {
+                .bytes = unsigned(packet.length), .group = packet.group, .opcode = packet.opcode};
+            if (scheduler && packet.payload && packet.length >= 4) {
+                response.id = uint16_t(packet.payload[0] | (unsigned(packet.payload[1]) << 8));
+                response.flags = uint16_t(packet.payload[2] | (unsigned(packet.payload[3]) << 8));
+            }
+        }
         if (packet.group == 0 && packet.opcode == 2)
             return JoinProgress::rejected;
         join.acknowledged |= packet.group == join.group && packet.opcode == join.opcode;

@@ -42,6 +42,7 @@ build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp
 	kernel/tests/drivers/net/intel_wifi_codecs.cpp \
 	kernel/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_context.cpp \
 	kernel/drivers/net/intel_wifi_start.cpp kernel/drivers/net/intel_wifi_command.cpp \
+	kernel/drivers/net/intel_wifi_station.cpp kernel/drivers/net/intel_wifi_station.hpp \
 	kernel/drivers/net/intel_wifi_rx.cpp kernel/include/drivers/net/intel_wifi_rx.hpp \
 	kernel/include/drivers/net/intel_wifi_live.hpp \
 	kernel/drivers/net/intel_wifi_scan.cpp kernel/include/drivers/net/intel_wifi_scan.hpp \

@@ -408,7 +408,7 @@ struct StationKeyFixture {
     CommandPayloads payloads{};
     uint8_t pages[8][ax::page_size]{};
     unsigned next_page = 0, commands = 0, completions = 0, received = 0;
-    bool scan_abort = false;
+    bool scan_abort = false, station_scan = false;
     enum class Reply { acknowledge, reject, withhold } reply = Reply::acknowledge;
     const FirmwareBootMemory memory{0, &status, used, descriptors, &payloads, 0x200000};
     const FirmwareBootIo io{
@@ -420,6 +420,12 @@ struct StationKeyFixture {
                 return;
             assert(offset == 0x460 && value == ++self.commands);
             const auto& data = self.payloads[value - 1];
+            if (self.station_scan && data[0] == 0xd) {
+                assert(value == 1 && data[1] == 1);
+                constexpr uint8_t timing[]{120, 0, 0, 0, 120, 0, 0, 0, 120, 0, 0, 0, 120, 0, 0, 0};
+                assert(!memcmp(data + 8 + 8 + 12, timing, sizeof(timing)));
+                return;
+            }
             if (self.scan_abort) {
                 constexpr uint8_t command[]{0xe, 1, 1, 0, 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0};
                 assert(value == 2 && !memcmp(command, data, sizeof(command)));
@@ -507,6 +513,75 @@ void check_station_signal() {
     assert(poll_live_station(session, 30, nullptr, nullptr, nullptr));
     assert(station.peer.signal_dbm == -79);
     std::puts("AX201_STATION_SIGNAL_MODEL_PASS");
+}
+
+void check_connected_scan() {
+    constexpr uint8_t peer[6]{2, 0, 0, 0, 0, 1};
+    constexpr uint8_t client[6]{2, 0, 0, 0, 0, 2};
+    for (const bool leave : {false, true}) {
+        StationKeyFixture model;
+        model.station_scan = model.scan_abort = true;
+        LiveScanSession session(model.io, model.memory);
+        session.running = true;
+        session.next_scan_id = 1;
+        session.channels.entries[0] = {2412, 1, true, false, false, true};
+        session.channels.count = 1;
+        auto& station = session.station;
+        station.queue.id = station.channel = 1;
+        memcpy(station.peer.bssid, peer, sizeof(peer));
+        memcpy(session.station_address, client, sizeof(client));
+        session.receive.post_initial();
+        ScanElementStorage elements{};
+        station.port_authorized = false;
+        assert(submit_live_scan(session, elements, 1) == -16 && !model.commands);
+        station.port_authorized = true;
+        station.beacon_deadline = 2;
+        station.pending_bytes = 15;
+        station.transmit_deadline = 6000;
+        assert(submit_live_scan(session, elements, 3) == 0 && model.commands == 1);
+        model.packet(0xd, 1, 0, 0);
+        assert(poll_live_station(session, 4, nullptr, nullptr, nullptr));
+        auto* tx = model.packet(0x1c, 0, 0x100, 48);
+        tx[0] = tx[36] = tx[40] = tx[44] = 1;
+        auto* rx = model.packet(0xc1, 0, 0x8000, 48 + 24 + 9);
+        rx[0] = 24 + 9;
+        rx[12] = 3;
+        rx[34] = 1;
+        auto* frame = rx + 48;
+        frame[0] = 8;
+        frame[1] = 2;
+        memcpy(frame + 4, client, sizeof(client));
+        memcpy(frame + 10, peer, sizeof(peer));
+        memcpy(frame + 16, peer, sizeof(peer));
+        constexpr uint8_t body[]{0xaa, 0xaa, 3, 0, 0, 0, 8, 0, 0x71};
+        memcpy(frame + 24, body, sizeof(body));
+        const auto receive = [](void* context, const uint8_t* packet, size_t length) {
+            assert(length == 15 && packet[12] == 8 && packet[13] == 0 && packet[14] == 0x71);
+            ++static_cast<StationKeyFixture*>(context)->received;
+        };
+        const auto complete = [](void* context, size_t length, bool failed) {
+            assert(length == 15 && !failed);
+            ++static_cast<StationKeyFixture*>(context)->completions;
+        };
+        assert(poll_live_station(session, 4000, &model, receive, complete));
+        assert(model.received == 1 && model.completions == 1 && !station.pending_bytes);
+        assert(session.leave.phase == LeavePhase::idle && session.active);
+        assert(poll_live_scan(session, 17000) == ScanOutcome::pending);
+        if (leave) {
+            assert(submit_live_leave(session, 3) == 0);
+            assert(poll_live_scan(session, 17001) == ScanOutcome::pending && model.commands == 2);
+            model.packet(0xe, 1, 1, 4);
+        }
+        auto* done = model.packet(0xf, 0, 0x8000, 16);
+        done[0] = 1;
+        done[6] = leave ? 2 : 1;
+        assert(poll_live_station(session, 17002, &model, receive, complete));
+        assert(poll_live_scan(session, 17002) ==
+               (leave ? ScanOutcome::aborted : ScanOutcome::complete));
+        assert(!session.active && !station.beacon_deadline && station.queue.id == 1);
+        assert(session.leave.phase == (leave ? LeavePhase::drain : LeavePhase::idle));
+    }
+    std::puts("AX201_CONNECTED_SCAN_MODEL_PASS");
 }
 
 void check_scan_abort() {
@@ -641,6 +716,7 @@ void check_intel_wifi_station_keys() {
 void check_intel_wifi_scan_channels() {
     check_scan_abort();
     check_station_signal();
+    check_connected_scan();
     NvmInfo nvm{};
     nvm.bands = 3;
     RegulatoryProfile profile{};
@@ -730,5 +806,15 @@ void check_intel_wifi_access_points() {
     for (uint8_t address = 2; address <= 32; ++address)
         observe(false, 6, 6, address, 80, {'Z'});
     assert(scan.access_point_count == 32 && scan.access_points_truncated);
+    ScanElementStorage retained_elements{};
+    PassiveScan replacement{};
+    replacement.elements = &retained_elements;
+    auto peer = point;
+    peer.signal_dbm = -59;
+    retain_associated_access_point(replacement, scan, peer);
+    retain_associated_access_point(replacement, scan, peer);
+    assert(replacement.access_point_count == 1 && replacement.access_points[0].signal_dbm == -59 &&
+           !memcmp(retained_elements.records[0].probe, probe, sizeof(probe)) &&
+           !memcmp(retained_elements.records[0].beacon, later_beacon, sizeof(later_beacon)));
     std::puts("AX201_ACCESS_POINT_MODEL_PASS");
 }

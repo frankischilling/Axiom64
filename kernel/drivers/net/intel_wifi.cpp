@@ -550,6 +550,7 @@ void configure_runtime(NetAdapter& device) {
 void stop_runtime(NetAdapter& device) {
     if (!radio)
         return;
+    const bool aborted_scan = radio->session.active;
     if (const auto pending = radio->session.station.pending_bytes)
         net_tx_complete(device, pending, true);
     const bool idle = stop_live_quz(radio->session);
@@ -561,6 +562,8 @@ void stop_runtime(NetAdapter& device) {
     device.info.live = false;
     device.info.carrier = false;
     device.info.writable = false;
+    if (aborted_scan)
+        wireless_scan_finished(device.info.index, false);
 }
 
 int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
@@ -594,10 +597,13 @@ void report_join_outcome(const NetAdapter& device, const LiveScanSession& sessio
 void poll_runtime(NetAdapter& device) {
     if (!radio || radio->polling)
         return;
-    if (radio->session.leave.phase != LeavePhase::idle) {
+    const bool leaving = radio->session.leave.phase != LeavePhase::idle;
+    if (leaving) {
         if (device.info.carrier)
             ++completed_generation;
         device.info.carrier = device.info.writable = false;
+    }
+    if (leaving && !radio->session.active) {
         const auto reason = radio->session.leave.reason;
         const auto from_ap = radio->session.leave.from_ap;
         const auto join_result = radio->session.leave.join_result;
@@ -644,7 +650,7 @@ void poll_runtime(NetAdapter& device) {
             },
             [](void* target, size_t length, bool failed) {
                 auto& adapter = *static_cast<NetAdapter*>(target);
-                adapter.info.writable = true;
+                adapter.info.writable = adapter.info.carrier;
                 net_tx_complete(adapter, length, failed);
             });
         radio->polling = false;
@@ -653,8 +659,10 @@ void poll_runtime(NetAdapter& device) {
             stop_runtime(device);
             ++completed_generation;
             wireless_disconnected(device.info.index);
+            return;
         }
-        return;
+        if (!radio->session.active)
+            return;
     }
     const bool active = radio->session.active;
     const auto outcome = poll_live_scan(radio->session, clock_monotonic_ns() / 1000000);
@@ -662,6 +670,9 @@ void poll_runtime(NetAdapter& device) {
         return;
     const bool complete = outcome == ScanOutcome::complete;
     if (complete) {
+        if (radio->session.station.queue.id && radio->session.leave.phase == LeavePhase::idle)
+            retain_associated_access_point(radio->session.scan, completed_scan,
+                                           radio->session.station.peer);
         release(completed_scan.elements);
         completed_scan = radio->session.scan;
         radio->pending = nullptr;
@@ -672,12 +683,19 @@ void poll_runtime(NetAdapter& device) {
     }
     radio->session.scan.elements = nullptr;
     // A timeout or bad receive state leaves command and DMA ownership uncertain.
-    if (!complete && outcome != ScanOutcome::rejected && outcome != ScanOutcome::aborted) {
+    const bool failed =
+        !complete && outcome != ScanOutcome::rejected && outcome != ScanOutcome::aborted;
+    const bool lost_station = failed && radio->session.station.queue.id;
+    if (failed) {
         log("iwlwifi: stopping live scan after firmware error %u\n", uint64_t(outcome));
         stop_runtime(device);
     }
     if (active)
         wireless_scan_finished(device.info.index, complete);
+    if (lost_station) {
+        ++completed_generation;
+        wireless_disconnected(device.info.index);
+    }
 }
 
 void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
@@ -808,9 +826,11 @@ uint32_t passive_scan_generation() {
 }
 
 bool live_scan_available() {
-    return radio && !radio->session.station.queue.id &&
-           radio->session.join.phase == JoinPhase::idle &&
-           radio->session.leave.phase == LeavePhase::idle;
+    if (!radio || radio->session.join.phase != JoinPhase::idle ||
+        radio->session.leave.phase != LeavePhase::idle)
+        return false;
+    const auto& station = radio->session.station;
+    return !station.key_busy && (!station.queue.id || station.port_authorized);
 }
 
 bool live_connect_available() {

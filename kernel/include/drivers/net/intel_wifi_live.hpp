@@ -150,6 +150,7 @@ FirmwareBootResult start_live_quz(LiveScanSession&, const AntennaMasks&,
 bool stop_live_quz(LiveScanSession&);
 int submit_live_scan(LiveScanSession&, ScanElementStorage&, uint64_t now_ms,
                      const ScanRequest& = {});
+// With a connected station, poll_live_station supplies the shared receive packets first.
 ScanOutcome poll_live_scan(LiveScanSession&, uint64_t now_ms);
 int submit_live_join(LiveScanSession&, const PassiveScan&, const StationRequest&);
 JoinOutcome poll_live_join(LiveScanSession&, uint64_t now_ms);

@@ -10,7 +10,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_live.hpp"
+#include "intel_wifi_station.hpp"
 #include "drivers/net/intel_wifi_channel.hpp"
 #include "drivers/net/intel_wifi_key.hpp"
 #include "mm/dma.hpp"
@@ -1120,10 +1120,11 @@ bool stop_live_quz(LiveScanSession& session) {
 static int submit_scan_phase(LiveScanSession& session, CommandSession& commands, uint64_t now_ms,
                              uint64_t channels, const ScanSsids& ssids) {
     uint8_t request[scan_request_bytes];
+    const bool associated = session.station.queue.id;
     if (!prepare_scan_phase(session.channels, session.scan, request, session.next_scan_id, channels,
-                            ssids))
+                            ssids, associated))
         return -22;
-    session.exchange.restart(session.next_command, now_ms);
+    session.exchange.restart(session.next_command, now_ms, associated);
     if (!commands.submit(1, 0xd, request, sizeof(request)))
         return -5;
     session.active = true;
@@ -1135,8 +1136,9 @@ int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uin
                      const ScanRequest& request) {
     if (!session.running)
         return -95;
-    if (session.active || session.station.queue.id || session.join.phase != JoinPhase::idle ||
-        session.leave.phase != LeavePhase::idle)
+    if (session.active || session.station.key_busy ||
+        (session.station.queue.id && !session.station.port_authorized) ||
+        session.join.phase != JoinPhase::idle || session.leave.phase != LeavePhase::idle)
         return -16;
 
     uint64_t allowed = 0, active = 0;
@@ -1168,20 +1170,24 @@ ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
         return ScanOutcome::receive_failed;
     const Registers reg{session.io};
     CommandSession commands{reg, session.receive, session.next_command};
+    const bool associated = session.station.queue.id;
     if (!session.active)
-        return commands.poll_idle() ? ScanOutcome::pending : ScanOutcome::receive_failed;
-    commands.poll_scan(session.exchange, now_ms);
-    const auto outcome = session.exchange.outcome();
-    if (outcome == ScanOutcome::pending) {
-        if (session.exchange.abort_ready()) {
-            uint8_t wire[scan_abort_bytes];
-            prepare_scan_abort(session.scan.id, wire);
-            session.exchange.abort_submitted(commands.index, now_ms);
-            if (!commands.submit(1, 0xe, wire, sizeof(wire)))
-                return ScanOutcome::receive_failed;
-        }
-        return outcome;
+        return associated || commands.poll_idle() ? ScanOutcome::pending
+                                                  : ScanOutcome::receive_failed;
+    if (associated)
+        session.exchange.expire(now_ms);
+    else
+        commands.poll_scan(session.exchange, now_ms);
+    if (session.exchange.abort_ready()) {
+        uint8_t wire[scan_abort_bytes];
+        prepare_scan_abort(session.scan.id, wire);
+        session.exchange.abort_submitted(commands.index, now_ms);
+        if (!commands.submit(1, 0xe, wire, sizeof(wire)))
+            session.exchange.receive_failed();
     }
+    const auto outcome = session.exchange.outcome();
+    if (outcome == ScanOutcome::pending)
+        return outcome;
     session.active = false;
     const uint64_t passive = session.passive_channels;
     session.passive_channels = 0;
@@ -1190,6 +1196,8 @@ ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
             return ScanOutcome::receive_failed;
         return ScanOutcome::pending;
     }
+    if (associated)
+        session.station.beacon_deadline = 0; // Resume the watchdog on the serving channel.
     return outcome;
 }
 
@@ -1548,6 +1556,8 @@ int submit_live_leave(LiveScanSession& session, uint16_t reason) {
     }
     if (!session.station.queue.id)
         return 0;
+    if (session.active)
+        session.exchange.request_abort();
     session.leave = {LeavePhase::drain, reason};
     return 0;
 }
@@ -1748,17 +1758,6 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
     return now_ms < leave.deadline ? LeaveOutcome::pending : LeaveOutcome::failed;
 }
 
-namespace {
-bool is_eapol(const uint8_t* frame, size_t length) {
-    return frame && length >= 14 && frame[12] == 0x88 && frame[13] == 0x8e;
-}
-
-bool allows_station_data(const LiveStation& station, const uint8_t* frame, size_t length) {
-    return (station.port_authorized && (!station.ccmp || station.keys.pairwise.installed)) ||
-           is_eapol(frame, length);
-}
-} // namespace
-
 int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t length,
                      uint64_t now_ms) {
     auto& station = session.station;
@@ -1784,61 +1783,6 @@ int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t leng
     return 0;
 }
 
-namespace {
-struct StationEvents {
-    void* context;
-    void (*receive)(void*, const uint8_t*, size_t);
-    void (*complete)(void*, size_t, bool);
-};
-
-uint64_t station_beacon_timeout(const LiveStation& station) {
-    return max(3000u, 8u * station.peer.beacon_interval_tu * 1024 / 1000);
-}
-
-void leave_after_link_loss(LiveScanSession& session, uint16_t reason, bool from_ap) {
-    session.leave = {LeavePhase::drain, reason};
-    session.leave.send_deauthentication = false;
-    session.leave.from_ap = from_ap;
-}
-
-bool observe_station_packet(LiveScanSession& session, const FirmwarePacket& packet, uint64_t now_ms,
-                            const StationEvents& events) {
-    auto& station = session.station;
-    if (station.pending_bytes) {
-        const auto tx = observe_authentication_tx(packet, station.queue);
-        if (tx == AuthEvent::malformed)
-            return false;
-        if (tx == AuthEvent::accepted || tx == AuthEvent::denied) {
-            const auto bytes = station.pending_bytes;
-            station.pending_bytes = 0;
-            ++station.queue.write_pointer;
-            events.complete(events.context, bytes, tx == AuthEvent::denied);
-        }
-    }
-    if (session.leave.phase != LeavePhase::idle)
-        return true;
-    uint16_t reason;
-    if (observe_station_disconnect(packet, session.station_address, station.peer, station.channel,
-                                   reason)) {
-        leave_after_link_loss(session, reason, true);
-        return true;
-    }
-    AssociationTiming timing;
-    if (observe_association_beacon(packet, station.peer, station.channel, timing)) {
-        station.beacon_deadline = now_ms + station_beacon_timeout(station);
-        if (timing.signal_dbm != scan_signal_unavailable)
-            station.peer.signal_dbm = timing.signal_dbm;
-    }
-    uint8_t frame[station_frame_bytes];
-    if (const auto bytes =
-            receive_station_data(packet, session.station_address, station.peer.bssid,
-                                 station.channel, frame, station.ccmp ? &station.keys : nullptr);
-        bytes && allows_station_data(station, frame, bytes))
-        events.receive(events.context, frame, bytes);
-    return true;
-}
-} // namespace
-
 bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
                        void (*receive)(void*, const uint8_t*, size_t),
                        void (*complete)(void*, size_t, bool)) {
@@ -1860,12 +1804,12 @@ bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
             break;
         if (!observe_station_packet(session, packet, now_ms, {context, receive, complete}))
             return false;
-        if (session.leave.phase != LeavePhase::idle)
+        if (session.leave.phase != LeavePhase::idle && !session.active)
             return true;
     }
     if (station.pending_bytes && now_ms >= station.transmit_deadline)
         return false;
-    if (now_ms >= station.beacon_deadline)
+    if (!session.active && now_ms >= station.beacon_deadline)
         leave_after_link_loss(session, 0, false);
     return true;
 }

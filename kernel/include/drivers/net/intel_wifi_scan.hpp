@@ -92,7 +92,8 @@ struct PassiveScan {
 };
 
 bool prepare_scan_phase(const ScanChannelList&, PassiveScan&, uint8_t (&wire)[scan_request_bytes],
-                        uint32_t id, uint64_t channels, const ScanSsids&);
+                        uint32_t id, uint64_t channels, const ScanSsids&, bool associated = false);
+void retain_associated_access_point(PassiveScan&, const PassiveScan&, const AccessPoint&);
 constexpr size_t scan_abort_bytes = 8;
 void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]);
 void observe_passive_scan(PassiveScan&, const FirmwarePacket&);
@@ -116,7 +117,7 @@ class PassiveScanExchange {
     uint16_t sequence, abort_sequence = 0;
     uint64_t phase_start;
     ScanOutcome result = ScanOutcome::pending;
-    bool accepted = false;
+    bool accepted = false, associated = false;
     Abort abort = Abort::none;
 
   public:
@@ -128,7 +129,7 @@ class PassiveScanExchange {
         return result;
     }
 
-    void restart(uint16_t new_sequence, uint64_t now_ms);
+    void restart(uint16_t new_sequence, uint64_t now_ms, bool has_station = false);
     void request_abort();
     bool abort_ready() const;
     void abort_submitted(uint16_t command_sequence, uint64_t now_ms);

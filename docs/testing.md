@@ -2374,6 +2374,12 @@ Use `NL80211_CMD_ABORT_SCAN` to cancel an active scan. Wait for
 Taking `wlan0` down also cancels an active scan and leaves the network if
 connected. Bring the interface up again to scan once cleanup finishes.
 
+An authorized connection can scan while staying associated. Firmware returns
+to the serving channel between excursions. The driver continues handling
+data and transmit completions, and it keeps the connected access point in the
+result list if the scan did not hear it. Disconnect waits for the active scan
+to end before releasing the station.
+
 Use `--active` for a broadcast probe test. Live requests may include up to
 20 SSID entries. A zero-length entry
 requests broadcast discovery, and a named entry requests a directed

@@ -1489,7 +1489,6 @@ void check_open_station() {
         assert(result.successful && !result.dma_idle && result.association_id == 42 &&
                model.master);
         assert(session.running && session.station.queue.id == 0x102 && model.commands_sent == 19);
-        assert(submit_live_scan(session, elements, 20) == -16);
         assert(submit_live_data(session, arp, 8, 20) == -22);
         assert(submit_live_data(session, arp, sizeof(arp), 20) == 0);
         assert(submit_live_data(session, arp, sizeof(arp), 21) == -11);

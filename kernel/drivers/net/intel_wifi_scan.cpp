@@ -286,7 +286,7 @@ ScanChannelList scan_channel_list(const NvmInfo& nvm, const RegulatoryProfile& p
 
 bool prepare_scan_phase(const ScanChannelList& list, PassiveScan& scan,
                         uint8_t (&request)[scan_request_bytes], uint32_t id, uint64_t channels,
-                        const ScanSsids& ssids) {
+                        const ScanSsids& ssids, bool associated) {
     if (ssids.count > scan_ssid_limit)
         return false;
     for (unsigned i = 0; i < ssids.count; ++i)
@@ -319,6 +319,13 @@ bool prepare_scan_phase(const ScanChannelList& list, PassiveScan& scan,
     general[1] = uint8_t(scan_flags >> 8);
     general[28] = 6;
     general[32] = general[33] = 110; // Passive dwell in TU.
+    if (associated) {
+        // The UMAC mild-scan budget returns to the serving channel between excursions.
+        for (unsigned lmac = 0; lmac < 2; ++lmac) {
+            write32(general + 12 + lmac * 4, 120); // Max time away, in TU.
+            write32(general + 20 + lmac * 4, 120); // Time to suspend the scan, in TU.
+        }
+    }
     request[channel_params + 1] = scan.channel_count;
     request[schedule + 2] = 1;
     if (probe_mask) {
@@ -326,6 +333,32 @@ bool prepare_scan_phase(const ScanChannelList& list, PassiveScan& scan,
         prepare_probe(request + probe_params, scan.station_address, ssids);
     }
     return true;
+}
+
+void retain_associated_access_point(PassiveScan& scan, const PassiveScan& previous,
+                                    const AccessPoint& peer) {
+    if (!scan.elements || !previous.elements)
+        return;
+    const auto matches = [&](const AccessPoint& item) {
+        return item.frequency_mhz == peer.frequency_mhz &&
+               !memcmp(item.bssid, peer.bssid, sizeof(peer.bssid)) &&
+               item.ssid_length == peer.ssid_length &&
+               !memcmp(item.ssid, peer.ssid, peer.ssid_length);
+    };
+    for (unsigned i = 0; i < scan.access_point_count; ++i)
+        if (matches(scan.access_points[i]))
+            return;
+    for (unsigned i = 0; i < previous.access_point_count; ++i) {
+        if (!matches(previous.access_points[i]))
+            continue;
+        const bool full = scan.access_point_count == scan_access_point_limit;
+        const unsigned next = full ? scan_access_point_limit - 1 : scan.access_point_count++;
+        scan.access_points_truncated |= full;
+        scan.access_points[next] = previous.access_points[i];
+        scan.access_points[next].signal_dbm = peer.signal_dbm;
+        scan.elements->records[next] = previous.elements->records[i];
+        return;
+    }
 }
 
 void observe_passive_scan(PassiveScan& scan, const FirmwarePacket& packet) {
@@ -358,11 +391,12 @@ void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]) {
     write32(wire, id);
 }
 
-void PassiveScanExchange::restart(uint16_t new_sequence, uint64_t now_ms) {
+void PassiveScanExchange::restart(uint16_t new_sequence, uint64_t now_ms, bool has_station) {
     sequence = new_sequence;
     phase_start = now_ms;
     result = ScanOutcome::pending;
     accepted = false;
+    associated = has_station;
     abort = Abort::none;
 }
 
@@ -382,7 +416,8 @@ void PassiveScanExchange::abort_submitted(uint16_t command_sequence, uint64_t no
 }
 
 void PassiveScanExchange::expire(uint64_t now_ms) {
-    const unsigned timeout_ms = accepted && abort < Abort::submitted ? 12000 : 2000;
+    const unsigned completion_ms = associated ? 20000 : 12000;
+    const unsigned timeout_ms = accepted && abort < Abort::submitted ? completion_ms : 2000;
     if (result == ScanOutcome::pending && now_ms - phase_start >= timeout_ms)
         result = accepted ? ScanOutcome::completion_timeout : ScanOutcome::reply_timeout;
 }

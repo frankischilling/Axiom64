@@ -108,6 +108,7 @@ void inet_consume(InetSocket* socket) {
 }
 
 void inet_dispose(InetSocket* socket) {
+    socket->datagram_filter.detach();
     InetUdpCork::discard(socket->cork);
     inet_multicast_close(socket);
     ipv4_detach_owner(socket);
@@ -347,11 +348,23 @@ bool inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* data, size_t 
     return delivered;
 }
 
-bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_port,
-                           uint16_t destination_port, bool broadcast, const void* data,
-                           size_t length) {
+static void enqueue_udp(InetSocket& socket, const Ipv4ReceiveMetadata& metadata,
+                        uint16_t source_port, unsigned packet_type, const uint8_t* segment,
+                        size_t length) {
+    // The filter sees the UDP header. The queue stores only the datagram body.
+    size_t snapshot =
+        socket.datagram_filter.snapshot({segment, length, 0x0800, packet_type, metadata.index});
+    if (snapshot)
+        enqueue(socket, metadata, source_port, segment + 8, max(snapshot, size_t(8)) - 8);
+}
+
+bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, bool broadcast,
+                           const uint8_t* segment, size_t length) {
     unsigned index = metadata.index;
     uint32_t source = metadata.source, destination = metadata.destination;
+    const uint16_t source_port = ip4::get16(segment), destination_port = ip4::get16(segment + 2);
+    const bool multicast = ip4::multicast(destination);
+    const unsigned packet_type = broadcast ? 1 : multicast ? 2 : 0;
     InetSocket* best = nullptr;
     unsigned best_score = 0;
     bool matched = false;
@@ -362,12 +375,11 @@ bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_
             (socket.peer && socket.peer != source) ||
             (socket.peer_port && __builtin_bswap16(socket.peer_port) != source_port))
             continue;
-        bool multicast = ip4::multicast(destination);
         if (multicast && !inet_multicast_accepts(&socket, index, destination, source))
             continue;
         matched = true;
         if (broadcast || multicast) {
-            enqueue(socket, metadata, source_port, data, length);
+            enqueue_udp(socket, metadata, source_port, packet_type, segment, length);
             continue;
         }
         unsigned score = (socket.local ? 4 : 0) + (socket.peer ? 4 : 0) +
@@ -378,7 +390,7 @@ bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_
         }
     }
     if (best)
-        enqueue(*best, metadata, source_port, data, length);
+        enqueue_udp(*best, metadata, source_port, packet_type, segment, length);
     return matched;
 }
 
@@ -760,6 +772,10 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                 tcp_limits(socket);
             return 0;
         }
+        if (b == 1 && c == 26 && inet_udp(socket))
+            return socket->datagram_filter.attach(task, d, frame.r8);
+        if (b == 1 && c == 27 && inet_udp(socket))
+            return socket->datagram_filter.detach();
         if (b == 1 && c == 25) { // SO_BINDTODEVICE
             if (frame.r8 > 16)
                 return -22;

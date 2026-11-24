@@ -44,6 +44,7 @@ struct Address {
     bool loopback() const;
 
     bool link_local() const;
+    bool interface_scoped() const;
 
     bool mapped() const;
 

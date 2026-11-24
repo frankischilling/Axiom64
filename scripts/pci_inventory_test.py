@@ -91,6 +91,21 @@ case "$($bb cat /etc/pci-test-layout)" in
             ! (printf fake > "$1")
         ' sh "$gpu/config"
         $bb printf 'PCI_INVENTORY_DUAL_GRAPHICS %s %s\\n' "$vga" "$gpu"
+
+        ethernet=/sys/class/net/eth0
+        nic=$($bb readlink -f "$ethernet/device")
+        slot=$($bb basename "$nic")
+        case "$nic" in
+            /sys/devices/pci0000:00/0000:00:07.0/"$slot") ;;
+            *) exit 1;;
+        esac
+        check_device "$base/$slot"
+        test "$($bb readlink -f "$base/$slot")" = "$nic"
+        test "$($bb cat "$nic/class")" = 0x020000
+        test "$($bb readlink -f "$nic/driver")" = /sys/bus/pci/drivers/e1000
+        $bb grep -qx "PCI_SLOT_NAME=$slot" "$nic/uevent"
+        $bb grep -qx 'INTERFACE=eth0' "$ethernet/uevent"
+        $bb printf 'PCI_INVENTORY_ETHERNET %s\\n' "$slot"
         ;;
 esac
 trap - EXIT
@@ -133,9 +148,14 @@ def check(directory, firmware, layout, installed=False):
     else:
         bridge = ("pci-bridge,chassis_nr=1" if firmware == "bios"
                   else "pcie-root-port,port=1,chassis=1,slot=1")
+        ethernet_bridge = ("pci-bridge,chassis_nr=2" if firmware == "bios"
+                           else "pcie-root-port,port=2,chassis=2,slot=2")
         command += ["-vga", "none", "-device", "VGA,addr=0x05",
                     "-device", f"{bridge},id=graphics-port,addr=0x06",
-                    "-device", "virtio-gpu-pci,bus=graphics-port,addr=0"]
+                    "-device", "virtio-gpu-pci,bus=graphics-port,addr=0",
+                    "-device", f"{ethernet_bridge},id=ethernet-port,addr=0x07",
+                    "-netdev", "user,id=isolated,restrict=on",
+                    "-device", "e1000,bus=ethernet-port,addr=0,netdev=isolated"]
     if firmware == "uefi":
         variables = directory / "OVMF_VARS.fd"
         shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
@@ -149,7 +169,9 @@ def check(directory, firmware, layout, installed=False):
     lines = text.splitlines()
     if (result.returncode != 1 or not markers.issubset(lines)
             or (installed and not any(line.startswith("VFS_ROOT_PASS filesystem=ext2 ") for line in lines))
-            or (layout == "dual" and not any(line.startswith("PCI_INVENTORY_DUAL_GRAPHICS ") for line in lines))
+            or (layout == "dual" and not all(
+                any(line.startswith(marker) for line in lines)
+                for marker in ("PCI_INVENTORY_DUAL_GRAPHICS ", "PCI_INVENTORY_ETHERNET ")))
             or "PCI_INVENTORY_TEST_FAIL" in lines
             or "incomplete)" in text or "PANIC:" in text):
         raise RuntimeError(f"PCI inventory failed for {directory.name}. See {log}")

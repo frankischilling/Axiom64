@@ -116,7 +116,8 @@ void inet6_complete(Inet6Socket* socket, size_t bytes, int error) {
 }
 
 Inet6Address inet6_peer(Inet6Socket* socket) {
-    return {10, socket->peer_port, 0, socket->peer, socket->peer.link_local() ? socket->index : 0};
+    return {10, socket->peer_port, 0, socket->peer,
+            socket->peer.interface_scoped() ? socket->index : 0};
 }
 
 int inet6_target(Inet6Socket* socket, Inet6Address& address, bool& named,
@@ -266,8 +267,8 @@ size_t inet6_send_prefix(Inet6Socket* socket) {
 
 Inet6SendControl inet6_send_defaults(const Inet6Socket* socket, const Inet6Address& address) {
     return {socket->local,
-            address.address.link_local() && address.scope ? address.scope : socket->index,
-            socket->hops,
+            address.address.interface_scoped() && address.scope ? address.scope : socket->index,
+            address.address.multicast() ? int16_t(socket->multicast_hops) : socket->hops,
             socket->traffic_class,
             socket->dont_fragment,
             false,

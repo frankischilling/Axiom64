@@ -126,7 +126,7 @@ int ipv4_administrative_changed(unsigned) {
 void ipv4_receive(const NetInfo&, const void*, size_t) {
 }
 
-int ipv4_route_control(const Ipv4Route&, bool, bool) {
+int ipv4_route_control(const Ipv4Route&, bool, bool, bool) {
     return -95;
 }
 
@@ -354,6 +354,60 @@ static void dad() {
     net_poll();
     assert(!ipv6_owned(1, local, true));
     assert((ipv6_address(1)->flags & 0x48) == 0x48);
+}
+
+static void address_notifications() {
+    struct Notification {
+        uint16_t type;
+        uint32_t flags;
+        Ipv6AddressCacheInfo lifetime;
+    };
+
+    static std::vector<Notification> received;
+    reset();
+    ipv6_observe_addresses([](const Ipv6Address& entry, const Ipv6AddressCacheInfo& cache,
+                              bool removed) {
+        uint8_t bytes[72];
+        assert(netlink_format_ipv6_address_event(entry, cache, removed, bytes, sizeof(bytes)) ==
+               sizeof(bytes));
+        NetlinkHeader header;
+        uint32_t index, flags;
+        Ipv6AddressCacheInfo lifetime;
+        memcpy(&header, bytes, sizeof(header));
+        memcpy(&index, bytes + 20, sizeof(index));
+        memcpy(&flags, bytes + 48, sizeof(flags));
+        memcpy(&lifetime, bytes + 56, sizeof(lifetime));
+        assert(!header.flags && !header.sequence && !header.port && header.length == sizeof(bytes));
+        assert(bytes[16] == 10 && bytes[17] == 64 && bytes[18] == uint8_t(flags) && !bytes[19]);
+        assert(index == 1 && !memcmp(bytes + 28, entry.address.bytes, 16));
+        received.push_back({header.type, flags, lifetime});
+    });
+    const Ipv6Address local{address(0, 2), 1, 0x200, 64};
+    assert(!ipv6_address_add(local, {2, 4}) && received.empty());
+    net_poll();
+    ticks = 100;
+    net_poll();
+    assert(received.empty());
+    ticks = 101;
+    net_poll();
+    assert(received.size() == 1 && received[0].type == 20 && received[0].flags == 0x200);
+    assert(received[0].lifetime.preferred == 1 && received[0].lifetime.valid == 3);
+    ticks = 200;
+    net_poll();
+    net_poll();
+    assert(received.size() == 2 && received[1].type == 20 && received[1].flags == 0x220);
+    assert(!ipv6_address_add(local, {1, 2}, true));
+    assert(received.size() == 3 && received[2].type == 20 && received[2].flags == 0x200);
+    ticks = 400;
+    net_poll();
+    assert(received.size() == 4 && received[3].type == 21 && !received[3].lifetime.valid);
+    assert(!ipv6_address_add({local.address, 1, 0x202, 64}));
+    assert(received.size() == 5 && received[4].type == 20 && received[4].flags == 0x282);
+    assert(!ipv6_address_remove(1, local.address));
+    assert(received.size() == 6 && received[5].type == 21 &&
+           received[5].lifetime.valid == UINT32_MAX);
+    ipv6_observe_addresses(nullptr);
+    received.clear();
 }
 
 int ipv6_fixture::route(const Ipv6Route& value, bool remove, bool privileged, unsigned flags) {
@@ -619,6 +673,80 @@ static void direct_neighbor_replies() {
     assert(last(0, 136).header.destination == address(0, 1));
 }
 
+static void route_append() {
+    reset();
+    const auto local = address(0, 2);
+    assert(!change(1, local));
+    const Ipv6Route first{{}, address(0, 1, true), 1, 100, 0, 9};
+    auto second = first;
+    second.gateway = address(0, 3, true);
+    constexpr unsigned append = 0xc05;
+    assert(route(first, false, true, 0x805) == -95);
+    assert(!route(first, false, true, append) && route(first, false, true, append) == -17);
+    assert(route(second, false) == -17);
+    assert(!route(second, false, true, append));
+    auto duplicate = second;
+    duplicate.protocol = 3;
+    assert(route(duplicate, false, true, append) == -17);
+
+    Ipv6Path path;
+    const auto remote = address(2, 1);
+    assert(!ipv6_path(local, remote, 0, path) && path.next_hop == first.gateway);
+    assert(!route(first, true));
+    assert(!ipv6_path(local, remote, 0, path) && path.next_hop == second.gateway);
+}
+
+static void scoped_multicast_output() {
+    reset();
+    auto local = address(1, 3, true);
+    assert(!change(2, local));
+    assert(!change(1, address(0, 2, true)));
+    ip6::Address group{};
+    group.bytes[0] = 0xff;
+    group.bytes[1] = 2;
+    group.bytes[15] = 2;
+    auto socket = inet6_allocate(3);
+    assert(socket);
+    const Inet6Address destination{10, 0, 0, group, 2};
+    const uint8_t solicitation[8] = {133};
+    const uint8_t multicast_mac[6] = {0x33, 0x33, 0, 0, 0, 2};
+    auto verify = [&](unsigned expected, const Inet6SendControl* selected) {
+        const auto count = emitted[1].size();
+        assert(inet6_send(socket, destination, solicitation, sizeof(solicitation), true,
+                          selected) == sizeof(solicitation));
+        ipv6_poll();
+        assert(emitted[0].empty() && emitted[1].size() == count + 1);
+        auto packet = last(1, 133);
+        assert(packet.header.source == local && packet.header.destination == group &&
+               packet.header.hop_limit == expected &&
+               !memcmp(emitted[1].back().data(), multicast_mac, sizeof(multicast_mac)) &&
+               !ip6::checksum(local, group, 58, packet.payload, packet.length));
+    };
+
+    socket->hops = 41;
+    verify(1, nullptr);
+    socket->multicast_hops = 255;
+    verify(255, nullptr);
+
+    struct {
+        uint64_t length;
+        uint32_t level, type;
+        int value;
+    } message{20, 41, 52, 37};
+
+    Inet6SendControl control;
+    assert(!inet6_parse_send_control(socket, destination,
+                                     reinterpret_cast<const uint8_t*>(&message), sizeof(message),
+                                     control, true));
+    verify(37, &control);
+    message.value = -1;
+    assert(!inet6_parse_send_control(socket, destination,
+                                     reinterpret_cast<const uint8_t*>(&message), sizeof(message),
+                                     control, true));
+    verify(255, &control);
+    inet6_close(socket);
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -658,7 +786,10 @@ int main() {
         assert(net_configure(n + 1, true, 1500) == 0);
     }
     ipv6_output_owner_tests(reset);
+    route_append();
+    scoped_multicast_output();
     dad();
+    address_notifications();
     echo_and_ownership();
     routed_reply_hops();
     routes_and_deadlines();

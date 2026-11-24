@@ -55,10 +55,8 @@ UdpInput udp_receive(const Ipv4ReceiveMetadata& metadata, bool broadcast, const 
     if (declared < 8 || declared > length ||
         (ip4::get16(bytes + 6) && checksum(metadata.source, metadata.destination, bytes, declared)))
         return UdpInput::dropped;
-    return inet_datagram_deliver(metadata, ip4::get16(bytes), ip4::get16(bytes + 2), broadcast,
-                                 bytes + 8, declared - 8)
-               ? UdpInput::delivered
-               : UdpInput::unbound;
+    return inet_datagram_deliver(metadata, broadcast, bytes, declared) ? UdpInput::delivered
+                                                                       : UdpInput::unbound;
 }
 
 int udp_send(InetSocket* owner, const UdpOutput& output, const void* data, size_t length) {

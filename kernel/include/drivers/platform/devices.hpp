@@ -45,7 +45,10 @@ enum class Device {
     parallel,
     dsp,
     alsa_control,
-    alsa_playback
+    alsa_playback,
+    touchpad,
+    input_uevent,
+    network_uevent
 };
 
 struct Terminal {
@@ -71,6 +74,8 @@ struct Pty {
 };
 
 void devices_init(bool display_console, bool virtio_graphics);
+void inventory_device_added(Node*, bool synthetic);
+const ControlFileOps* inventory_uevent_control(Node*);
 
 uint64_t device_number(Node*);
 

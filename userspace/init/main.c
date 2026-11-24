@@ -40,8 +40,17 @@
 
 static const char debug_network[] = "/etc/axiom64-debug-network";
 static const char debug_ssh_config[] = "/etc/ssh/sshd_config.debug";
+static const char desktop_network[] = "/usr/libexec/axiom64-networkmanager";
+static const char input_daemon[] = "/sbin/udevd";
+static const char input_coldplug[] = "/usr/libexec/axiom64-input-coldplug";
+static const char input_ready[] = "/run/axiom64-input-ready";
+
+static pid_t start_service(const char* path, int own_session);
 
 static pid_t network(int debug) {
+    if (!debug && access(desktop_network, X_OK) == 0)
+        return start_service(desktop_network, 0);
+
     pid_t child = fork();
     if (!child) {
         int input = open("/dev/null", O_RDONLY);
@@ -135,6 +144,21 @@ static int enabled(const char* name) {
     return value && !strcmp(value, "1");
 }
 
+static int retry_due(const struct timespec* now, const struct timespec* retry) {
+    return now->tv_sec > retry->tv_sec ||
+           (now->tv_sec == retry->tv_sec && now->tv_nsec >= retry->tv_nsec);
+}
+
+static int publish_input_ready(void) {
+    int ready = open(input_ready, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0444);
+    if (ready < 0) {
+        perror("init: input readiness");
+        return 0;
+    }
+    close(ready);
+    return 1;
+}
+
 static unsigned long long milliseconds(const struct timespec* now) {
     return (unsigned long long)now->tv_sec * 1000 + (unsigned long long)now->tv_nsec / 1000000;
 }
@@ -194,6 +218,14 @@ int main(void) {
         const int bus_installed = access(bus_path, X_OK) == 0;
         struct timespec bus_retry = retry;
         pid_t bus = bus_installed ? start_service(bus_path, 0) : -1;
+        const int input_installed = access(input_daemon, X_OK) == 0 &&
+                                    access(input_coldplug, X_OK) == 0 &&
+                                    access("/sys/class/input", X_OK) == 0;
+        struct timespec input_retry = retry;
+        pid_t udev = -1, coldplug = -1;
+        int coldplugged = 0;
+        if (input_installed)
+            unlink(input_ready);
         const int text_console = enabled("AXIOM64_TEXT_CONSOLE");
         const char* display_path = "/usr/libexec/axiom64-display-manager";
         const int use_display_manager = !text_console && access(display_path, X_OK) == 0 &&
@@ -254,6 +286,15 @@ int main(void) {
                 if (monotonic(&bus_retry) < 0)
                     return 1;
                 bus_retry.tv_sec++;
+            } else if (child > 0 && child == udev) {
+                fprintf(stderr, "Input device manager exited status=%d. Retrying.\n", status);
+                unlink(input_ready);
+                udev = -1;
+                coldplugged = 0;
+            } else if (child > 0 && child == coldplug) {
+                coldplug = -1;
+                if (udev > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0)
+                    coldplugged = publish_input_ready();
             } else if (child > 0 && child == display) {
                 if (kill(-display, SIGKILL) < 0 && errno != ESRCH)
                     perror("init: display manager cleanup");
@@ -274,8 +315,7 @@ int main(void) {
                 perror("init: authenticated console recovery");
                 return 1;
             }
-            if (manager < 0 && (now.tv_sec > retry.tv_sec ||
-                                (now.tv_sec == retry.tv_sec && now.tv_nsec >= retry.tv_nsec))) {
+            if (manager < 0 && retry_due(&now, &retry)) {
                 manager = network(debug);
                 if (manager < 0)
                     perror("init: network manager fork");
@@ -284,30 +324,30 @@ int main(void) {
                 retry = now;
                 retry.tv_sec++;
             }
-            if (!seeded && seeder < 0 &&
-                (now.tv_sec > seed_retry.tv_sec ||
-                 (now.tv_sec == seed_retry.tv_sec && now.tv_nsec >= seed_retry.tv_nsec))) {
+            if (!seeded && seeder < 0 && retry_due(&now, &seed_retry)) {
                 seeder = seed_service(&now);
                 seed_retry = now;
                 seed_retry.tv_sec++;
             }
-            if (bus_installed && bus < 0 &&
-                (now.tv_sec > bus_retry.tv_sec ||
-                 (now.tv_sec == bus_retry.tv_sec && now.tv_nsec >= bus_retry.tv_nsec))) {
+            if (bus_installed && bus < 0 && retry_due(&now, &bus_retry)) {
                 bus = start_service(bus_path, 0);
                 bus_retry = now;
                 bus_retry.tv_sec++;
             }
-            if (use_display_manager && display < 0 &&
-                (now.tv_sec > display_retry.tv_sec ||
-                 (now.tv_sec == display_retry.tv_sec && now.tv_nsec >= display_retry.tv_nsec))) {
+            if (input_installed && coldplug < 0 && !coldplugged && retry_due(&now, &input_retry)) {
+                if (udev < 0)
+                    udev = start_service(input_daemon, 0);
+                if (udev > 0)
+                    coldplug = start_service(input_coldplug, 0);
+                input_retry = now;
+                input_retry.tv_sec++;
+            }
+            if (use_display_manager && display < 0 && retry_due(&now, &display_retry)) {
                 display = start_service(display_path, 1);
                 display_retry = now;
                 display_retry.tv_sec += 5;
             }
-            if (ssh_enabled && seeded && ssh < 0 &&
-                (now.tv_sec > ssh_retry.tv_sec ||
-                 (now.tv_sec == ssh_retry.tv_sec && now.tv_nsec >= ssh_retry.tv_nsec))) {
+            if (ssh_enabled && seeded && ssh < 0 && retry_due(&now, &ssh_retry)) {
                 if (debug_ssh_configured())
                     ssh = start_debug_ssh();
                 ssh_retry = now;

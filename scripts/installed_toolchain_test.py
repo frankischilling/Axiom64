@@ -18,13 +18,17 @@ SAMPLES = ("Makefile", "arithmetic.asm", "broken.c", "hello.c", "hello.cpp",
            "library.cpp", "shared.cpp", "threads.cpp", "installed-build-tools.sh")
 
 
-def verify(disk, output, firmware, samples):
+def verify(disk, output, firmware, samples, networkmanager):
     log = output / f"{firmware}.log"
     command = ["qemu-system-x86_64", "-machine", "q35", "-m", "2048",
                "-display", "none", "-monitor", "none", "-serial", "stdio",
-               "-nic", "none", "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
+               "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
                "-drive", f"if=none,id=root,format=raw,file={disk},snapshot=on",
                "-device", "nvme,drive=root,serial=AXDEVTOOLS,bootindex=0"]
+    if networkmanager:
+        command += ["-netdev", "user,id=lab,restrict=on", "-device", "e1000,netdev=lab"]
+    else:
+        command += ["-nic", "none"]
     command += (["-accel", "kvm", "-cpu", "host"] if os.access("/dev/kvm", os.R_OK | os.W_OK)
                 else ["-cpu", "max"])
     add_firmware(command, output, firmware)
@@ -78,6 +82,13 @@ def verify(disk, output, firmware, samples):
             run("test -r \"$HOME/auto-eduroam/LICENSE\" && "
                 "test -r \"$HOME/auto-eduroam/README.md\" && "
                 "\"$HOME/auto-eduroam/connect-eduroam.sh\" --help && connect-eduroam --help", 13)
+            if networkmanager:
+                run("nmcli --version && "
+                    "nmcli -g IP4.ADDRESS device show eth0 | grep -Fx '10.0.2.15/24'", 14)
+                run("/sbin/wpa_supplicant -v | grep -F 'wpa_supplicant v' && "
+                    "test -r /usr/lib/NetworkManager/*/libnm-device-plugin-wifi.so && "
+                    "test -r /usr/share/plasma/plasmoids/org.kde.plasma.networkmanagement/metadata.json",
+                    15)
             send("sudo /bin/busybox poweroff -f")
             wait(b"Password: ")
             send(password)
@@ -100,6 +111,8 @@ def verify(disk, output, firmware, samples):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/installed-toolchain-test")
+    parser.add_argument("--networkmanager", action="store_true",
+                        help="check NetworkManager DHCP, nmcli, and the packaged Wi-Fi stack")
     args = parser.parse_args()
     result = args.output.resolve()
     result.mkdir(parents=True, exist_ok=False)
@@ -111,7 +124,7 @@ def main():
     build_medium("disk", disk, kernel, archive, " console.text", installed=True)
     record = dict(kernel_sha256=digest(kernel), archive_sha256=digest(archive), boots=[])
     for firmware in ("bios", "uefi"):
-        record["boots"].append(verify(disk, result, firmware, samples))
+        record["boots"].append(verify(disk, result, firmware, samples, args.networkmanager))
         (result / "results.json").write_text(json.dumps(record, indent=2) + "\n")
 
 

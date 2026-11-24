@@ -55,6 +55,15 @@ const Ipv4Address* AddressBook::at(unsigned position) const {
     return position < count ? &entries[position].value : nullptr;
 }
 
+const Ipv4Address* AddressBook::find(unsigned index, uint32_t address, uint32_t mask) const {
+    for (unsigned n = 0; n < count; ++n) {
+        const auto& entry = entries[n].value;
+        if (entry.index == index && entry.config.address == address && entry.config.mask == mask)
+            return &entry;
+    }
+    return nullptr;
+}
+
 const Ipv4Address* AddressBook::label(unsigned index, const char* name, uint32_t hint) const {
     const Ipv4Address* first = nullptr;
     for (unsigned n = 0; n < count; n++) {

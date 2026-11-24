@@ -26,7 +26,7 @@
 #include <stdint.h>
 
 namespace ax::Clock {
-// Converts a free-running 64-bit counter into 10 ms units without losing fractions.
+// Scales a free-running 64-bit counter without losing fractions between samples.
 class Counter {
   public:
     bool reset(uint64_t initial, uint64_t numerator, uint64_t denominator);
@@ -45,6 +45,8 @@ struct ClockTimezone {
 extern uint64_t ticks;
 void clock_init(uint64_t rsdp, bool prefer_pm_timer);
 bool clock_shared_counter_ready();
+uint64_t clock_monotonic_ns();
+uint64_t clock_monotonic_resolution_ns();
 void clock_realtime_init();
 uint64_t clock_realtime_ticks();
 ClockTimezone clock_timezone();

@@ -250,10 +250,12 @@ void prepare_associated_mac(const uint8_t (&station)[6], const AccessPoint& peer
 }
 
 bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, unsigned bytes,
-                                 bool high_band, AssociationRequest& request) {
+                                 bool high_band, AssociationRequest& request, const uint8_t* extra,
+                                 unsigned extra_bytes) {
     request.length = 0;
     if ((peer.capability & 0x13) != 1 || !peer.ssid_length ||
-        peer.ssid_length > sizeof(peer.ssid) || !ies)
+        peer.ssid_length > sizeof(peer.ssid) || !ies || extra_bytes > association_extra_limit ||
+        (extra_bytes && !extra))
         return false;
 
     const unsigned first_rate = high_band ? scan_cck_rate_count : 0;
@@ -313,7 +315,9 @@ bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, un
         memcpy(body + end, supported + initial, count - initial);
         end += count - initial;
     }
-    request.length = end;
+    if (extra_bytes)
+        memcpy(body + end, extra, extra_bytes);
+    request.length = end + extra_bytes;
     return true;
 }
 

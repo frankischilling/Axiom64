@@ -13,9 +13,11 @@
 namespace ax {
 struct NetlinkHeader;
 inline constexpr uint16_t nl80211_family = 17;
+inline constexpr uint16_t nl80211_max_attribute = 315; // NL80211_ATTR_MLO_SUPPORT
 inline constexpr uint8_t nl80211_get_wiphy = 1, nl80211_get_interface = 5, nl80211_get_scan = 32;
 inline constexpr uint8_t nl80211_trigger_scan = 33;
 inline constexpr uint8_t nl80211_connect = 46, nl80211_disconnect = 48;
+inline constexpr uint8_t nl80211_set_station = 18;
 inline constexpr unsigned nl80211_scan_group = 17, nl80211_mlme_group = 18;
 
 struct WirelessDump {
@@ -38,5 +40,6 @@ void wireless_scan_finished(unsigned ifindex, bool complete);
 void wireless_connection_finished(unsigned ifindex, const uint8_t (&bssid)[6], bool success,
                                   bool timeout);
 void wireless_disconnected(unsigned ifindex, uint16_t reason = 1);
+void wireless_socket_closed(unsigned port);
 void netlink_broadcast_wireless(unsigned group, const void*, size_t);
 } // namespace ax

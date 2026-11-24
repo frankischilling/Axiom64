@@ -296,6 +296,7 @@ struct StartupFixture {
     AssocCase assoc_case = AssocCase::unused;
     ArpCase arp_case = ArpCase::unused;
     bool open_station = false;
+    bool extra_association_elements = false;
     uint16_t disconnect_reason = 0;
     unsigned rejoin_command_offset = 0, rejoin_rx_offset = 0;
     CommandDescriptor management_ring[management_queue_entries]{};
@@ -487,14 +488,15 @@ struct StartupFixture {
         const auto slot = 4 + step;
         const auto& descriptor = management_ring[slot];
         const uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
-        const uint8_t assoc_body[]{1,  0,  1,  0,  0,  3,  'l', 'a', 'b', 1,  8,  2,  4,
-                                   11, 22, 12, 18, 24, 36, 50,  4,   48,  72, 96, 108};
+        const uint8_t assoc_body[]{1,  0,  1,  0,  0, 3,  'l', 'a', 'b', 1,  8, 2,  4,  11,  22, 12,
+                                   18, 24, 36, 50, 4, 48, 72,  96,  108, 59, 2, 81, 81, 127, 1,  0};
         const auto reason = disconnect_reason ? disconnect_reason : 3;
         const uint8_t leave_body[]{uint8_t(reason), uint8_t(reason >> 8)};
         const uint8_t* body = step == 0 ? auth_body : step == 1 ? assoc_body : leave_body;
-        const uint16_t length = step == 0   ? sizeof(auth_body)
-                                : step == 1 ? sizeof(assoc_body)
-                                            : sizeof(leave_body);
+        const uint16_t length = step == 0 ? sizeof(auth_body)
+                                : step == 1
+                                    ? sizeof(assoc_body) - (extra_association_elements ? 0 : 7)
+                                    : sizeof(leave_body);
         assert(descriptor.buffer_count == 3 && management_counts[slot] == (24 + length + 3) / 4);
         const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {length, 0x52080}};
         assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
@@ -1701,6 +1703,11 @@ void check_live_connection() {
         request.bssid[5] = 0x12;
         assert(submit_live_join(session, session.scan, request) == -2);
         request.bssid[5] = 0x11;
+        request.controlled_port = true;
+        const uint8_t extra[]{59, 2, 81, 81, 127, 1, 0};
+        memcpy(request.extra, extra, sizeof(extra));
+        request.extra_bytes = sizeof(extra);
+        model.extra_association_elements = true;
         assert(submit_live_join(session, session.scan, request) == 0);
         assert(submit_live_leave(session, 3) == -16);
         assert(submit_live_scan(session, scan, 2) == -16 && model.commands_sent == 8);
@@ -1713,6 +1720,11 @@ void check_live_connection() {
             assert(outcome == JoinOutcome::connected && model.commands_sent == 19);
             assert(session.station.queue.id == 0x102 && session.station.channel == 1);
             assert(session.station.next_sequence == 2 && session.join.aid == 42);
+            assert(!session.station.port_authorized);
+            uint8_t packet[14]{};
+            packet[12] = 8;
+            assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
+            session.station.port_authorized = true;
             assert(submit_live_join(session, session.scan, request) == -106);
             check_live_departure(model, session, scan, request, pending);
         } else {

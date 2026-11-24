@@ -139,7 +139,9 @@ bool live_scan_available();
 int trigger_live_scan(const ScanRequest&);
 struct StationRequest;
 bool live_connect_available();
-int request_live_connection(const StationRequest&);
-int request_live_disconnect(uint16_t reason);
+int request_live_connection(const StationRequest&, unsigned owner);
+int request_live_disconnect(uint16_t reason, unsigned sender);
+void close_connection_owner(unsigned port);
+int authorize_live_station(const uint8_t (&peer)[6], bool authorized);
 bool live_bss_associated(const AccessPoint&);
 } // namespace ax::IntelWifi

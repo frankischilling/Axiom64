@@ -523,6 +523,8 @@ struct RuntimeRadio {
     ScanElementStorage* pending = nullptr;
     bool polling = false;
     bool connectable = false;
+    unsigned owner_port = 0;
+    bool leave_after_join = false;
 
     ~RuntimeRadio() {
         release(pending);
@@ -577,7 +579,8 @@ void poll_runtime(NetAdapter& device) {
         if (result == LeaveOutcome::failed) {
             log("iwlwifi: stopping radio after incomplete station teardown\n");
             stop_runtime(device);
-        }
+        } else
+            radio->owner_port = 0;
         wireless_disconnected(device.info.index, reason);
         return;
     }
@@ -586,6 +589,14 @@ void poll_runtime(NetAdapter& device) {
         if (result == JoinOutcome::pending)
             return;
         const bool connected = result == JoinOutcome::connected;
+        if (radio->leave_after_join) {
+            radio->leave_after_join = false;
+            if (connected)
+                submit_live_leave(radio->session, 3);
+            else
+                stop_runtime(device);
+            return;
+        }
         if (connected) {
             device.info.carrier = device.info.writable = true;
             ++completed_generation;
@@ -771,18 +782,45 @@ bool live_connect_available() {
     return radio && radio->connectable;
 }
 
-int request_live_connection(const StationRequest& request) {
+int request_live_connection(const StationRequest& request, unsigned owner) {
     if (!live_connect_available())
         return -95;
     if (!scanned_adapter.info.administrative)
         return -100;
-    return submit_live_join(radio->session, completed_scan, request);
+    const int status = submit_live_join(radio->session, completed_scan, request);
+    if (!status)
+        radio->owner_port = owner;
+    return status;
 }
 
-int request_live_disconnect(uint16_t reason) {
+int request_live_disconnect(uint16_t reason, unsigned sender) {
     if (!live_connect_available())
         return -95;
+    if (radio->owner_port && sender != radio->owner_port)
+        return -1;
     return submit_live_leave(radio->session, reason);
+}
+
+void close_connection_owner(unsigned port) {
+    if (!port || !radio || radio->owner_port != port)
+        return;
+    radio->owner_port = 0;
+    if (radio->session.join.phase != JoinPhase::idle)
+        radio->leave_after_join = true;
+    else
+        submit_live_leave(radio->session, 3);
+}
+
+int authorize_live_station(const uint8_t (&peer)[6], bool authorized) {
+    if (!live_connect_available())
+        return -95;
+    auto& session = radio->session;
+    if (!session.station.queue.id || memcmp(session.station.peer.bssid, peer, sizeof(peer)))
+        return -2;
+    if (session.leave.phase != LeavePhase::idle)
+        return -16;
+    session.station.port_authorized = authorized;
+    return 0;
 }
 
 bool live_bss_associated(const AccessPoint& point) {

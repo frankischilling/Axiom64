@@ -15,7 +15,9 @@ inline constexpr unsigned session_protection_bytes = 24;
 inline constexpr unsigned station_frame_bytes = 1518;
 inline constexpr unsigned authentication_dma_bytes = 128 + 8 + station_frame_bytes - 14;
 // Capability, listen interval, SSID, and up to twelve rates in two elements.
-inline constexpr unsigned association_body_bytes = 4 + 2 + 32 + 2 + 12 + 2;
+inline constexpr unsigned association_extra_limit = 64;
+inline constexpr unsigned association_body_bytes =
+    4 + 2 + 32 + 2 + 12 + 2 + association_extra_limit;
 
 struct AssociationRequest {
     uint8_t body[association_body_bytes]{};
@@ -51,7 +53,8 @@ bool observe_association_beacon(const FirmwarePacket&, const AccessPoint&, uint8
 void prepare_associated_mac(const uint8_t (&station)[6], const AccessPoint&, uint16_t aid,
                             const AssociationTiming&, uint8_t (&wire)[mac_context_bytes]);
 bool prepare_association_request(const AccessPoint&, const uint8_t* ies, unsigned bytes,
-                                 bool high_band, AssociationRequest&);
+                                 bool high_band, AssociationRequest&,
+                                 const uint8_t* extra = nullptr, unsigned extra_bytes = 0);
 bool prepare_management_frame(const AuthenticationDma&, PeerQueue, uint32_t,
                               const uint8_t (&station)[6], const AccessPoint&, ManagementFrame,
                               const AssociationRequest&, uint16_t sequence, uint16_t reason = 3);

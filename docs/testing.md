@@ -2418,8 +2418,8 @@ To keep an association open for IP tests, boot with
 usual IP client, such as `udhcpc -i wlan0` on a network with DHCP. Watch
 link state with `ip link show wlan0`. The driver lowers carrier when the
 access point disconnects, beacons stop, or a transmit completion times
-out. The radio stops on link loss. Reconnection, encrypted networks, and
-connection setup through NetworkManager still need driver support.
+out. The radio stops on link loss. Use live-scan mode for connections
+managed by userspace.
 
 With `iwlwifi.live-scan`, bring `wlan0` up and complete a scan before
 sending an `nl80211` connect request for an open network. The request
@@ -2428,6 +2428,13 @@ frequency. The acknowledgment means the driver accepted the request.
 The result arrives separately in the `mlme` multicast group after the
 firmware exchange. Carrier comes up after a successful result. A failed
 exchange stops the radio so the firmware can release its DMA buffers.
+
+The open-network path accepts association requests from wpa_supplicant.
+It can prefer a BSSID or frequency and include operating classes or
+extended capabilities in the request. When userspace asks to control the
+port, the driver passes only EAPOL frames until the supplicant authorizes
+the associated peer. Closing the socket that owns a connection ends it.
+Secured associations and encryption keys still need driver support.
 
 Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
 disconnect event on the `mlme` group before scanning or connecting again.

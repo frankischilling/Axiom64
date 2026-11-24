@@ -122,7 +122,7 @@ void number(uint8_t*& tail, uint16_t type, uint32_t value) {
 size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t port, bool dump,
                        uint16_t family) {
     // A control dump can carry both descriptions in the same datagram.
-    static_assert((20 + 44 + 24 + 28) + (20 + 44 + 124 + 52) <= generic_family_reply_size);
+    static_assert((20 + 44 + 24 + 28) + (20 + 44 + 144 + 52) <= generic_family_reply_size);
     auto tail = output + sizeof(NetlinkHeader);
     const GenericHeader header{new_family, 2, 0};
     memcpy(tail, &header, sizeof(header));
@@ -135,16 +135,17 @@ size_t describe_family(uint8_t* output, const NetlinkHeader& request, uint32_t p
     else
         attribute(tail, family_name, control_name, sizeof(control_name));
     attribute(tail, family_id, &family, sizeof(family));
-    number(tail, 3, wireless ? 1 : 2);   // Family version.
-    number(tail, 4, 0);                  // No family-specific header.
-    number(tail, 5, wireless ? 174 : 0); // NL80211_ATTR_SPLIT_WIPHY_DUMP.
+    number(tail, 3, wireless ? 1 : 2); // Family version.
+    number(tail, 4, 0);                // No family-specific header.
+    number(tail, 5, wireless ? nl80211_max_attribute : 0);
 
     const uint8_t commands[]{nl80211_get_wiphy,
                              nl80211_get_interface,
                              nl80211_get_scan,
                              uint8_t(trigger ? nl80211_trigger_scan : 0),
                              uint8_t(connect ? nl80211_connect : 0),
-                             uint8_t(connect ? nl80211_disconnect : 0)};
+                             uint8_t(connect ? nl80211_disconnect : 0),
+                             uint8_t(connect ? nl80211_set_station : 0)};
     uint8_t operations[20 * sizeof(commands)];
     auto entries = operations;
     const unsigned count = wireless ? sizeof(commands) : 1;

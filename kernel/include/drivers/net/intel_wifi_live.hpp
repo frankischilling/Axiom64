@@ -19,12 +19,18 @@ struct LiveStation {
     uint16_t next_sequence = 0;
     size_t pending_bytes = 0;
     uint64_t transmit_deadline = 0, beacon_deadline = 0;
+    bool port_authorized = true;
 };
 
 struct StationRequest {
     ScanSsid ssid{};
     uint8_t bssid[6]{};
     uint32_t frequency_mhz = 0;
+    uint8_t bssid_hint[6]{};
+    uint32_t frequency_hint = 0;
+    uint8_t extra[association_extra_limit]{};
+    unsigned extra_bytes = 0;
+    bool controlled_port = false;
 };
 
 enum class JoinPhase : uint8_t {
@@ -58,6 +64,7 @@ struct StationJoin {
     uint16_t sequence = 0, command_sequence = 0, aid = 0;
     uint8_t group = 0, opcode = 0;
     bool submitted = false, acknowledged = false, indicated = false;
+    bool controlled_port = false;
     uint64_t deadline = 0;
 };
 

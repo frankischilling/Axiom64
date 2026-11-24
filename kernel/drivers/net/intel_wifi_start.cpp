@@ -1115,13 +1115,20 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
     for (const auto byte : request.bssid)
         specified_bssid |= byte != 0;
     StationJoin candidate;
+    unsigned preferred = 0;
     for (unsigned i = 0; i < scan.access_point_count; ++i) {
         const auto& peer = scan.access_points[i];
+        const unsigned preference =
+            (!specified_bssid && !memcmp(peer.bssid, request.bssid_hint, sizeof(peer.bssid)) ? 2
+                                                                                             : 0) +
+            (!request.frequency_mhz && peer.frequency_mhz == request.frequency_hint ? 1 : 0);
         if (peer.ssid_length != request.ssid.length ||
             memcmp(peer.ssid, request.ssid.bytes, request.ssid.length) ||
             (specified_bssid && memcmp(peer.bssid, request.bssid, sizeof(peer.bssid))) ||
             (request.frequency_mhz && peer.frequency_mhz != request.frequency_mhz) ||
-            (candidate.rate && peer.signal_dbm <= candidate.peer.signal_dbm))
+            (candidate.rate &&
+             (preference < preferred ||
+              (preference == preferred && peer.signal_dbm <= candidate.peer.signal_dbm))))
             continue;
         for (unsigned j = 0; j < session.channels.count; ++j) {
             const auto& channel = session.channels.entries[j];
@@ -1131,7 +1138,7 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
             const auto& elements = scan.elements->records[i];
             AssociationRequest association;
             if (!prepare_association_request(peer, elements.beacon, peer.beacon_ie_bytes, high,
-                                             association))
+                                             association, request.extra, request.extra_bytes))
                 break;
             const auto rate = authentication_rate(elements.beacon, peer.beacon_ie_bytes, high,
                                                   session.antennas.tx);
@@ -1141,12 +1148,14 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
             candidate.channel = channel;
             candidate.association = association;
             candidate.rate = rate;
+            preferred = preference;
             break;
         }
     }
     if (!candidate.rate)
         return -2;
     candidate.phase = JoinPhase::phy;
+    candidate.controlled_port = request.controlled_port;
     session.join = candidate;
     return 0;
 }
@@ -1333,6 +1342,7 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
                 session.station.channel = join.channel.number;
                 session.station.rate = join.rate;
                 session.station.next_sequence = join.sequence;
+                session.station.port_authorized = !join.controlled_port;
                 join.phase = JoinPhase::idle;
                 return JoinOutcome::connected;
             }
@@ -1477,11 +1487,20 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
     return now_ms < leave.deadline ? LeaveOutcome::pending : LeaveOutcome::failed;
 }
 
+namespace {
+bool allows_station_data(const LiveStation& station, const uint8_t* frame, size_t length) {
+    return station.port_authorized ||
+           (frame && length >= 14 && frame[12] == 0x88 && frame[13] == 0x8e);
+}
+} // namespace
+
 int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t length,
                      uint64_t now_ms) {
     auto& station = session.station;
     if (!session.running || !station.queue.id || session.leave.phase != LeavePhase::idle)
         return -95;
+    if (!allows_station_data(station, frame, length))
+        return -13;
     if (station.pending_bytes)
         return -11;
     if (!prepare_station_data(session.receive.memory.data_transmit, station.queue, station.rate,
@@ -1536,7 +1555,8 @@ bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
         if (observe_association_beacon(packet, station.peer, station.channel, timing))
             station.beacon_deadline = now_ms + beacon_timeout;
         if (const auto bytes = receive_station_data(packet, session.station_address,
-                                                    station.peer.bssid, station.channel, frame))
+                                                    station.peer.bssid, station.channel, frame);
+            bytes && allows_station_data(station, frame, bytes))
             receive(context, frame, bytes);
     }
     return now_ms < station.beacon_deadline &&

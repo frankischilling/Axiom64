@@ -21,8 +21,10 @@ enum Attribute : uint16_t {
     iftype = 5,
     mac = 6,
     wiphy_bands = 22,
+    ht_capability = 31,
     supported_iftypes = 32,
     frequency_mhz = 38,
+    association_ies = 42,
     max_num_scan_ssids = 43,
     scan_frequencies = 44,
     scan_ssids = 45,
@@ -33,9 +35,19 @@ enum Attribute : uint16_t {
     auth_type = 53,
     reason_code = 54,
     timed_out = 65,
+    station_flags = 67,
+    control_port = 68,
     status_code = 72,
+    control_port_ethertype = 102,
+    ht_capability_mask = 148,
     wdev = 153,
+    vht_capability = 157,
     scan_flags = 158,
+    vht_capability_mask = 176,
+    mac_hint = 200,
+    frequency_hint = 201,
+    socket_owner = 204,
+    mlo_support = nl80211_max_attribute,
 };
 
 enum BssAttribute : uint16_t {
@@ -123,9 +135,42 @@ class Message {
     }
 };
 
-int select_station_request(const uint8_t* bytes, size_t length, unsigned index, bool disconnect,
-                           IntelWifi::StationRequest& connection, uint16_t& reason) {
-    uint64_t seen = 0;
+struct StationAttributes {
+    IntelWifi::StationRequest connection{};
+    uint16_t reason = 3;
+    bool owned = false, authorized = false;
+};
+
+int select_association_elements(const uint8_t* bytes, size_t size,
+                                IntelWifi::StationRequest& request) {
+    if (size > sizeof(request.extra))
+        return -22;
+    unsigned seen = 0;
+    for (size_t offset = 0; offset < size;) {
+        if (size - offset < 2 || bytes[offset + 1] > size - offset - 2)
+            return -22;
+        const auto id = bytes[offset];
+        const auto length = bytes[offset + 1];
+        // The supplicant supplies these two elements without overriding SSID, rates or security.
+        const unsigned flag = id == 59 ? 1 : id == 127 ? 2 : 0;
+        if (!flag)
+            return -95;
+        if (!length || (seen & flag))
+            return -22;
+        seen |= flag;
+        offset += 2 + length;
+    }
+    if (size)
+        memcpy(request.extra, bytes, size);
+    request.extra_bytes = unsigned(size);
+    return 0;
+}
+
+int select_station_request(const uint8_t* bytes, size_t length, unsigned index, uint8_t command,
+                           StationAttributes& request) {
+    constexpr uint32_t authorized_flag = 1u << 1;
+    bool seen[mlo_support + 1]{};
+    auto& connection = request.connection;
     while (length) {
         if (length < sizeof(AttributeHeader))
             return -22;
@@ -136,12 +181,22 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
             return -22;
         const auto* value = bytes + sizeof(field);
         const size_t size = field.length - sizeof(field);
-        if (disconnect && field.type != ifindex && field.type != wdev && field.type != reason_code)
+        if (field.type > mlo_support)
             return -95;
-        unsigned slot;
+        const bool device = field.type == ifindex || field.type == wdev;
+        if (command == nl80211_disconnect && !device && field.type != reason_code)
+            return -95;
+        if (command == nl80211_set_station && !device && field.type != mac &&
+            field.type != station_flags)
+            return -95;
+        // Supplicants can send both names for the same socket-owner flag.
+        if (seen[field.type] && field.type != socket_owner)
+            return -22;
+        seen[field.type] = true;
         switch (field.type) {
         case ifindex:
         case frequency_mhz:
+        case frequency_hint:
         case auth_type: {
             uint32_t number;
             if (size != sizeof(number))
@@ -151,12 +206,12 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
                 return -19;
             if (field.type == auth_type && number != 0)
                 return -95;
-            if (field.type == frequency_mhz) {
+            if (field.type == frequency_mhz || field.type == frequency_hint) {
                 if (!number)
                     return -22;
-                connection.frequency_mhz = number;
+                (field.type == frequency_mhz ? connection.frequency_mhz
+                                             : connection.frequency_hint) = number;
             }
-            slot = field.type;
             break;
         }
         case wdev: {
@@ -166,46 +221,88 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
             memcpy(&id, value, sizeof(id));
             if (id != device_id)
                 return -19;
-            slot = 0;
             break;
         }
         case mac:
+        case mac_hint:
             if (size != sizeof(connection.bssid) || (value[0] & 1))
                 return -22;
             if (!(value[0] | value[1] | value[2] | value[3] | value[4] | value[5]))
                 return -22;
-            memcpy(connection.bssid, value, size);
-            slot = mac;
+            memcpy(field.type == mac ? connection.bssid : connection.bssid_hint, value, size);
             break;
         case ssid:
             if (!size || size > sizeof(connection.ssid.bytes))
                 return -22;
             memcpy(connection.ssid.bytes, value, size);
             connection.ssid.length = uint8_t(size);
-            slot = ssid;
             break;
         case reason_code:
-            if (!disconnect)
+            if (command != nl80211_disconnect)
                 return -95;
-            if (size != sizeof(reason))
+            if (size != sizeof(request.reason))
                 return -22;
-            memcpy(&reason, value, sizeof(reason));
-            if (!reason)
+            memcpy(&request.reason, value, sizeof(request.reason));
+            if (!request.reason)
                 return -22;
-            slot = reason_code;
             break;
+        case association_ies:
+            if (const int error = select_association_elements(value, size, connection))
+                return error;
+            break;
+        case ht_capability:
+        case ht_capability_mask:
+        case vht_capability:
+        case vht_capability_mask:
+            // The current association uses legacy rates, so there are no HT/VHT fields to mask.
+            if (size !=
+                (field.type == ht_capability || field.type == ht_capability_mask ? 26u : 12u))
+                return -22;
+            break;
+        case socket_owner:
+        case control_port:
+        case mlo_support:
+            if (size)
+                return -22;
+            request.owned |= field.type == socket_owner;
+            connection.controlled_port |= field.type == control_port;
+            break;
+        case control_port_ethertype: {
+            uint16_t type;
+            if (size != sizeof(type))
+                return -22;
+            memcpy(&type, value, sizeof(type));
+            if (type != 0x888e)
+                return -95;
+            break;
+        }
+        case station_flags: {
+            uint32_t flags[2]{};
+            if (command != nl80211_set_station)
+                return -95;
+            if (size != sizeof(flags))
+                return -22;
+            memcpy(flags, value, sizeof(flags));
+            if (flags[0] != authorized_flag || (flags[1] & ~authorized_flag))
+                return -95;
+            request.authorized = flags[1] != 0;
+            break;
+        }
         default:
             return -95;
         }
-        const auto bit = uint64_t(1) << slot;
-        if (seen & bit)
-            return -22;
-        seen |= bit;
         bytes += aligned;
         length -= aligned;
     }
-    return (seen & ((uint64_t(1) << ifindex) | 1)) && (disconnect || connection.ssid.length) ? 0
-                                                                                             : -22;
+    if (!seen[ifindex] && !seen[wdev])
+        return -22;
+    if (command == nl80211_connect &&
+        (!seen[ssid] || (seen[ht_capability] && !seen[ht_capability_mask]) ||
+         (seen[vht_capability] && !seen[vht_capability_mask])))
+        return -22;
+    if (command == nl80211_set_station && (!seen[mac] || !seen[station_flags]))
+        return -22;
+    return 0;
 }
 
 int select_frequencies(const uint8_t* bytes, size_t length, uint64_t& channels) {
@@ -431,19 +528,25 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
     const uint8_t command = bytes[sizeof(request)];
     const bool dump = (request.flags & dump_flags) == dump_flags;
     const bool trigger = command == nl80211_trigger_scan;
-    const bool disconnect = command == nl80211_disconnect;
-    if (command == nl80211_connect || disconnect) {
+    if (command == nl80211_connect || command == nl80211_disconnect ||
+        command == nl80211_set_station) {
         if (dump || !wireless_connect_available())
             return netlink_ack(data, request, port, -95, capped, reply);
         if (!privileged)
             return netlink_ack(data, request, port, -1, capped, reply);
-        IntelWifi::StationRequest connection;
-        uint16_t reason = 3; // Station is leaving.
+        StationAttributes station_request;
         int error = select_station_request(bytes + header, request.length - header, info->index,
-                                           disconnect, connection, reason);
-        if (!error)
-            error = disconnect ? IntelWifi::request_live_disconnect(reason)
-                               : IntelWifi::request_live_connection(connection);
+                                           command, station_request);
+        if (!error) {
+            if (command == nl80211_connect)
+                error = IntelWifi::request_live_connection(station_request.connection,
+                                                           station_request.owned ? port : 0);
+            else if (command == nl80211_disconnect)
+                error = IntelWifi::request_live_disconnect(station_request.reason, port);
+            else
+                error = IntelWifi::authorize_live_station(station_request.connection.bssid,
+                                                          station_request.authorized);
+        }
         return error || (request.flags & 4) ? netlink_ack(data, request, port, error, capped, reply)
                                             : 0;
     }
@@ -496,7 +599,8 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
                 message.value(entry++, uint32_t(nl80211_trigger_scan));
             if (wireless_connect_available()) {
                 message.value(entry++, uint32_t(nl80211_connect));
-                message.value(entry, uint32_t(nl80211_disconnect));
+                message.value(entry++, uint32_t(nl80211_disconnect));
+                message.value(entry, uint32_t(nl80211_set_station));
             }
             message.end_nested(commands);
         }
@@ -582,5 +686,9 @@ void wireless_disconnected(unsigned index, uint16_t reason) {
     event.value(reason_code, reason);
     const size_t size = event.finish(nl80211_disconnect, 0, 0, false);
     netlink_broadcast_wireless(nl80211_mlme_group, bytes, size);
+}
+
+void wireless_socket_closed(unsigned port) {
+    IntelWifi::close_connection_owner(port);
 }
 } // namespace ax

@@ -128,6 +128,8 @@ void netlink_consume(NetlinkSocket* socket) {
 }
 
 void netlink_close(NetlinkSocket* socket) {
+    if (socket->protocol == generic_protocol)
+        wireless_socket_closed(socket->port);
     socket->wireless_dump = {};
     while (socket->count)
         netlink_consume(socket);

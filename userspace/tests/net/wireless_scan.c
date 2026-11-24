@@ -24,7 +24,7 @@
 struct packet {
     struct nlmsghdr header;
     struct genlmsghdr generic;
-    uint8_t attrs[96];
+    uint8_t attrs[256];
 };
 
 static void require(int condition, const char* message) {
@@ -512,6 +512,8 @@ static void check_connection(int fd, unsigned family, unsigned index) {
                  sizeof(name));
     receive(fd, bytes, sizeof(bytes), 0);
     const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    require(read_u32(message_attribute(message, CTRL_ATTR_MAXATTR)) >= NL80211_ATTR_MLO_SUPPORT,
+            "controller reports the supported attribute range");
     const struct nlattr* groups = message_attribute(message, CTRL_ATTR_MCAST_GROUPS);
     const struct nlattr* entry = nested(groups, 2);
     require(!memcmp(payload(nested(entry, CTRL_ATTR_MCAST_GRP_NAME), 5), "mlme", 5),
@@ -526,6 +528,8 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     const struct nlattr* commands = message_attribute(message, NL80211_ATTR_SUPPORTED_COMMANDS);
     require(read_u32(nested(commands, 2)) == NL80211_CMD_CONNECT, "radio advertises connect");
     require(read_u32(nested(commands, 3)) == NL80211_CMD_DISCONNECT, "radio advertises disconnect");
+    require(read_u32(nested(commands, 4)) == NL80211_CMD_SET_STATION,
+            "radio advertises station authorization");
 
     struct packet request = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 17);
     const uint8_t peer[] = {2, 0, 0, 0, 0, 1};
@@ -546,6 +550,16 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     duplicate.header.nlmsg_seq += 2;
     append_attribute(&duplicate, NL80211_ATTR_SSID, "lab", 3);
     check_station_ack(fd, &duplicate, EINVAL);
+    struct packet malformed_ie = request;
+    malformed_ie.header.nlmsg_seq += 3;
+    const uint8_t invalid_ie[] = {127, 3, 0};
+    append_attribute(&malformed_ie, NL80211_ATTR_IE, invalid_ie, sizeof(invalid_ie));
+    check_station_ack(fd, &malformed_ie, EINVAL);
+    malformed_ie = request;
+    malformed_ie.header.nlmsg_seq += 4;
+    const uint8_t rsn_ie[] = {48, 2, 1, 0};
+    append_attribute(&malformed_ie, NL80211_ATTR_IE, rsn_ie, sizeof(rsn_ie));
+    check_station_ack(fd, &malformed_ie, EOPNOTSUPP);
 
     struct packet leave = make_request(family, NL80211_CMD_DISCONNECT, NLM_F_ACK, 40);
     check_station_ack(fd, &leave, EINVAL);
@@ -583,13 +597,49 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     leave.header.nlmsg_seq += 2;
     check_station_ack(fd, &leave, 0);
     check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL);
+
+    int owner = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
+    require(owner >= 0, "open separate connection owner socket");
+    struct packet owned = request;
+    owned.header.nlmsg_seq++;
+    const uint8_t extended[] = {127, 1, 0};
+    const uint16_t ethertype = 0x888e;
+    const uint8_t ht[26] = {0}, vht[12] = {0};
+    append_attribute(&owned, NL80211_ATTR_IE, extended, sizeof(extended));
+    append_attribute(&owned, NL80211_ATTR_CONTROL_PORT, NULL, 0);
+    append_attribute(&owned, NL80211_ATTR_CONTROL_PORT_ETHERTYPE, &ethertype, sizeof(ethertype));
+    append_attribute(&owned, NL80211_ATTR_HT_CAPABILITY, ht, sizeof(ht));
+    append_attribute(&owned, NL80211_ATTR_HT_CAPABILITY_MASK, ht, sizeof(ht));
+    append_attribute(&owned, NL80211_ATTR_VHT_CAPABILITY, vht, sizeof(vht));
+    append_attribute(&owned, NL80211_ATTR_VHT_CAPABILITY_MASK, vht, sizeof(vht));
+    append_attribute(&owned, NL80211_ATTR_SOCKET_OWNER, NULL, 0);
+    append_attribute(&owned, NL80211_ATTR_SOCKET_OWNER, NULL, 0);
+    append_attribute(&owned, NL80211_ATTR_MLO_SUPPORT, NULL, 0);
+    check_station_ack(owner, &owned, 0);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer);
+    leave.header.nlmsg_seq++;
+    check_station_ack(fd, &leave, EPERM);
+    struct packet authorize = make_request(family, NL80211_CMD_SET_STATION, NLM_F_ACK, 60);
+    const uint32_t authorized = 1u << NL80211_STA_FLAG_AUTHORIZED;
+    const struct nl80211_sta_flag_update update = {.mask = authorized, .set = authorized};
+    append_attribute(&authorize, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&authorize, NL80211_ATTR_MAC, peer, sizeof(peer));
+    check_station_ack(fd, &authorize, EINVAL);
+    authorize.header.nlmsg_seq++;
+    append_attribute(&authorize, NL80211_ATTR_STA_FLAGS2, &update, sizeof(update));
+    check_station_ack(fd, &authorize, 0);
+    require(close(owner) == 0, "close connection owner socket");
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL);
     require(setgid(1000) == 0 && setuid(1000) == 0, "drop connection privileges");
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, EPERM);
     leave.header.nlmsg_seq++;
     check_station_ack(fd, &leave, EPERM);
+    authorize.header.nlmsg_seq++;
+    check_station_ack(fd, &authorize, EPERM);
     puts("WIRELESS_LIVE_CONNECT_PASS");
     puts("WIRELESS_LIVE_DISCONNECT_PASS");
+    puts("WIRELESS_CONTROLLED_PORT_PASS");
 }
 
 int main(int argc, char** argv) {

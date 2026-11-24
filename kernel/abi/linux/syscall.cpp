@@ -39,6 +39,7 @@
 #include "process/signals.hpp"
 #include "process/clock_sleep.hpp"
 #include "process/task.hpp"
+#include "security/seccomp.hpp"
 #include "process/scheduler.hpp"
 #include "process/cpu.hpp"
 #include "mm/barrier.hpp"
@@ -1931,6 +1932,8 @@ int64_t dispatch_linux_syscall(Frame* f, Task* running) {
         return dup_fd(a, b, c);
     case 293:
         return create_pipe(a, b);
+    case 317:
+        return seccomp_syscall(*running, uint32_t(a), uint32_t(b), c);
     case 253:
     case 254:
     case 255:

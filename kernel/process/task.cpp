@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/task.hpp"
+#include "security/seccomp.hpp"
 #include "fs/cgroup.hpp"
 #include "process/scheduler.hpp"
 #include "arch/x86_64/tlb.hpp"
@@ -155,6 +156,7 @@ static void release_resources(Task* t) {
     descriptor_wait_discard(*t);
     semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
+    seccomp_release(*t);
     credential_release(t->credentials);
     io_discard(*t);
     futex_discard(*t);
@@ -296,6 +298,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         return -12;
     }
     credential_inherit(child->credentials, current_task()->credentials);
+    seccomp_inherit(*child, *current_task());
     if (vm) {
         release_memory(child);
         child->memory = current_task()->memory;

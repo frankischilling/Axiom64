@@ -36,6 +36,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `userspace/services/` | Persisted seed ownership, rotation and recovery |
 | `userspace/desktop/` | Display sessions, Xorg and window-manager configuration |
 | `mk/rootfs.mk` | Full and desktop root filesystem inputs and image build rules |
+| `mk/security.mk` | Credential, file-capability, seccomp and random-source tests |
 | `userspace/net/config/` | Ring 3 address/route adapter, ownership recovery, saved profiles, and resolver metadata |
 | `userspace/net/dhcp/` | Bounded packet codec, lease state, and bootstrap/UDP transport |
 | `userspace/tests/` | ABI, filesystem, IPC, network, process, thread, storage, desktop, and native toolchain tests |

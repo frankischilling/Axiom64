@@ -118,6 +118,26 @@ int queue_signal(Task* task, int signal, int sender, int code, int status, uint6
                        {sender, code, status, address, sender_uid(sender)});
 }
 
+void signal_seccomp_trap(Task& task, int number, uint32_t architecture, uint64_t instruction,
+                         int reason) {
+    constexpr int sigsys = 31;
+    constexpr uint64_t bit = 1ull << (sigsys - 1);
+    auto& handler = task.handlers->signal_actions[sigsys - 1][0];
+    if ((task.signal_mask & bit) || handler == 1) {
+        handler = 0;
+        task.signal_mask &= ~bit;
+    }
+    task.pending_signals.discard(bit);
+    SignalData data{};
+    data.code = 1; // SYS_SECCOMP
+    data.error = reason;
+    data.address = instruction;
+    data.syscall_number = number;
+    data.syscall_architecture = architecture;
+    if (post_signal(task, task.pending_signals, sigsys, data))
+        exit_task(&task, sigsys);
+}
+
 static int post_process_signal(Process* process, int signal, const SignalData& data) {
     for (auto& task : tasks)
         if (task.state != State::empty && task.state != State::zombie && task.process == process)

@@ -139,6 +139,7 @@ struct SemaphoreRequest;
 struct SemaphoreUndo;
 struct MessageQueueRequest;
 struct PosixQueueRequest;
+struct SeccompFilter;
 
 struct FifoOpen {
     Handle* handle;
@@ -160,7 +161,7 @@ struct Task {
     void set_name(const char* value, size_t length);
 
     struct {
-        uint64_t mask, information, deadline;
+        uint64_t mask, information, deadline_ns;
         bool finite;
     } signal_wait;
 
@@ -170,6 +171,8 @@ struct Task {
     FsContext* fs;
     SignalHandlers* handlers;
     Credentials credentials;
+    SeccompFilter* seccomp_filter;
+    unsigned seccomp_mode, seccomp_filter_count;
     uint64_t fs_base, gs_base, tid_address, signal_mask;
     uint64_t altstack_base, altstack_size;
     PendingSignals pending_signals;

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/signals.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 bool signal_pending_for(const Task& task, uint64_t mask) {
@@ -60,7 +61,12 @@ void format_signal_info(uint8_t (&bytes)[128], int number, const SignalData& dat
     memcpy(bytes, &number, 4);
     memcpy(bytes + 4, &data.error, 4);
     memcpy(bytes + 8, &data.code, 4);
-    if (data.code > 0 && (number == 11 || number == 7 || number == 5 || number == 4 || number == 8))
+    if (number == 31 && data.code == 1) {
+        memcpy(bytes + 16, &data.address, 8);
+        memcpy(bytes + 24, &data.syscall_number, 4);
+        memcpy(bytes + 28, &data.syscall_architecture, 4);
+    } else if (data.code > 0 &&
+               (number == 11 || number == 7 || number == 5 || number == 4 || number == 8))
         memcpy(bytes + 16, &data.address, 8);
     else {
         memcpy(bytes + 16, &data.sender, 4);
@@ -97,7 +103,7 @@ int64_t signal_wait_enter(Frame* frame) {
         return -14;
     mask &= ~unmaskable_signals;
     bool finite = frame->rdx != 0;
-    uint64_t deadline = 0;
+    uint64_t deadline_ns = 0;
     if (finite) {
         struct {
             int64_t seconds, nanoseconds;
@@ -105,22 +111,25 @@ int64_t signal_wait_enter(Frame* frame) {
 
         if (!current_task()->memory->space.copy_in(&timeout, frame->rdx, sizeof(timeout)))
             return -14;
-        if (timeout.seconds < 0 || timeout.nanoseconds < 0 || timeout.nanoseconds >= 1000000000)
+        constexpr uint64_t ns_per_second = 1'000'000'000;
+        if (timeout.seconds < 0 || timeout.nanoseconds < 0 ||
+            uint64_t(timeout.nanoseconds) >= ns_per_second)
             return -22;
-        uint64_t fraction = (uint64_t(timeout.nanoseconds) + 9999999) / 10000000;
-        uint64_t seconds = uint64_t(timeout.seconds);
-        constexpr uint64_t maximum = uint64_t(INT64_MAX) / 10000000 + 1;
-        uint64_t duration = seconds > maximum / 100 ? maximum : seconds * 100 + fraction;
-        if (duration > maximum)
-            duration = maximum;
-        deadline = duration > UINT64_MAX - ticks ? UINT64_MAX : ticks + duration;
+        const auto fraction = uint64_t(timeout.nanoseconds);
+        const auto seconds = uint64_t(timeout.seconds);
+        constexpr uint64_t maximum = INT64_MAX;
+        const auto duration = seconds > (maximum - fraction) / ns_per_second
+                                  ? maximum
+                                  : seconds * ns_per_second + fraction;
+        const auto now = clock_monotonic_ns();
+        deadline_ns = now + min(duration, UINT64_MAX - now);
     }
     int64_t result = consume(*current_task(), mask, frame->rsi);
     if (result)
         return result;
-    if (finite && deadline <= ticks)
+    if (finite && deadline_ns <= clock_monotonic_ns())
         return -11;
-    current_task()->signal_wait = {mask, frame->rsi, deadline, finite};
+    current_task()->signal_wait = {mask, frame->rsi, deadline_ns, finite};
     current_task()->wait = Wait::signal_queue;
     current_task()->state = State::blocked;
     return would_block;
@@ -128,7 +137,7 @@ int64_t signal_wait_enter(Frame* frame) {
 
 bool signal_wait_resume(Task& task) {
     int64_t result = consume(task, task.signal_wait.mask, task.signal_wait.information);
-    if (!result && task.signal_wait.finite && ticks >= task.signal_wait.deadline)
+    if (!result && task.signal_wait.finite && clock_monotonic_ns() >= task.signal_wait.deadline_ns)
         result = -11;
     if (!result)
         return false;

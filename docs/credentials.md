@@ -37,7 +37,13 @@ ELF exec checks directory search, regular-file type, executable mode and `noexec
 
 Ordinary exec preserves valid ambient capabilities. An applicable file capability or privilege-changing set-ID exec clears them; root compatibility uses the bounding and inheritable sets. Keep-caps is cleared at exec. Identity or filesystem-identity changes, and acquisition of permitted capabilities, restrict the shared memory context's dumpability. `AT_SECURE` and dumpability use separate Linux rules: a secure loader can run with normal dumpability when exec does not acquire privileges. The [file capability contract](file-capabilities.md) records wire formats, attribute permissions and actual exec transitions.
 
-RAM and classic ext2 xattrs supply Linux file capabilities and upstream `getcap`/`setcap` administration. User namespaces, security modules, ACLs, auditing, seccomp and a complete tracing engine remain required work for [F09](feature-roadmap.md#f09-accounts-permissions-and-process-credentials), [F04](feature-roadmap.md#f04-vfs-mounts-and-pseudo-filesystems) and [F34](feature-roadmap.md#f34-debugging-tracing-and-profiling). Stored capability bits do not establish support for an absent syscall or subsystem.
+RAM and classic ext2 xattrs supply Linux file capabilities and upstream `getcap`/`setcap` administration. User namespaces, security modules, ACLs, auditing and a complete tracing engine remain required work for [F09](feature-roadmap.md#f09-accounts-permissions-and-process-credentials), [F04](feature-roadmap.md#f04-vfs-mounts-and-pseudo-filesystems) and [F34](feature-roadmap.md#f34-debugging-tracing-and-profiling).
+
+## Syscall filtering
+
+On x86-64, `seccomp` and `PR_SET_SECCOMP` support strict mode and classic BPF filters. Installing a filter requires `PR_SET_NO_NEW_PRIVS` or `CAP_SYS_ADMIN`. A filter receives the syscall number, audit architecture, instruction pointer and six 64-bit arguments. The kernel checks every filter on the task before dispatch and applies the most restrictive result. Fork, clone and exec preserve the filter chain. `SECCOMP_FILTER_FLAG_TSYNC` can apply a caller's chain to sibling threads that have compatible policies. `/proc/<pid>/status` shows the mode and filter count. [Linux seccomp filter ABI](https://docs.kernel.org/userspace-api/seccomp_filter.html)
+
+The supported actions allow, write to the rate-limited kernel log, return an errno, deliver `SIGSYS`, or terminate the calling thread or process. Tracer-mediated actions, notification listeners and filter installation flags beyond thread synchronization are pending. User namespaces and a Firefox sandbox test remain part of [issue #265](https://github.com/frankischilling/Axiom64/issues/265).
 
 ## Filesystem access and retained resources
 
@@ -60,7 +66,10 @@ make test-credentials-policy
 make build/credentials-native build/credentials-static build/credentials-dynamic
 sudo -n make test-credentials-native
 make test-credentials
+make test-seccomp
 ```
+
+`test-seccomp` uses four virtual CPUs, pinned Linux UAPI headers, and static and dynamic musl clients under BIOS and UEFI. Run `python3 scripts/seccomp_test.py --linux-kernel /path/to/bzImage --directory build/seccomp-comparison` to also run the static client on a clean Linux guest.
 
 The host policy suite uses ASAN/UBSAN with allocation failure and reference-lifetime checks. It covers the maximum group list, sorting, invalid replacements, capability masks, securebits, saved/filesystem IDs, exec and DAC/signal policy.
 

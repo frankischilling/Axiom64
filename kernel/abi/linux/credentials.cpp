@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "abi/linux/credentials.hpp"
+#include "security/seccomp.hpp"
 #include "process/task.hpp"
 
 namespace ax {
@@ -212,6 +213,10 @@ int64_t credential_syscall(Frame* frame) {
             return space.copy_out(frame->rsi, current_task()->name, sizeof(current_task()->name))
                        ? 0
                        : -14;
+        if (a == 21) // PR_GET_SECCOMP
+            return current_task()->seccomp_mode;
+        if (a == 22) // PR_SET_SECCOMP
+            return seccomp_set_mode(*current_task(), frame->rsi, frame->rdx);
         return credential_control(cred, a, frame->rsi, frame->rdx, frame->r10, frame->r8);
     default:
         return -38;

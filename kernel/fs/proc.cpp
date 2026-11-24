@@ -680,6 +680,8 @@ static int status(Node* node, Snapshot& snapshot) {
     text.bits("CapBnd", owner->credentials.bounding);
     text.bits("CapAmb", owner->credentials.ambient);
     text.field("NoNewPrivs", owner->credentials.no_new_privileges);
+    text.field("Seccomp", owner->seccomp_mode);
+    text.field("Seccomp_filters", owner->seccomp_filter_count);
     if (text.failed) {
         release(bytes);
         return -75;

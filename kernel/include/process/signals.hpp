@@ -31,6 +31,8 @@ constexpr uint64_t signal_trampoline = 0x7fffffffe000;
 constexpr uint64_t unmaskable_signals = (1ull << 8) | (1ull << 18);
 
 int queue_signal(Task*, int, int sender = 0, int code = 0, int status = 0, uint64_t address = 0);
+void signal_seccomp_trap(Task&, int number, uint32_t architecture, uint64_t instruction,
+                         int reason);
 
 int queue_process_signal(Process*, int, int sender = 0, int code = 0, int status = 0,
                          uint64_t address = 0, const Process* child = nullptr);

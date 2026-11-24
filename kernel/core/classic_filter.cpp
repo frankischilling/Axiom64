@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file    kernel/net/socket_filter.cpp
- * @brief   Classic socket filter validation and execution.
+ * @file    kernel/core/classic_filter.cpp
+ * @brief   Classic BPF validation and execution.
  * @author  frankischilling
  * @date    2026-11-23
  *
- * Validates forward-only filter programs and executes bounded packet reads.
+ * Validates forward-only filter programs and reads their input within bounds.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -22,7 +22,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
-#include "net/socket_filter.hpp"
+#include "core/classic_filter.hpp"
 
 namespace ax {
 namespace {
@@ -53,11 +53,14 @@ bool ancillary_value(uint32_t offset, const FilterInput& input, uint32_t& value)
     }
 }
 
-bool supported_load(const FilterInstruction& item) {
+bool supported_load(const FilterInstruction& item, FilterContext context, size_t input_size) {
     const auto mode = item.code & 0xe0, width = item.code & 0x18;
     bool to_x = item.code & 1;
     if (mode == immediate || mode == length || mode == memory)
         return width == 0 && (mode != memory || item.value < slots);
+    if (context == FilterContext::syscall)
+        return item.code == absolute && !(item.value & 3) && item.value <= input_size &&
+               sizeof(uint32_t) <= input_size - item.value;
     if (mode == header_shift)
         return to_x && width == byte;
     if (to_x || (mode != absolute && mode != indirect) || width == 0x18)
@@ -71,7 +74,7 @@ bool supported_load(const FilterInstruction& item) {
 }
 
 bool load(const FilterInstruction& item, const FilterInput& input, uint32_t x,
-          const uint32_t (&scratch)[slots], uint32_t& result) {
+          const uint32_t (&scratch)[slots], uint32_t& result, FilterContext context) {
     const auto mode = item.code & 0xe0;
     if (mode == immediate)
         result = item.value;
@@ -79,7 +82,11 @@ bool load(const FilterInstruction& item, const FilterInput& input, uint32_t x,
         result = scratch[item.value];
     else if (mode == length)
         result = input.length;
-    else if (mode == absolute && item.value >= ancillary)
+    else if (context == FilterContext::syscall) {
+        if (item.value > input.length || sizeof(result) > input.length - item.value)
+            return false;
+        memcpy(&result, input.data + item.value, sizeof(result));
+    } else if (mode == absolute && item.value >= ancillary)
         return ancillary_value(item.value, input, result);
     else {
         const uint64_t offset = uint64_t(item.value) + (mode == indirect ? x : 0);
@@ -157,8 +164,9 @@ bool branch(uint16_t operation, uint32_t a, uint32_t value) {
 }
 } // namespace
 
-bool validate_socket_filter(const FilterInstruction* code, unsigned count, uint16_t* masks) {
-    if (!count || count > max_socket_filter_instructions || (code[count - 1].code & 7) != ret)
+bool validate_classic_filter(const FilterInstruction* code, unsigned count, uint16_t* masks,
+                             FilterContext context, size_t input_size) {
+    if (!count || count > max_classic_filter_instructions || (code[count - 1].code & 7) != ret)
         return false;
     memset(masks, 0xff, count * sizeof(*masks));
     masks[0] = 0;
@@ -172,7 +180,7 @@ bool validate_socket_filter(const FilterInstruction* code, unsigned count, uint1
         switch (item.code & 7) {
         case ld:
         case ldx:
-            if (!supported_load(item) ||
+            if (!supported_load(item, context, input_size) ||
                 ((item.code & 0xe0) == memory && !(initialized & (1u << item.value))))
                 return false;
             break;
@@ -183,7 +191,8 @@ bool validate_socket_filter(const FilterInstruction* code, unsigned count, uint1
             initialized |= 1u << item.value;
             break;
         case alu:
-            if (operation > bit_xor || (operation == negate && (item.code & from_x)) ||
+            if (operation > bit_xor || (context == FilterContext::syscall && operation == modulo) ||
+                (operation == negate && (item.code & from_x)) ||
                 (!(item.code & from_x) &&
                  (((operation == divide || operation == modulo) && !item.value) ||
                   ((operation == left_shift || operation == right_shift) && item.value >= 32))))
@@ -218,8 +227,8 @@ bool validate_socket_filter(const FilterInstruction* code, unsigned count, uint1
     return true;
 }
 
-uint32_t run_socket_filter(const FilterInstruction* code, unsigned count,
-                           const FilterInput& input) {
+uint32_t run_classic_filter(const FilterInstruction* code, unsigned count, const FilterInput& input,
+                            FilterContext context) {
     uint32_t a = 0, x = 0, scratch[slots]{};
     for (unsigned index = 0; index < count; ++index) {
         const auto& item = code[index];
@@ -228,7 +237,7 @@ uint32_t run_socket_filter(const FilterInstruction* code, unsigned count,
         switch (item.code & 7) {
         case ld:
         case ldx:
-            if (!load(item, input, x, scratch, item.code & 1 ? x : a))
+            if (!load(item, input, x, scratch, item.code & 1 ? x : a, context))
                 return 0;
             break;
         case st:

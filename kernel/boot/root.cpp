@@ -53,6 +53,26 @@ static void required(const char* name, uint32_t kind, bool executable = false) {
         failure(name, -13);
 }
 
+static void validate_root_directory(const char* name) {
+    if (!strcmp(name, ".") || !strcmp(name, ".."))
+        failure("rootdir", -22);
+    for (auto cursor = name; *cursor; ++cursor)
+        if (*cursor == '/' || *cursor == '\\')
+            failure("rootdir", -22);
+}
+
+static void select_root_directory(const char* name) {
+    Node* node = nullptr;
+    if (int error = resolve_path(path(name), node, false))
+        failure("rootdir", error);
+    if ((node->mode & 0170000) != directory)
+        failure("rootdir", -20);
+    if (node->uid || (node->mode & 0022))
+        failure("rootdir", -13);
+    root_node = node;
+    log("VFS_ROOT_DIRECTORY name=%s\n", name);
+}
+
 static void volatile_mount(const char* name) {
     required(name, directory);
     Path destination = path(name), source = path("");
@@ -96,15 +116,17 @@ static void descriptor_links() {
 
 void boot_root_init(const BootArguments& arguments, const char* init) {
     char root[sizeof("PARTLABEL=") - 1 + partition_label_size]{}, type[16]{}, flags[32]{};
+    char root_directory[256]{};
     int selected = arguments.read("root=", root, sizeof(root));
     int filesystem = arguments.read("rootfstype=", type, sizeof(type));
     int policy = arguments.read("rootflags=", flags, sizeof(flags));
-    if (selected < 0 || filesystem < 0 || policy < 0)
+    int alternate = arguments.read("rootdir=", root_directory, sizeof(root_directory));
+    if (selected < 0 || filesystem < 0 || policy < 0 || alternate < 0)
         failure("configuration", -22);
     if (strlen(root) >= 32 && memcmp(root, "PARTUUID=", 9) && memcmp(root, "PARTLABEL=", 10))
         failure("configuration", -22);
     if (!selected || !strcmp(root, "ramfs")) {
-        if (filesystem || policy)
+        if (filesystem || policy || alternate)
             failure("configuration", -22);
         required(init, regular_file, true);
         volatile_mount("/proc");
@@ -113,6 +135,8 @@ void boot_root_init(const BootArguments& arguments, const char* init) {
         descriptor_links();
         return;
     }
+    if (alternate)
+        validate_root_directory(root_directory);
     int device = block_find(root);
     if (device < 0)
         failure("root-device", device);
@@ -126,6 +150,8 @@ void boot_root_init(const BootArguments& arguments, const char* init) {
     int error = vfs_disk_root(unsigned(device), readonly, checked);
     if (error)
         failure(root, error);
+    if (alternate)
+        select_root_directory(root_directory);
     required(init, regular_file, true);
     required("/bin/busybox", regular_file, true);
     required("/lib/ld-musl-x86_64.so.1", regular_file, true);

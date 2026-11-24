@@ -77,7 +77,9 @@ def verify(disk, output, firmware, samples):
             run("/bin/sh installed-build-tools.sh", 12, timeout=300)
             run("test -r \"$HOME/auto-eduroam/LICENSE\" && "
                 "test -r \"$HOME/auto-eduroam/README.md\" && "
-                "\"$HOME/auto-eduroam/connect-eduroam.sh\" --help && connect-eduroam --help", 13)
+                "test -x \"$HOME/auto-eduroam/connect-eduroam.sh\" && "
+                "cmp \"$HOME/auto-eduroam/connect-eduroam.sh\" /usr/bin/connect-eduroam && "
+                "bash -n /usr/bin/connect-eduroam && connect-eduroam-verified --help", 13)
             send("sudo /bin/busybox poweroff -f")
             wait(b"Password: ")
             send(password)

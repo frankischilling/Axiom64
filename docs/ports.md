@@ -33,8 +33,11 @@ under **Power and Battery** in System Tray Settings.
 New accounts get an `auto-eduroam` folder with the setup helper and its
 instructions. Existing accounts get it at desktop sign-in if that path is
 available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.
-Connection setup needs NetworkManager, a supported Wi-Fi device, and the
-CA certificate and authentication server domain supplied by your school.
+The pinned upstream script uses NetworkManager and prompts for your school
+username and password. It skips server certificate checks. For certificate
+validation, use the school's official profile or run
+`connect-eduroam-verified` with the certificate and server domain from your
+school.
 
 The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
 UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools

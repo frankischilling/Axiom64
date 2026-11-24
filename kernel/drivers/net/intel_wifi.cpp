@@ -535,6 +535,10 @@ struct RuntimeRadio {
 };
 
 RuntimeRadio* radio;
+uint8_t* live_firmware;
+size_t live_firmware_size;
+
+void stage_firmware(const uint8_t*, size_t, FirmwareCheck, const AuthenticationTarget&);
 
 void configure_runtime(NetAdapter& device) {
     if (!radio || device.info.administrative)
@@ -547,14 +551,15 @@ void configure_runtime(NetAdapter& device) {
     device.info.carrier = device.info.writable = false;
 }
 
-void stop_runtime(NetAdapter& device) {
+bool shut_down_radio(NetAdapter& device) {
     if (!radio)
-        return;
+        return false;
     const bool aborted_scan = radio->session.active;
     if (const auto pending = radio->session.station.pending_bytes)
         net_tx_complete(device, pending, true);
     const bool idle = stop_live_quz(radio->session);
-    restore_registers(radio->queues, radio->staged, radio->original_pci, idle);
+    const bool restored =
+        restore_registers(radio->queues, radio->staged, radio->original_pci, idle);
     radio->~RuntimeRadio();
     release(radio);
     radio = nullptr;
@@ -564,6 +569,29 @@ void stop_runtime(NetAdapter& device) {
     device.info.writable = false;
     if (aborted_scan)
         wireless_scan_finished(device.info.index, false);
+    return idle && restored;
+}
+
+void stop_runtime(NetAdapter& device) {
+    shut_down_radio(device);
+    release(live_firmware);
+    live_firmware = nullptr;
+    live_firmware_size = 0;
+}
+
+void recover_runtime(NetAdapter& device) {
+    const bool safe = shut_down_radio(device);
+    // Consume the retained image even on failure to bound startup retries.
+    auto* bytes = live_firmware;
+    const auto size = live_firmware_size;
+    live_firmware = nullptr;
+    live_firmware_size = 0;
+    if (safe && bytes) {
+        log("iwlwifi: restarting firmware after runtime failure\n");
+        stage_firmware(bytes, size, FirmwareCheck::live_scan, {});
+        log("iwlwifi: firmware restart %s\n", radio ? "complete" : "failed");
+    }
+    release(bytes);
 }
 
 int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
@@ -621,7 +649,7 @@ void poll_runtime(NetAdapter& device) {
             report_join_outcome(device, radio->session, join_result);
         if (result == LeaveOutcome::failed) {
             log("iwlwifi: stopping radio after incomplete station teardown\n");
-            stop_runtime(device);
+            recover_runtime(device);
         }
         if (join_result == JoinOutcome::idle)
             wireless_disconnected(device.info.index, reason, from_ap);
@@ -637,8 +665,12 @@ void poll_runtime(NetAdapter& device) {
             ++completed_generation;
         }
         report_join_outcome(device, radio->session, result);
-        if (!connected)
-            stop_runtime(device);
+        if (!connected) {
+            log("iwlwifi: join ended at phase %u with outcome %u and peer status %u\n",
+                uint64_t(radio->session.join.phase), uint64_t(result),
+                uint64_t(radio->session.join.peer_status));
+            recover_runtime(device);
+        }
         return;
     }
     if (radio->session.station.queue.id) {
@@ -656,7 +688,7 @@ void poll_runtime(NetAdapter& device) {
         radio->polling = false;
         if (!healthy) {
             log("iwlwifi: stopping radio after station firmware failure\n");
-            stop_runtime(device);
+            recover_runtime(device);
             ++completed_generation;
             wireless_disconnected(device.info.index);
             return;
@@ -688,7 +720,7 @@ void poll_runtime(NetAdapter& device) {
     const bool lost_station = failed && radio->session.station.queue.id;
     if (failed) {
         log("iwlwifi: stopping live scan after firmware error %u\n", uint64_t(outcome));
-        stop_runtime(device);
+        recover_runtime(device);
     }
     if (active)
         wireless_scan_finished(device.info.index, complete);
@@ -726,12 +758,22 @@ void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
         if (result.successful) {
             device->session.security_keys = image.security_key_version == 1;
             radio = device;
-            memcpy(scanned_adapter.info.mac, device->session.station_address,
-                   sizeof(device->session.station_address));
-            scanned_adapter.info.carrier = scanned_adapter.info.writable = open;
-            if (net_register(scanned_adapter, "iwlwifi", &adapter)) {
+            auto& info = scanned_adapter.info;
+            const auto& address = device->session.station_address;
+            const bool registered = info.index != 0;
+            if (!registered)
+                memcpy(info.mac, address, sizeof(address));
+            info.carrier = info.writable = open;
+            const bool admitted = registered
+                                      ? !memcmp(info.mac, address, sizeof(address))
+                                      : net_register(scanned_adapter, "iwlwifi", &adapter) != 0;
+            if (admitted) {
+                info.live = true;
                 scanned_adapter.receive_only_diagnostic = false;
                 radio_channels = device->session.channels;
+                release(completed_scan.elements);
+                new (&completed_scan) PassiveScan{};
+                ++completed_generation;
                 if (open) {
                     completed_scan = result.passive;
                     device->pending = nullptr;
@@ -902,7 +944,8 @@ int request_live_key(const StationKeyRequest& request) {
         });
     radio->polling = false;
     if (result.link_lost) {
-        stop_runtime(device);
+        log("iwlwifi: stopping radio after station key failure\n");
+        recover_runtime(device);
         ++completed_generation;
         wireless_disconnected(device.info.index);
     }
@@ -986,9 +1029,14 @@ void load_firmware(Node* file, FirmwareCheck check, const AuthenticationTarget& 
         report("firmware allocation failed");
         return;
     }
-    if (node_read(file, 0, bytes, size) == int64_t(size))
+    if (node_read(file, 0, bytes, size) == int64_t(size)) {
         stage_firmware(bytes, size, check, target);
-    else {
+        if (radio && check == FirmwareCheck::live_scan && !live_firmware) {
+            live_firmware = bytes;
+            live_firmware_size = size;
+            return;
+        }
+    } else {
         log("iwlwifi: firmware read failed\n");
         report("firmware read failed");
     }

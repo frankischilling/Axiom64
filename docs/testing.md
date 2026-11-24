@@ -2504,4 +2504,8 @@ A cancelled attempt ends with a connect timeout. The driver waits for the
 outstanding firmware command or transmit to finish, then removes the
 resources from that attempt. After cleanup, the radio can scan and connect
 again. If firmware fails to confirm cleanup, the driver stops the radio
-to protect the DMA buffers.
+to protect the DMA buffers. If the driver can stop DMA and restore the PCI
+command register, it tries one restart using the firmware saved at startup.
+The restarted radio keeps its interface name and can scan again. If DMA or
+PCI restoration cannot be confirmed, the old buffers stay reserved until
+reboot.

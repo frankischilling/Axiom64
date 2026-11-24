@@ -100,7 +100,7 @@ BootInfo boot_info;
     Acpi::DefinitionBlocks definitions;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
     const bool schedule_peers = arguments.has("smp.scheduler");
-    clock_init(rsdp, schedule_peers);
+    clock_init(rsdp, schedule_peers, arguments.has("clock.pm-latched"));
     const bool power_supply = arguments.has("acpi.power");
     if (power_supply)
         DeviceInventory::power_supply_prepare(definitions);

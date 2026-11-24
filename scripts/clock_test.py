@@ -14,7 +14,10 @@ from ext2_test import create_volume
 from network_test import fixture
 
 
-def run(firmware, transport, counter, delay, timeout, seed, scratch):
+PM_COUNTERS = ('pm-latched', 'pm-verified')
+
+
+def run(firmware, transport, counter, delay, timeout, seed, scratch, image):
     label = f'clock-{firmware}-{transport}-{counter}-delay{delay}'
     log, trace = ROOT / 'build' / (label + '.log'), ROOT / 'build' / (label + '.trace')
     trace.unlink(missing_ok=True)
@@ -38,8 +41,10 @@ def run(firmware, transport, counter, delay, timeout, seed, scratch):
             if backend.poll() is not None or time.monotonic() > until:
                 raise RuntimeError('clock fixture backend did not start')
             time.sleep(.02)
-        command = ['qemu-system-x86_64', '-machine', 'pc,hpet=' + ('off' if counter == 'tsc' else 'on'),
-            '-cpu', 'max', '-m', '512M', '-cdrom', str(ROOT / 'build/axiom64-clock.iso'),
+        machine = 'q35' if counter == 'pm-latched' else 'pc'
+        hpet = 'off' if counter in ('tsc', *PM_COUNTERS) else 'on'
+        command = ['qemu-system-x86_64', '-machine', f'{machine},hpet={hpet}',
+            '-cpu', 'max', '-m', '512M', '-cdrom', str(image),
             '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-nic', 'none', '-no-reboot',
             '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04', '-blockdev',
             f'driver=nbd,node-name=clock,server.type=unix,server.path={socket}',
@@ -47,6 +52,8 @@ def run(firmware, transport, counter, delay, timeout, seed, scratch):
             ('disable-legacy=on' if transport == 'modern' else 'disable-modern=on')]
         if counter == 'hpet-limit':
             command += ['-global', 'hpet.timers=32']
+        if counter in PM_COUNTERS:
+            command += ['-smp', '4']
         if firmware == 'uefi':
             variables = ROOT / 'build' / (label + '-OVMF_VARS.fd')
             shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -79,8 +86,12 @@ def run(firmware, transport, counter, delay, timeout, seed, scratch):
     readings = re.findall(r'CLOCK_ELAPSED stage=(\S+) before=(\d+) after=(\d+) elapsed_ns=(\d+)', text)
     elapsed = {stage: int(interval) for stage, _, _, interval in readings}
     deadline = re.search(r'CLOCK_DEADLINE alarm=(\d) child_ready=(\d)', text)
-    selected = 'Clock: HPET 64-bit counter' if counter == 'hpet' else 'Clock: calibrated TSC'
-    missing = [marker for marker in [selected, 'CLOCK_ELAPSED_TESTS_PASS',
+    if counter in PM_COUNTERS:
+        selected = ['Clock: ACPI PM timer, 24-bit counter', 'SMP: scheduler online=4',
+                    f'Clock: ACPI PM sampling mode={counter.removeprefix("pm-")}']
+    else:
+        selected = ['Clock: HPET 64-bit counter' if counter == 'hpet' else 'Clock: calibrated TSC']
+    missing = [marker for marker in [*selected, 'CLOCK_ELAPSED_TESTS_PASS',
                'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0'] if marker not in text]
     violations = []
     if len(readings) != 4 or set(elapsed) != {'sleep-before', 'mount', 'fsync', 'sleep-after'}:
@@ -126,15 +137,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--firmware', choices=['bios', 'uefi', 'both'], default='both')
     parser.add_argument('--transport', choices=['modern', 'legacy', 'both'], default='both')
-    parser.add_argument('--counter', choices=['hpet', 'tsc', 'hpet-limit', 'both', 'all'], default='all')
+    parser.add_argument('--counter', choices=['hpet', 'tsc', 'hpet-limit', 'both', 'all', 'pm',
+                                               *PM_COUNTERS], default='all')
     parser.add_argument('--delay', choices=['0', '3', 'both'], default='both')
     parser.add_argument('--timeout', type=float, default=90)
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('timeout must be positive')
     fixture(program='clock-elapsed-tests', script='userspace/tests/time/elapsed.sh')
+    pm_requested = args.counter in ('pm', *PM_COUNTERS)
+    options = ['--kernel-option', 'smp.scheduler', '--kernel-option', 'clock.pm-latched'] \
+        if pm_requested else []
+    image = ROOT / 'build' / ('axiom64-clock-pm.iso' if pm_requested else 'axiom64-clock.iso')
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
-                    '--output-name', 'axiom64-clock.iso'], cwd=ROOT, check=True)
+                    '--output-name', image.name, *options], cwd=ROOT, check=True)
     result = dict(seed_sha256=None, seed_unchanged=False, boots=[])
     path = ROOT / 'build/clock-results.json'
     with tempfile.TemporaryDirectory(prefix='axiom64-clock-') as temporary:
@@ -144,11 +160,11 @@ def main():
         result['seed_sha256'] = hashlib.sha256(seed.read_bytes()).hexdigest()
         for firmware in ['bios', 'uefi'] if args.firmware == 'both' else [args.firmware]:
             for transport in ['modern', 'legacy'] if args.transport == 'both' else [args.transport]:
-                counters = ['hpet', 'tsc', 'hpet-limit'] if args.counter == 'all' else (
-                    ['hpet', 'tsc'] if args.counter == 'both' else [args.counter])
+                counters = {'all': ('hpet', 'tsc', 'hpet-limit'), 'both': ('hpet', 'tsc'),
+                            'pm': PM_COUNTERS}.get(args.counter, (args.counter,))
                 for counter in counters:
                     for delay in [0, 3] if args.delay == 'both' else [int(args.delay)]:
-                        boot = run(firmware, transport, counter, delay, args.timeout, seed, scratch)
+                        boot = run(firmware, transport, counter, delay, args.timeout, seed, scratch, image)
                         result['boots'].append(boot)
                         result['seed_unchanged'] = hashlib.sha256(seed.read_bytes()).hexdigest() == result['seed_sha256']
                         path.write_text(json.dumps(result, indent=2) + '\n')

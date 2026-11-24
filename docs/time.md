@@ -28,6 +28,14 @@ timer become due across that operation.
 3. If neither counter is usable, retain IRQ-only time accounting. Its serial
    message identifies that elapsed kernel waits cannot be accounted for.
 
+With `smp.scheduler`, the kernel first tries the ACPI PM timer so every
+CPU reads the same counter. Combine it with `clock.pm-latched` to try single
+I/O reads between timer interrupts on the ICH9 and Intel HM470 PM timers.
+Boot still verifies that the counter advances. ICH9 requires the enabled PCI
+ACPI base to match the FADT timer port. HM470 requires the 24-bit timer at
+`0x1808`. Interrupts, large steps and other chipsets use verified reads.
+The boot log reports the selected sampling mode.
+
 Limine base revision 3 returns the RSDP physical address and leaves ACPI and
 reserved regions outside the direct map. The architecture reader checks the
 firmware memory range and maps those bytes explicitly. It uses the existing
@@ -181,6 +189,10 @@ monotonic/realtime API agreement, explicit guest success, and the selected
 counter. The child deliberately yields after reporting its absolute deadline,
 so entering the wait after storage must observe an already expired timeout.
 The seed must remain unchanged.
+
+Run `python3 scripts/clock_test.py --counter pm` to exercise the four-CPU
+ACPI PM clock. The Q35 guest uses latched reads and the PC guest checks the
+verified fallback with the same boot option and timed flushes.
 
 Results are in `build/clock-results.json`; guest/backend logs and flush traces
 use `build/clock-*`. Existing full OS, networking, thread, storage, and root

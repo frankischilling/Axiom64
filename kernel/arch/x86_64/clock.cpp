@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "core/time.hpp"
+#include "drivers/platform/pci.hpp"
 #include "firmware/acpi.hpp"
 
 namespace ax {
@@ -40,6 +41,7 @@ static uint32_t pm_last;
 static uint64_t pm_extended;
 static uint64_t tsc_per_us;
 static bool use_tsc;
+static bool use_latched_pm;
 
 static uint64_t timestamp() {
     uint32_t low, high;
@@ -115,6 +117,34 @@ static bool read_pm_timer(const Acpi::PmTimer& timer, uint32_t& reading) {
     return false;
 }
 
+static bool supports_latched_pm(const Acpi::PmTimer& timer) {
+    if (timer.mask != 0x00ffffff)
+        return false;
+
+    const PciFunction lpc{0, 31, 0, 0, nullptr};
+    switch (lpc.read32(0)) {
+    case 0x29188086: { // ICH9 LPC
+        const uint16_t base = lpc.read16(0x40) & 0xff80;
+        return base && (lpc.read8(0x44) & 0x80) && timer.port == base + 8;
+    }
+    case 0x068d8086: // HM470 LPC and its observed firmware ACPI timer port
+        return timer.port == 0x1808;
+    default:
+        return false;
+    }
+}
+
+static bool sample_pm_timer(bool verify, uint32_t& reading) {
+    // Interrupts keep the verified sampler. Recheck a large or backward step
+    // in the fast path before accounting for the elapsed ticks.
+    if (use_latched_pm && !verify) {
+        reading = in32(pm_timer.port) & pm_timer.mask;
+        if (((reading - pm_last) & pm_timer.mask) <= pm_frequency / 4)
+            return true;
+    }
+    return read_pm_timer(pm_timer, reading);
+}
+
 static bool initialize_pm_timer(uint64_t rsdp) {
     Acpi::PmTimer device{};
     uint32_t initial;
@@ -176,11 +206,14 @@ static bool initialize_tsc() {
     return true;
 }
 
-void clock_init(uint64_t rsdp, bool prefer_pm_timer) {
-    if (prefer_pm_timer && initialize_pm_timer(rsdp))
+void clock_init(uint64_t rsdp, bool prefer_pm_timer, bool request_latched_pm) {
+    if (prefer_pm_timer && initialize_pm_timer(rsdp)) {
+        use_latched_pm = request_latched_pm && supports_latched_pm(pm_timer);
         log("Clock: ACPI PM timer, %u-bit counter, 100 Hz accounting\n",
             pm_timer.mask == UINT32_MAX ? 32u : 24u);
-    else if (initialize_hpet(rsdp))
+        if (request_latched_pm)
+            log("Clock: ACPI PM sampling mode=%s\n", use_latched_pm ? "latched" : "verified");
+    } else if (initialize_hpet(rsdp))
         log("Clock: HPET 64-bit counter, 100 Hz accounting\n");
     else if ((use_tsc = initialize_tsc()))
         log("Clock: calibrated TSC, fixed-frequency fallback, 100 Hz accounting\n");
@@ -217,7 +250,7 @@ void clock_refresh(bool timer) {
         uint32_t reading;
         // The bootstrap CPU's 100 Hz tick samples well inside the 24-bit wrap
         // interval (about 4.69 s). Kernel entries serialize timeline updates.
-        if (read_pm_timer(pm_timer, reading)) {
+        if (sample_pm_timer(timer, reading)) {
             pm_extended += (reading - pm_last) & pm_timer.mask;
             pm_last = reading;
             sample_clock(pm_extended);

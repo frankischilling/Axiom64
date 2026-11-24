@@ -178,7 +178,7 @@ static Mount* mounted_on(Node* point) {
 }
 
 Node* directory_parent(Node* node) {
-    if (current_task() && node == current_task()->fs->root_node)
+    if (node == (current_task() ? current_task()->fs->root_node : root_node))
         return node;
     if (node == node->mount->root && node->mount->point)
         return node->mount->point->parent;

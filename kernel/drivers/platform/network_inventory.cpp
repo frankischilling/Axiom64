@@ -82,6 +82,29 @@ bool publish_pci_parent(const NetInfo& info, const char* path) {
     if (offset + name + sizeof(slot) - 1 + sizeof(info.bus_address) > sizeof(event))
         return false;
     memcpy(event + offset, info.driver, name);
+    char endpoint_path[256];
+    if (!inventory_path(endpoint_path, path, "uevent"))
+        return false;
+    if (auto endpoint = lookup(endpoint_path, false)) {
+        if (endpoint->device != Device::pci_uevent || !endpoint->owned)
+            return false;
+        const size_t length = offset + name + 1;
+        event[length - 1] = '\n';
+        if (endpoint->size >= length &&
+            !memcmp(endpoint->data + endpoint->size - length, event, length))
+            return true;
+        const size_t size = endpoint->size + length;
+        auto bytes = static_cast<uint8_t*>(alloc(size));
+        if (!bytes)
+            return false;
+        memcpy(bytes, endpoint->data, endpoint->size);
+        memcpy(bytes + endpoint->size, event, length);
+        release(endpoint->data);
+        endpoint->data = bytes;
+        endpoint->size = endpoint->capacity = size;
+        inventory_device_changed(endpoint);
+        return true;
+    }
     memcpy(event + offset + name, slot, sizeof(slot) - 1);
     memcpy(event + offset + name + sizeof(slot) - 1, info.bus_address, sizeof(info.bus_address));
     return inventory_attribute(path, "uevent", event);

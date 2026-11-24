@@ -51,8 +51,8 @@ The installed desktop runs NetworkManager after the system D-Bus socket
 appears. Ethernet uses its internal DHCP client by default. The Plasma network
 applet reads the same D-Bus service. NetworkManager stores saved connections
 under `/etc/NetworkManager/system-connections/`. Test boots that enable
-`debug.ssh` use the older [direct-cable network setup](pxe.md). Boot without
-`debug.ssh` to use NetworkManager and open Networks in the Plasma system tray.
+`debug.ssh` also run NetworkManager unless an explicit
+[direct-cable lab profile](pxe.md) selects the native service.
 
 The serial console remains available for recovery. Create the root-owned
 `/etc/axiom64/console-desktop` file and reboot to have console sign-in start
@@ -157,6 +157,7 @@ Limine's kernel command line selects the root:
 | `root=PARTUUID=<id>` | Select a GPT partition GUID or an MBR disk signature and hexadecimal partition number, such as `13572468-05` |
 | `root=PARTLABEL=<name>` | Select a GPT partition name in UTF-8. The name is case-sensitive and must fit in one command-line token. |
 | `rootfstype=ext2`, `ext3`, or `ext4` | Select the ext-family driver. Omission also selects that driver. See the [supported formats](ext2.md#supported-format-and-operations). |
+| `rootdir=<name>` | Boot an installation in one top-level directory on the selected disk. The directory must be owned by root and writable only by its owner. |
 | `rootflags=rw` | Writable root; also the default for a selected disk |
 | `rootflags=ro` | Read-only root; use `readonly=on` on QEMU's drive to enforce it in hardware too |
 | `rootflags=rw,recovery=check` or `ro,recovery=check` | Check a dirty root through the complete ext2 validation scan; writable checks can reconcile free counters, while read-only checks require consistent counters |
@@ -166,6 +167,12 @@ Empty, duplicate, oversized, and unsupported root options fail with a `BOOT_ROOT
 For a generated recovery boot image, pass `--root-recovery` with `--root-device` to `scripts/image.py`. This selects the checked policy above. The ordinary image keeps the default clean-volume requirement. [Ext2 recovery limits](ext2.md#supported-format-and-operations) explain counter reconciliation and structural rejection.
 
 The disk must contain executable regular files at `/sbin/init`, `/bin/busybox`, and `/lib/ld-musl-x86_64.so.1`, plus directories at `/dev`, `/proc`, `/sys`, `/tmp`, and `/run`. Required paths are checked through the disk filesystem. The ELF loader and dynamic linker use the selected root. Relative paths, cwd, mount ownership, and `stat.st_dev` follow that root too.
+
+For a trial install beside an existing root, append `rootdir=trial` to a
+disk or PXE entry that already selects the partition. Put the installation
+files inside its top-level `trial` directory. The kernel resolves init,
+its libraries, and the volatile mount directories inside that installation.
+Boot entries without `rootdir` still start at the partition root.
 
 The kernel mounts independent RAM volumes on `/dev`, `/sys`, `/tmp` and `/run`, and a process filesystem on `/proc`. Devices, process status, framebuffer metadata, sockets and scratch files can therefore work with a read-only root. `/tmp` has mode `01777`. Ordinary files elsewhere use ext2; `/tmp` and `/run` do not persist. Procfs currently supplies process/thread enumeration, caller-relative self links and actual identity/group/state status; wider procfs, sysfs and devtmpfs interfaces remain required.
 
@@ -184,6 +191,8 @@ Virtio requests, including mount-time flushes, have a 30-second deadline. A host
 ```sh
 make test-disk-root
 make test-root-io
+make build/axiom64.elf busybox
+python3 scripts/boot_root_directory_test.py
 python3 scripts/disk_root_test.py --checks files --firmware bios --transport modern
 python3 scripts/disk_root_test.py --checks errors --firmware uefi --transport legacy
 python3 scripts/boot_test.py --disk-root --transport modern --firmware both

@@ -1093,7 +1093,8 @@ static int mounts_snapshot(const Entry& item, Snapshot& output) {
         if (!type)
             continue;
         char path[sizeof(Path::text)];
-        node_path(mount->root, path, sizeof(path), false, boundary);
+        auto visible_root = mount == root_node->mount ? root_node : mount->root;
+        node_path(visible_root, path, sizeof(path), false, boundary);
         if (!path[0])
             continue;
         char device[block_name_size];

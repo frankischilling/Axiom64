@@ -573,7 +573,8 @@ static void check_station_event(int fd, unsigned family, unsigned index, unsigne
 static void check_rsn_connect(int fd, unsigned family, unsigned index, const uint8_t* peer) {
     const uint8_t security[] = {48, 20,  1, 0, 0, 15, 172, 4,   1, 0, 0,
                                 15, 172, 4, 1, 0, 0,  15,  172, 1, 0, 0};
-    const uint32_t version = NL80211_WPA_VERSION_2, ccmp = 0x000fac04, eap = 0x000fac01;
+    const uint32_t version = NL80211_WPA_VERSION_2, ccmp = 0x000fac04;
+    const uint32_t akms[] = {0x000fac05, 0x000fac01}; // EAP-SHA256 and ordinary EAP.
     const uint32_t frequency = 2412;
     struct packet connect = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 110);
     append_attribute(&connect, NL80211_ATTR_IFINDEX, &index, sizeof(index));
@@ -583,10 +584,17 @@ static void check_rsn_connect(int fd, unsigned family, unsigned index, const uin
     append_attribute(&connect, NL80211_ATTR_IE, security, sizeof(security));
     append_attribute(&connect, NL80211_ATTR_WPA_VERSIONS, &version, sizeof(version));
     append_attribute(&connect, NL80211_ATTR_CIPHER_SUITES_PAIRWISE, &ccmp, sizeof(ccmp));
-    append_attribute(&connect, NL80211_ATTR_AKM_SUITES, &eap, sizeof(eap));
+    append_attribute(&connect, NL80211_ATTR_AKM_SUITES, akms, sizeof(akms));
     check_station_ack(fd, &connect, EINVAL); /* Missing group cipher. */
     ++connect.header.nlmsg_seq;
     append_attribute(&connect, NL80211_ATTR_CIPHER_SUITE_GROUP, &ccmp, sizeof(ccmp));
+    struct packet mismatch = connect;
+    struct nlattr* suites =
+        (struct nlattr*)message_attribute(&mismatch.header, NL80211_ATTR_AKM_SUITES);
+    const uint32_t personal_akms[] = {0x000fac02, 0x000fac08};
+    memcpy((uint8_t*)suites + NLA_HDRLEN, personal_akms, sizeof(personal_akms));
+    mismatch.header.nlmsg_seq += 2;
+    check_station_ack(fd, &mismatch, EOPNOTSUPP);
     struct packet protected_management = connect;
     const uint32_t mfp = NL80211_MFP_REQUIRED;
     ++protected_management.header.nlmsg_seq;

@@ -2453,12 +2453,18 @@ acknowledgement, that a repeated install preserves replay counters, and that a
 timeout closes the link.
 
 The live driver supports WPA2 with CCMP-128 for both pairwise and group
-traffic. It accepts Enterprise and Personal profiles. The station keeps the
+traffic. It accepts Enterprise and Personal profiles. When the supplicant
+offers several authentication suites, the driver checks the suite selected in
+the association request against the list. The station keeps the
 controlled port closed until userspace installs a pairwise key and authorizes
-the connection. The firmware model checks the outgoing association frame.
-The Blade still needs WPA2 authentication and encrypted traffic tests on a
-real access point. Networks that require protected management frames need
-additional driver support.
+the connection. The firmware model checks the outgoing association frame. In
+a guest with NetworkManager and wpa_supplicant installed, a simulated
+WPA2-Personal access point verified the integrity codes on messages two and
+four. The test also verified both CCMP key installs and port authorization.
+
+The Blade still needs WPA2 authentication and encrypted traffic tests on a real
+access point. Networks that require protected management frames need additional
+driver support.
 
 Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
 disconnect event on the `mlme` group before scanning or connecting again.

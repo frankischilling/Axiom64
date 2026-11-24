@@ -183,7 +183,9 @@ int select_association_elements(const uint8_t* bytes, size_t size,
 int select_station_request(const uint8_t* bytes, size_t length, unsigned index, uint8_t command,
                            StationAttributes& request) {
     constexpr uint32_t authorized_flag = 1u << 1;
+    constexpr unsigned enterprise_akm = 1, personal_akm = 2;
     bool seen[mlo_support + 1]{};
+    unsigned allowed_akms = 0;
     auto& connection = request.connection;
     while (length) {
         if (length < sizeof(AttributeHeader))
@@ -215,8 +217,7 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
         case use_mfp:
         case pairwise_cipher:
         case group_cipher:
-        case wpa_versions:
-        case akm_suites: {
+        case wpa_versions: {
             uint32_t number;
             if (size != sizeof(number))
                 return -22;
@@ -230,14 +231,6 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
                 return -95;
             if (field.type == wpa_versions && number != 2)
                 return -95;
-            if (field.type == akm_suites) {
-                if (number == IntelWifi::enterprise_suite)
-                    connection.akm = IntelWifi::RsnAkm::enterprise;
-                else if (number == IntelWifi::personal_suite)
-                    connection.akm = IntelWifi::RsnAkm::personal;
-                else
-                    return -95;
-            }
             if (field.type == frequency_mhz || field.type == frequency_hint) {
                 if (!number)
                     return -22;
@@ -246,6 +239,20 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
             }
             break;
         }
+        case akm_suites:
+            if (!size || size % sizeof(uint32_t))
+                return -22;
+            for (size_t offset = 0; offset < size; offset += sizeof(uint32_t)) {
+                uint32_t suite;
+                memcpy(&suite, value + offset, sizeof(suite));
+                if (suite == IntelWifi::enterprise_suite)
+                    allowed_akms |= enterprise_akm;
+                else if (suite == IntelWifi::personal_suite)
+                    allowed_akms |= personal_akm;
+            }
+            if (!allowed_akms)
+                return -95;
+            break;
         case wdev: {
             uint64_t id;
             if (size != sizeof(id))
@@ -334,13 +341,24 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
          (seen[vht_capability] && !seen[vht_capability_mask])))
         return -22;
     if (command == nl80211_connect) {
-        const bool rsn = connection.akm != IntelWifi::RsnAkm::open;
+        using IntelWifi::RsnAkm;
+        const bool rsn = seen[akm_suites];
         if (rsn && (!seen[wpa_versions] || !seen[pairwise_cipher] || !seen[group_cipher]))
             return -22;
-        if ((!rsn && (seen[wpa_versions] || seen[pairwise_cipher] || seen[group_cipher] ||
-                      seen[privacy])) ||
-            !IntelWifi::station_rsn_matches(connection.extra, connection.extra_bytes,
-                                            connection.akm))
+        // The driver gets a list of permitted suites and the RSN element for this attempt.
+        // Use the selected suite in the element and require it to be in that list.
+        if ((allowed_akms & enterprise_akm) &&
+            IntelWifi::station_rsn_matches(connection.extra, connection.extra_bytes,
+                                           RsnAkm::enterprise))
+            connection.akm = RsnAkm::enterprise;
+        else if ((allowed_akms & personal_akm) &&
+                 IntelWifi::station_rsn_matches(connection.extra, connection.extra_bytes,
+                                                RsnAkm::personal))
+            connection.akm = RsnAkm::personal;
+        else if (rsn || seen[wpa_versions] || seen[pairwise_cipher] || seen[group_cipher] ||
+                 seen[privacy] ||
+                 !IntelWifi::station_rsn_matches(connection.extra, connection.extra_bytes,
+                                                 RsnAkm::open))
             return -95;
     }
     if (command == nl80211_set_station && (!seen[mac] || !seen[station_flags]))

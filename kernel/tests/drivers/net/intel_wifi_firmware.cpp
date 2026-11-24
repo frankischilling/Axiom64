@@ -124,12 +124,13 @@ struct StartupFixture {
     ReceiveStatus receive_status{};
     uint32_t used[rx_ring_entries]{};
     uint8_t buffer[ax::page_size]{};
-    uint8_t replies[3][ax::page_size]{};
+    uint8_t replies[4][ax::page_size]{};
     CommandDescriptor commands[command_ring_entries]{};
     CommandPayloads payloads{};
     unsigned commands_sent = 0;
     bool malformed_nvm = false;
     bool wrong_sequence = false;
+    bool reject_scan_config = false;
     bool master = false;
     bool requested_master = false;
     bool sent_doorbell = false;
@@ -142,26 +143,19 @@ struct StartupFixture {
     }
 
     void command_reply(unsigned index) {
-        assert(index == ++commands_sent && index <= 3);
+        assert(index == ++commands_sent && index <= 4);
         const unsigned slot = index - 1;
-        const uint8_t expected_groups[] = {2, 12, 12};
-        const uint8_t expected_commands[] = {3, 0, 2};
-        const uint8_t expected_word = slot ? 0 : 2;
         const auto& command = payloads[slot];
-        const uint8_t expected[] = {expected_commands[slot],
-                                    expected_groups[slot],
-                                    uint8_t(slot),
-                                    0,
-                                    4,
-                                    0,
-                                    0,
-                                    0,
-                                    expected_word,
-                                    0,
-                                    0,
-                                    0};
-        assert(!memcmp(expected, command, sizeof(expected)));
-        assert(commands[slot].buffer_count == 1 && commands[slot].buffers[0].length == 12);
+        const uint8_t expected[][20]{
+            {3, 2, 0, 0, 4, 0, 0, 0, 2},
+            {0, 12, 1, 0, 4},
+            {2, 12, 2, 0, 4},
+            {0xc, 1, 3, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2},
+        };
+        const auto command_bytes = index == 4 ? 20 : 12;
+        assert(!memcmp(expected[slot], command, sizeof(expected[slot])));
+        assert(commands[slot].buffer_count == 1 &&
+               commands[slot].buffers[0].length == command_bytes);
         assert(commands[slot].buffers[0].address == 0xa000 + slot * command_slot_bytes);
 
         auto* reply = replies[slot];
@@ -175,8 +169,9 @@ struct StartupFixture {
         const unsigned length = index == 3 ? 472 : 4;
         reply[0] = uint8_t(length);
         reply[1] = uint8_t(length >> 8);
-        reply[4] = command[0];
-        reply[5] = command[1];
+        const bool reject = index == 4 && reject_scan_config;
+        reply[4] = reject ? 2 : command[0];
+        reply[5] = reject ? 0 : command[1];
         reply[6] = index == 3 && wrong_sequence ? 0xff : command[2];
         if (index == 3) {
             reply[8] = malformed_nvm;
@@ -234,7 +229,7 @@ struct StartupFixture {
         }
     }
 
-    FirmwareBootResult run(bool nvm = false) {
+    FirmwareBootResult run(bool nvm = false, const AntennaMasks* scan_antennas = nullptr) {
         const FirmwareBootIo io{
             this,
             [](void* ptr, unsigned offset) {
@@ -258,7 +253,7 @@ struct StartupFixture {
                 auto& model = *static_cast<StartupFixture*>(ptr);
                 if (id == 1)
                     return model.buffer;
-                return id >= 2 && id <= 4 ? model.replies[id - 2] : nullptr;
+                return id >= 2 && id <= 5 ? model.replies[id - 2] : nullptr;
             },
         };
         FirmwareBootMemory memory{0x9000, &receive_status, used};
@@ -267,7 +262,7 @@ struct StartupFixture {
             memory.command_payloads = &payloads;
             memory.command_dma = 0xa000;
         }
-        return start_and_stop_quz(io, memory);
+        return start_and_stop_quz(io, memory, scan_antennas);
     }
 };
 
@@ -311,6 +306,24 @@ void check_startup() {
         }
     }
     std::puts("AX201_NVM_MODEL_PASS");
+
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        StartupFixture model(StartupCase::good);
+        model.reject_scan_config = scenario == 1;
+        model.malformed_nvm = scenario == 3;
+        const AntennaMasks antennas{scenario == 2 ? uint8_t(4) : uint8_t(1), 2};
+        const auto outcome = model.run(true, &antennas);
+        const char* expected[] = {
+            "firmware scan configuration accepted",
+            "firmware scan configuration failed",
+            "firmware and NVM antenna masks do not overlap",
+            "firmware returned invalid NVM data",
+        };
+        assert(!strcmp(outcome.status, expected[scenario]));
+        assert(outcome.alive && outcome.dma_idle && model.reset_after_dma && !model.master);
+        assert(model.commands_sent == (scenario >= 2 ? 3u : 4u));
+    }
+    std::puts("AX201_SCAN_CONFIG_MODEL_PASS");
 }
 } // namespace
 
@@ -323,6 +336,8 @@ int main(int argc, char** argv) {
     word(file, version + 4, 0x12345678);
     word(file, append(file, 48, 4), 0x06630001);
     word(file, append(file, 48, 4), 0x04010c02);
+    word(file, append(file, 48, 4), 0x0005010c);
+    word(file, append(file, 23, 4), 0x00330018);
     word(file, append(file, 27, 4), 2);
     const size_t first_section = section(file, 0x400000, {7});
     const size_t delimiter = section(file, 0xffffcccc, {0, 0, 0, 0});
@@ -335,6 +350,7 @@ int main(int argc, char** argv) {
     FirmwareImage image{};
     assert(!parse_firmware(file.data(), file.size(), image));
     assert(image.nvm_version == 4);
+    assert(image.scan_config_version == 5 && image.antennas.tx == 3 && image.antennas.rx == 3);
     assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
            image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
@@ -363,6 +379,12 @@ int main(int argc, char** argv) {
     Bytes duplicate_alive = file;
     word(duplicate_alive, append(duplicate_alive, 48, 4), 0x06630001);
     reject(duplicate_alive);
+    Bytes duplicate_scan = file;
+    word(duplicate_scan, append(duplicate_scan, 48, 4), 0x0004010c);
+    reject(duplicate_scan);
+    Bytes duplicate_phy = file;
+    word(duplicate_phy, append(duplicate_phy, 23, 4), 0x00330018);
+    reject(duplicate_phy);
     Bytes oversized = file;
     section(oversized, 0x1010000, Bytes(max_section_bytes + 1, 0));
     reject(oversized);
@@ -376,6 +398,7 @@ int main(int argc, char** argv) {
         Bytes device_file{std::istreambuf_iterator<char>(input), {}};
         assert(!parse_firmware(device_file.data(), device_file.size(), image));
         assert(image.nvm_version == 4);
+        assert(image.scan_config_version == 5 && image.antennas.tx == 3 && image.antennas.rx == 3);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

@@ -25,7 +25,8 @@ enum class PacketRead { end, packet, malformed };
 PacketRead next_firmware_packet(const uint8_t*, size_t bytes, size_t& offset, FirmwarePacket&);
 
 bool prepare_host_command(uint8_t (&slot)[command_slot_bytes], uint64_t dma, CommandDescriptor&,
-                          uint16_t index, uint8_t group, uint8_t opcode, uint32_t payload);
+                          uint16_t index, uint8_t group, uint8_t opcode, const uint8_t* payload,
+                          size_t payload_bytes);
 
 struct NvmInfo {
     uint16_t version;

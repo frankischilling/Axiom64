@@ -2304,5 +2304,10 @@ reboot. The Blade has returned ALIVE and passed shutdown over PXE.
 `iwlwifi.nvm-check` continues after ALIVE. It sends the initialization and
 NVM access commands, waits for the initialization notification, and reads the
 device's NVM information before stopping the adapter. The register model
-checks reply matching and rejects invalid NVM data. A physical NVM response,
-a wireless interface, and association still need verification.
+checks reply matching and rejects invalid NVM data. The Blade returned a valid
+NVM reply and stopped the adapter over PXE.
+
+`iwlwifi.scan-config-check` also asks the firmware to configure scanning.
+It requires scan configuration version 5 and intersects the antenna masks
+from the firmware and NVM. It checks the command reply, then stops the adapter.
+Network discovery, a wireless interface, and association require further work.

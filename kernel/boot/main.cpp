@@ -130,10 +130,16 @@ BootInfo boot_info;
         xhci_keyboard_init();
     net_init();
     const bool probe_wifi = arguments.has("iwlwifi.probe");
-    const bool nvm_wifi = arguments.has("iwlwifi.nvm-check");
-    const bool start_wifi = nvm_wifi || arguments.has("iwlwifi.start-check");
-    if (probe_wifi || start_wifi || arguments.has("iwlwifi.firmware-check"))
-        IntelWifi::check_firmware(probe_wifi, start_wifi, nvm_wifi);
+    auto wifi_check = IntelWifi::FirmwareCheck::stage;
+    if (arguments.has("iwlwifi.scan-config-check"))
+        wifi_check = IntelWifi::FirmwareCheck::scan_config;
+    else if (arguments.has("iwlwifi.nvm-check"))
+        wifi_check = IntelWifi::FirmwareCheck::nvm;
+    else if (arguments.has("iwlwifi.start-check"))
+        wifi_check = IntelWifi::FirmwareCheck::start;
+    if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
+        arguments.has("iwlwifi.firmware-check"))
+        IntelWifi::check_firmware(probe_wifi, wifi_check);
     publish_pci_inventory();
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));

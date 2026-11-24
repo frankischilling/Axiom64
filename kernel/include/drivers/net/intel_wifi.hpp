@@ -28,15 +28,23 @@ struct FirmwareRegion {
     unsigned count;
 };
 
+struct AntennaMasks {
+    uint8_t tx, rx;
+};
+
 struct FirmwareImage {
     uint32_t version[3];
     FirmwareRegion regions[region_count];
     uint32_t paging_bytes;
     uint8_t alive_version;
     uint8_t nvm_version;
+    uint8_t scan_config_version;
+    AntennaMasks antennas;
 };
 
 // The returned sections borrow the firmware bytes. A rejected image leaves output intact.
 const char* parse_firmware(const uint8_t*, size_t, FirmwareImage&);
-void check_firmware(bool probe_pci, bool start = false, bool nvm = false);
+
+enum class FirmwareCheck { stage, start, nvm, scan_config };
+void check_firmware(bool probe_pci, FirmwareCheck);
 } // namespace ax::IntelWifi

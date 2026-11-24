@@ -228,7 +228,9 @@ struct AdapterBoot {
     const BootQueues& queues;
 };
 
-void launch_firmware(BootQueues& queues, StagedImage& staged, bool nvm) {
+void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
+                     const AntennaMasks& antennas) {
+    const bool nvm = check == FirmwareCheck::nvm || check == FirmwareCheck::scan_config;
     if (nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
         report("command buffer allocation failed");
         return;
@@ -274,7 +276,8 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, bool nvm) {
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
-    const auto result = start_and_stop_quz(io, memory);
+    const auto* scan_antennas = check == FirmwareCheck::scan_config ? &antennas : nullptr;
+    const auto result = start_and_stop_quz(io, memory, scan_antennas);
     const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
     adapter.write16(pci_command, restore);
     const bool restored = adapter.read16(pci_command) == restore;
@@ -295,21 +298,27 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, bool nvm) {
     }
 }
 
-void stage_firmware(const uint8_t* bytes, size_t size, bool start, bool nvm) {
+void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
     FirmwareImage image{};
     if (const auto* error = parse_firmware(bytes, size, image)) {
         log("iwlwifi: firmware rejected: %s\n", error);
         report(error);
         return;
     }
-    if (nvm && image.nvm_version != 4) {
+    if ((check == FirmwareCheck::nvm || check == FirmwareCheck::scan_config) &&
+        image.nvm_version != 4) {
         log("iwlwifi: unsupported NVM version %u\n", uint64_t(image.nvm_version));
         report("firmware does not advertise NVM version 4");
         return;
     }
-    if (start && image.alive_version != 6) {
+    if (check != FirmwareCheck::stage && image.alive_version != 6) {
         log("iwlwifi: unsupported ALIVE version %u\n", uint64_t(image.alive_version));
         report("firmware does not advertise ALIVE version 6");
+        return;
+    }
+    if (check == FirmwareCheck::scan_config &&
+        (image.scan_config_version != 5 || !image.antennas.tx || !image.antennas.rx)) {
+        report("firmware lacks scan configuration v5 or antenna masks");
         return;
     }
     StagedImage staged;
@@ -337,12 +346,13 @@ void stage_firmware(const uint8_t* bytes, size_t size, bool start, bool nvm) {
         uint64_t(image.regions[umac].count), uint64_t(image.regions[paging].count),
         uint64_t(image.paging_bytes));
     report("firmware and boot queues staged in memory");
-    if (start)
-        launch_firmware(queues, staged, nvm);
+    if (check != FirmwareCheck::stage)
+        launch_firmware(queues, staged, check, image.antennas);
 }
 } // namespace
 
-void check_firmware(bool probe_pci, bool start, bool nvm) {
+void check_firmware(bool probe_pci, FirmwareCheck check) {
+    const bool start = check != FirmwareCheck::stage;
     if (probe_pci || start) {
         start_requested = start;
         probe = Probe::absent;
@@ -370,7 +380,7 @@ void check_firmware(bool probe_pci, bool start, bool nvm) {
         return;
     }
     if (node_read(file, 0, bytes, size) == int64_t(size))
-        stage_firmware(bytes, size, start, nvm);
+        stage_firmware(bytes, size, check);
     else {
         log("iwlwifi: firmware read failed\n");
         report("firmware read failed");

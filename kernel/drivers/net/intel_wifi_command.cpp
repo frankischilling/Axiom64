@@ -46,8 +46,11 @@ PacketRead next_firmware_packet(const uint8_t* data, size_t bytes, size_t& offse
 
 bool prepare_host_command(uint8_t (&slot)[command_slot_bytes], uint64_t dma,
                           CommandDescriptor& descriptor, uint16_t index, uint8_t group,
-                          uint8_t opcode, uint32_t payload) {
-    constexpr unsigned header_bytes = 8, command_bytes = header_bytes + sizeof(payload);
+                          uint8_t opcode, const uint8_t* payload, size_t payload_bytes) {
+    constexpr unsigned header_bytes = 8;
+    if (payload_bytes > sizeof(slot) - header_bytes || (!payload && payload_bytes))
+        return false;
+    const auto command_bytes = uint16_t(header_bytes + payload_bytes);
     if (!dma || dma % alignof(uint64_t) || !Dma::fits(dma, command_bytes, Dma::pci) ||
         index >= command_ring_entries || !group)
         return false;
@@ -55,9 +58,9 @@ bool prepare_host_command(uint8_t (&slot)[command_slot_bytes], uint64_t dma,
     slot[0] = opcode;
     slot[1] = group;
     slot[2] = uint8_t(index); // Queue zero is reserved for host commands.
-    slot[4] = sizeof(payload);
-    for (unsigned i = 0; i < sizeof(payload); ++i)
-        slot[header_bytes + i] = uint8_t(payload >> (8 * i));
+    slot[4] = uint8_t(payload_bytes);
+    if (payload_bytes)
+        memcpy(slot + header_bytes, payload, payload_bytes);
     descriptor = {};
     descriptor.buffer_count = 1;
     descriptor.buffers[0] = {command_bytes, dma};

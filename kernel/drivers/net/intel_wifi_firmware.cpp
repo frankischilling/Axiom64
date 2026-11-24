@@ -15,9 +15,9 @@ namespace ax::IntelWifi {
 namespace {
 constexpr size_t tlv_file_header = 88, tlv_header = 8;
 constexpr uint32_t tlv_magic = 0x0a4c5749;
-constexpr uint32_t tlv_runtime_section = 19, tlv_init_section = 20, tlv_secure_runtime = 24,
-                   tlv_secure_init = 25, tlv_cpu_count = 27, tlv_paging_size = 32,
-                   tlv_firmware_version = 36, tlv_command_versions = 48;
+constexpr uint32_t tlv_runtime_section = 19, tlv_init_section = 20, tlv_phy_sku = 23,
+                   tlv_secure_runtime = 24, tlv_secure_init = 25, tlv_cpu_count = 27,
+                   tlv_paging_size = 32, tlv_firmware_version = 36, tlv_command_versions = 48;
 constexpr uint32_t cpu_separator = 0xffffcccc, paging_separator = 0xaaaabbbb;
 
 uint32_t load32(const uint8_t* bytes) {
@@ -60,7 +60,7 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     FirmwareImage image{};
     auto region = lmac;
     bool seen_version = false, seen_cpu_count = false, seen_paging_size = false, seen_alive = false;
-    bool seen_nvm = false;
+    bool seen_nvm = false, seen_phy_sku = false, seen_scan_config = false;
     for (size_t cursor = tlv_file_header; cursor < size;) {
         if (size - cursor < tlv_header)
             return "truncated TLV header";
@@ -90,6 +90,14 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
             seen_paging_size = true;
             image.paging_bytes = load32(payload);
             break;
+        case tlv_phy_sku: {
+            if (seen_phy_sku || length != 4)
+                return "invalid firmware PHY SKU";
+            seen_phy_sku = true;
+            const auto phy = load32(payload);
+            image.antennas = {uint8_t((phy >> 16) & 0xf), uint8_t((phy >> 20) & 0xf)};
+            break;
+        }
         case tlv_command_versions:
             if (length % 4)
                 return "invalid firmware command versions";
@@ -104,6 +112,11 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
                         return "duplicate firmware NVM version";
                     seen_nvm = true;
                     image.nvm_version = payload[i + 3];
+                } else if (payload[i] == 0xc && payload[i + 1] == 1) {
+                    if (seen_scan_config)
+                        return "duplicate firmware scan configuration version";
+                    seen_scan_config = true;
+                    image.scan_config_version = payload[i + 2];
                 }
             }
             break;

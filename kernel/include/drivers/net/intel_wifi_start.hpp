@@ -40,5 +40,6 @@ struct FirmwareBootResult {
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.
-FirmwareBootResult start_and_stop_quz(const FirmwareBootIo&, const FirmwareBootMemory&);
+FirmwareBootResult start_and_stop_quz(const FirmwareBootIo&, const FirmwareBootMemory&,
+                                      const AntennaMasks* scan_antennas = nullptr);
 } // namespace ax::IntelWifi

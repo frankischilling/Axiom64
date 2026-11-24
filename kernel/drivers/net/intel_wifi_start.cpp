@@ -290,13 +290,14 @@ struct CommandSession {
         return Reply::timeout;
     }
 
-    Reply send(uint8_t group, uint8_t opcode, uint32_t word, FirmwarePacket& packet) {
+    Reply send(uint8_t group, uint8_t opcode, const uint8_t* payload, size_t bytes,
+               FirmwarePacket& packet) {
         const auto& memory = rx.memory;
         const unsigned slot = index;
         if (slot >= command_ring_entries ||
             !prepare_host_command((*memory.command_payloads)[slot],
                                   memory.command_dma + slot * command_slot_bytes,
-                                  memory.commands[slot], index, group, opcode, word))
+                                  memory.commands[slot], index, group, opcode, payload, bytes))
             return Reply::broken;
         __atomic_thread_fence(__ATOMIC_RELEASE);
         reg.write(command_write_pointer, ++index);
@@ -304,20 +305,35 @@ struct CommandSession {
     }
 };
 
-const char* request_nvm(const Registers& reg, ReceiveReader& rx, NvmInfo& info) {
-    CommandSession commands{reg, rx};
+const char* request_nvm(CommandSession& commands, NvmInfo& info) {
     FirmwarePacket response{};
-    if (commands.send(2, 3, 1u << 1, response) != Reply::matched)
+    const uint8_t init_config[4]{1u << 1};
+    const uint8_t reserved[4]{};
+    if (commands.send(2, 3, init_config, sizeof(init_config), response) != Reply::matched)
         return "firmware init configuration failed";
-    if (commands.send(12, 0, 0, response) != Reply::matched)
+    if (commands.send(12, 0, reserved, sizeof(reserved), response) != Reply::matched)
         return "firmware NVM access completion failed";
     if (!commands.init_complete && commands.wait(0, 4, 0, response, true) != Reply::matched)
         return "firmware initialization did not complete";
-    if (commands.send(12, 2, 0, response) != Reply::matched)
+    if (commands.send(12, 2, reserved, sizeof(reserved), response) != Reply::matched)
         return "firmware NVM query failed";
     if (!read_nvm_v4(response, info))
         return "firmware returned invalid NVM data";
     return nullptr;
+}
+
+const char* configure_scan(CommandSession& commands, const NvmInfo& nvm,
+                           const AntennaMasks& firmware) {
+    const auto tx = uint8_t(nvm.tx_chains & firmware.tx);
+    const auto rx = uint8_t(nvm.rx_chains & firmware.rx);
+    if (!tx || !rx)
+        return "firmware and NVM antenna masks do not overlap";
+    // Reduced scan configuration v5. Upstream leaves mode and station fields zero.
+    const uint8_t config[12]{0, 0, 0, 0, tx, 0, 0, 0, rx};
+    FirmwarePacket response{};
+    return commands.send(1, 0xc, config, sizeof(config), response) == Reply::matched
+               ? nullptr
+               : "firmware scan configuration failed";
 }
 } // namespace
 
@@ -333,13 +349,15 @@ AlivePacket read_alive_notification(const uint8_t* data, size_t length) {
     return received == PacketRead::end ? AlivePacket::missing : AlivePacket::malformed;
 }
 
-FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory) {
+FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
+                                      const AntennaMasks* scan_antennas) {
     if (!memory.context_address || memory.context_address != align_down(memory.context_address) ||
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
         return {"invalid startup DMA addresses", false, true};
-    if (memory.commands && (!memory.command_payloads || !memory.command_dma ||
-                            !Dma::fits(memory.command_dma, sizeof(CommandPayloads), Dma::pci)))
+    if ((scan_antennas && !memory.commands) ||
+        (memory.commands && (!memory.command_payloads || !memory.command_dma ||
+                             !Dma::fits(memory.command_dma, sizeof(CommandPayloads), Dma::pci))))
         return {"invalid command DMA addresses", false, true};
     const Registers reg{io};
     if (!claim_with_wake(reg))
@@ -364,8 +382,12 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             ReceiveReader rx{io, memory};
             error = wait_for_alive(reg, rx);
             alive = !error;
-            if (alive && memory.commands)
-                error = request_nvm(reg, rx, info);
+            if (alive && memory.commands) {
+                CommandSession commands{reg, rx};
+                error = request_nvm(commands, info);
+                if (!error && scan_antennas)
+                    error = configure_scan(commands, info, *scan_antennas);
+            }
         }
     }
 
@@ -378,7 +400,11 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         idle = stopped && disabled;
     }
     const bool reset_done = reset_adapter(reg);
-    const char* success = memory.commands ? "firmware NVM read passed" : "firmware ALIVE received";
+    const char* success = "firmware ALIVE received";
+    if (scan_antennas)
+        success = "firmware scan configuration accepted";
+    else if (memory.commands)
+        success = "firmware NVM read passed";
     return {error ? error : success, alive, !request_dma || (idle && reset_done), info};
 }
 } // namespace ax::IntelWifi

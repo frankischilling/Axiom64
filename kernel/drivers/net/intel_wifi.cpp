@@ -595,7 +595,7 @@ bool live_scan_available() {
     return radio != nullptr;
 }
 
-int trigger_live_scan(uint64_t channels) {
+int trigger_live_scan(const ScanRequest& request) {
     if (!radio)
         return -95;
     if (!scanned_adapter.info.administrative)
@@ -606,7 +606,7 @@ int trigger_live_scan(uint64_t channels) {
     if (!elements)
         return -12;
     const int error =
-        submit_live_scan(radio->session, *elements, clock_monotonic_ns() / 1000000, channels);
+        submit_live_scan(radio->session, *elements, clock_monotonic_ns() / 1000000, request);
     if (error) {
         radio->session.scan.elements = nullptr;
         release(elements);

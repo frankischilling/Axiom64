@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/net/intel_wifi_scan.cpp
- * @brief   Encode an AX201 passive scan and collect access points from RX frames.
+ * @brief   Encode AX201 scan phases and collect access points from RX frames.
  * @author  frankischilling
  * @date    2026-11-23
  *
@@ -22,20 +22,70 @@ constexpr uint8_t channel_order[]{
 
 constexpr unsigned low_band_channels = 14, channel_capacity = 67;
 constexpr uint8_t low_band = 1, high_band = 0;
-constexpr uint16_t channel_valid = 1, channel_radar = 1u << 4, channel_indoor = 1u << 5;
+constexpr uint16_t channel_valid = 1, channel_active = 1u << 3, channel_radar = 1u << 4,
+                   channel_indoor = 1u << 5;
 constexpr uint16_t force_passive = 1u << 11, report_beacons = 1u << 1;
 constexpr unsigned request_header = 8, general_bytes = 36, channel_header = 4;
 constexpr unsigned channel_bytes = 8, schedule_bytes = 12, probe_bytes = 1344;
 constexpr unsigned channel_params = request_header + general_bytes;
 constexpr unsigned first_channel = channel_params + channel_header;
 constexpr unsigned schedule = first_channel + channel_bytes * channel_capacity;
+constexpr unsigned probe_params = schedule + schedule_bytes;
+constexpr unsigned probe_segments = 20, probe_buffer = 512;
+constexpr unsigned direct_scan = probe_segments + probe_buffer + 4;
+constexpr unsigned direct_entry_bytes = 34;
 constexpr unsigned beacon_header = 36;
-static_assert(schedule + schedule_bytes + probe_bytes == passive_request_bytes);
-static_assert(passive_request_bytes + 8 <= command_slot_bytes);
+static_assert(direct_scan + scan_ssid_limit * direct_entry_bytes + 8 * 4 + 16 * 6 == probe_bytes);
+static_assert(probe_params + probe_bytes == scan_request_bytes);
+static_assert(scan_request_bytes + 8 <= command_slot_bytes);
 static_assert(sizeof(channel_order) == scan_channel_limit);
 
 uint16_t read16(const uint8_t* data) {
     return uint16_t(data[0] | (uint16_t(data[1]) << 8));
+}
+
+void write32(uint8_t* data, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i)
+        data[i] = uint8_t(value >> (8 * i));
+}
+
+void probe_segment(uint8_t* segment, uint8_t offset, uint8_t length) {
+    segment[0] = offset;
+    segment[2] = length;
+}
+
+unsigned probe_rates(uint8_t* ies, unsigned first, unsigned count, uint8_t id) {
+    ies[0] = id;
+    ies[1] = uint8_t(count);
+    memcpy(ies + 2, scan_legacy_rates + first, count);
+    return count + 2;
+}
+
+void prepare_probe(uint8_t* probe, const uint8_t (&station)[6], const ScanSsids& ssids) {
+    constexpr unsigned header = 26; // Management header and wildcard SSID element.
+    uint8_t* frame = probe + probe_segments;
+    frame[0] = 0x40; // Probe request.
+    memset(frame + 4, 0xff, 6);
+    memcpy(frame + 10, station, sizeof(station));
+    memset(frame + 16, 0xff, 6);
+    probe_segment(probe, 0, header);
+
+    constexpr unsigned rates = sizeof(scan_legacy_rates);
+    unsigned low_bytes = probe_rates(frame + header, 0, 8, 1);
+    low_bytes += probe_rates(frame + header + low_bytes, 8, rates - 8, 50);
+    probe_segment(probe + 4, header, uint8_t(low_bytes));
+    const auto high_offset = uint8_t(header + low_bytes);
+    const auto high_bytes =
+        probe_rates(frame + high_offset, scan_cck_rate_count, rates - scan_cck_rate_count, 1);
+    probe_segment(probe + 8, high_offset, uint8_t(high_bytes));
+    probe_segment(probe + 12, uint8_t(high_offset + high_bytes), 0);
+    probe_segment(probe + 16, uint8_t(high_offset + high_bytes), 0);
+    for (unsigned i = 0; i < ssids.count; ++i) {
+        const auto& ssid = ssids.entries[ssids.count - 1 - i];
+        auto* entry = probe + direct_scan + direct_entry_bytes * i;
+        entry[1] = ssid.length;
+        memcpy(entry + 2, ssid.bytes, ssid.length);
+    }
 }
 
 bool station_address_valid(const uint8_t* address) {
@@ -218,29 +268,39 @@ ScanChannelList scan_channel_list(const NvmInfo& nvm, const RegulatoryProfile& p
         const uint8_t channel = channel_order[i];
         const uint16_t flags = profile.flags[i];
         list.entries[list.count++] = {
-            channel_frequency(channel),   channel,
-            bool(flags & channel_valid),  bool(flags & channel_radar),
+            channel_frequency(channel),
+            channel,
+            bool(flags & channel_valid),
+            bool(flags & channel_radar),
             bool(flags & channel_indoor),
+            // This driver has no DFS or indoor-location control.
+            bool((flags & channel_active) && !(flags & (channel_radar | channel_indoor))),
         };
     }
     return list;
 }
 
-bool prepare_passive_scan(const ScanChannelList& list, PassiveScan& scan,
-                          uint8_t (&request)[passive_request_bytes], uint32_t id,
-                          uint64_t channels) {
+bool prepare_scan_phase(const ScanChannelList& list, PassiveScan& scan,
+                        uint8_t (&request)[scan_request_bytes], uint32_t id, uint64_t channels,
+                        const ScanSsids& ssids) {
+    if (ssids.count > scan_ssid_limit)
+        return false;
+    for (unsigned i = 0; i < ssids.count; ++i)
+        if (ssids.entries[i].length > sizeof(ScanSsid::bytes))
+            return false;
     memset(request, 0, sizeof(request));
-    auto* const elements = scan.elements;
-    scan = PassiveScan{};
-    scan.elements = elements;
+    scan.status = PassiveScan::Status::pending;
+    scan.channel_count = 0;
     scan.id = id;
-    for (unsigned i = 0; i < 4; ++i)
-        request[i] = uint8_t(id >> (8 * i));
+    write32(request, id);
+    const uint32_t probe_mask = (uint32_t(1) << ssids.count) - 1;
     for (unsigned i = 0; i < list.count; ++i) {
-        if (!list.entries[i].allowed || !(channels & (uint64_t(1) << i)))
+        const auto& entry = list.entries[i];
+        if (!(channels & (uint64_t(1) << i)) || !entry.allowed || (probe_mask && !entry.active))
             continue;
-        const uint8_t channel = list.entries[i].number;
+        const uint8_t channel = entry.number;
         auto* descriptor = request + first_channel + channel_bytes * scan.channel_count;
+        write32(descriptor, probe_mask);
         descriptor[4] = channel;
         descriptor[5] = channel <= low_band_channels ? low_band : high_band;
         descriptor[6] = 1; // One pass on each channel.
@@ -248,7 +308,7 @@ bool prepare_passive_scan(const ScanChannelList& list, PassiveScan& scan,
     }
     if (!scan.channel_count)
         return false;
-    const uint16_t scan_flags = force_passive | report_beacons;
+    const uint16_t scan_flags = report_beacons | (probe_mask ? 0 : force_passive);
     auto* const general = request + request_header;
     request[4] = 6; // Out-of-channel priority for an immediate scan.
     general[0] = uint8_t(scan_flags);
@@ -257,6 +317,10 @@ bool prepare_passive_scan(const ScanChannelList& list, PassiveScan& scan,
     general[32] = general[33] = 110; // Passive dwell in TU.
     request[channel_params + 1] = scan.channel_count;
     request[schedule + 2] = 1;
+    if (probe_mask) {
+        general[4] = general[5] = 10;
+        prepare_probe(request + probe_params, scan.station_address, ssids);
+    }
     return true;
 }
 

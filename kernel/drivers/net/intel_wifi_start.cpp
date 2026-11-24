@@ -390,10 +390,12 @@ const char* configure_scan_station(CommandSession& commands, uint8_t (&address)[
 
 const char* run_passive_scan(CommandSession& commands, const ScanChannelList& channels,
                              const uint8_t (&address)[6], PassiveScan& scan, uint32_t id) {
-    uint8_t request[passive_request_bytes];
-    if (!prepare_passive_scan(channels, scan, request, id, all_scan_channels))
-        return "no permitted 2.4 or 5 GHz channels";
+    uint8_t request[scan_request_bytes];
+    scan.access_point_count = 0;
+    scan.access_points_truncated = false;
     memcpy(scan.station_address, address, sizeof(address));
+    if (!prepare_scan_phase(channels, scan, request, id, all_scan_channels, {}))
+        return "no permitted 2.4 or 5 GHz channels";
 
     PassiveScanExchange exchange(scan, commands.index, 0);
     if (!commands.submit(1, 0xd, request, sizeof(request)))
@@ -556,30 +558,53 @@ bool stop_live_quz(LiveScanSession& session) {
         return true;
     session.running = false;
     session.active = false;
+    session.passive_channels = 0;
     return stop_adapter(Registers{session.io}, true);
 }
 
-int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uint64_t now_ms,
-                     uint64_t channels) {
-    if (!session.running)
-        return -95;
-    if (session.active)
-        return -16;
-
-    uint8_t request[passive_request_bytes];
-    session.scan.elements = &elements;
-    if (!prepare_passive_scan(session.channels, session.scan, request, session.next_scan_id,
-                              channels))
+static int submit_scan_phase(LiveScanSession& session, CommandSession& commands, uint64_t now_ms,
+                             uint64_t channels, const ScanSsids& ssids) {
+    uint8_t request[scan_request_bytes];
+    if (!prepare_scan_phase(session.channels, session.scan, request, session.next_scan_id, channels,
+                            ssids))
         return -22;
-    memcpy(session.scan.station_address, session.station_address, sizeof(session.station_address));
     session.exchange.restart(session.next_command, now_ms);
-    const Registers reg{session.io};
-    CommandSession commands{reg, session.receive, session.next_command};
     if (!commands.submit(1, 0xd, request, sizeof(request)))
         return -5;
     session.active = true;
     session.next_scan_id ^= 1;
     return 0;
+}
+
+int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uint64_t now_ms,
+                     const ScanRequest& request) {
+    if (!session.running)
+        return -95;
+    if (session.active)
+        return -16;
+
+    uint64_t allowed = 0, active = 0;
+    for (unsigned i = 0; i < session.channels.count; ++i) {
+        const auto& channel = session.channels.entries[i];
+        const uint64_t bit = uint64_t(1) << i;
+        if (!channel.allowed || !(request.channels & bit))
+            continue;
+        allowed |= bit;
+        if (request.ssids.count && channel.active)
+            active |= bit;
+    }
+    if (!allowed)
+        return -22;
+    session.scan.access_point_count = 0;
+    session.scan.access_points_truncated = false;
+    session.scan.elements = &elements;
+    memcpy(session.scan.station_address, session.station_address, sizeof(session.station_address));
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    const int error = active ? submit_scan_phase(session, commands, now_ms, active, request.ssids)
+                             : submit_scan_phase(session, commands, now_ms, allowed, {});
+    session.passive_channels = !error && active ? allowed & ~active : 0;
+    return error;
 }
 
 ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
@@ -591,7 +616,16 @@ ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
         return commands.poll_idle() ? ScanOutcome::pending : ScanOutcome::receive_failed;
     commands.poll_scan(session.exchange, now_ms);
     const auto outcome = session.exchange.outcome();
-    session.active = outcome == ScanOutcome::pending;
+    if (outcome == ScanOutcome::pending)
+        return outcome;
+    session.active = false;
+    const uint64_t passive = session.passive_channels;
+    session.passive_channels = 0;
+    if (outcome == ScanOutcome::complete && passive) {
+        if (submit_scan_phase(session, commands, now_ms, passive, {}))
+            return ScanOutcome::receive_failed;
+        return ScanOutcome::pending;
+    }
     return outcome;
 }
 } // namespace ax::IntelWifi

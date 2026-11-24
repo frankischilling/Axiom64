@@ -2351,11 +2351,11 @@ bring it up.
 Boot without the passive scan option for the normal device inventory.
 
 Run the userspace scan check from the PXE RAM image on the Blade. The output
-includes the number of access points read through `nl80211`. Association,
-active probes, and NetworkManager connection controls remain open.
+includes the number of access points read through `nl80211`. Association
+and NetworkManager connection controls remain open.
 
-Boot with `iwlwifi.live-scan` to keep the radio running and request passive
-scans after login. Bring `wlan0` up and run the userspace scan check with
+Boot with `iwlwifi.live-scan` to keep the radio running and request scans
+after login. Bring `wlan0` up and run the userspace scan check with
 `--live` as an administrator. It subscribes to scan events, requests a
 scan across the permitted channels, and prints the number of access
 points after receiving the completion event. A second request while a
@@ -2363,3 +2363,11 @@ scan is running returns `EBUSY`. If a scan aborts, readers can still
 query the last successful snapshot. A request can also select frequencies
 in MHz. It skips disabled channels and rejects empty lists, unknown or
 duplicate frequencies, and selections with no permitted channels.
+
+Use `--active` for a broadcast probe test. Live requests may include up to
+20 SSID entries. A zero-length entry
+requests broadcast discovery, and a named entry requests a directed
+probe. Channels that firmware permits for active scanning run first.
+Channels that require passive operation, including radar and indoor-only
+channels, run in a separate passive phase. Readers receive one completion
+event and one combined result after both phases finish.

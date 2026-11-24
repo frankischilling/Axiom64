@@ -24,7 +24,7 @@
 struct packet {
     struct nlmsghdr header;
     struct genlmsghdr generic;
-    uint8_t attrs[32];
+    uint8_t attrs[96];
 };
 
 static void require(int condition, const char* message) {
@@ -182,7 +182,7 @@ static void check_radio(const struct nlmsghdr* message, int live, int fixture) {
     const struct nlattr* bands = message_attribute(message, NL80211_ATTR_WIPHY_BANDS);
     const uint8_t* max_ssids =
         payload(message_attribute(message, NL80211_ATTR_MAX_NUM_SCAN_SSIDS), 1);
-    require(*max_ssids == 0, "radio advertises passive scanning");
+    require(*max_ssids == (live ? 20 : 0), "radio advertises its scan SSID limit");
     const struct nlattr* commands = message_attribute(message, NL80211_ATTR_SUPPORTED_COMMANDS);
     if (live)
         require(read_u32(nested(commands, 1)) == NL80211_CMD_TRIGGER_SCAN,
@@ -209,9 +209,11 @@ static void check_radio(const struct nlmsghdr* message, int live, int fixture) {
             require((mhz >= 5000) == (i == NL80211_BAND_5GHZ), "frequency matches its band");
             const int disabled = nested(entry, NL80211_FREQUENCY_ATTR_DISABLED) != NULL;
             const int no_ir = nested(entry, NL80211_FREQUENCY_ATTR_NO_IR) != NULL;
-            require(disabled || no_ir, "driver does not permit transmission");
+            require(live || disabled || no_ir, "cached radio reports passive-only channels");
             if (fixture) {
                 require(disabled == (mhz == 2417), "firmware disabled channel preserved");
+                require(no_ir == (!disabled && (!live || mhz == 5260)),
+                        "restricted channels remain passive-only");
                 require((nested(entry, NL80211_FREQUENCY_ATTR_RADAR) != NULL) == (mhz == 5260) &&
                             (nested(entry, NL80211_FREQUENCY_ATTR_INDOOR_ONLY) != NULL) ==
                                 (mhz == 5260),
@@ -337,15 +339,33 @@ static void trigger(int fd, unsigned family, unsigned index, unsigned sequence, 
     check_error(message, error);
 }
 
-static void reject_active_scan(int fd, unsigned family, unsigned index) {
-    struct packet request = make_request(family, NL80211_CMD_TRIGGER_SCAN, NLM_F_ACK, 15);
-    const struct nlattr wildcard = {.nla_len = 4, .nla_type = 1};
+static void trigger_ssids(int fd, unsigned family, unsigned index, unsigned sequence,
+                          const void* list, size_t size, int error) {
+    struct packet request = make_request(family, NL80211_CMD_TRIGGER_SCAN, NLM_F_ACK, sequence);
     append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
-    append_attribute(&request, NL80211_ATTR_SCAN_SSIDS | NLA_F_NESTED, &wildcard, sizeof(wildcard));
+    append_attribute(&request, NL80211_ATTR_SCAN_SSIDS | NLA_F_NESTED, list, size);
     send_packet(fd, &request);
     alignas(struct nlmsghdr) uint8_t bytes[1024];
     receive(fd, bytes, sizeof(bytes), 0);
-    check_error((const struct nlmsghdr*)bytes, EOPNOTSUPP);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    require(message->nlmsg_seq == sequence, "SSID scan acknowledgment sequence");
+    check_error(message, error);
+}
+
+static void check_bad_ssids(int fd, unsigned family, unsigned index) {
+    const struct nlattr truncated = {.nla_len = 5, .nla_type = 1};
+    trigger_ssids(fd, family, index, 36, &truncated, sizeof(truncated), EINVAL);
+
+    const struct {
+        struct nlattr field;
+        uint8_t name[36];
+    } oversized = {{.nla_len = 37, .nla_type = 1}, {0}};
+
+    trigger_ssids(fd, family, index, 37, &oversized, sizeof(oversized), EINVAL);
+    struct nlattr list[21];
+    for (unsigned i = 0; i < sizeof(list) / sizeof(list[0]); ++i)
+        list[i] = (struct nlattr){.nla_len = NLA_HDRLEN, .nla_type = i + 1};
+    trigger_ssids(fd, family, index, 38, list, sizeof(list), EINVAL);
 }
 
 static void trigger_filtered(int fd, unsigned family, unsigned index, unsigned sequence,
@@ -386,7 +406,8 @@ static void scan_event(int fd, unsigned family, unsigned index, unsigned command
     require(reported == index, "scan event identifies the interface");
 }
 
-static void check_live(int fd, unsigned family, unsigned index, unsigned group, int fixture) {
+static void check_live(int fd, unsigned family, unsigned index, unsigned group, int fixture,
+                       int active) {
     require(group &&
                 setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
             "subscribe to wireless scan events");
@@ -395,7 +416,7 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
     bring_up_interface();
     int dump = -1;
     if (fixture) {
-        reject_active_scan(fd, family, index);
+        check_bad_ssids(fd, family, index);
         trigger_filtered(fd, family, index, 31, 0, 0, 0, 0, EINVAL);
         trigger_filtered(fd, family, index, 32, 1, 5260, 0, 1, EINVAL);
         trigger_filtered(fd, family, index, 33, 1, 1234, 0, 0, EINVAL);
@@ -406,8 +427,12 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
         send_request(dump, family, NL80211_CMD_GET_SCAN, NLM_F_DUMP, 20, NL80211_ATTR_IFINDEX,
                      &index, sizeof(index));
         trigger_filtered(fd, family, index, 11, 2, 2417, 5260, 0, 0);
-    } else
+    } else if (active) {
+        const struct nlattr wildcard = {.nla_len = NLA_HDRLEN, .nla_type = 1};
+        trigger_ssids(fd, family, index, 11, &wildcard, sizeof(wildcard), 0);
+    } else {
         trigger(fd, family, index, 11, 0);
+    }
     if (fixture)
         trigger(fd, family, index, 12, EBUSY);
     scan_event(fd, family, index, NL80211_CMD_NEW_SCAN_RESULTS);
@@ -420,8 +445,24 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
         require(done->nlmsg_type == NLMSG_DONE && (done->nlmsg_flags & NLM_F_DUMP_INTR),
                 "updated scan interrupts the older dump");
         require(close(dump) == 0, "release concurrent dump socket");
-        trigger(fd, family, index, 13, 0);
+
+        const struct {
+            struct nlattr wildcard, directed;
+            uint8_t name[4];
+            struct nlattr duplicate;
+            uint8_t duplicate_name[4];
+        } names = {
+            {.nla_len = 4, .nla_type = 1},
+            {.nla_len = 7, .nla_type = 2},
+            {'A', 0, 'B', 0},
+            {.nla_len = 7, .nla_type = 3},
+            {'A', 0, 'B', 0},
+        };
+
+        trigger_ssids(fd, family, index, 13, &names, sizeof(names), 0);
         scan_event(fd, family, index, NL80211_CMD_SCAN_ABORTED);
+        trigger_ssids(fd, family, index, 19, &names.wildcard, sizeof(names.wildcard), 0);
+        scan_event(fd, family, index, NL80211_CMD_NEW_SCAN_RESULTS);
         require(setgid(1000) == 0 && setuid(1000) == 0, "drop scan privileges");
         trigger(fd, family, index, 14, EPERM);
     }
@@ -432,7 +473,8 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
 int main(int argc, char** argv) {
     int absent = argc == 2 && !strcmp(argv[1], "--absent");
     int observed = argc == 2 && !strcmp(argv[1], "--observed");
-    int live = argc == 2 && !strcmp(argv[1], "--live");
+    int active = argc == 2 && !strcmp(argv[1], "--active");
+    int live = active || (argc == 2 && !strcmp(argv[1], "--live"));
     int live_fixture = argc == 2 && !strcmp(argv[1], "--live-fixture");
     require(argc == 1 || absent || observed || live || live_fixture, "wireless test mode");
     if (!getuid() && !live && !live_fixture)
@@ -450,7 +492,7 @@ int main(int argc, char** argv) {
         check_interface(fd, family, index, live || live_fixture,
                         live_fixture || (!observed && !live));
         if (live || live_fixture)
-            check_live(fd, family, index, group, live_fixture);
+            check_live(fd, family, index, group, live_fixture, active);
         else
             check_stream(fd, family, index, !observed);
     }

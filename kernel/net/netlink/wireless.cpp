@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/net/netlink/wireless.cpp
- * @brief   Linux nl80211 queries for the AX201 passive scan.
+ * @brief   Linux nl80211 queries and scan requests for the AX201.
  * @author  frankischilling
  * @date    2026-11-23
  *
@@ -142,10 +142,39 @@ int select_frequencies(const uint8_t* bytes, size_t length, uint64_t& channels) 
     return channels ? 0 : -22;
 }
 
+int select_ssids(const uint8_t* bytes, size_t length, IntelWifi::ScanSsids& ssids) {
+    unsigned count = 0;
+    while (length) {
+        if (length < sizeof(AttributeHeader) || ++count > IntelWifi::scan_ssid_limit)
+            return -22;
+        AttributeHeader field;
+        memcpy(&field, bytes, sizeof(field));
+        const size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
+        if (field.length < sizeof(field) || aligned > length || (field.type & 0xc000) ||
+            field.length - sizeof(field) > sizeof(IntelWifi::ScanSsid::bytes))
+            return -22;
+
+        const size_t size = field.length - sizeof(field);
+        const auto* name = bytes + sizeof(field);
+        unsigned i = 0;
+        while (i < ssids.count &&
+               (ssids.entries[i].length != size || memcmp(ssids.entries[i].bytes, name, size)))
+            ++i;
+        if (i == ssids.count) {
+            auto& ssid = ssids.entries[ssids.count++];
+            ssid.length = uint8_t(size);
+            memcpy(ssid.bytes, name, size);
+        }
+        bytes += aligned;
+        length -= aligned;
+    }
+    return 0;
+}
+
 int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsigned index,
-           uint64_t& channels) {
+           IntelWifi::ScanRequest& scan) {
     bool selected_phy = false, selected_device = false;
-    bool frequencies_seen = false;
+    bool frequencies_seen = false, ssids_seen = false;
     while (length) {
         if (length < sizeof(AttributeHeader))
             return -22;
@@ -193,14 +222,19 @@ int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsi
             if (command == nl80211_trigger_scan) {
                 if (frequencies_seen)
                     return -22;
-                if (const int error = select_frequencies(value, size, channels))
+                if (const int error = select_frequencies(value, size, scan.channels))
                     return error;
                 frequencies_seen = true;
             }
             break;
         case scan_ssids:
-            if (command == nl80211_trigger_scan && size)
-                return -95;
+            if (command == nl80211_trigger_scan) {
+                if (ssids_seen)
+                    return -22;
+                if (const int error = select_ssids(value, size, scan.ssids))
+                    return error;
+                ssids_seen = true;
+            }
             break;
         default:
             if (command == nl80211_trigger_scan)
@@ -215,7 +249,8 @@ int select(const uint8_t* bytes, size_t length, uint8_t command, bool dump, unsi
     return selected_device || (dump && command == nl80211_get_interface) ? 0 : -22;
 }
 
-void radio_band(Message& message, const IntelWifi::ScanChannelList& list, uint16_t band) {
+void radio_band(Message& message, const IntelWifi::ScanChannelList& list, uint16_t band,
+                bool live) {
     unsigned first = 0;
     const auto band_of = [](const IntelWifi::ScanChannel& channel) {
         return uint16_t(channel.frequency_mhz >= 5000);
@@ -233,7 +268,8 @@ void radio_band(Message& message, const IntelWifi::ScanChannelList& list, uint16
         if (!channel.allowed) {
             message.attr(frequency_disabled, nullptr, 0);
         } else {
-            message.attr(frequency_no_ir, nullptr, 0);
+            if (!live || !channel.active)
+                message.attr(frequency_no_ir, nullptr, 0);
             if (channel.radar)
                 message.attr(frequency_radar, nullptr, 0);
             if (channel.indoor)
@@ -243,13 +279,14 @@ void radio_band(Message& message, const IntelWifi::ScanChannelList& list, uint16
     }
     message.end_nested(frequencies);
 
-    constexpr uint32_t rates[]{10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540};
+    using IntelWifi::scan_cck_rate_count;
+    using IntelWifi::scan_legacy_rates;
     const size_t rates_start = message.begin_nested(band_rates);
-    const unsigned first_rate = band ? 4 : 0;
-    for (unsigned i = first_rate; i < sizeof(rates) / sizeof(rates[0]); ++i) {
+    const unsigned first_rate = band ? scan_cck_rate_count : 0;
+    for (unsigned i = first_rate; i < sizeof(scan_legacy_rates); ++i) {
         const size_t entry = message.begin_nested(uint16_t(i - first_rate + 1));
-        message.value(rate_tenths_mbps, rates[i]);
-        if (i && i < 4)
+        message.value(rate_tenths_mbps, uint32_t(scan_legacy_rates[i]) * 5);
+        if (i && i < scan_cck_rate_count)
             message.attr(rate_short_preamble, nullptr, 0);
         message.end_nested(entry);
     }
@@ -302,9 +339,9 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         return netlink_ack(data, request, port, -95, capped, reply);
     if (trigger && !privileged)
         return netlink_ack(data, request, port, -1, capped, reply);
-    uint64_t channels = IntelWifi::all_scan_channels;
+    IntelWifi::ScanRequest scan;
     if (int error =
-            select(bytes + header, request.length - header, command, dump, info->index, channels))
+            select(bytes + header, request.length - header, command, dump, info->index, scan))
         return netlink_ack(data, request, port, error, capped, reply);
     if (command == nl80211_get_scan) {
         if (cursor.active)
@@ -313,7 +350,7 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         return 0;
     }
     if (trigger) {
-        const int status = IntelWifi::trigger_live_scan(channels);
+        const int status = IntelWifi::trigger_live_scan(scan);
         if (status || (request.flags & 4))
             return netlink_ack(data, request, port, status, capped, reply);
         return 0;
@@ -331,13 +368,14 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         const size_t types = message.begin_nested(supported_iftypes);
         message.attr(station, nullptr, 0);
         message.end_nested(types);
-        message.value(max_num_scan_ssids, uint8_t(0));
+        const bool live = wireless_trigger_available();
+        message.value(max_num_scan_ssids, uint8_t(live ? IntelWifi::scan_ssid_limit : 0));
         const size_t bands = message.begin_nested(wiphy_bands);
         const auto& list = IntelWifi::scan_channel_inventory();
-        radio_band(message, list, 0);
-        radio_band(message, list, 1);
+        radio_band(message, list, 0, live);
+        radio_band(message, list, 1, live);
         message.end_nested(bands);
-        if (wireless_trigger_available()) {
+        if (live) {
             const size_t commands = message.begin_nested(supported_commands);
             message.value(1, uint32_t(nl80211_trigger_scan));
             message.end_nested(commands);

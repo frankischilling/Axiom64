@@ -33,6 +33,7 @@ bool start_requested;
 PassiveScan completed_scan{};
 ScanChannelList radio_channels{};
 uint32_t completed_generation = 1;
+RadioStatus diagnostic;
 void poll_runtime(NetAdapter&);
 int send_runtime(NetAdapter&, const void*, size_t);
 void stop_runtime(NetAdapter&);
@@ -48,6 +49,9 @@ NetAdapter scanned_adapter{
 };
 
 void report(const char* status) {
+    const size_t length = min(strlen(status), sizeof(diagnostic.firmware) - 1);
+    memcpy(diagnostic.firmware, status, length);
+    diagnostic.firmware[length] = 0;
     constexpr char prefix[] = "Intel AX201: ";
     for (const char* p = prefix; *p; ++p)
         fb_console_put(*p);
@@ -562,6 +566,9 @@ bool shut_down_radio(NetAdapter& device) {
     const bool idle = stop_live_quz(radio->session);
     const bool restored =
         restore_registers(radio->queues, radio->staged, radio->original_pci, idle);
+    diagnostic.shutdown = !idle       ? "DMA stop or reset unconfirmed"
+                          : !restored ? "PCI restore failed"
+                                      : "complete";
     radio->~RuntimeRadio();
     release(radio);
     radio = nullptr;
@@ -581,16 +588,25 @@ void stop_runtime(NetAdapter& device) {
     live_firmware_size = 0;
 }
 
-void recover_runtime(NetAdapter& device) {
+void recover_runtime(NetAdapter& device, const char* failure, unsigned phase, int result) {
+    diagnostic.failure = failure;
+    diagnostic.fault_phase = phase;
+    diagnostic.fault_result = result;
+    ++diagnostic.failures;
     const bool retry = radio && radio->can_recover;
     const bool safe = shut_down_radio(device);
     auto* bytes = live_firmware;
     const auto size = live_firmware_size;
     live_firmware = nullptr;
     live_firmware_size = 0;
+    diagnostic.recovery = !safe    ? "shutdown unconfirmed"
+                          : !retry ? "radio failed before completing a scan or association"
+                                   : "firmware unavailable";
     if (retry && safe && bytes) {
+        ++diagnostic.restart_attempts;
         log("iwlwifi: restarting firmware after runtime failure\n");
         stage_firmware(bytes, size, FirmwareCheck::live_scan, {});
+        diagnostic.recovery = radio ? "restarted" : "restart failed";
         log("iwlwifi: firmware restart %s\n", radio ? "complete" : "failed");
         if (radio) {
             // Confirm progress before allowing another restart.
@@ -623,6 +639,8 @@ int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
 void report_join_outcome(const NetAdapter& device, const LiveScanSession& session,
                          JoinOutcome outcome) {
     const auto& join = session.join;
+    diagnostic.join_result = unsigned(outcome);
+    diagnostic.peer_status = join.peer_status;
     if (join.cancel_reason) {
         wireless_connection_finished(device.info.index, join.peer.bssid, 1, true, {}, {});
         return;
@@ -665,7 +683,7 @@ void poll_runtime(NetAdapter& device) {
             report_join_outcome(device, radio->session, join_result);
         if (result == LeaveOutcome::failed) {
             log("iwlwifi: stopping radio after incomplete station teardown\n");
-            recover_runtime(device);
+            recover_runtime(device, "teardown", unsigned(radio->session.leave.phase), int(result));
         }
         if (join_result == JoinOutcome::idle)
             wireless_disconnected(device.info.index, reason, from_ap);
@@ -686,7 +704,8 @@ void poll_runtime(NetAdapter& device) {
             log("iwlwifi: join ended at phase %u with outcome %u and peer status %u\n",
                 uint64_t(radio->session.join.phase), uint64_t(result),
                 uint64_t(radio->session.join.peer_status));
-            recover_runtime(device);
+            recover_runtime(device, "association", unsigned(radio->session.join.phase),
+                            int(result));
         }
         return;
     }
@@ -705,7 +724,7 @@ void poll_runtime(NetAdapter& device) {
         radio->polling = false;
         if (!healthy) {
             log("iwlwifi: stopping radio after station firmware failure\n");
-            recover_runtime(device);
+            recover_runtime(device, "station", 0, 0);
             ++completed_generation;
             wireless_disconnected(device.info.index);
             return;
@@ -738,7 +757,7 @@ void poll_runtime(NetAdapter& device) {
     const bool lost_station = failed && radio->session.station.queue.id;
     if (failed) {
         log("iwlwifi: stopping live scan after firmware error %u\n", uint64_t(outcome));
-        recover_runtime(device);
+        recover_runtime(device, active ? "scan" : "idle receive", 0, int(outcome));
     }
     if (active)
         wireless_scan_finished(device.info.index, complete);
@@ -871,6 +890,13 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check,
 }
 } // namespace
 
+RadioStatus radio_status() {
+    RadioStatus status = diagnostic;
+    status.live = radio != nullptr;
+    status.authorized = radio && radio->session.station.port_authorized;
+    return status;
+}
+
 const PassiveScan* passive_scan_snapshot() {
     return completed_scan.status == PassiveScan::Status::complete ? &completed_scan : nullptr;
 }
@@ -968,7 +994,7 @@ int request_live_key(const StationKeyRequest& request) {
     radio->polling = false;
     if (result.link_lost) {
         log("iwlwifi: stopping radio after station key failure\n");
-        recover_runtime(device);
+        recover_runtime(device, "station key", 0, result.status);
         ++completed_generation;
         wireless_disconnected(device.info.index);
     }

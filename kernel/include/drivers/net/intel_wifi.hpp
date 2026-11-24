@@ -84,4 +84,21 @@ bool parse_authentication_target(const char*, AuthenticationTarget&);
 bool parse_data_probe_target(const char*, AuthenticationTarget&);
 void check_firmware(bool probe_pci, FirmwareCheck, const AuthenticationTarget& = {});
 void start_if_available();
+
+struct RadioStatus {
+    char firmware[128] = "not started";
+    const char* failure = "none";
+    const char* shutdown = "none";
+    const char* recovery = "none";
+    unsigned failures = 0;
+    unsigned restart_attempts = 0;
+    unsigned join_result = 0;
+    unsigned peer_status = 0;
+    unsigned fault_phase = 0;
+    int fault_result = 0;
+    bool live = false;
+    bool authorized = false;
+};
+
+RadioStatus radio_status();
 } // namespace ax::IntelWifi

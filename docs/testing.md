@@ -2517,3 +2517,8 @@ command register, it tries one restart using the firmware saved at startup.
 The restarted radio keeps its interface name. A completed scan or association
 allows another recovery after a later failure. If DMA or PCI restoration
 cannot be confirmed, the old buffers stay reserved until reboot.
+
+If Wi-Fi disappears, run `cat /proc/axiom64_ax201` on the affected boot.
+This read-only report shows whether the radio is live, its last association
+result and access point status code, and which step stopped firmware recovery.
+The report is available from a local terminal when the wired link is down.

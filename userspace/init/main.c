@@ -48,7 +48,8 @@ static const char input_ready[] = "/run/axiom64-input-ready";
 static pid_t start_service(const char* path, int own_session);
 
 static pid_t network(int debug) {
-    if (!debug && access(desktop_network, X_OK) == 0)
+    const int lab_profile = debug && access(debug_network, F_OK) == 0;
+    if (!lab_profile && access(desktop_network, X_OK) == 0)
         return start_service(desktop_network, 0);
 
     pid_t child = fork();
@@ -58,7 +59,7 @@ static pid_t network(int debug) {
             dup2(input, 0);
             close(input);
         }
-        if (debug && access(debug_network, F_OK) == 0)
+        if (lab_profile)
             execl("/sbin/network-manager", "network-manager", "--saved", debug_network, (char*)0);
         else
             execl("/sbin/network-manager", "network-manager", (char*)0);

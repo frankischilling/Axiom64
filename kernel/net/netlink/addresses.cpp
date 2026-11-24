@@ -66,6 +66,7 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
     memcpy(label, net_info(address.index)->name, sizeof(label));
     desired.mask = address.prefix ? UINT32_MAX << (32 - address.prefix) : 0;
     uint32_t local = 0, peer = 0, seen = 0;
+    bool suppress_prefix_route = false;
     size_t at = sizeof(message) + sizeof(address);
     while (at < message.length) {
         Attribute field;
@@ -100,8 +101,9 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
                 return -22;
             uint32_t flags;
             memcpy(&flags, input + at + 4, sizeof(flags));
-            if (flags & ~uint32_t(0xa1))
+            if (flags & ~(uint32_t(0xa1) | Ipv4Address::no_prefix_route))
                 return -95;
+            suppress_prefix_route = flags & Ipv4Address::no_prefix_route;
         } else {
             if (field.length != 8)
                 return -22;
@@ -131,7 +133,8 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
         desired.broadcast = 0;
     if (message.type == 20) {
         return ipv4_address_add(address.index, label, desired, lifetime,
-                                (message.flags & 0x100) && !(message.flags & 0x200));
+                                (message.flags & 0x100) && !(message.flags & 0x200),
+                                suppress_prefix_route);
     }
     for (unsigned n = 0; auto current = ipv4_address(n); n++)
         if (current->index == address.index && current->config.address == local &&

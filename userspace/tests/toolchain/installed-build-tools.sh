@@ -83,4 +83,16 @@ fi
 for page in git cmake rg; do
     test -s "/usr/share/man/man1/$page.1.gz"
 done
+micro -version | grep -q '2[.]0[.]14'
+ssh -G localhost | grep -qx 'hostname localhost'
+test -x /usr/bin/scp
+test -x /usr/bin/sftp
+ip -V | grep -q iproute2
+ip link show lo | grep -q 'lo:'
+ss -V | grep -q iproute2
+dig -v | grep -q DiG
+gdb -nx -batch -ex 'file /tmp/native-c' -ex 'info functions main' | grep -Eq '[[:space:]]main$'
+strace -V | grep -q 'strace -- version'
+MANPAGER=cat MANWIDTH=80 /bin/man 2 open | grep -q 'possibly create a file'
+MANPAGER=cat MANWIDTH=80 man 1 less | grep -q 'display the contents of a file'
 printf '%s\n' NATIVE_BUILD_TOOLS_PASS

@@ -1089,7 +1089,7 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
 }
 
 int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config,
-                     Ipv4AddressLifetimes lifetime, bool replace) {
+                     Ipv4AddressLifetimes lifetime, bool replace, bool suppress_prefix_route) {
     if (!net_info(index))
         return -19;
     if (!label || !*label)
@@ -1104,7 +1104,8 @@ int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config
     memcpy(name, label, length + 1);
     refresh_addresses();
     auto before = addresses;
-    int error = addresses.add(index, name, captured, ticks, lifetime, replace);
+    int error =
+        addresses.add(index, name, captured, ticks, lifetime, replace, suppress_prefix_route);
     return error ? error : addresses_changed(before, index);
 }
 

@@ -70,6 +70,41 @@ static int check_input_inventory(void) {
     return 0;
 }
 
+enum { attach_filter = 26, detach_filter = 27, return_constant = 0x06 };
+
+static int attach_uevent_return(int listener, uint16_t opcode, uint32_t value) {
+    const struct {
+        uint16_t code;
+        uint8_t jt, jf;
+        uint32_t k;
+    } instruction = {opcode, 0, 0, value};
+
+    const struct {
+        uint16_t count;
+        const void* instructions;
+    } program = {1, &instruction};
+
+    return setsockopt(listener, SOL_SOCKET, attach_filter, &program, sizeof(program));
+}
+
+static int check_input_filter(int listener) {
+    int ignored = 0;
+    if (setsockopt(listener, SOL_SOCKET, detach_filter, &ignored, sizeof(ignored)) != -1 ||
+        errno != ENOENT || attach_uevent_return(listener, return_constant, 0) ||
+        attach_uevent_return(listener, 0xffff, 0) != -1 || errno != EINVAL)
+        return -1;
+    int trigger = open("/sys/class/input/event1/uevent", O_WRONLY);
+    char bytes[32];
+    if (trigger < 0 || write(trigger, "add\n", 4) != 4 ||
+        recv(listener, bytes, sizeof(bytes), 0) != -1 || errno != EAGAIN ||
+        attach_uevent_return(listener, return_constant, 8) || write(trigger, "add\n", 4) != 4 ||
+        recv(listener, bytes, sizeof(bytes), 0) != 8 || memcmp(bytes, "add@/dev", 8) ||
+        setsockopt(listener, SOL_SOCKET, detach_filter, &ignored, sizeof(ignored)) ||
+        close(trigger))
+        return -1;
+    return 0;
+}
+
 static int check_input_uevent(void) {
     struct netlink_address {
         uint16_t family, padding;
@@ -90,6 +125,16 @@ static int check_input_uevent(void) {
     int enabled = 1;
     if (bind(route, (struct sockaddr*)&local, sizeof(local)) ||
         setsockopt(listener, SOL_SOCKET, so_passcred, &enabled, sizeof(enabled)))
+        return -1;
+
+    int receive_buffer = 0;
+    socklen_t buffer_size = sizeof(receive_buffer);
+    if (setsockopt(listener, SOL_SOCKET, SO_RCVBUF, &enabled, sizeof(enabled)) ||
+        getsockopt(listener, SOL_SOCKET, SO_RCVBUF, &receive_buffer, &buffer_size) ||
+        buffer_size != sizeof(receive_buffer) || receive_buffer != 256 ||
+        setsockopt(route, SOL_SOCKET, SO_RCVBUF, &enabled, sizeof(enabled)) ||
+        getsockopt(route, SOL_SOCKET, SO_RCVBUF, &receive_buffer, &buffer_size) ||
+        buffer_size != sizeof(receive_buffer) || receive_buffer != 4096)
         return -1;
 
     const int trigger = open("/sys/class/input/event1/uevent", O_WRONLY | O_TRUNC);
@@ -134,6 +179,8 @@ static int check_input_uevent(void) {
         if (data[i] < '0' || data[i] > '9')
             return -1;
     if (send(listener, prefix, sizeof(prefix), 0) != -1 || errno != EOPNOTSUPP)
+        return -1;
+    if (check_input_filter(listener))
         return -1;
 
     const int network = open("/sys/class/net/lo/uevent", O_WRONLY | O_TRUNC);
@@ -197,6 +244,19 @@ static int check_input_uevent(void) {
         return -1;
     info = CMSG_FIRSTHDR(&message);
     if (!info || memcmp(CMSG_DATA(info), relay_credentials, sizeof(relay_credentials)))
+        return -1;
+
+    if (attach_uevent_return(relay, return_constant, 0) ||
+        send(listener, event, sizeof(event), 0) != sizeof(event) ||
+        recv(relay, data, sizeof(data), 0) != -1 || errno != EAGAIN)
+        return -1;
+    destination.port = 0;
+    destination.groups = 2;
+    if (attach_uevent_return(relay, return_constant, 8) ||
+        sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+               sizeof(destination)) != sizeof(event) ||
+        recv(relay, data, sizeof(data), 0) != 8 || memcmp(data, event, 8) ||
+        setsockopt(relay, SOL_SOCKET, detach_filter, &enabled, sizeof(enabled)))
         return -1;
 
     pid_t child = fork();

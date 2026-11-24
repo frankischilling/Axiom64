@@ -157,7 +157,8 @@ int RouteTable::synchronize(const AddressBook& addresses, uint16_t active_interf
     bool keep[ipv4_address_capacity]{}, add[ipv4_address_capacity]{};
     unsigned count = 0, fresh = 0;
     for (unsigned n = 0; auto address = addresses.at(n); n++) {
-        if (address->secondary || !address->index || address->index > max_net_devices ||
+        if (address->secondary || (address->flags & Ipv4Address::no_prefix_route) ||
+            !address->index || address->index > max_net_devices ||
             !(active_interfaces & (1u << (address->index - 1))))
             continue;
         const auto& config = address->config;

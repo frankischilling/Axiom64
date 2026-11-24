@@ -24,7 +24,9 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "net/netlink.hpp"
+#include "net/netlink_wireless.hpp"
 #include "net/socket_control.hpp"
+#include "net/socket_filter.hpp"
 #include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
@@ -53,6 +55,8 @@ struct NetlinkSocket {
     NetlinkAddress peer{};
     int error = 0;
     Handle* handle = nullptr;
+    WirelessDump wireless_dump;
+    SocketFilter filter{};
     NetlinkFrame* queue[queue_count]{};
 };
 
@@ -109,6 +113,8 @@ int netlink_target(Task& task, NetlinkSocket* socket, const NetlinkAddress& addr
     return address.port ? -111 : 0;
 }
 
+static void pump_wireless_dump(NetlinkSocket* socket);
+
 void netlink_consume(NetlinkSocket* socket) {
     if (!socket->count)
         return;
@@ -118,11 +124,16 @@ void netlink_consume(NetlinkSocket* socket) {
     frame = nullptr;
     socket->head = (socket->head + 1) % queue_count;
     socket->count--;
+    pump_wireless_dump(socket);
 }
 
 void netlink_close(NetlinkSocket* socket) {
+    if (socket->protocol == generic_protocol)
+        wireless_socket_closed(socket->port);
+    socket->wireless_dump = {};
     while (socket->count)
         netlink_consume(socket);
+    socket->filter.detach();
     *socket = {};
 }
 
@@ -145,8 +156,10 @@ size_t netlink_available(NetlinkSocket* socket) {
 }
 
 bool netlink_ready(NetlinkSocket* socket, bool write) {
+    const size_t write_limit =
+        socket->protocol == uevent_protocol ? queue_bytes : socket->receive_limit;
     return write ? socket->count + socket->deliveries < queue_count &&
-                       socket->bytes + netlink_ack_size <= socket->receive_limit
+                       socket->bytes + netlink_ack_size <= write_limit
                  : socket->count != 0 || socket->error != 0;
 }
 
@@ -188,8 +201,30 @@ void netlink_publish_delivery(NetlinkSocket* socket, NetlinkFrame* frame) {
     socket->queue[(socket->head + socket->count++) % queue_count] = frame;
 }
 
+static void pump_wireless_dump(NetlinkSocket* socket) {
+    auto& cursor = socket->wireless_dump;
+    // Keep one record queued. A complete scan can exceed the socket's receive quota.
+    if (!cursor.active || socket->count)
+        return;
+    const size_t length = wireless_dump_record(cursor, socket->port, nullptr);
+    NetlinkFrame* frame;
+    if (int error = reserve_frame(socket, length, frame)) {
+        socket->error = error == -11 ? 90 : -error;
+        cursor.active = false;
+        epoll_notify(socket->handle, 8);
+        return;
+    }
+    wireless_dump_record(cursor, socket->port, frame + 1);
+    wireless_dump_advance(cursor);
+    netlink_publish_delivery(socket, frame);
+    epoll_notify(socket->handle, 1);
+}
+
 static int deliver_notification(NetlinkSocket& socket, const void* data, size_t length,
                                 const NetlinkAddress& source, const uint32_t* credentials) {
+    length = socket.filter.snapshot({static_cast<const uint8_t*>(data), length});
+    if (!length)
+        return 0;
     NetlinkFrame* frame;
     if (int error = reserve_frame(&socket, length, frame))
         return error;
@@ -218,6 +253,11 @@ static void broadcast_notification(unsigned protocol, const NetlinkSocket* sende
 
 void netlink_broadcast_uevent(const void* data, size_t length) {
     broadcast_notification(uevent_protocol, nullptr, data, length, {16, 0, 0, kernel_uevent_group});
+}
+
+void netlink_broadcast_wireless(unsigned group, const void* data, size_t length) {
+    const uint32_t mask = 1u << (group - 1);
+    broadcast_notification(generic_protocol, nullptr, data, length, {16, 0, 0, mask});
 }
 
 void netlink_link_event(const NetInfo& info, uint32_t changed_flags) {
@@ -318,6 +358,14 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
     // Reserve every response before processing the first request in this datagram.
     // No route mutation can succeed while allocation/backpressure loses its result.
     for (size_t at = 0; at < length;) {
+        // Some callers send the whole zero-initialized request buffer.
+        if (count && !bytes[at]) {
+            size_t padding = at;
+            while (padding < length && !bytes[padding])
+                padding++;
+            if (padding == length)
+                break;
+        }
         NetlinkHeader header;
         if (length - at < sizeof(header))
             return -22;
@@ -331,7 +379,8 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         if (generic) {
             const size_t error_size =
                 socket->capped ? netlink_ack_size : 20 + aligned(header.length);
-            reply.capacity = max(generic_family_reply_size, error_size);
+            reply.capacity = max(max(generic_family_reply_size, error_size),
+                                 wireless_reply_capacity(header, bytes + at));
             reply.followup = (header.flags & 4) || (header.flags & 0x300) == 0x300;
         } else {
             reply.capacity = socket->capped && !routing_dump(header.type)
@@ -349,7 +398,7 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
     if (frames > queue_count || total > socket->receive_limit)
         return -90;
     if (frames > queue_count - socket->count - socket->deliveries ||
-        socket->bytes + total > socket->receive_limit)
+        socket->bytes > socket->receive_limit || total > socket->receive_limit - socket->bytes)
         return -11;
     int error = socket->port ? 0 : bind_port(socket, 0, task.process->pid);
     if (error)
@@ -381,15 +430,18 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         const auto& reply = replies[i];
         const auto* input = bytes + reply.position;
         size_t tail = 0;
-        size_t size = generic ? generic_reply(input, socket->port, socket->capped, reply.data + 1,
-                                              reply.end ? reply.end + 1 : nullptr, tail)
-                              : routing_reply(input, socket->port, socket->capped, reply.data + 1,
-                                              capable(task.credentials, Capability::net_admin),
-                                              socket->strict);
+        size_t size =
+            generic
+                ? generic_reply(input, socket->port, socket->capped,
+                                capable(task.credentials, Capability::net_admin), reply.data + 1,
+                                reply.end ? reply.end + 1 : nullptr, tail, socket->wireless_dump)
+                : routing_reply(input, socket->port, socket->capped, reply.data + 1,
+                                capable(task.credentials, Capability::net_admin), socket->strict);
         publish(reply.data, size);
         if (reply.end)
             publish(reply.end, tail);
     }
+    pump_wireless_dump(socket);
     return length;
 }
 
@@ -464,6 +516,10 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         return address_out(task, address, b, c);
     }
     if (frame.rax == 54) {
+        if (socket->protocol == uevent_protocol && b == 1 && c == 26) // SO_ATTACH_FILTER
+            return socket->filter.attach(task, d, frame.r8);
+        if (socket->protocol == uevent_protocol && b == 1 && c == 27) // SO_DETACH_FILTER
+            return socket->filter.detach();
         int value;
         if (frame.r8 < 4)
             return -22;
@@ -496,7 +552,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             else
                 socket->groups &= ~group;
         } else if (b == 1 && (c == 7 || c == 8)) {
-            size_t limit = 2 * min(size_t(uint32_t(value)), max_buffer_request);
+            const size_t limit = 2 * min(size_t(uint32_t(value)), max_buffer_request);
             if (c == 7)
                 socket->send_limit = max(size_t(2048), limit);
             else

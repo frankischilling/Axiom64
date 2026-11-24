@@ -520,7 +520,7 @@ void rtl8168g_attach(const PciFunction& pci) {
         log("rtl8168g: XID=%x initialization failed at %s\n", uint64_t(xid), stage);
         return;
     }
-    if (!net_register(device.adapter)) {
+    if (!net_register(device.adapter, "rtl8168g", &pci)) {
         stop(device.adapter);
         log("rtl8168g: XID=%x network registration failed\n", uint64_t(xid));
         return;

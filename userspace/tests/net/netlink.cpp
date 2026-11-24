@@ -28,8 +28,11 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/ethtool.h>
+#include <linux/genetlink.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/sockios.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <poll.h>
@@ -151,6 +154,66 @@ static size_t receive(int fd, uint8_t* bytes, size_t capacity) {
     return count;
 }
 
+static bool control_description(const uint8_t* bytes, size_t count) {
+    bool name = false, id = false;
+    for (size_t offset = NLMSG_HDRLEN + GENL_HDRLEN; offset < count;) {
+        nlattr field{};
+        check(count - offset >= sizeof(field), "complete generic attribute header");
+        memcpy(&field, bytes + offset, sizeof(field));
+        check(field.nla_len >= NLA_HDRLEN && size_t(NLA_ALIGN(field.nla_len)) <= count - offset,
+              "aligned generic attribute length");
+        const auto* payload = bytes + offset + NLA_HDRLEN;
+        if (field.nla_type == CTRL_ATTR_FAMILY_NAME)
+            name = field.nla_len == NLA_HDRLEN + 7 && !memcmp(payload, "nlctrl", 7);
+        if (field.nla_type == CTRL_ATTR_FAMILY_ID) {
+            uint16_t family = 0;
+            check(field.nla_len == NLA_HDRLEN + sizeof(family), "two-byte generic family ID");
+            memcpy(&family, payload, sizeof(family));
+            id = family == GENL_ID_CTRL;
+        }
+        offset += NLA_ALIGN(field.nla_len);
+    }
+    return name && id;
+}
+
+static void receive_control_family(int fd, unsigned expected_sequence) {
+    alignas(nlmsghdr) uint8_t bytes[512];
+    alignas(cmsghdr) char control[CMSG_SPACE(sizeof(ucred))]{};
+    sockaddr_nl sender{};
+    iovec vector{bytes, sizeof(bytes)};
+    msghdr message{};
+    message.msg_name = &sender;
+    message.msg_namelen = sizeof(sender);
+    message.msg_iov = &vector;
+    message.msg_iovlen = 1;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+    pollfd ready{fd, POLLIN, 0};
+    check(poll(&ready, 1, 4000) == 1 && (ready.revents & POLLIN), "control reply readable");
+    ssize_t count = recvmsg(fd, &message, 0);
+    check(count >= ssize_t(NLMSG_LENGTH(GENL_HDRLEN)) && message.msg_flags == 0 &&
+              message.msg_namelen == sizeof(sender) && sender.nl_family == AF_NETLINK &&
+              !sender.nl_pid && !sender.nl_groups,
+          "generic reply from kernel");
+    const auto* ancillary = CMSG_FIRSTHDR(&message);
+    check(ancillary && ancillary->cmsg_level == SOL_SOCKET &&
+              ancillary->cmsg_type == SCM_CREDENTIALS &&
+              ancillary->cmsg_len == CMSG_LEN(sizeof(ucred)),
+          "generic reply carries SCM_CREDENTIALS");
+    ucred credentials{};
+    memcpy(&credentials, CMSG_DATA(ancillary), sizeof(credentials));
+    check(!credentials.pid && !credentials.uid && !credentials.gid, "kernel sender credentials");
+    nlmsghdr header{};
+    genlmsghdr generic{};
+    memcpy(&header, bytes, sizeof(header));
+    memcpy(&generic, bytes + NLMSG_HDRLEN, sizeof(generic));
+    check(header.nlmsg_len == unsigned(count) && header.nlmsg_type == GENL_ID_CTRL &&
+              header.nlmsg_pid == port(fd) && header.nlmsg_seq == expected_sequence &&
+              !header.nlmsg_flags && generic.cmd == CTRL_CMD_NEWFAMILY && generic.version == 2,
+          "reply type, length, port, sequence and version");
+    check(control_description(bytes, count), "nlctrl name and family ID");
+}
+
 static void acknowledgment(int fd, const Packet& request, int expected) {
     uint8_t bytes[8192];
     size_t size = receive(fd, bytes, sizeof(bytes));
@@ -167,6 +230,97 @@ static void acknowledgment(int fd, const Packet& request, int expected) {
               header.nlmsg_pid == port(fd) && error == -expected &&
               !memcmp(&echoed, &request.header, sizeof(echoed)),
           "capped ACK preserves sequence, authoritative port, errno, and original header");
+}
+
+static void generic_discovery() {
+    int route = open_socket();
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_GENERIC);
+    check(fd >= 0, "open generic netlink socket");
+    sockaddr_nl address{};
+    address.nl_family = AF_NETLINK;
+    address.nl_pid = port(route);
+    check(bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+              port(fd) == port(route),
+          "port identity is scoped by netlink protocol");
+    int one = 1, requested = 16384, value = 0;
+    socklen_t length = sizeof(value);
+    check(setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &one, sizeof(one)) == 0 &&
+              setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &one, sizeof(one)) == 0 &&
+              setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &requested, sizeof(requested)) == 0 &&
+              getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &value, &length) == 0 &&
+              value == 2 * requested && length == sizeof(value),
+          "configure generic credentials and receive space");
+    check(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &requested, sizeof(requested)) == 0 &&
+              getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &value, &length) == 0 &&
+              value == 2 * requested &&
+              getsockopt(fd, SOL_SOCKET, SO_PROTOCOL, &value, &length) == 0 &&
+              value == NETLINK_GENERIC,
+          "configure send space and report generic protocol");
+    int group = GENL_ID_CTRL;
+    check(setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
+          "join control notification group");
+    length = sizeof(address);
+    check(getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0 &&
+              address.nl_groups == (1u << (group - 1)),
+          "control group stored in local name");
+    check(setsockopt(fd, SOL_NETLINK, NETLINK_DROP_MEMBERSHIP, &group, sizeof(group)) == 0 &&
+              port(fd) == port(route),
+          "drop control group without changing port identity");
+
+    const char* names[]{"nlctrl", "ax-no-family"};
+    for (const char* name : names) {
+        Packet request(GENL_ID_CTRL, NLM_F_ACK);
+        const genlmsghdr command{CTRL_CMD_GETFAMILY, 1, 0};
+        memcpy(request.bytes + request.size, &command, sizeof(command));
+        request.size += sizeof(command);
+        size_t size = strlen(name) + 1;
+        const nlattr field{uint16_t(NLA_HDRLEN + size), CTRL_ATTR_FAMILY_NAME};
+        memcpy(request.bytes + request.size, &field, sizeof(field));
+        memcpy(request.bytes + request.size + NLA_HDRLEN, name, size);
+        request.size += NLA_ALIGN(field.nla_len);
+        send_packet(fd, request);
+        bool present = !strcmp(name, "nlctrl");
+        if (present)
+            receive_control_family(fd, request.header.nlmsg_seq);
+        acknowledgment(fd, request, present ? 0 : ENOENT);
+    }
+
+    Packet dump(GENL_ID_CTRL, NLM_F_DUMP);
+    const genlmsghdr command{CTRL_CMD_GETFAMILY, 1, 0};
+    memcpy(dump.bytes + dump.size, &command, sizeof(command));
+    dump.size += sizeof(command);
+    send_packet(fd, dump);
+    bool saw_control = false, done = false;
+    for (unsigned datagram = 0; datagram < 256 && !done; ++datagram) {
+        uint8_t reply[32768];
+        size_t size = receive(fd, reply, sizeof(reply));
+        for (size_t offset = 0; offset < size;) {
+            nlmsghdr header{};
+            check(size - offset >= NLMSG_HDRLEN, "complete multipart header");
+            memcpy(&header, reply + offset, sizeof(header));
+            check(header.nlmsg_len >= NLMSG_HDRLEN &&
+                      NLMSG_ALIGN(header.nlmsg_len) <= size - offset &&
+                      header.nlmsg_seq == dump.header.nlmsg_seq && header.nlmsg_pid == port(fd) &&
+                      (header.nlmsg_flags & NLM_F_MULTI),
+                  "generic multipart framing and sequence");
+            if (header.nlmsg_type == NLMSG_DONE) {
+                int status;
+                check(header.nlmsg_len >= NLMSG_LENGTH(sizeof(status)), "complete dump status");
+                memcpy(&status, reply + offset + NLMSG_HDRLEN, sizeof(status));
+                check(!status, "successful generic dump");
+                done = true;
+                break;
+            }
+            check(header.nlmsg_type == GENL_ID_CTRL &&
+                      header.nlmsg_len >= NLMSG_LENGTH(GENL_HDRLEN),
+                  "family description in control dump");
+            saw_control |= control_description(reply + offset, header.nlmsg_len);
+            offset += NLMSG_ALIGN(header.nlmsg_len);
+        }
+    }
+    check(done && saw_control, "generic dump includes nlctrl and ends");
+    check(close(fd) == 0 && close(route) == 0, "release independently bound netlink sockets");
+    puts("NETLINK_GENERIC_DISCOVERY_PASS");
 }
 
 static void change(int fd, const Route& route, bool remove, int error = 0) {
@@ -570,6 +724,223 @@ static void await_carrier(bool up) {
     check(false, "both actual interface carrier flags reach the requested state");
 }
 
+static void link_subscription(int fd, bool subscribe) {
+    const int group = RTNLGRP_LINK;
+    int option = subscribe ? NETLINK_ADD_MEMBERSHIP : NETLINK_DROP_MEMBERSHIP;
+    check(setsockopt(fd, SOL_NETLINK, option, &group, sizeof(group)) == 0,
+          "change link notification subscription");
+}
+
+static void ipv4_address_events(int writer) {
+    int listener = open_socket();
+    const int group = RTNLGRP_IPV4_IFADDR;
+    check(setsockopt(listener, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
+          "subscribe to IPv4 address changes");
+    constexpr uint32_t example = 0xc000020a;
+    constexpr unsigned actions[] = {RTM_NEWADDR, RTM_DELADDR};
+    for (unsigned type : actions) {
+        const unsigned flags = type == RTM_NEWADDR ? NLM_F_CREATE | NLM_F_EXCL : 0;
+        Packet request(type, NLM_F_ACK | flags);
+        ifaddrmsg body{AF_INET, 24, 0, RT_SCOPE_UNIVERSE, indexes[0]};
+        memcpy(request.bytes + request.size, &body, sizeof(body));
+        request.size += sizeof(body);
+        request.attribute(IFA_LOCAL, htonl(example));
+        request.attribute(IFA_ADDRESS, htonl(example));
+        send_packet(writer, request);
+        acknowledgment(writer, request, 0);
+
+        uint8_t bytes[96];
+        sockaddr_nl source{};
+        socklen_t length = sizeof(source);
+        pollfd ready{listener, POLLIN, 0};
+        check(poll(&ready, 1, 3000) == 1 && (ready.revents & POLLIN),
+              "IPv4 address mutation notifies an independent listener");
+        ssize_t count = recvfrom(listener, bytes, sizeof(bytes), 0,
+                                 reinterpret_cast<sockaddr*>(&source), &length);
+        check(count >= ssize_t(NLMSG_LENGTH(sizeof(body))) && length == sizeof(source) &&
+                  source.nl_family == AF_NETLINK && !source.nl_pid &&
+                  source.nl_groups == RTMGRP_IPV4_IFADDR,
+              "IPv4 notification comes from its kernel multicast group");
+        nlmsghdr header{};
+        memcpy(&header, bytes, sizeof(header));
+        memcpy(&body, bytes + NLMSG_HDRLEN, sizeof(body));
+        check(header.nlmsg_len == unsigned(count) && header.nlmsg_type == type &&
+                  !header.nlmsg_flags && !header.nlmsg_seq && !header.nlmsg_pid &&
+                  body.ifa_family == AF_INET && body.ifa_prefixlen == 24 &&
+                  body.ifa_index == indexes[0],
+              "IPv4 notification has the correct action and address identity");
+        unsigned local_count = 0;
+        for (size_t at = NLMSG_LENGTH(sizeof(body)); at < size_t(count);) {
+            rtattr field{};
+            check(size_t(count) - at >= sizeof(field), "complete IPv4 notification attribute");
+            memcpy(&field, bytes + at, sizeof(field));
+            check(field.rta_len >= RTA_LENGTH(0) &&
+                      size_t(RTA_ALIGN(field.rta_len)) <= size_t(count) - at,
+                  "bounded IPv4 notification attribute");
+            if (field.rta_type == IFA_LOCAL && field.rta_len == RTA_LENGTH(sizeof(example))) {
+                uint32_t address;
+                memcpy(&address, bytes + at + RTA_LENGTH(0), sizeof(address));
+                check(ntohl(address) == example, "IPv4 notification carries the changed address");
+                ++local_count;
+            }
+            at += RTA_ALIGN(field.rta_len);
+        }
+        check(local_count == 1, "exactly one IFA_LOCAL attribute");
+    }
+    check(close(listener) == 0, "close IPv4 address listener");
+    puts("NETLINK_IPV4_ADDRESS_EVENTS_PASS");
+}
+
+static Packet link_request(unsigned type, bool up, uint32_t mtu) {
+    Packet request(type, NLM_F_ACK);
+    ifinfomsg link{};
+    link.ifi_index = indexes[0];
+    link.ifi_flags = up ? IFF_UP : 0;
+    link.ifi_change = IFF_UP;
+    memcpy(request.bytes + request.size, &link, sizeof(link));
+    request.size += sizeof(link);
+    request.attribute(IFLA_MTU, mtu);
+    return request;
+}
+
+static void link_update(int fd, unsigned type, bool up, uint32_t mtu, int expected = 0) {
+    auto request = link_request(type, up, mtu);
+    send_packet(fd, request);
+    acknowledgment(fd, request, expected);
+}
+
+struct LinkEvent {
+    ifinfomsg link;
+    uint32_t mtu = 0;
+    uint8_t carrier = 0xff;
+};
+
+static LinkEvent link_event(int fd) {
+    uint8_t data[512];
+    sockaddr_nl source{};
+    socklen_t length = sizeof(source);
+    pollfd ready{fd, POLLIN, 0};
+    check(poll(&ready, 1, 3000) == 1 && (ready.revents & POLLIN), "link notification readable");
+    ssize_t count =
+        recvfrom(fd, data, sizeof(data), 0, reinterpret_cast<sockaddr*>(&source), &length);
+    check(count >= ssize_t(NLMSG_LENGTH(sizeof(ifinfomsg))) && length == sizeof(source) &&
+              source.nl_family == AF_NETLINK && !source.nl_pid && source.nl_groups == RTMGRP_LINK,
+          "link notification from kernel multicast");
+    nlmsghdr header{};
+    LinkEvent event{};
+    memcpy(&header, data, sizeof(header));
+    memcpy(&event.link, data + NLMSG_HDRLEN, sizeof(event.link));
+    check(header.nlmsg_len == unsigned(count) && header.nlmsg_type == RTM_NEWLINK &&
+              !header.nlmsg_seq && !header.nlmsg_pid,
+          "link notification has unsolicited new-link header");
+    for (size_t offset = NLMSG_LENGTH(sizeof(event.link)); offset < size_t(count);) {
+        rtattr field{};
+        check(size_t(count) - offset >= sizeof(field), "complete link notification attribute");
+        memcpy(&field, data + offset, sizeof(field));
+        check(field.rta_len >= RTA_LENGTH(0) &&
+                  size_t(RTA_ALIGN(field.rta_len)) <= size_t(count) - offset,
+              "aligned link notification attribute");
+        if (field.rta_type == IFLA_MTU && field.rta_len == RTA_LENGTH(sizeof(event.mtu)))
+            memcpy(&event.mtu, data + offset + RTA_LENGTH(0), sizeof(event.mtu));
+        if (field.rta_type == IFLA_CARRIER && field.rta_len == RTA_LENGTH(sizeof(event.carrier)))
+            event.carrier = data[offset + RTA_LENGTH(0)];
+        offset += RTA_ALIGN(field.rta_len);
+    }
+    return event;
+}
+
+static void ethtool_link(unsigned lane, bool carrier) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    ifreq request{};
+    check(fd >= 0 && if_indextoname(indexes[lane], request.ifr_name), "ethtool interface");
+    ethtool_drvinfo driver{};
+    driver.cmd = ETHTOOL_GDRVINFO;
+    request.ifr_data = reinterpret_cast<char*>(&driver);
+    check(ioctl(fd, SIOCETHTOOL, &request) == 0 && driver.cmd == ETHTOOL_GDRVINFO &&
+              !strcmp(driver.driver, lane == 0 ? "virtio_net" : "e1000") &&
+              strlen(driver.bus_info) == 12 && driver.bus_info[4] == ':' &&
+              driver.bus_info[7] == ':' && driver.bus_info[10] == '.',
+          "ethtool reports the bound driver and PCI address");
+    char path[128], value_text[32]{}, target[256];
+    snprintf(path, sizeof(path), "/sys/class/net/%s", request.ifr_name);
+    ssize_t path_bytes = readlink(path, target, sizeof(target) - 1);
+    check(path_bytes > 0, "network class points to the PCI device inventory");
+    target[path_bytes] = 0;
+    char suffix[64];
+    snprintf(suffix, sizeof(suffix), "/%s/net/%s", driver.bus_info, request.ifr_name);
+    check(!strncmp(target, "../../devices/pci", 17) && size_t(path_bytes) > strlen(suffix) &&
+              !strcmp(target + path_bytes - strlen(suffix), suffix),
+          "network inventory has the same PCI location as ethtool");
+    snprintf(path, sizeof(path), "/sys/class/net/%s/ifindex", request.ifr_name);
+    int index_fd = open(path, O_RDONLY);
+    check(index_fd >= 0 && read(index_fd, value_text, sizeof(value_text) - 1) > 0 &&
+              close(index_fd) == 0 && strtoul(value_text, nullptr, 10) == indexes[lane],
+          "network inventory has the same interface index as routing netlink");
+    ethtool_value value{ETHTOOL_GLINK, 99};
+    request.ifr_data = reinterpret_cast<char*>(&value);
+    check(ioctl(fd, SIOCETHTOOL, &request) == 0 && value.cmd == ETHTOOL_GLINK &&
+              value.data == unsigned(carrier),
+          "ethtool reports actual carrier");
+    check(close(fd) == 0, "close ethtool socket");
+}
+
+static void link_controls(int writer, int listener) {
+    link_update(writer, RTM_NEWLINK, false, 1400);
+    auto event = link_event(listener);
+    check(unsigned(event.link.ifi_index) == indexes[0] && !(event.link.ifi_flags & IFF_UP) &&
+              (event.link.ifi_change & IFF_UP) && event.mtu == 1400 && !event.carrier &&
+              !(interface_flags(0) & IFF_UP),
+          "new-link request lowers the interface and publishes its MTU");
+    link_update(writer, RTM_SETLINK, true, 1500);
+    event = link_event(listener);
+    check(unsigned(event.link.ifi_index) == indexes[0] && (event.link.ifi_flags & IFF_UP) &&
+              (event.link.ifi_change & IFF_UP) && event.mtu == 1500 && !event.carrier &&
+              (interface_flags(0) & IFF_UP),
+          "set-link request restores the interface and MTU");
+    link_update(writer, RTM_SETLINK, false, 1, EINVAL);
+    pollfd quiet{listener, POLLIN, 0};
+    check(poll(&quiet, 1, 0) == 0 && (interface_flags(0) & IFF_UP),
+          "invalid MTU preserves the link and emits no event");
+
+    for (unsigned i = 0; i < 31; i++)
+        link_update(writer, RTM_NEWLINK, true, i % 2 ? 1500 : 1400);
+    // The last queue slot belongs to the caller's acknowledgment. Its own
+    // multicast notification must not consume that reservation.
+    auto restore = link_request(RTM_SETLINK, true, 1500);
+    send_packet(listener, restore);
+    check(poll(&quiet, 1, 0) == 1 && (quiet.revents & POLLERR),
+          "dropped multicast reports a readable socket error");
+    int error = 0;
+    socklen_t length = sizeof(error);
+    check(getsockopt(listener, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == ENOBUFS,
+          "socket reports lost link notifications");
+    for (unsigned i = 0; i < 31; i++) {
+        event = link_event(listener);
+        check(event.mtu == (i % 2 ? 1500u : 1400u), "queued notifications retain their order");
+    }
+    link_subscription(listener, false);
+    acknowledgment(listener, restore, 0);
+    check(poll(&quiet, 1, 0) == 0, "queue and error are both drained");
+    link_subscription(listener, true);
+    for (unsigned lane = 0; lane < 2; lane++)
+        ethtool_link(lane, false);
+    puts("NETLINK_LINK_CONTROL_PASS");
+}
+
+static void restored_link_events(int listener) {
+    unsigned seen = 0;
+    for (unsigned i = 0; i < 2; i++) {
+        auto event = link_event(listener);
+        unsigned lane = unsigned(event.link.ifi_index) == indexes[0] ? 0 : 1;
+        check(unsigned(event.link.ifi_index) == indexes[lane] && !(seen & (1u << lane)) &&
+                  (event.link.ifi_flags & IFF_RUNNING) && event.mtu == 1500 && event.carrier == 1,
+              "both physical carrier transitions arrive on the link group");
+        seen |= 1u << lane;
+        ethtool_link(lane, true);
+    }
+    puts("NETLINK_LINK_CARRIER_EVENTS_PASS");
+}
+
 static void ownership(int fd) {
     Route own = onlink(0, 0xac140000, 16, 1000);
     change(fd, own, false);
@@ -641,15 +1012,16 @@ static void byte_quota(int fd) {
     Route filter;
     filter.protocol = 0;
     dump.route(filter, true);
-    for (unsigned i = 0; i < 15; i++)
+    constexpr unsigned dump_count = 14;
+    for (unsigned i = 0; i < dump_count; i++)
         send_packet(fd, dump);
     check(send(fd, dump.bytes, dump.size, 0) == -1 && errno == EAGAIN,
           "reserved dump storage reaches byte quota before packet-count quota");
     int capped = 0;
     check(setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &capped, sizeof(capped)) == 0,
           "full echo accounts for reserved bytes");
-    // Fifteen maximum IPv4 dumps reserve 15 * 4176 bytes. Keep the
-    // original oversized echo as a rejection control, then fill all 65536.
+    // Fourteen maximum IPv4 dumps reserve 14 * 4432 bytes. An uncapped
+    // acknowledgment adds 20 bytes to the request echoed in the remainder.
     uint8_t oversized[3776]{};
     nlmsghdr rejected{};
     rejected.nlmsg_len = sizeof(oversized);
@@ -659,7 +1031,7 @@ static void byte_quota(int fd) {
     memcpy(oversized, &rejected, sizeof(rejected));
     check(send(fd, oversized, sizeof(oversized), 0) == -1 && errno == EAGAIN,
           "oversized full echo cannot overrun remaining byte quota");
-    uint8_t large[2876]{};
+    uint8_t large[3468]{};
     nlmsghdr original{};
     original.nlmsg_len = sizeof(large);
     original.nlmsg_type = 0x777;
@@ -667,7 +1039,7 @@ static void byte_quota(int fd) {
     original.nlmsg_seq = ++sequence;
     memcpy(large, &original, sizeof(original));
     check(send(fd, large, sizeof(large), 0) == ssize_t(sizeof(large)),
-          "fifteen dump reservations and full error echo exactly fill 65536 bytes");
+          "dump reservations and full error echo exactly fill 65536 bytes");
     pollfd writable{fd, POLLOUT, 0};
     check(poll(&writable, 1, 0) == 0, "byte exhaustion removes write readiness");
     Route own = onlink(0, 0x0a660000, 16, 4501);
@@ -692,7 +1064,7 @@ static void byte_quota(int fd) {
     check(poll(&writable, 1, 0) == 1 && (writable.revents & POLLOUT),
           "releasing reserved bytes restores write readiness");
     send_packet(fd, mutation);
-    for (unsigned i = 0; i < 14; i++)
+    for (unsigned i = 1; i < dump_count; i++)
         receive(fd, reply, sizeof(reply));
     size = receive(fd, reply, sizeof(reply));
     nlmsghdr header;
@@ -711,7 +1083,7 @@ static void byte_quota(int fd) {
     check(setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &capped, sizeof(capped)) == 0 &&
               close(observer) == 0,
           "restore capped replies and release byte-quota observer");
-    puts("NETLINK_BYTE_QUOTA_PASS reserved=65536 packets=16");
+    puts("NETLINK_BYTE_QUOTA_PASS reserved=65536 packets=15");
 }
 
 static void uncapped_reply(int fd) {
@@ -737,6 +1109,47 @@ static void uncapped_reply(int fd) {
     check(setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &value, sizeof(value)) == 0,
           "restore bounded acknowledgments");
     puts("NETLINK_UNCAPPED_REPLY_PASS");
+}
+
+static void padded_address_dump(int fd) {
+    struct {
+        nlmsghdr header;
+        ifaddrmsg address;
+        uint8_t tail[128];
+    } request{};
+
+    request.header = {NLMSG_LENGTH(sizeof(ifaddrmsg)), RTM_GETADDR, NLM_F_DUMP | NLM_F_REQUEST,
+                      2195, 0};
+    request.address.ifa_family = AF_INET;
+    request.address.ifa_index = indexes[0];
+    check(send(fd, &request, sizeof(request), 0) == sizeof(request),
+          "accept a zero-filled address dump buffer past its declared message");
+    unsigned seen = 0;
+    bool done = false;
+    while (!done) {
+        alignas(nlmsghdr) uint8_t bytes[8192];
+        int length = recv(fd, bytes, sizeof(bytes), 0);
+        check(length > 0, "receive address dump");
+        for (auto* response = reinterpret_cast<nlmsghdr*>(bytes); NLMSG_OK(response, length);
+             response = NLMSG_NEXT(response, length)) {
+            check(response->nlmsg_seq == request.header.nlmsg_seq &&
+                      (response->nlmsg_flags & NLM_F_DUMP_FILTERED),
+                  "mark address results filtered by interface");
+            if (response->nlmsg_type == NLMSG_DONE) {
+                done = true;
+                break;
+            }
+            check(response->nlmsg_type == RTM_NEWADDR &&
+                      response->nlmsg_len >= NLMSG_LENGTH(sizeof(ifaddrmsg)),
+                  "receive a complete address record");
+            auto* address = static_cast<ifaddrmsg*>(NLMSG_DATA(response));
+            check(address->ifa_family == AF_INET && address->ifa_index == indexes[0],
+                  "exclude addresses on other interfaces");
+            ++seen;
+        }
+    }
+    check(seen != 0, "selected Ethernet address appears");
+    puts("NETLINK_PADDED_ADDR_PASS");
 }
 
 static void malformed(int fd) {
@@ -1114,6 +1527,9 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
     puts("NETLINK_READY");
     native = argc == 2 && !strcmp(argv[1], "--native");
+    generic_discovery();
+    if (argc == 2 && !strcmp(argv[1], "--generic-only"))
+        return 0;
     indexes[0] = if_nametoindex("eth0");
     indexes[1] = if_nametoindex("eth1");
     check(indexes[0] && indexes[1] && indexes[0] != indexes[1], "two isolated Ethernet interfaces");
@@ -1121,10 +1537,21 @@ int main(int argc, char** argv) {
         configuration(lane, SIOCSIFFLAGS, 0);
     await_carrier(false);
     int early = open_socket();
+    int listener = -1;
+    if (!native) {
+        listener = open_socket();
+        link_subscription(listener, true);
+        link_controls(early, listener);
+    }
     early_routes(early);
-    check(close(early) == 0, "close early-route socket before existing lifetime tests");
     if (!native)
+        ipv4_address_events(early);
+    check(close(early) == 0, "close early-route socket before existing lifetime tests");
+    if (!native) {
         await_carrier(true);
+        restored_link_events(listener);
+        check(close(listener) == 0, "close link multicast listener");
+    }
     for (unsigned lane = 0; lane < 2; lane++) {
         configuration(lane, SIOCSIFFLAGS, 0);
         configuration(lane, SIOCSIFADDR, 0x0a170128 + (lane << 8));
@@ -1135,6 +1562,7 @@ int main(int argc, char** argv) {
     int fd = open_socket();
     message_io(fd);
     uncapped_reply(fd);
+    padded_address_dump(fd);
     ownership(fd);
     configuration_adapter(fd);
     automatic_prefixes(fd);

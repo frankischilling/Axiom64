@@ -1,8 +1,8 @@
 # Calendar clocks and elapsed kernel waits
 
-The kernel exposes a boot-relative clock with 10 ms resolution. A free-running
-counter supplies elapsed time; the 100 Hz PIT continues to supply scheduling
-interrupts. Reading the clock at syscall entry and exit also accounts for time
+The kernel reports boot-relative time in microseconds when a free-running
+counter is available. The 100 Hz PIT continues to supply scheduling interrupts.
+Reading the clock at syscall entry and exit also accounts for time
 spent in synchronous kernel operations with interrupts disabled.
 
 Previously, the clock counted only PIT interrupts. A real three-second ext2
@@ -37,8 +37,8 @@ read exceeds 64 KiB; root tables have at most 256 entries, and extended RSDP
 records have at most 4096 bytes. Corrupt or unsupported tables fall back without
 following their unchecked sizes or pointers.
 
-`Clock::Counter` copies its scale and initial reading. It carries fractional
-10 ms units across samples, admits small unsigned wrap, ignores ambiguous
+`Clock::Counter` copies its scale and initial reading. It carries the
+fraction of a microsecond across samples, admits small unsigned wrap, ignores ambiguous
 backward differences larger than `INT64_MAX`, and saturates accumulated time.
 Its common path uses bounded 64-bit arithmetic. Large intervals use a quotient
 and remainder calculation with at most 27 steps, avoiding a freestanding
@@ -54,8 +54,10 @@ this change does not promise that an overdue callback can run during them.
 The virtio transport's existing two-second reset and 30-second block-request
 deadlines retain their independently calibrated implementation and policy.
 
-`clock_getres` reports 10 ms for the accepted IDs and permits a null result
-pointer. `CLOCK_REALTIME`, `CLOCK_REALTIME_COARSE`, `gettimeofday`, and the raw
+`clock_getres` reports 1 µs for `CLOCK_MONOTONIC`, `CLOCK_MONOTONIC_RAW`,
+and `CLOCK_BOOTTIME` when an elapsed counter is available. The IRQ-only fallback,
+coarse clocks, calendar clocks and CPU accounting report 10 ms. A null result pointer
+is allowed. `CLOCK_REALTIME`, `CLOCK_REALTIME_COARSE`, `gettimeofday`, and the raw
 Linux `time` syscall use the UTC calendar sampled at boot. Other currently
 accepted IDs retain boot-relative accounting; this does not establish CPU-time
 clock semantics. Absolute `FUTEX_WAIT_BITSET` deadlines with

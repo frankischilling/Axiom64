@@ -35,6 +35,7 @@
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "drivers/block/block.hpp"
+#include "drivers/net/intel_wifi.hpp"
 #include "drivers/platform/devices.hpp"
 #include "net/ethernet.hpp"
 #include "ipc/eventfd.hpp"
@@ -77,6 +78,7 @@ enum class Kind {
     mounts,
     filesystem_types,
     partitions,
+    ax201_status,
     sys,
     fs,
     pipe_limit,
@@ -96,12 +98,13 @@ enum class Kind {
 // Kernel execution serializes generation. Every proc mount observes this same boot.
 char boot_identifier[37]{};
 constexpr const char* sys_directories[] = {"kernel", "net", "fs"};
-constexpr const char* root_names[] = {"self", "thread-self", "sys",    "cpuinfo",     "meminfo",
-                                      "stat", "uptime",      "mounts", "filesystems", "partitions"};
-constexpr Kind root_kinds[] = {Kind::self,      Kind::thread_self, Kind::sys,
-                               Kind::cpuinfo,   Kind::meminfo,     Kind::system_stat,
-                               Kind::uptime,    Kind::mounts_link, Kind::filesystem_types,
-                               Kind::partitions};
+constexpr const char* root_names[] = {"self",        "thread-self", "sys",          "cpuinfo",
+                                      "meminfo",     "stat",        "uptime",       "mounts",
+                                      "filesystems", "partitions",  "axiom64_ax201"};
+constexpr Kind root_kinds[] = {Kind::self,       Kind::thread_self, Kind::sys,
+                               Kind::cpuinfo,    Kind::meminfo,     Kind::system_stat,
+                               Kind::uptime,     Kind::mounts_link, Kind::filesystem_types,
+                               Kind::partitions, Kind::ax201_status};
 constexpr size_t root_children = sizeof(root_names) / sizeof(root_names[0]);
 static_assert(root_children == sizeof(root_kinds) / sizeof(root_kinds[0]));
 constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-hard",
@@ -120,7 +123,8 @@ static bool snapshot_file(Kind kind) {
     return kind == Kind::status || kind == Kind::stat || kind == Kind::comm ||
            kind == Kind::cgroup || kind == Kind::fdinfo || kind == Kind::cpuinfo ||
            kind == Kind::meminfo || kind == Kind::system_stat || kind == Kind::uptime ||
-           kind == Kind::mounts || kind == Kind::filesystem_types || kind == Kind::partitions;
+           kind == Kind::mounts || kind == Kind::filesystem_types || kind == Kind::partitions ||
+           kind == Kind::ax201_status;
 }
 
 struct Entry {
@@ -1155,6 +1159,49 @@ static int partitions_snapshot(Snapshot& output) {
     return 0;
 }
 
+static int ax201_snapshot(Snapshot& output) {
+    constexpr size_t capacity = 768;
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    const auto state = IntelWifi::radio_status();
+    Text text{bytes, 0, capacity};
+    text.field("Radio live", state.live);
+    text.field("Port authorized", state.authorized);
+    text.field("Recovery image ready", state.recovery_image);
+    text.field("Failures", state.failures);
+    text.field("Restart attempts", state.restart_attempts);
+    text.field("Last join result", state.join_result);
+    text.field("Peer status", state.peer_status);
+    text.field("Fault phase", state.fault_phase);
+    text.string("Fault result:\t");
+    const int64_t result = state.fault_result;
+    if (result < 0)
+        text.character('-');
+    text.number(uint64_t(result < 0 ? -result : result));
+    text.character('\n');
+    text.field("Queue reply group", state.queue_response.group);
+    text.field("Queue reply opcode", state.queue_response.opcode);
+    text.field("Queue reply bytes", state.queue_response.bytes);
+    text.field("Queue ID", state.queue_response.id);
+    text.field("Queue flags", state.queue_response.flags);
+    text.string("Failure: ");
+    text.string(state.failure);
+    text.string("\nShutdown: ");
+    text.string(state.shutdown);
+    text.string("\nRecovery: ");
+    text.string(state.recovery);
+    text.string("\nFirmware: ");
+    text.string(state.firmware);
+    text.character('\n');
+    if (text.failed) {
+        release(bytes);
+        return -75;
+    }
+    output = {bytes, text.length};
+    return 0;
+}
+
 static int make_snapshot(Node* node, Snapshot& output) {
     auto item = entry(node);
     if (item->kind == Kind::fdinfo)
@@ -1163,6 +1210,8 @@ static int make_snapshot(Node* node, Snapshot& output) {
         return mounts_snapshot(*item, output);
     if (item->kind == Kind::partitions)
         return partitions_snapshot(output);
+    if (item->kind == Kind::ax201_status)
+        return ax201_snapshot(output);
     if (item->kind == Kind::comm) {
         auto owner = task(item->pid);
         if (!owner)

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file    kernel/include/drivers/platform/device_event.hpp
- * @brief   Device inventory attributes and event publication.
+ * @file    kernel/include/drivers/platform/intel_lpss.hpp
+ * @brief   Declares the Intel LPSS I²C boot probe.
  * @author  frankischilling
- * @date    2026-11-23
+ * @date    2026-11-22
+ *
+ * Checks PCI power and the memory aperture before I²C controller discovery.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -21,9 +23,14 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #pragma once
-#include "core/base.hpp"
 
 namespace ax {
-struct Node;
-int publish_device_event(Node*);
+namespace Acpi {
+struct DefinitionBlocks;
+struct InterruptTopology;
+} // namespace Acpi
+
+enum class LpssProbe { inspect, bar, hid, input };
+void intel_lpss_i2c_probe(const Acpi::DefinitionBlocks&, const Acpi::InterruptTopology*, LpssProbe);
+void intel_lpss_input_poll();
 } // namespace ax

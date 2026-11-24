@@ -139,14 +139,15 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         if (address.address.mapped())
             return -101;
         unsigned index = socket->index;
-        if (address.address.link_local()) {
+        if (address.address.link_local() ||
+            (frame.rax == 42 && address.address.interface_scoped())) {
             if (frame.rax == 42 && index && address.scope && index != address.scope)
                 return -22;
             if (address.scope)
                 index = address.scope;
-            if (!index)
+            if (!index && !address.address.multicast())
                 return -22;
-            if (index != ipv6_loopback && !net_info(index))
+            if (index && index != ipv6_loopback && !net_info(index))
                 return -19;
         }
         if (frame.rax == 49) {
@@ -330,11 +331,13 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             (c == 53   ? socket->receive_hop_options
              : c == 56 ? socket->receive_routing
                        : socket->receive_destination_options) = value != 0;
-        } else if (b == 41 && (c == 16 || c == 67)) {
+        } else if (b == 41 && (c == 16 || c == 18 || c == 67)) {
             if (value < -1 || value > 255)
                 return -22;
             if (c == 16)
                 socket->hops = value;
+            else if (c == 18)
+                socket->multicast_hops = value == -1 ? inet6_default_multicast_hops : value;
             else {
                 uint8_t selected = value == -1 ? 0 : value;
                 if (socket->traffic_class != selected) {
@@ -398,6 +401,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             value = socket->udp_cork;
         else if (b == 41 && c == 16)
             value = socket->hops < 0 ? ipv6_destination_hops(socket->destination) : socket->hops;
+        else if (b == 41 && c == 18)
+            value = socket->multicast_hops;
         else if (b == 41 && c == 67)
             value = socket->traffic_class;
         else if (b == 41 && (c == 8 || c == 49 || c == 51 || c == 66))

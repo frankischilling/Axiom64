@@ -39,7 +39,6 @@ class UnixMessageCredentials {
     friend int unix_read_control(Task&, uint64_t, size_t, UnixMessageCredentials&, UnixRights*&);
 
   public:
-    static UnixMessageCredentials kernel();
     void capture(const Task&);
     bool operator==(const UnixMessageCredentials&) const = default;
     size_t write(Task&, uint64_t pointer, size_t capacity, uint32_t& flags) const;

@@ -242,7 +242,11 @@ int64_t futex_syscall(Frame* frame) {
             return -14;
         if (time.sec < 0 || time.nsec < 0 || time.nsec >= 1000000000)
             return -22;
-        uint64_t value = time_ticks(time.sec, time.nsec);
+        // Relative waits start at the current point within the scheduler tick.
+        // Rounding the duration alone could wake a waiter before its deadline.
+        int64_t phase =
+            command == 0 && (time.sec || time.nsec) ? clock_monotonic_ns() % 10000000 : 0;
+        uint64_t value = time_ticks(time.sec, time.nsec + phase);
         if (command == 9 && (op & 256)) {
             uint64_t now = clock_realtime_ticks();
             uint64_t remaining = value > now ? value - now : 0;

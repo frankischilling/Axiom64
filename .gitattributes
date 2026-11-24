@@ -16,6 +16,8 @@ vendor/gnu-utmp-reader/* -text -whitespace
 
 # Keep preserved upstream package archives byte-identical to their locked hashes.
 vendor/ports/*.apk -text
+vendor/firmware/intel-ax201/*.ucode binary
+vendor/firmware/intel-ax201/LICENCE.iwlwifi_firmware -text -whitespace
 scripts/tests/fixtures/normal-init-default-ipv6-lane0.pcap binary
 scripts/tests/fixtures/normal-init-default-ipv6-lane1.pcap binary
 scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace

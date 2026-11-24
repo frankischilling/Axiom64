@@ -78,6 +78,8 @@ const Ipv6Address* ipv6_address(unsigned position);
 int ipv6_address_add(const Ipv6Address&, Ipv6AddressLifetimes = {}, bool replace = false);
 
 Ipv6AddressCacheInfo ipv6_address_cache(const Ipv6Address&);
+using Ipv6AddressObserver = void (*)(const Ipv6Address&, const Ipv6AddressCacheInfo&, bool removed);
+void ipv6_observe_addresses(Ipv6AddressObserver);
 
 int ipv6_address_remove(unsigned index, const ip6::Address&);
 

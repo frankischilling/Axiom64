@@ -25,6 +25,7 @@
  */
 #pragma once
 #include "net/inet.hpp"
+#include "net/socket_filter.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv4_wire.hpp"
 #include "net/ipv4/multicast.hpp"
@@ -48,6 +49,7 @@ struct InetSocket {
     unsigned index = 0, head = 0, count = 0;
     uint32_t local = 0, peer = 0, receive_limit = inet_queue_bytes, send_limit = inet_queue_bytes;
     uint32_t filter = 0;
+    SocketFilter datagram_filter;
     size_t bytes = 0, transmitted = 0;
     unsigned mtu_policy = 1;
     Ipv4Destination destination;

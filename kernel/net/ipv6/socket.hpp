@@ -34,6 +34,7 @@
 namespace ax {
 constexpr unsigned inet6_socket_count = 256, inet6_queue_count = 32;
 constexpr uint32_t inet6_queue_bytes = 65536;
+constexpr uint8_t inet6_default_multicast_hops = 1;
 static_assert(inet6_socket_count <= ip6::path_mtu_reference_capacity);
 using Inet6UdpCork = UdpCork<Inet6Address, Inet6SendControl>;
 
@@ -45,6 +46,7 @@ struct Inet6Socket {
     bool receive_hop_options = false, receive_routing = false, receive_destination_options = false;
     uint8_t type = 3, protocol = 58, pmtu_mode = 1, traffic_class = 0;
     int16_t hops = -1;
+    uint8_t multicast_hops = inet6_default_multicast_hops;
     uint32_t socket_mtu = 0;
     unsigned index = 0, head = 0, count = 0, shutdown = 0;
     uint16_t local_port = 0, peer_port = 0;

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/vfs.hpp"
+#include "drivers/platform/devices.hpp"
 #include "fs/inotify.hpp"
 #include "fs/tmpfs.hpp"
 #include "fs/xattr.hpp"
@@ -38,6 +39,8 @@ void ramfs_set_control(Node* node, const ControlFileOps* control) {
 }
 
 static const ControlFileOps* control(Node* node) {
+    if (auto inventory = inventory_uevent_control(node))
+        return inventory;
     return static_cast<const ControlFileOps*>(node->filesystem_data);
 }
 

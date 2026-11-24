@@ -1734,6 +1734,11 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 228: {
         if (a > 7)
             return -22;
+        if (a == 1 || a == 4 || a == 7) {
+            uint64_t now = clock_monotonic_ns();
+            Timespec ts{int64_t(now / 1000000000), int64_t(now % 1000000000)};
+            return copy_result(b, &ts, sizeof(ts));
+        }
         uint64_t now = a == 2 || a == 3   ? cpu_ticks(*running, a == 3)
                        : a == 0 || a == 5 ? clock_realtime_ticks()
                                           : ticks;
@@ -1743,7 +1748,8 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 229: {
         if (a > 7)
             return -22;
-        Timespec ts{0, 10000000};
+        Timespec ts{0, a == 1 || a == 4 || a == 7 ? int64_t(clock_monotonic_resolution_ns())
+                                                  : 10000000};
         return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
     case 230:

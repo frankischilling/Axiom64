@@ -54,7 +54,8 @@ build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
-build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam $(wildcard vendor/cmake/*.cmake) | busybox
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam \
+	$(wildcard vendor/cmake/*.cmake) $(AX201_FIRMWARE) $(AX201_LICENSE) | busybox
 	$(PYTHON) scripts/rootfs.py --profile installed-desktop
 
 image: build/axiom64.elf build/rootfs.cpio

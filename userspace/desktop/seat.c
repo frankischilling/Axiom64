@@ -685,10 +685,8 @@ static void child(const struct account_profile* profile, int output, int server,
         // Xorg resets its umask before opening a named log. Keep all diagnostics
         // on the already private stderr descriptor at its normal file verbosity.
         umask(077);
-        char* const arguments[] = {"Xorg",
+        char* const arguments[] = {"axiom64-xorg-seat",
                                    ":0",
-                                   "-config",
-                                   "/etc/X11/xorg.conf",
                                    "-nolisten",
                                    "tcp",
                                    "-noreset",
@@ -704,7 +702,7 @@ static void child(const struct account_profile* profile, int output, int server,
                                                                                    : "-extension",
                                    "GLX",
                                    NULL};
-        execv("/usr/libexec/Xorg", arguments);
+        execv("/usr/libexec/axiom64-xorg-seat", arguments);
     } else {
         umask(077);
         execl("/usr/bin/dbus-run-session", "dbus-run-session",

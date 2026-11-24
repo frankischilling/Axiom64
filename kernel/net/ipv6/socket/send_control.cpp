@@ -43,6 +43,7 @@ int inet6_parse_send_control(const Inet6Socket* socket, const Inet6Address& dest
                              const uint8_t* bytes, size_t length, Inet6SendControl& result,
                              bool raw_capable) {
     result = inet6_send_defaults(socket, destination);
+    const int16_t default_hops = result.hops;
     result.present = length != 0;
     result.extensions = {};
 
@@ -143,7 +144,7 @@ int inet6_parse_send_control(const Inet6Socket* socket, const Inet6Address& dest
                     if (header.type == 67)
                         result.traffic_class = uint8_t(value);
                     else
-                        result.hops = value < 0 ? socket->hops : value;
+                        result.hops = value < 0 ? default_hops : value;
                 }
             } else
                 return -22;

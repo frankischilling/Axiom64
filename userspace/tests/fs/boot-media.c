@@ -22,15 +22,270 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
+#define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+static int check_input_inventory(void) {
+    for (unsigned i = 0; i < 2; ++i) {
+        char dev[64], link[64], target[64], attr[96], received[32];
+        struct stat dev_stat, class_stat, char_stat;
+        snprintf(dev, sizeof(dev), "/dev/input/event%u", i);
+        if (stat(dev, &dev_stat) || !S_ISCHR(dev_stat.st_mode) || major(dev_stat.st_rdev) != 13 ||
+            minor(dev_stat.st_rdev) != 64 + i)
+            return -1;
+        snprintf(link, sizeof(link), "/sys/dev/char/13:%u", minor(dev_stat.st_rdev));
+        ssize_t length = readlink(link, target, sizeof(target) - 1);
+        if (length <= 0)
+            return -1;
+        target[length] = 0;
+        snprintf(attr, sizeof(attr), "../../devices/virtual/input/input%u/event%u", i, i);
+        if (strcmp(target, attr) || stat(link, &char_stat))
+            return -1;
+        snprintf(link, sizeof(link), "/sys/class/input/event%u", i);
+        if (stat(link, &class_stat) || class_stat.st_ino != char_stat.st_ino)
+            return -1;
+        snprintf(attr, sizeof(attr), "%s/device/capabilities/rel", link);
+        int fd = open(attr, O_RDONLY);
+        if (fd < 0)
+            return -1;
+        const char* expected = i ? "103\n" : "0\n";
+        length = read(fd, received, sizeof(received));
+        if (close(fd) || length != (ssize_t)strlen(expected) || memcmp(received, expected, length))
+            return -1;
+    }
+    puts("BOOT_INPUT_INVENTORY_PASS");
+    return 0;
+}
+
+enum { attach_filter = 26, detach_filter = 27, return_constant = 0x06 };
+
+static int attach_uevent_return(int listener, uint16_t opcode, uint32_t value) {
+    const struct {
+        uint16_t code;
+        uint8_t jt, jf;
+        uint32_t k;
+    } instruction = {opcode, 0, 0, value};
+
+    const struct {
+        uint16_t count;
+        const void* instructions;
+    } program = {1, &instruction};
+
+    return setsockopt(listener, SOL_SOCKET, attach_filter, &program, sizeof(program));
+}
+
+static int check_input_filter(int listener) {
+    int ignored = 0;
+    if (setsockopt(listener, SOL_SOCKET, detach_filter, &ignored, sizeof(ignored)) != -1 ||
+        errno != ENOENT || attach_uevent_return(listener, return_constant, 0) ||
+        attach_uevent_return(listener, 0xffff, 0) != -1 || errno != EINVAL)
+        return -1;
+    int trigger = open("/sys/class/input/event1/uevent", O_WRONLY);
+    char bytes[32];
+    if (trigger < 0 || write(trigger, "add\n", 4) != 4 ||
+        recv(listener, bytes, sizeof(bytes), 0) != -1 || errno != EAGAIN ||
+        attach_uevent_return(listener, return_constant, 8) || write(trigger, "add\n", 4) != 4 ||
+        recv(listener, bytes, sizeof(bytes), 0) != 8 || memcmp(bytes, "add@/dev", 8) ||
+        setsockopt(listener, SOL_SOCKET, detach_filter, &ignored, sizeof(ignored)) ||
+        close(trigger))
+        return -1;
+    return 0;
+}
+
+static int check_input_uevent(void) {
+    struct netlink_address {
+        uint16_t family, padding;
+        uint32_t port, groups;
+    } local = {AF_NETLINK, 0, 0x13579, 1}, sender = {0};
+
+    enum { kernel_uevent = 15, so_passcred = 16, scm_credentials = 2 };
+
+    const int listener = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, kernel_uevent);
+    const int route = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, 0);
+    if (listener < 0 || route < 0 || bind(listener, (struct sockaddr*)&local, sizeof(local)))
+        return -1;
+    socklen_t length = sizeof(local);
+    if (getsockname(listener, (struct sockaddr*)&local, &length) || length != sizeof(local) ||
+        local.port != 0x13579 || local.groups != 1)
+        return -1;
+    local.groups = 0;
+    int enabled = 1;
+    if (bind(route, (struct sockaddr*)&local, sizeof(local)) ||
+        setsockopt(listener, SOL_SOCKET, so_passcred, &enabled, sizeof(enabled)))
+        return -1;
+
+    int receive_buffer = 0;
+    socklen_t buffer_size = sizeof(receive_buffer);
+    if (setsockopt(listener, SOL_SOCKET, SO_RCVBUF, &enabled, sizeof(enabled)) ||
+        getsockopt(listener, SOL_SOCKET, SO_RCVBUF, &receive_buffer, &buffer_size) ||
+        buffer_size != sizeof(receive_buffer) || receive_buffer != 256 ||
+        setsockopt(route, SOL_SOCKET, SO_RCVBUF, &enabled, sizeof(enabled)) ||
+        getsockopt(route, SOL_SOCKET, SO_RCVBUF, &receive_buffer, &buffer_size) ||
+        buffer_size != sizeof(receive_buffer) || receive_buffer != 4096)
+        return -1;
+
+    const int trigger = open("/sys/class/input/event1/uevent", O_WRONLY | O_TRUNC);
+    if (trigger < 0 || write(trigger, "bogus", 5) != -1 || errno != EINVAL ||
+        write(trigger, "add\n", 4) != 4 || close(trigger))
+        return -1;
+
+    struct pollfd ready[] = {{listener, POLLIN, 0}, {route, POLLIN, 0}};
+    if (poll(ready, 2, 100) != 1 || !(ready[0].revents & POLLIN) || ready[1].revents)
+        return -1;
+    char data[256];
+    struct iovec payload = {data, sizeof(data)};
+
+    union {
+        struct cmsghdr align;
+        unsigned char bytes[CMSG_SPACE(sizeof(uint32_t) * 3)];
+    } ancillary;
+    struct msghdr message = {0};
+    message.msg_name = &sender;
+    message.msg_namelen = sizeof(sender);
+    message.msg_iov = &payload;
+    message.msg_iovlen = 1;
+    message.msg_control = ancillary.bytes;
+    message.msg_controllen = sizeof(ancillary.bytes);
+    const ssize_t bytes = recvmsg(listener, &message, 0);
+    const struct cmsghdr* info = CMSG_FIRSTHDR(&message);
+    if (bytes < 1 || message.msg_flags || message.msg_namelen != sizeof(sender) ||
+        sender.family != AF_NETLINK || sender.port != 0 || sender.groups != 1 || !info ||
+        info->cmsg_level != SOL_SOCKET || info->cmsg_type != scm_credentials ||
+        info->cmsg_len != CMSG_LEN(sizeof(uint32_t) * 3))
+        return -1;
+    const uint32_t expected[3] = {0};
+    if (memcmp(CMSG_DATA(info), expected, sizeof(expected)))
+        return -1;
+    const char prefix[] = "add@/devices/virtual/input/input1/event1\0ACTION=add\0"
+                          "DEVPATH=/devices/virtual/input/input1/event1\0SUBSYSTEM=input\0"
+                          "MAJOR=13\0MINOR=65\0DEVNAME=input/event1\0SYNTH_UUID=0\0SEQNUM=";
+    if (bytes <= (ssize_t)sizeof(prefix) || data[bytes - 1] ||
+        memcmp(data, prefix, sizeof(prefix) - 1))
+        return -1;
+    for (size_t i = sizeof(prefix) - 1; i < (size_t)bytes - 1; ++i)
+        if (data[i] < '0' || data[i] > '9')
+            return -1;
+    if (send(listener, prefix, sizeof(prefix), 0) != -1 || errno != EOPNOTSUPP)
+        return -1;
+    if (check_input_filter(listener))
+        return -1;
+
+    const int network = open("/sys/class/net/lo/uevent", O_WRONLY | O_TRUNC);
+    if (network < 0 || write(network, "add\n", 4) != 4 || close(network))
+        return -1;
+    message.msg_namelen = sizeof(sender);
+    message.msg_controllen = sizeof(ancillary.bytes);
+    const ssize_t network_bytes = recvmsg(listener, &message, 0);
+    const char network_prefix[] = "add@/devices/virtual/net/lo\0ACTION=add\0"
+                                  "DEVPATH=/devices/virtual/net/lo\0SUBSYSTEM=net\0"
+                                  "INTERFACE=lo\0IFINDEX=9\0SYNTH_UUID=0\0SEQNUM=";
+    info = CMSG_FIRSTHDR(&message);
+    if (network_bytes <= (ssize_t)sizeof(network_prefix) || data[network_bytes - 1] ||
+        memcmp(data, network_prefix, sizeof(network_prefix) - 1) || message.msg_flags ||
+        sender.family != AF_NETLINK || sender.port != 0 || sender.groups != 1 || !info ||
+        info->cmsg_level != SOL_SOCKET || info->cmsg_type != scm_credentials ||
+        info->cmsg_len != CMSG_LEN(sizeof(expected)) ||
+        memcmp(CMSG_DATA(info), expected, sizeof(expected)))
+        return -1;
+
+    const int relay = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, kernel_uevent);
+    struct netlink_address processed = {AF_NETLINK, 0, 0, 2};
+    int joining = 2;
+    if (relay < 0 || bind(relay, (struct sockaddr*)&processed, sizeof(processed)) ||
+        setsockopt(relay, SOL_SOCKET, so_passcred, &enabled, sizeof(enabled)) ||
+        setsockopt(relay, 270, 1, &joining, sizeof(joining)))
+        return -1;
+    socklen_t processed_length = sizeof(processed);
+    if (getsockname(relay, (struct sockaddr*)&processed, &processed_length) ||
+        processed.port == local.port || !processed.port || processed.groups != 2)
+        return -1;
+
+    // A named send uses the transport address, but credentials identify the
+    // process even when the socket is bound to a different port.
+    struct netlink_address destination = {AF_NETLINK, 0, 0, 2};
+    const char event[] = "processed input";
+    if (sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+               sizeof(destination)) != sizeof(event))
+        return -1;
+    message.msg_namelen = sizeof(sender);
+    message.msg_controllen = sizeof(ancillary.bytes);
+    if (recvmsg(relay, &message, 0) != sizeof(event) || memcmp(data, event, sizeof(event)) ||
+        sender.port != local.port || sender.groups != 2)
+        return -1;
+    info = CMSG_FIRSTHDR(&message);
+    const uint32_t relay_credentials[] = {(uint32_t)getpid(), (uint32_t)getuid(),
+                                          (uint32_t)getgid()};
+    if (!info || info->cmsg_type != scm_credentials ||
+        memcmp(CMSG_DATA(info), relay_credentials, sizeof(relay_credentials)))
+        return -1;
+
+    destination.port = processed.port;
+    destination.groups = 0;
+    if (connect(listener, (struct sockaddr*)&destination, sizeof(destination)) ||
+        send(listener, event, sizeof(event), 0) != sizeof(event))
+        return -1;
+    message.msg_namelen = sizeof(sender);
+    message.msg_controllen = sizeof(ancillary.bytes);
+    if (recvmsg(relay, &message, 0) != sizeof(event) || memcmp(data, event, sizeof(event)) ||
+        sender.port != local.port || sender.groups != 0)
+        return -1;
+    info = CMSG_FIRSTHDR(&message);
+    if (!info || memcmp(CMSG_DATA(info), relay_credentials, sizeof(relay_credentials)))
+        return -1;
+
+    if (attach_uevent_return(relay, return_constant, 0) ||
+        send(listener, event, sizeof(event), 0) != sizeof(event) ||
+        recv(relay, data, sizeof(data), 0) != -1 || errno != EAGAIN)
+        return -1;
+    destination.port = 0;
+    destination.groups = 2;
+    if (attach_uevent_return(relay, return_constant, 8) ||
+        sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+               sizeof(destination)) != sizeof(event) ||
+        recv(relay, data, sizeof(data), 0) != 8 || memcmp(data, event, 8) ||
+        setsockopt(relay, SOL_SOCKET, detach_filter, &enabled, sizeof(enabled)))
+        return -1;
+
+    pid_t child = fork();
+    if (child < 0)
+        return -1;
+    if (child == 0) {
+        destination.groups = 2;
+        destination.port = 0;
+        if (setgid(1000) || setuid(1000) || send(listener, event, sizeof(event), 0) != -1 ||
+            errno != EPERM ||
+            sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+                   sizeof(destination)) != -1 ||
+            errno != EPERM)
+            _exit(1);
+        _exit(0);
+    }
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) ||
+        recv(relay, data, sizeof(data), 0) != -1 || errno != EAGAIN)
+        return -1;
+    destination.groups = 1;
+    destination.port = 0;
+    if (sendto(listener, event, sizeof(event), 0, (struct sockaddr*)&destination,
+               sizeof(destination)) != -1 ||
+        errno != EOPNOTSUPP || close(route) || close(relay) || close(listener))
+        return -1;
+    puts("BOOT_INPUT_UEVENT_PASS");
+    return 0;
+}
 
 static int check_usb_input(void) {
     enum { key_a = 30, key_b = 48, key_c = 46, button_left = 272 };
@@ -130,6 +385,7 @@ int main(int argc, char** argv) {
     int fd = open("/boot-proof", O_RDONLY);
     if (argc != 1 || getpid() != 1 || fd < 0 ||
         read(fd, token, sizeof(token)) != sizeof(token) - 1 || close(fd) || check_framebuffer() ||
+        check_input_inventory() || check_input_uevent() ||
         (!access("/boot-usb-input", F_OK) && check_usb_input()))
         return 1;
     printf("BOOT_MEDIA_PASS %s %s\n", argv[0], token);

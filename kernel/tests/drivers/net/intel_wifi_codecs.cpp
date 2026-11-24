@@ -18,6 +18,65 @@
 using namespace ax::IntelWifi;
 using Bytes = std::vector<uint8_t>;
 
+void check_intel_wifi_boot_queues(const FirmwareImage& image) {
+    FirmwareAddresses addresses{};
+    uint64_t section_address = 0x100000;
+    for (unsigned group = 0; group < region_count; ++group)
+        for (unsigned i = 0; i < image.regions[group].count; ++i) {
+            addresses[group][i] = section_address;
+            section_address += max_section_bytes;
+        }
+
+    constexpr ReceiveQueues rx{0x4000, 0x9000, 0xb000};
+    constexpr uint64_t tx = 0xc000;
+    BootContext context{};
+    assert(make_boot_context(image, addresses, rx, tx, context));
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&context);
+    const uint8_t header[] = {0x51, 0x03, 0, 0, 0xc0, 0x01, 0, 0, 0xb0, 0x09, 0, 0};
+    assert(!memcmp(bytes, header, sizeof(header)));
+    assert(context.rx.free_ring == rx.free_ring && context.rx.used_ring == rx.used_ring &&
+           context.rx.status == rx.status && context.commands == tx && bytes[56] == 2);
+    for (unsigned i = 57; i < 192; ++i)
+        assert(bytes[i] == 0);
+    for (unsigned i = 1728; i < sizeof(context); ++i)
+        assert(bytes[i] == 0);
+    for (unsigned i = 0; i < max_sections; ++i) {
+        assert(context.umac[i] == addresses[umac][i]);
+        assert(context.lmac[i] == addresses[lmac][i]);
+        assert(context.paging[i] == addresses[paging][i]);
+    }
+
+    const BootContext saved = context;
+    assert(!make_boot_context(image, addresses, {rx.free_ring + 1, rx.used_ring, rx.status}, tx,
+                              context));
+    assert(!make_boot_context(image, addresses, rx, 0xfffff000ull, context));
+    addresses[paging][0] = 0;
+    assert(!make_boot_context(image, addresses, rx, tx, context));
+    assert(!memcmp(&context, &saved, sizeof(context)));
+
+    uint64_t receive = 0;
+    assert(encode_receive_buffer(0xfffff000ull, 2047, receive) && receive == 0xfffff7ffull);
+    assert(!encode_receive_buffer(0x100000000ull, 1, receive));
+    assert(!encode_receive_buffer(0x100a, 1, receive));
+    assert(!encode_receive_buffer(0x1000, 0, receive));
+    assert(!encode_receive_buffer(0x1000, 4096, receive));
+    assert(receive == 0xfffff7ffull);
+
+    uint8_t command[invalid_command_size]{};
+    CommandDescriptor ring[command_ring_entries]{};
+    constexpr uint64_t invalid = 0x12000;
+    assert(!prepare_command_ring(0, command, ring));
+    assert(prepare_command_ring(invalid, command, ring));
+    const uint8_t expected_command[] = {6, 15, 0xff, 0xff, 0, 0, 0, 0};
+    assert(!memcmp(command, expected_command, sizeof(command)));
+    for (const auto& descriptor : ring) {
+        const uint8_t expected_descriptor[256] = {1, 0, 8, 0, 0, 0x20, 0x01};
+        assert(!memcmp(&descriptor, expected_descriptor, sizeof(descriptor)));
+    }
+    assert(!prepare_command_ring(invalid + 1, command, ring));
+    assert(!memcmp(command, expected_command, sizeof(command)));
+}
+
 void check_intel_wifi_association_codec() {
     AccessPoint peer{};
     peer.capability = 1;

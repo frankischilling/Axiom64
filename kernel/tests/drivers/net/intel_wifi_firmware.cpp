@@ -15,6 +15,7 @@
 #include <vector>
 
 void check_intel_wifi_access_points();
+void check_intel_wifi_boot_queues(const ax::IntelWifi::FirmwareImage&);
 void check_intel_wifi_association_codec();
 void check_intel_wifi_ccmp_data();
 void check_intel_wifi_key_codec();
@@ -49,65 +50,6 @@ size_t section(Bytes& file, uint32_t offset, const Bytes& data) {
     for (size_t i = 0; i < data.size(); ++i)
         file[start + 4 + i] = data[i];
     return start;
-}
-
-void check_boot_queues(const FirmwareImage& image) {
-    FirmwareAddresses addresses{};
-    uint64_t section_address = 0x100000;
-    for (unsigned group = 0; group < region_count; ++group)
-        for (unsigned i = 0; i < image.regions[group].count; ++i) {
-            addresses[group][i] = section_address;
-            section_address += max_section_bytes;
-        }
-
-    constexpr ReceiveQueues rx{0x4000, 0x9000, 0xb000};
-    constexpr uint64_t tx = 0xc000;
-    BootContext context{};
-    assert(make_boot_context(image, addresses, rx, tx, context));
-    const auto* bytes = reinterpret_cast<const uint8_t*>(&context);
-    const uint8_t header[] = {0x51, 0x03, 0, 0, 0xc0, 0x01, 0, 0, 0xb0, 0x09, 0, 0};
-    assert(!memcmp(bytes, header, sizeof(header)));
-    assert(context.rx.free_ring == rx.free_ring && context.rx.used_ring == rx.used_ring &&
-           context.rx.status == rx.status && context.commands == tx && bytes[56] == 2);
-    for (unsigned i = 57; i < 192; ++i)
-        assert(bytes[i] == 0);
-    for (unsigned i = 1728; i < sizeof(context); ++i)
-        assert(bytes[i] == 0);
-    for (unsigned i = 0; i < max_sections; ++i) {
-        assert(context.umac[i] == addresses[umac][i]);
-        assert(context.lmac[i] == addresses[lmac][i]);
-        assert(context.paging[i] == addresses[paging][i]);
-    }
-
-    const BootContext saved = context;
-    assert(!make_boot_context(image, addresses, {rx.free_ring + 1, rx.used_ring, rx.status}, tx,
-                              context));
-    assert(!make_boot_context(image, addresses, rx, 0xfffff000ull, context));
-    addresses[paging][0] = 0;
-    assert(!make_boot_context(image, addresses, rx, tx, context));
-    assert(!memcmp(&context, &saved, sizeof(context)));
-
-    uint64_t receive = 0;
-    assert(encode_receive_buffer(0xfffff000ull, 2047, receive) && receive == 0xfffff7ffull);
-    assert(!encode_receive_buffer(0x100000000ull, 1, receive));
-    assert(!encode_receive_buffer(0x100a, 1, receive));
-    assert(!encode_receive_buffer(0x1000, 0, receive));
-    assert(!encode_receive_buffer(0x1000, 4096, receive));
-    assert(receive == 0xfffff7ffull);
-
-    uint8_t command[invalid_command_size]{};
-    CommandDescriptor ring[command_ring_entries]{};
-    constexpr uint64_t invalid = 0x12000;
-    assert(!prepare_command_ring(0, command, ring));
-    assert(prepare_command_ring(invalid, command, ring));
-    const uint8_t expected_command[] = {6, 15, 0xff, 0xff, 0, 0, 0, 0};
-    assert(!memcmp(command, expected_command, sizeof(command)));
-    for (const auto& descriptor : ring) {
-        const uint8_t expected_descriptor[256] = {1, 0, 8, 0, 0, 0x20, 0x01};
-        assert(!memcmp(&descriptor, expected_descriptor, sizeof(descriptor)));
-    }
-    assert(!prepare_command_ring(invalid + 1, command, ring));
-    assert(!memcmp(command, expected_command, sizeof(command)));
 }
 
 void alive_packet(uint8_t* data) {
@@ -191,6 +133,7 @@ struct StartupFixture {
     bool extra_association_elements = false;
     bool secured_association = false;
     uint16_t disconnect_reason = 0;
+    unsigned cancel_after_commands = 0;
     unsigned rejoin_command_offset = 0, rejoin_rx_offset = 0;
     CommandDescriptor management_ring[management_queue_entries]{};
     uint16_t management_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
@@ -198,6 +141,8 @@ struct StartupFixture {
     uint16_t data_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
     uint8_t authentication_payload[authentication_dma_bytes]{};
     unsigned authentication_rx_buffers = 0;
+    bool defer_authentication_completion = false;
+    uint16_t deferred_authentication_buffer = 0;
     unsigned data_rx_buffers = 0;
     unsigned bad_binding_status = 0;
     unsigned short_binding_status = 0;
@@ -410,6 +355,8 @@ struct StartupFixture {
 
     void authentication_doorbell(uint32_t value) {
         const auto step = authentication_rx_buffers - data_rx_buffers;
+        const bool cancelling = cancel_after_commands == 16 && commands_sent == 16 && step == 1;
+        const bool leaving = cancelling || step == 2;
         const bool synced = step == 2 && assoc_case != AssocCase::bad_beacon;
         const unsigned command_count = (disconnect_reason && step == 2) || data_rx_buffers ? 19
                                        : synced                                            ? 17
@@ -433,15 +380,15 @@ struct StartupFixture {
         }
         const auto reason = disconnect_reason ? disconnect_reason : 3;
         const uint8_t leave_body[]{uint8_t(reason), uint8_t(reason >> 8)};
-        const uint8_t* body = step == 0 ? auth_body : step == 1 ? assoc_body : leave_body;
-        const uint16_t length = step == 0   ? sizeof(auth_body)
-                                : step == 1 ? association_length
-                                            : sizeof(leave_body);
+        const uint8_t* body = step == 0 ? auth_body : leaving ? leave_body : assoc_body;
+        const uint16_t length = step == 0 ? sizeof(auth_body)
+                                : leaving ? sizeof(leave_body)
+                                          : association_length;
         assert(descriptor.buffer_count == 3 && management_counts[slot] == (24 + length + 3) / 4);
         const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {length, 0x52080}};
         assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
         const uint8_t first[20]{0x1c, 0, uint8_t(slot), 1, uint8_t(24 + length), 0, 0, 12, 3};
-        const uint8_t subtype = step == 0 ? 0xb0 : step == 1 ? 0 : 0xc0;
+        const uint8_t subtype = step == 0 ? 0xb0 : leaving ? 0xc0 : 0;
         const uint8_t sequence = uint8_t(authentication_rx_buffers << 4);
         const uint8_t second[]{
             0, 0x40, 0,    0,    subtype, 0,    0, 0, 2, 0, 0, 0,    0,        0x11,
@@ -520,7 +467,10 @@ struct StartupFixture {
         ++authentication_rx_buffers;
         const unsigned index = commands_sent + authentication_rx_buffers + rejoin_rx_offset;
         used[index] = index + 1;
-        receive_status.closed_buffer = uint16_t(index + 1);
+        if (defer_authentication_completion)
+            deferred_authentication_buffer = uint16_t(index + 1);
+        else
+            receive_status.closed_buffer = uint16_t(index + 1);
     }
 
     void arp_doorbell(uint32_t value) {
@@ -597,7 +547,13 @@ struct StartupFixture {
         const bool auth = auth_case != AuthCase::unused;
         const bool association = assoc_case != AssocCase::unused;
         const bool data = arp_case != ArpCase::unused;
-        const bool leaving = disconnect_reason && actual >= 20 && actual <= 25;
+        const bool leaving =
+            !cancel_after_commands && disconnect_reason && actual >= 20 && actual <= 25;
+        const unsigned cancel_step = cancel_after_commands && actual > cancel_after_commands
+                                         ? actual - cancel_after_commands
+                                         : 0;
+        const bool cancel_phy = cancel_after_commands == 9 && cancel_step == 1;
+        const auto cancel_station = cancel_after_commands == 16 ? cancel_step : 0;
         const unsigned clear_association = data ? 20 : 18;
         const unsigned release_session = open_station  ? 19
                                          : association ? clear_association + 1
@@ -629,10 +585,17 @@ struct StartupFixture {
             payload_bytes = 12;
             expected[12] = 1;
             expected[16] = 2;
-        } else if (index == 7 || (leaving && actual == 20)) {
+        } else if (cancel_phy) {
+            payload_bytes = expect_peer_command(18, expected);
+        } else if (cancel_station == 1) {
+            expected[0] = 5;
+            expected[1] = 3;
+            expected[12] = 3;
+            payload_bytes = 24;
+        } else if (index == 7 || (leaving && actual == 20) || cancel_station == 2) {
             expected[0] = 0x28;
             payload_bytes = 148;
-            expected[12] = leaving ? 2 : 1;
+            expected[12] = leaving || cancel_station == 2 ? 2 : 1;
             expected[16] = 5;
             const uint8_t address[]{2, 0x11, 0x22, 0x33, 0x44, 0x55};
             memcpy(expected + 24, address, sizeof(address));
@@ -640,6 +603,9 @@ struct StartupFixture {
             expected[40] = 0xf;
             expected[44] = 0x15;
             expected[60] = 0x44;
+        } else if (cancel_station >= 3) {
+            assert(cancel_station <= 6);
+            payload_bytes = expect_peer_command(cancel_station + 12, expected);
         } else if (leaving) {
             if (actual <= 22) {
                 payload_bytes = expect_peer_command(15, expected);
@@ -792,6 +758,7 @@ struct StartupFixture {
         const bool add_peer = (peer || key_check) && peer_index == 13 && command[0] == 0x18;
         const unsigned length = binding ? (index == short_binding_status ? 7 : 8)
                                 : leaving && actual >= 21 && actual <= 22 ? 12
+                                : cancel_station == 3                     ? 12
                                 : data_queue                              ? 12
                                 : add_peer                                ? 8
                                 : peer && peer_index == 14 && command[0] == 0x17
@@ -1697,7 +1664,6 @@ void check_live_connection() {
             model.secured_association = true;
         }
         assert(submit_live_join(session, session.scan, request) == 0);
-        assert(submit_live_leave(session, 3) == -16);
         assert(submit_live_scan(session, scan, 2) == -16 && model.commands_sent == 8);
         assert(submit_live_join(session, session.scan, request) == -16);
 
@@ -1743,6 +1709,92 @@ void check_live_connection() {
         assert(stop_live_quz(session) && !model.master);
     }
     std::puts("AX201_LIVE_CONNECTION_MODEL_PASS");
+}
+
+void check_cancel_join() {
+    constexpr struct {
+        JoinPhase phase;
+        bool in_flight;
+    } cases[]{
+        {JoinPhase::phy, false},
+        {JoinPhase::chains, false},
+        {JoinPhase::authenticate, false},
+        {JoinPhase::authenticate, true},
+    };
+
+    for (const auto& [cancel_at, in_flight] : cases) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = PeerCase::success;
+        model.auth_case = AuthCase::reply_timeout;
+        model.assoc_case = AssocCase::accepted;
+        model.arp_case = ArpCase::accepted;
+        model.open_station = true;
+        model.live_replies.resize(48 * ax::page_size);
+        const auto io = model.make_io();
+        const auto memory = model.make_memory(true, true);
+        LiveScanSession session(io, memory);
+        assert(start_live_quz(session, {1, 2}).successful);
+        ScanElementStorage scan{};
+        const StationRequest request{{{'l', 'a', 'b'}, 3}, {2, 0, 0, 0, 0, 0x11}, 2412};
+        assert(submit_live_scan(session, scan, 0) == 0);
+        assert(poll_live_scan(session, 1) == ScanOutcome::complete);
+        assert(submit_live_join(session, session.scan, request) == 0);
+        uint64_t now = 2;
+        while (session.join.phase != cancel_at && now < 30)
+            assert(poll_live_join(session, now++) == JoinOutcome::pending);
+        assert(session.join.phase == cancel_at);
+        if (cancel_at == JoinPhase::authenticate) {
+            model.defer_authentication_completion = in_flight;
+            assert(poll_live_join(session, now++) == JoinOutcome::pending);
+            assert(session.join.acknowledged == !in_flight && !session.join.indicated);
+        }
+        assert(model.commands_sent == (cancel_at == JoinPhase::phy      ? 8u
+                                       : cancel_at == JoinPhase::chains ? 9u
+                                                                        : 16u));
+        model.cancel_after_commands = model.commands_sent;
+        model.disconnect_reason = 8;
+        assert(submit_live_leave(session, 8) == 0);
+        assert(submit_live_leave(session, 3) == 0);
+        assert(session.join.cancel_reason == 8);
+        if (in_flight) {
+            assert(poll_live_join(session, now++) == JoinOutcome::pending);
+            assert(session.join.phase == JoinPhase::authenticate);
+            assert(session.leave.phase == LeavePhase::idle && model.commands_sent == 16);
+            assert(model.deferred_authentication_buffer);
+            model.receive_status.closed_buffer = model.deferred_authentication_buffer;
+            model.defer_authentication_completion = false;
+        }
+        assert(poll_live_join(session, now++) == JoinOutcome::pending);
+        assert(session.join.phase == JoinPhase::idle && session.leave.reason == 8);
+        assert(submit_live_join(session, session.scan, request) == -16);
+        assert(submit_live_scan(session, scan, now) == -16);
+        auto leave = LeaveOutcome::pending;
+        while (leave == LeaveOutcome::pending && now < 50)
+            leave = poll_live_leave(session, now++, nullptr, nullptr);
+        assert(leave == LeaveOutcome::disconnected && session.running && !model.requested_stop);
+        assert(!session.station.queue.id && !session.station.management.id);
+        assert(model.commands_sent == (cancel_at == JoinPhase::phy      ? 8u
+                                       : cancel_at == JoinPhase::chains ? 10u
+                                                                        : 22u));
+        assert(model.authentication_rx_buffers == (cancel_at == JoinPhase::authenticate ? 2u : 0u));
+
+        model.rejoin_command_offset = model.commands_sent - 7;
+        model.rejoin_rx_offset = model.authentication_rx_buffers;
+        model.authentication_rx_buffers = model.cancel_after_commands = 0;
+        model.disconnect_reason = 0;
+        model.auth_case = AuthCase::accepted;
+        assert(submit_live_scan(session, scan, now++) == 0);
+        assert(poll_live_scan(session, now++) == ScanOutcome::complete);
+        assert(submit_live_join(session, session.scan, request) == 0);
+        auto outcome = JoinOutcome::pending;
+        while (outcome == JoinOutcome::pending && now < 100)
+            outcome = poll_live_join(session, now++);
+        assert(outcome == JoinOutcome::connected);
+        assert(stop_live_quz(session) && !model.master);
+    }
+    std::puts("AX201_CANCEL_JOIN_MODEL_PASS");
 }
 
 } // namespace
@@ -1811,7 +1863,7 @@ int main(int argc, char** argv) {
     assert(image.regions[lmac].sections[0].data == file.data() + first_section + 4 &&
            *image.regions[umac].sections[0].data == 8 &&
            image.regions[paging].sections[1].data[4095] == 11);
-    check_boot_queues(image);
+    check_intel_wifi_boot_queues(image);
     check_startup();
     check_live_scans();
     check_active_scan();
@@ -1829,6 +1881,7 @@ int main(int argc, char** argv) {
     check_associated_arp();
     check_open_station();
     check_live_connection();
+    check_cancel_join();
     check_intel_wifi_receive_recycling();
     check_intel_wifi_access_points();
 
@@ -1910,7 +1963,7 @@ int main(int argc, char** argv) {
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);
-        check_boot_queues(image);
+        check_intel_wifi_boot_queues(image);
         std::puts("AX201_FIRMWARE_RELEASE_PASS");
     }
     std::puts("AX201_FIRMWARE_CODEC_PASS");

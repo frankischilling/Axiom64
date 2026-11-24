@@ -53,6 +53,7 @@ enum class JoinPhase : uint8_t {
     associated_mac,
     data_queue,
     release_protection,
+    complete,
 };
 
 enum class JoinOutcome { idle, pending, connected, rejected, timeout, failed };
@@ -70,6 +71,7 @@ struct StationJoin {
     bool submitted = false, acknowledged = false, indicated = false;
     bool controlled_port = false, association_sent = false, ccmp = false;
     uint16_t association_status = 0;
+    uint16_t cancel_reason = 0;
     unsigned response_ie_bytes = 0;
     uint64_t deadline = 0;
 };
@@ -78,6 +80,7 @@ enum class LeavePhase : uint8_t {
     idle,
     drain,
     deauthenticate,
+    release_protection,
     clear_mac,
     remove_data,
     remove_management,
@@ -85,6 +88,7 @@ enum class LeavePhase : uint8_t {
     remove_peer,
     unbind,
     remove_phy,
+    done,
 };
 
 enum class LeaveOutcome { pending, disconnected, failed };
@@ -98,6 +102,7 @@ struct StationLeave {
     uint64_t deadline = 0;
     bool send_deauthentication = true;
     bool from_ap = false;
+    JoinPhase cancelled_at = JoinPhase::idle; // First join phase that did not complete.
 };
 
 struct LiveScanSession {

@@ -526,7 +526,6 @@ struct RuntimeRadio {
     bool polling = false;
     bool connectable = false;
     unsigned owner_port = 0;
-    bool leave_after_join = false;
 
     ~RuntimeRadio() {
         release(pending);
@@ -561,6 +560,25 @@ int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
     return error;
 }
 
+void report_join_outcome(const NetAdapter& device, const LiveScanSession& session,
+                         JoinOutcome outcome) {
+    const auto& join = session.join;
+    if (join.cancel_reason) {
+        wireless_connection_finished(device.info.index, join.peer.bssid, 1, true, {}, {});
+        return;
+    }
+    WirelessElements request;
+    if (join.association_sent)
+        request = {join.association.body + association_request_fixed_bytes,
+                   join.association.length - association_request_fixed_bytes};
+    const uint16_t status = outcome == JoinOutcome::connected
+                                ? 0
+                                : (join.association_status ? join.association_status : 1);
+    wireless_connection_finished(device.info.index, join.peer.bssid, status,
+                                 outcome == JoinOutcome::timeout, request,
+                                 {session.association_response_ies, join.response_ie_bytes});
+}
+
 void poll_runtime(NetAdapter& device) {
     if (!radio || radio->polling)
         return;
@@ -570,6 +588,7 @@ void poll_runtime(NetAdapter& device) {
         device.info.carrier = device.info.writable = false;
         const auto reason = radio->session.leave.reason;
         const auto from_ap = radio->session.leave.from_ap;
+        const bool cancelled_join = radio->session.leave.cancelled_at != JoinPhase::idle;
         radio->polling = true;
         const auto result =
             poll_live_leave(radio->session, clock_monotonic_ns() / 1000000, &device,
@@ -579,12 +598,15 @@ void poll_runtime(NetAdapter& device) {
         radio->polling = false;
         if (result == LeaveOutcome::pending)
             return;
+        radio->owner_port = 0;
+        if (cancelled_join)
+            report_join_outcome(device, radio->session, JoinOutcome::timeout);
         if (result == LeaveOutcome::failed) {
             log("iwlwifi: stopping radio after incomplete station teardown\n");
             stop_runtime(device);
-        } else
-            radio->owner_port = 0;
-        wireless_disconnected(device.info.index, reason, from_ap);
+        }
+        if (!cancelled_join)
+            wireless_disconnected(device.info.index, reason, from_ap);
         return;
     }
     if (radio->session.join.phase != JoinPhase::idle) {
@@ -592,28 +614,11 @@ void poll_runtime(NetAdapter& device) {
         if (result == JoinOutcome::pending)
             return;
         const bool connected = result == JoinOutcome::connected;
-        if (radio->leave_after_join) {
-            radio->leave_after_join = false;
-            if (connected)
-                submit_live_leave(radio->session, 3);
-            else
-                stop_runtime(device);
-            return;
-        }
         if (connected) {
             device.info.carrier = device.info.writable = true;
             ++completed_generation;
         }
-        const auto& join = radio->session.join;
-        WirelessElements request;
-        if (join.association_sent)
-            request = {join.association.body + association_request_fixed_bytes,
-                       join.association.length - association_request_fixed_bytes};
-        const uint16_t status =
-            connected ? 0 : (join.association_status ? join.association_status : 1);
-        wireless_connection_finished(
-            device.info.index, join.peer.bssid, status, result == JoinOutcome::timeout, request,
-            {radio->session.association_response_ies, join.response_ie_bytes});
+        report_join_outcome(device, radio->session, result);
         if (!connected)
             stop_runtime(device);
         return;
@@ -792,7 +797,8 @@ uint32_t passive_scan_generation() {
 
 bool live_scan_available() {
     return radio && !radio->session.station.queue.id &&
-           radio->session.join.phase == JoinPhase::idle;
+           radio->session.join.phase == JoinPhase::idle &&
+           radio->session.leave.phase == LeavePhase::idle;
 }
 
 bool live_connect_available() {
@@ -826,10 +832,7 @@ void close_connection_owner(unsigned port) {
     if (!port || !radio || radio->owner_port != port)
         return;
     radio->owner_port = 0;
-    if (radio->session.join.phase != JoinPhase::idle)
-        radio->leave_after_join = true;
-    else
-        submit_live_leave(radio->session, 3);
+    submit_live_leave(radio->session, 3);
 }
 
 int authorize_live_station(const uint8_t (&peer)[6], bool authorized) {

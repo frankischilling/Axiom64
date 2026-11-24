@@ -2423,9 +2423,9 @@ To keep an association open for IP tests, boot with
 `Intel AX201: open station ready` appears, bring up `wlan0` and run the
 usual IP client, such as `udhcpc -i wlan0` on a network with DHCP. Watch
 link state with `ip link show wlan0`. The driver lowers carrier when the
-access point disconnects, beacons stop, or a transmit completion times
-out. The radio stops on link loss. Use live-scan mode for connections
-managed by userspace.
+access point disconnects or its beacons stop. It clears the association and
+keeps the radio available for scans. A transmit completion timeout stops the
+radio. Use live-scan mode for connections managed by userspace.
 
 With `iwlwifi.live-scan`, bring `wlan0` up and complete a scan before
 sending an `nl80211` connect request for an open network. The request
@@ -2474,8 +2474,11 @@ The Blade still needs WPA2 authentication and encrypted traffic tests on a real
 access point. Networks that require protected management frames need additional
 driver support.
 
-Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
-disconnect event on the `mlme` group before scanning or connecting again.
-An explicit disconnect keeps the radio running after it clears the
-association. If firmware does not confirm cleanup, the driver stops the
-radio to protect the DMA buffers.
+Send `NL80211_CMD_DISCONNECT` to end a connection or cancel a pending
+association. Wait for the result on the `mlme` group before scanning or
+connecting again. An established connection ends with a disconnect event.
+A cancelled attempt ends with a connect timeout. The driver waits for the
+outstanding firmware command or transmit to finish, then removes the
+resources from that attempt. After cleanup, the radio can scan and connect
+again. If firmware fails to confirm cleanup, the driver stops the radio
+to protect the DMA buffers.

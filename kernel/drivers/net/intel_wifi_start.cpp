@@ -1135,7 +1135,8 @@ int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uin
                      const ScanRequest& request) {
     if (!session.running)
         return -95;
-    if (session.active || session.station.queue.id || session.join.phase != JoinPhase::idle)
+    if (session.active || session.station.queue.id || session.join.phase != JoinPhase::idle ||
+        session.leave.phase != LeavePhase::idle)
         return -16;
 
     uint64_t allowed = 0, active = 0;
@@ -1331,6 +1332,7 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
     case JoinPhase::beacon:
         return true;
     case JoinPhase::idle:
+    case JoinPhase::complete:
         return false;
     }
     __builtin_unreachable();
@@ -1365,6 +1367,14 @@ JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket&
                    : JoinProgress::waiting;
     if (join.phase == JoinPhase::authenticate || join.phase == JoinPhase::associate) {
         const auto tx = observe_authentication_tx(packet, join.management);
+        if (join.cancel_reason) {
+            if (tx == AuthEvent::malformed)
+                return JoinProgress::failed;
+            if (tx == AuthEvent::unrelated)
+                return JoinProgress::waiting;
+            ++join.management.write_pointer;
+            return JoinProgress::ready;
+        }
         if (tx == AuthEvent::denied)
             return JoinProgress::rejected;
         if (tx == AuthEvent::malformed || observe_session_protection(packet) == AuthEvent::ended)
@@ -1419,6 +1429,21 @@ JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket&
     }
     return JoinProgress::ready;
 }
+
+JoinOutcome cancel_live_join(LiveScanSession& session, JoinPhase next) {
+    auto& join = session.join;
+    auto& station = session.station;
+    station.peer = join.peer;
+    station.channel = join.channel.number;
+    station.rate = join.rate;
+    station.queue = join.data;
+    station.management = join.management;
+    station.next_sequence = join.sequence;
+    session.leave = {LeavePhase::deauthenticate, join.cancel_reason};
+    session.leave.cancelled_at = next;
+    join.phase = JoinPhase::idle;
+    return JoinOutcome::pending;
+}
 } // namespace
 
 JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
@@ -1427,8 +1452,18 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
         return JoinOutcome::idle;
     const Registers reg{session.io};
     CommandSession commands{reg, session.receive, session.next_command};
-    if (!commands.acknowledge_pending() ||
-        (!join.submitted && !begin_join_phase(session, commands, now_ms)))
+    if (!commands.acknowledge_pending())
+        return JoinOutcome::failed;
+    if (join.cancel_reason) {
+        if (!join.submitted || join.phase == JoinPhase::beacon)
+            return cancel_live_join(session, join.phase);
+        if ((join.phase == JoinPhase::authenticate || join.phase == JoinPhase::associate) &&
+            join.acknowledged) {
+            ++join.management.write_pointer;
+            return cancel_live_join(session, JoinPhase(unsigned(join.phase) + 1));
+        }
+    }
+    if (!join.submitted && !begin_join_phase(session, commands, now_ms))
         return JoinOutcome::failed;
     for (unsigned i = 0; i < 64; ++i) {
         FirmwarePacket packet{};
@@ -1445,6 +1480,8 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
         case JoinProgress::rejected:
             return JoinOutcome::rejected;
         case JoinProgress::ready:
+            if (join.cancel_reason)
+                return cancel_live_join(session, JoinPhase(unsigned(join.phase) + 1));
             if (join.phase == JoinPhase::release_protection) {
                 session.station.peer = join.peer;
                 session.station.peer.beacon_interval_tu = join.timing.beacon_interval_tu;
@@ -1469,10 +1506,15 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
 int submit_live_leave(LiveScanSession& session, uint16_t reason) {
     if (!reason)
         return -22;
-    if (session.leave.phase != LeavePhase::idle || session.join.phase != JoinPhase::idle)
+    if (session.leave.phase != LeavePhase::idle)
         return -16;
     if (!session.running)
         return -95;
+    if (session.join.phase != JoinPhase::idle) {
+        if (!session.join.cancel_reason)
+            session.join.cancel_reason = reason;
+        return 0;
+    }
     if (!session.station.queue.id)
         return 0;
     session.leave = {LeavePhase::drain, reason};
@@ -1506,6 +1548,11 @@ bool begin_leave_phase(LiveScanSession& session, CommandSession& commands, uint6
         commands.reg.write(command_write_pointer, uint8_t(station.management.write_pointer + 1) |
                                                       (uint32_t(station.management.id) << 16));
         return true;
+    case LeavePhase::release_protection: {
+        uint8_t wire[session_protection_bytes];
+        prepare_session_protection(false, wire);
+        return submit_operation(commands, leave, 3, 5, wire, sizeof(wire));
+    }
     case LeavePhase::clear_mac: {
         uint8_t wire[mac_context_bytes];
         prepare_scan_station(session.station_address, wire);
@@ -1543,6 +1590,7 @@ bool begin_leave_phase(LiveScanSession& session, CommandSession& commands, uint6
     }
     case LeavePhase::drain:
     case LeavePhase::idle:
+    case LeavePhase::done:
         return false;
     }
     __builtin_unreachable();
@@ -1566,6 +1614,39 @@ AuthEvent observe_leave_packet(const LiveScanSession& session, const FirmwarePac
         return AuthEvent::malformed;
     return AuthEvent::accepted;
 }
+
+bool leave_phase_needed(const StationLeave& leave) {
+    const auto phase = leave.cancelled_at;
+    switch (leave.phase) {
+    case LeavePhase::deauthenticate:
+        return phase == JoinPhase::idle || phase > JoinPhase::authenticate;
+    case LeavePhase::release_protection:
+        return phase > JoinPhase::protect && phase <= JoinPhase::release_protection;
+    case LeavePhase::clear_mac:
+        return phase == JoinPhase::idle || phase > JoinPhase::select_mac;
+    case LeavePhase::remove_data:
+        return phase == JoinPhase::idle || phase > JoinPhase::data_queue;
+    case LeavePhase::remove_management:
+        return phase == JoinPhase::idle || phase > JoinPhase::management_queue;
+    case LeavePhase::remove_peer:
+        return phase == JoinPhase::idle || phase > JoinPhase::add_peer;
+    case LeavePhase::unbind:
+        return phase == JoinPhase::idle || phase > JoinPhase::bind;
+    case LeavePhase::remove_phy:
+        return phase == JoinPhase::idle || phase > JoinPhase::phy;
+    case LeavePhase::remove_keys:
+        return phase == JoinPhase::idle;
+    default:
+        return true;
+    }
+}
+
+LeaveOutcome finish_live_leave(LiveScanSession& session) {
+    erase_key_bytes(&session.station.keys, sizeof(session.station.keys));
+    session.station = {};
+    session.leave = {};
+    return LeaveOutcome::disconnected;
+}
 } // namespace
 
 LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* context,
@@ -1583,6 +1664,12 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
             leave.phase = after_drain;
         else
             leave.deadline = station.transmit_deadline;
+    }
+    if (!leave.submitted) {
+        while (!leave_phase_needed(leave))
+            leave.phase = LeavePhase(unsigned(leave.phase) + 1);
+        if (leave.phase == LeavePhase::done)
+            return finish_live_leave(session);
     }
     if (leave.phase == LeavePhase::remove_keys && !leave.submitted) {
         while (leave.key_slot < station_key_slots &&
@@ -1614,12 +1701,8 @@ LeaveOutcome poll_live_leave(LiveScanSession& session, uint64_t now_ms, void* co
             leave.phase = after_drain;
             return LeaveOutcome::pending;
         }
-        if (leave.phase == LeavePhase::remove_phy) {
-            erase_key_bytes(&station.keys, sizeof(station.keys));
-            station = {};
-            leave = {};
-            return LeaveOutcome::disconnected;
-        }
+        if (leave.phase == LeavePhase::remove_phy)
+            return finish_live_leave(session);
         if (leave.phase == LeavePhase::remove_keys) {
             auto& key = station_key(station, leave_key_slot(leave.key_slot++));
             erase_key_bytes(&key, sizeof(key));

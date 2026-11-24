@@ -17,7 +17,7 @@ constexpr size_t tlv_file_header = 88, tlv_header = 8;
 constexpr uint32_t tlv_magic = 0x0a4c5749;
 constexpr uint32_t tlv_runtime_section = 19, tlv_init_section = 20, tlv_secure_runtime = 24,
                    tlv_secure_init = 25, tlv_cpu_count = 27, tlv_paging_size = 32,
-                   tlv_firmware_version = 36;
+                   tlv_firmware_version = 36, tlv_command_versions = 48;
 constexpr uint32_t cpu_separator = 0xffffcccc, paging_separator = 0xaaaabbbb;
 
 uint32_t load32(const uint8_t* bytes) {
@@ -59,7 +59,7 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
 
     FirmwareImage image{};
     auto region = lmac;
-    bool seen_version = false, seen_cpu_count = false, seen_paging_size = false;
+    bool seen_version = false, seen_cpu_count = false, seen_paging_size = false, seen_alive = false;
     for (size_t cursor = tlv_file_header; cursor < size;) {
         if (size - cursor < tlv_header)
             return "truncated TLV header";
@@ -88,6 +88,18 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
                 return "invalid paging record";
             seen_paging_size = true;
             image.paging_bytes = load32(payload);
+            break;
+        case tlv_command_versions:
+            if (length % 4)
+                return "invalid firmware command versions";
+            for (unsigned i = 0; i < length; i += 4) {
+                if (payload[i] == 1 && !payload[i + 1]) {
+                    if (seen_alive)
+                        return "duplicate firmware ALIVE version";
+                    seen_alive = true;
+                    image.alive_version = payload[i + 3];
+                }
+            }
             break;
         case tlv_runtime_section:
             if (!append_section(image, region, payload, length))

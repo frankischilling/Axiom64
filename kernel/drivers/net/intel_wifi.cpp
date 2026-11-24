@@ -7,7 +7,8 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_context.hpp"
+#include "core/time.hpp"
+#include "drivers/net/intel_wifi_start.hpp"
 #include "drivers/platform/fb_console.hpp"
 #include "drivers/platform/pci.hpp"
 #include "fs/vfs.hpp"
@@ -23,6 +24,9 @@ constexpr uint32_t hr_radio = 0x0010a100;
 constexpr char firmware_file[] = "/lib/firmware/iwlwifi-QuZ-a0-hr-b0-77.ucode";
 enum class Probe { absent, rejected, identified };
 Probe probe;
+PciFunction adapter{};
+volatile uint32_t* adapter_registers;
+bool start_requested;
 
 void report(const char* status) {
     constexpr char prefix[] = "Intel AX201: ";
@@ -51,13 +55,13 @@ void probe_adapter(const PciFunction& pci) {
     }
     PciBar bar{};
     uint64_t address;
-    constexpr unsigned bytes = csr_hw_rf_id + sizeof(uint32_t);
+    const unsigned bytes = (start_requested ? 0x1c80 : csr_hw_rf_id) + sizeof(uint32_t);
     if (pci.probe_bar(0, PciBarSpace::memory, bar) != PciBarStatus::valid ||
         !bar.range(0, bytes, address)) {
         log("iwlwifi: BAR 0 is unavailable\n");
         return;
     }
-    auto registers = static_cast<const volatile uint32_t*>(map_mmio(address, bytes));
+    auto registers = static_cast<volatile uint32_t*>(map_mmio(address, bytes));
     if (!registers) {
         log("iwlwifi: cannot map BAR 0\n");
         return;
@@ -77,19 +81,25 @@ void probe_adapter(const PciFunction& pci) {
         return;
     }
     log("iwlwifi: MAC revision=%x radio=%x\n", uint64_t(revision), uint64_t(radio));
-    if (revision == quz_mac_revision && radio == hr_radio)
+    if (revision == quz_mac_revision && radio == hr_radio) {
+        adapter = pci;
+        adapter_registers = registers;
         probe = Probe::identified;
+    }
 }
 
 struct StagedImage {
     FirmwareAddresses addresses{};
     size_t page_counts[region_count][max_sections]{};
+    bool retain = false;
 
     StagedImage() = default;
     StagedImage(const StagedImage&) = delete;
     StagedImage& operator=(const StagedImage&) = delete;
 
     ~StagedImage() {
+        if (retain)
+            return;
         for (unsigned region = 0; region < region_count; ++region)
             for (unsigned i = 0; i < max_sections; ++i)
                 if (addresses[region][i])
@@ -129,13 +139,14 @@ struct StagedImage {
 struct DmaBuffer {
     uint64_t address = 0;
     size_t pages = 0;
+    bool retain = false;
 
     DmaBuffer() = default;
     DmaBuffer(const DmaBuffer&) = delete;
     DmaBuffer& operator=(const DmaBuffer&) = delete;
 
     ~DmaBuffer() {
-        if (address)
+        if (address && !retain)
             page_free(address, pages);
     }
 
@@ -154,18 +165,27 @@ struct BootQueues {
     using FreeRing = uint64_t[rx_ring_entries];
     using Commands = CommandDescriptor[command_ring_entries];
     using InvalidCommand = uint8_t[invalid_command_size];
+    using UsedRing = uint32_t[rx_ring_entries];
 
     DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
     unsigned receive_count = 0;
 
+    void pin_until_reboot() {
+        DmaBuffer* buffers[] = {&free_ring, &used_ring,       &status,
+                                &commands,  &invalid_command, &context};
+        for (auto* buffer : buffers)
+            buffer->retain = true;
+    }
+
     ~BootQueues() {
+        if (free_ring.retain)
+            return;
         for (unsigned i = 0; i < receive_count; ++i)
             page_free(align_down(free_ring.data<FreeRing>()[i]), 1);
     }
 
     bool prepare(const FirmwareImage& image, const FirmwareAddresses& addresses) {
-        if (!free_ring.allocate(sizeof(FreeRing)) ||
-            !used_ring.allocate(rx_ring_entries * sizeof(uint32_t)) ||
+        if (!free_ring.allocate(sizeof(FreeRing)) || !used_ring.allocate(sizeof(UsedRing)) ||
             !status.allocate(sizeof(ReceiveStatus)) || !commands.allocate(sizeof(Commands)) ||
             !invalid_command.allocate(sizeof(InvalidCommand)) ||
             !context.allocate(sizeof(BootContext)))
@@ -193,11 +213,83 @@ struct BootQueues {
     }
 };
 
-void stage_firmware(const uint8_t* bytes, size_t size) {
+bool interrupts_inactive(const PciFunction& pci) {
+    unsigned limit = 0;
+    unsigned capability = pci.find_capability(5, &limit);
+    if (capability && (capability + 4 > limit || (pci.read16(capability + 2) & 1)))
+        return false;
+    capability = pci.find_capability(0x11, &limit);
+    return !capability || (capability + 4 <= limit && !(pci.read16(capability + 2) & (1u << 15)));
+}
+
+struct AdapterBoot {
+    uint16_t command;
+    const BootQueues& queues;
+};
+
+void launch_firmware(BootQueues& queues, StagedImage& staged) {
+    const auto original = adapter.read16(pci_command);
+    if ((original & bus_master) || !device_powered(adapter) || !interrupts_inactive(adapter)) {
+        report("PCI function is not idle for startup");
+        return;
+    }
+    AdapterBoot boot{uint16_t(original | memory_space | intx_disable), queues};
+    adapter.write16(pci_command, boot.command);
+    if (adapter.read16(pci_command) != boot.command) {
+        adapter.write16(pci_command, original);
+        report("cannot enable PCI register access");
+        return;
+    }
+
+    const FirmwareBootIo io{
+        &boot,
+        [](void*, unsigned offset) { return adapter_registers[offset / sizeof(uint32_t)]; },
+        [](void*, unsigned offset, uint32_t value) {
+            adapter_registers[offset / sizeof(uint32_t)] = value;
+        },
+        [](void*, unsigned usec) { return clock_delay_us(usec); },
+        [](void* state, bool enable) {
+            const auto& boot = *static_cast<AdapterBoot*>(state);
+            const auto command = uint16_t(boot.command | (enable ? bus_master : 0));
+            adapter.write16(pci_command, command);
+            return adapter.read16(pci_command) == command;
+        },
+        [](void* state, unsigned id) -> const uint8_t* {
+            const auto& queues = static_cast<AdapterBoot*>(state)->queues;
+            if (!id || id > queues.receive_count)
+                return nullptr;
+            return static_cast<const uint8_t*>(
+                physical(align_down(queues.free_ring.data<BootQueues::FreeRing>()[id - 1])));
+        },
+    };
+    const auto result =
+        start_and_stop_quz(io, {queues.context.address, &queues.status.data<ReceiveStatus>(),
+                                queues.used_ring.data<BootQueues::UsedRing>()});
+    const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
+    adapter.write16(pci_command, restore);
+    const bool restored = adapter.read16(pci_command) == restore;
+    log("iwlwifi: %s, DMA idle=%u, PCI command restored=%u\n", result.status,
+        uint64_t(result.dma_idle), uint64_t(restored));
+    report(result.status);
+    if (!result.dma_idle || !restored) {
+        queues.pin_until_reboot();
+        staged.retain = true;
+        report("DMA buffers reserved until reboot");
+    } else if (result.alive) {
+        report("adapter reset and stopped");
+    }
+}
+
+void stage_firmware(const uint8_t* bytes, size_t size, bool start) {
     FirmwareImage image{};
     if (const auto* error = parse_firmware(bytes, size, image)) {
         log("iwlwifi: firmware rejected: %s\n", error);
         report(error);
+        return;
+    }
+    if (start && image.alive_version != 6) {
+        log("iwlwifi: unsupported ALIVE version %u\n", uint64_t(image.alive_version));
+        report("firmware does not advertise ALIVE version 6");
         return;
     }
     StagedImage staged;
@@ -225,11 +317,14 @@ void stage_firmware(const uint8_t* bytes, size_t size) {
         uint64_t(image.regions[umac].count), uint64_t(image.regions[paging].count),
         uint64_t(image.paging_bytes));
     report("firmware and boot queues staged in memory");
+    if (start)
+        launch_firmware(queues, staged);
 }
 } // namespace
 
-void check_firmware(bool probe_pci) {
-    if (probe_pci) {
+void check_firmware(bool probe_pci, bool start) {
+    if (probe_pci || start) {
+        start_requested = start;
         probe = Probe::absent;
         pci_scan(probe_adapter);
         if (probe != Probe::identified) {
@@ -255,7 +350,7 @@ void check_firmware(bool probe_pci) {
         return;
     }
     if (node_read(file, 0, bytes, size) == int64_t(size))
-        stage_firmware(bytes, size);
+        stage_firmware(bytes, size, start);
     else {
         log("iwlwifi: firmware read failed\n");
         report("firmware read failed");

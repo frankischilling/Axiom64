@@ -7,7 +7,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_context.hpp"
+#include "drivers/net/intel_wifi_start.hpp"
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -97,6 +97,135 @@ void check_boot_queues(const FirmwareImage& image) {
     assert(!prepare_command_ring(invalid + 1, command, ring));
     assert(!memcmp(command, expected_command, sizeof(command)));
 }
+
+void alive_packet(uint8_t* data) {
+    // A short, unrelated notification followed by an aligned ALIVE v6 frame.
+    data[0] = 4;
+    data[4] = 0x68;
+    data[64] = 148;
+    data[68] = 1;
+    data[72] = 0xfe;
+    data[73] = 0xca;
+}
+
+enum class StartupCase {
+    good,
+    blocked,
+    unowned,
+    timeout,
+    bad_buffer,
+    stop_failed,
+    bus_master_failed
+};
+
+struct StartupFixture {
+    StartupCase scenario;
+    uint32_t csr[(0x1c80 / 4) + 1]{};
+    ReceiveStatus receive_status{};
+    uint32_t used[rx_ring_entries]{};
+    uint8_t buffer[ax::page_size]{};
+    bool master = false;
+    bool requested_master = false;
+    bool sent_doorbell = false;
+    bool requested_stop = false;
+    bool reset_after_dma = false;
+
+    explicit StartupFixture(StartupCase scenario) : scenario(scenario) {
+        csr[0x24 / 4] = scenario == StartupCase::blocked ? 0 : 1u << 27;
+        alive_packet(buffer);
+    }
+
+    void write(unsigned offset, uint32_t value) {
+        assert(offset % 4 == 0 && offset / 4 < sizeof(csr) / sizeof(*csr));
+        auto& reg = csr[offset / 4];
+        if (offset == 8) {
+            reg &= ~value;
+            return;
+        }
+        reg = value;
+        if (offset == 0 && scenario == StartupCase::unowned)
+            reg &= ~(1u << 22);
+        if (offset == 0x24 && (value & 4))
+            reg |= 1;
+        if (offset == 0x20) {
+            if (value & 0x200) {
+                requested_stop = true;
+                if (scenario != StartupCase::stop_failed)
+                    reg |= 0x100;
+            }
+            if (value & 0x80) {
+                assert(!master);
+                reg &= ~0x80;
+                reset_after_dma |= requested_master;
+            }
+        }
+        if (offset == 0x44c && csr[0x444 / 4] == 0x03a05c44) {
+            assert(value == 1 && master && csr[0x40 / 4] == 0x9000 && !csr[0x44 / 4]);
+            assert(csr[0x0c / 4] & 1);
+            if (scenario != StartupCase::timeout)
+                csr[8 / 4] |= 1;
+        }
+        if (offset == 0x1c80) {
+            assert(value == 2040 && master && !sent_doorbell);
+            sent_doorbell = true;
+            used[0] = scenario == StartupCase::bad_buffer ? 0 : 1;
+            receive_status.closed_buffer = 1;
+        }
+    }
+
+    FirmwareBootResult run() {
+        const FirmwareBootIo io{
+            this,
+            [](void* ptr, unsigned offset) {
+                return static_cast<StartupFixture*>(ptr)->csr[offset / 4];
+            },
+            [](void* ptr, unsigned offset, uint32_t value) {
+                static_cast<StartupFixture*>(ptr)->write(offset, value);
+            },
+            [](void*, unsigned) { return true; },
+            [](void* ptr, bool enable) {
+                auto& model = *static_cast<StartupFixture*>(ptr);
+                model.requested_master |= enable;
+                if (enable && model.scenario == StartupCase::bus_master_failed)
+                    return false;
+                if (!enable)
+                    assert(model.requested_stop);
+                model.master = enable;
+                return true;
+            },
+            [](void* ptr, unsigned id) -> const uint8_t* {
+                return id == 1 ? static_cast<StartupFixture*>(ptr)->buffer : nullptr;
+            },
+        };
+        return start_and_stop_quz(io, {0x9000, &receive_status, used});
+    }
+};
+
+void check_startup() {
+    uint8_t buffer[ax::page_size]{};
+    alive_packet(buffer);
+    assert(read_alive_notification(buffer, sizeof(buffer)) == AlivePacket::success);
+    assert(read_alive_notification(buffer, 75) == AlivePacket::malformed);
+    buffer[73] = 0;
+    assert(read_alive_notification(buffer, sizeof(buffer)) == AlivePacket::rejected);
+    buffer[66] = 1;
+    assert(read_alive_notification(buffer, sizeof(buffer)) == AlivePacket::malformed);
+
+    for (auto scenario :
+         {StartupCase::good, StartupCase::blocked, StartupCase::unowned, StartupCase::timeout,
+          StartupCase::bad_buffer, StartupCase::stop_failed, StartupCase::bus_master_failed}) {
+        StartupFixture model(scenario);
+        const auto outcome = model.run();
+        const bool attempted_dma =
+            scenario != StartupCase::blocked && scenario != StartupCase::unowned;
+        assert(model.requested_master == attempted_dma && !model.master);
+        assert(model.requested_stop == attempted_dma && model.reset_after_dma == attempted_dma);
+        assert(outcome.alive ==
+               (scenario == StartupCase::good || scenario == StartupCase::stop_failed));
+        assert(outcome.dma_idle == (scenario != StartupCase::stop_failed));
+    }
+    std::puts("AX201_STARTUP_MODEL_PASS");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -106,6 +235,7 @@ int main(int argc, char** argv) {
     const size_t version = append(file, 36, 12);
     word(file, version, 77);
     word(file, version + 4, 0x12345678);
+    word(file, append(file, 48, 4), 0x06630001);
     word(file, append(file, 27, 4), 2);
     const size_t first_section = section(file, 0x400000, {7});
     const size_t delimiter = section(file, 0xffffcccc, {0, 0, 0, 0});
@@ -117,13 +247,15 @@ int main(int argc, char** argv) {
     const size_t last_section = section(file, 0x1000000, Bytes(4096, 11));
     FirmwareImage image{};
     assert(!parse_firmware(file.data(), file.size(), image));
-    assert(image.version[1] == 0x12345678 && image.paging_bytes == 4096);
+    assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
+           image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
            image.regions[paging].count == 2);
     assert(image.regions[lmac].sections[0].data == file.data() + first_section + 4 &&
            *image.regions[umac].sections[0].data == 8 &&
            image.regions[paging].sections[1].data[4095] == 11);
     check_boot_queues(image);
+    check_startup();
 
     auto reject = [&](const Bytes& invalid) {
         FirmwareImage prior{};
@@ -140,6 +272,9 @@ int main(int argc, char** argv) {
     Bytes duplicate = file;
     word(duplicate, append(duplicate, 27, 4), 2);
     reject(duplicate);
+    Bytes duplicate_alive = file;
+    word(duplicate_alive, append(duplicate_alive, 48, 4), 0x06630001);
+    reject(duplicate_alive);
     Bytes oversized = file;
     section(oversized, 0x1010000, Bytes(max_section_bytes + 1, 0));
     reject(oversized);
@@ -152,9 +287,9 @@ int main(int argc, char** argv) {
         std::ifstream input(argv[1], std::ios::binary);
         Bytes device_file{std::istreambuf_iterator<char>(input), {}};
         assert(!parse_firmware(device_file.data(), device_file.size(), image));
-        assert(image.version[0] == 77 && image.paging_bytes == 0x97000 &&
-               image.regions[lmac].count == 14 && image.regions[umac].count == 15 &&
-               image.regions[paging].count == 20);
+        assert(image.version[0] == 77 && image.alive_version == 6 &&
+               image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
+               image.regions[umac].count == 15 && image.regions[paging].count == 20);
         check_boot_queues(image);
         std::puts("AX201_FIRMWARE_RELEASE_PASS");
     }

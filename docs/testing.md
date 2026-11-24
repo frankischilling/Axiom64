@@ -2291,10 +2291,14 @@ In a test initramfs, put the firmware in `/lib/firmware`. Boot with
 `iwlwifi.firmware-check` to validate the image, compare staged sections with
 the firmware file, and prepare the receive and host-command queues.
 Use `iwlwifi.probe` to require the AX201 PCI function and confirm the QuZ MAC
-and HR radio revisions. Add `fbconsole` to see
-the result on the boot display. The serial log includes the section counts and
-PCI probe details. The Blade has passed adapter identification and firmware
-staging over PXE. The queue setup leaves the radio off and releases the staged
-memory.
-Firmware startup, a wireless interface, and network association remain to be
-implemented.
+and HR radio revisions. Add `fbconsole` to see the result on the boot display.
+The serial log includes the section counts and PCI probe details. The Blade has
+passed adapter identification and firmware staging over PXE.
+
+`iwlwifi.start-check` adds a bounded hardware startup trial. It checks that
+the firmware advertises ALIVE version 6, starts the MAC, and waits for the
+firmware's ALIVE message. The trial stops and resets the adapter afterwards.
+If DMA shutdown cannot be verified, the kernel keeps its buffers reserved until
+reboot. The sanitizer test exercises startup and shutdown with a register model.
+Firmware startup on the Blade, a wireless interface, and association remain
+to be verified or implemented.

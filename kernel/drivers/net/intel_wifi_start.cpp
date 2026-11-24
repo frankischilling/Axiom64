@@ -251,16 +251,19 @@ const char* wait_for_alive(const Registers& reg, ReceiveReader& rx) {
 }
 
 enum class Reply { matched, rejected, broken, timeout };
+enum class WaitFor { reply, initialization, scan };
 
 struct CommandSession {
     const Registers& reg;
     ReceiveReader& rx;
     uint16_t index = 0;
     bool init_complete = false;
+    PassiveScan* passive = nullptr;
 
     Reply wait(uint8_t group, uint8_t opcode, uint16_t sequence, FirmwarePacket& packet,
-               bool notification = false) {
-        for (unsigned attempt = 0; attempt < 2000; ++attempt) {
+               WaitFor event = WaitFor::reply) {
+        const unsigned deadline_ms = event == WaitFor::scan ? 12000 : 2000;
+        for (unsigned attempt = 0; attempt < deadline_ms; ++attempt) {
             const auto cause = reg.read(interrupts);
             const auto control = reg.read(gp);
             if (cause == UINT32_MAX || (cause & error_interrupts) || control == UINT32_MAX ||
@@ -272,7 +275,14 @@ struct CommandSession {
             while ((received = rx.next(packet)) == PacketRead::packet) {
                 if (packet.group == 0 && packet.opcode == 4)
                     init_complete = true;
-                if (notification) {
+                if (passive)
+                    observe_passive_scan(*passive, packet);
+                if (event == WaitFor::scan) {
+                    if (passive->status != PassiveScan::Status::pending)
+                        return Reply::matched;
+                    continue;
+                }
+                if (event == WaitFor::initialization) {
                     if (init_complete)
                         return Reply::matched;
                     continue;
@@ -313,7 +323,8 @@ const char* request_nvm(CommandSession& commands, NvmInfo& info) {
         return "firmware init configuration failed";
     if (commands.send(12, 0, reserved, sizeof(reserved), response) != Reply::matched)
         return "firmware NVM access completion failed";
-    if (!commands.init_complete && commands.wait(0, 4, 0, response, true) != Reply::matched)
+    if (!commands.init_complete &&
+        commands.wait(0, 4, 0, response, WaitFor::initialization) != Reply::matched)
         return "firmware initialization did not complete";
     if (commands.send(12, 2, reserved, sizeof(reserved), response) != Reply::matched)
         return "firmware NVM query failed";
@@ -349,6 +360,54 @@ const char* request_regulatory_profile(CommandSession& commands, const NvmInfo& 
         return "firmware returned an invalid regulatory profile";
     return profile.valid_channels ? nullptr
                                   : "firmware regulatory profile has no permitted channels";
+}
+
+const char* configure_tx_antennas(CommandSession& commands, const NvmInfo& nvm,
+                                  const AntennaMasks& firmware) {
+    FirmwarePacket reply{};
+    const uint8_t tx_mask[4]{uint8_t(nvm.tx_chains & firmware.tx)};
+    if (!tx_mask[0])
+        return "firmware and NVM transmit antenna masks do not overlap";
+    if (commands.send(1, 0x98, tx_mask, sizeof(tx_mask), reply) != Reply::matched)
+        return "firmware TX antenna configuration failed";
+    return nullptr;
+}
+
+const char* run_passive_scan(CommandSession& commands, const NvmInfo& nvm,
+                             const RegulatoryProfile& regulatory, PassiveScan& scan) {
+    uint8_t request[passive_request_bytes];
+    if (!prepare_passive_scan(nvm, regulatory, scan, request))
+        return "no permitted 2.4 or 5 GHz channels";
+
+    // The 22000-family CSR holds optional OEM straps followed by an OTP fallback.
+    uint8_t address[6];
+    const auto& reg = commands.reg;
+    if (!decode_station_address(reg.read(0x388), reg.read(0x38c), address) &&
+        !decode_station_address(reg.read(0x380), reg.read(0x384), address))
+        return "adapter has no valid station MAC address";
+    uint8_t mac[mac_context_bytes];
+    prepare_scan_station(address, mac);
+    FirmwarePacket reply{};
+    if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
+        return "firmware station context setup failed";
+
+    commands.passive = &scan;
+    const auto submitted = commands.send(1, 0xd, request, sizeof(request), reply);
+    auto completed = Reply::matched;
+    if (submitted == Reply::matched && scan.status == PassiveScan::Status::pending)
+        completed = commands.wait(0, 0xf, 0, reply, WaitFor::scan);
+    commands.passive = nullptr;
+    if (submitted != Reply::matched)
+        return "firmware rejected the passive scan request";
+    if (completed == Reply::timeout)
+        return "passive scan completion timed out";
+    if (completed != Reply::matched)
+        return "passive scan receive failed";
+    if (scan.status == PassiveScan::Status::aborted)
+        return "firmware aborted the passive scan";
+    return scan.status == PassiveScan::Status::complete
+               ? nullptr
+               : "firmware returned an invalid scan completion";
 }
 } // namespace
 
@@ -386,6 +445,7 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     bool alive = false;
     NvmInfo info{};
     RegulatoryProfile regulatory{};
+    PassiveScan passive{};
     if (request_dma) {
         if (!io.bus_master(io.context, true)) {
             error = "PCI bus master did not enable";
@@ -401,10 +461,14 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             if (alive && memory.commands) {
                 CommandSession commands{reg, rx};
                 error = request_nvm(commands, info);
-                if (!error && scan && scan->regulatory)
+                if (!error && scan && scan->check == FirmwareCheck::passive_scan)
+                    error = configure_tx_antennas(commands, info, scan->antennas);
+                if (!error && scan && scan->check >= FirmwareCheck::regulatory)
                     error = request_regulatory_profile(commands, info, regulatory);
                 if (!error && scan)
                     error = configure_scan(commands, info, scan->antennas);
+                if (!error && scan && scan->check == FirmwareCheck::passive_scan)
+                    error = run_passive_scan(commands, info, regulatory, passive);
             }
         }
     }
@@ -419,11 +483,19 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     }
     const bool reset_done = reset_adapter(reg);
     const char* success = "firmware ALIVE received";
-    if (scan)
-        success = scan->regulatory ? "firmware regulatory profile and scan configuration passed"
-                                   : "firmware scan configuration accepted";
+    if (scan && scan->check == FirmwareCheck::passive_scan)
+        success = "firmware passive scan complete";
+    else if (scan && scan->check == FirmwareCheck::regulatory)
+        success = "firmware regulatory profile and scan configuration passed";
+    else if (scan)
+        success = "firmware scan configuration accepted";
     else if (memory.commands)
         success = "firmware NVM read passed";
-    return {error ? error : success, alive, !request_dma || (idle && reset_done), info, regulatory};
+    return {error ? error : success,
+            alive,
+            !request_dma || (idle && reset_done),
+            info,
+            regulatory,
+            passive};
 }
 } // namespace ax::IntelWifi

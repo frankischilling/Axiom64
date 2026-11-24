@@ -8,7 +8,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #pragma once
-#include "drivers/net/intel_wifi_command.hpp"
+#include "drivers/net/intel_wifi_scan.hpp"
 
 namespace ax::IntelWifi {
 struct FirmwareBootIo {
@@ -38,11 +38,12 @@ struct FirmwareBootResult {
     bool dma_idle;
     NvmInfo nvm{};
     RegulatoryProfile regulatory{};
+    PassiveScan passive{};
 };
 
 struct ScanChecks {
     AntennaMasks antennas;
-    bool regulatory;
+    FirmwareCheck check;
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.

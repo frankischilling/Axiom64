@@ -276,7 +276,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
-    const ScanChecks scan{antennas, check == FirmwareCheck::regulatory};
+    const ScanChecks scan{antennas, check};
     const auto result =
         start_and_stop_quz(io, memory, check >= FirmwareCheck::scan_config ? &scan : nullptr);
     const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
@@ -293,6 +293,19 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     if (result.regulatory.country[0])
         log("iwlwifi: regulatory domain=%s permitted=%u slots=%u\n", result.regulatory.country,
             uint64_t(result.regulatory.valid_channels), uint64_t(result.regulatory.channel_slots));
+    if (result.passive.status == PassiveScan::Status::complete) {
+        log("iwlwifi: passive scan channels=%u access points=%u truncated=%u\n",
+            uint64_t(result.passive.channel_count), uint64_t(result.passive.access_point_count),
+            uint64_t(result.passive.access_points_truncated));
+        if (result.passive.access_points_truncated) {
+            report("at least 32 access points seen");
+        } else {
+            char count[] = "access points seen: 00";
+            count[sizeof(count) - 3] = char('0' + result.passive.access_point_count / 10);
+            count[sizeof(count) - 2] = char('0' + result.passive.access_point_count % 10);
+            report(count);
+        }
+    }
     if (!result.dma_idle || !restored) {
         queues.pin_until_reboot();
         staged.retain = true;
@@ -324,8 +337,12 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report("firmware lacks scan configuration v5 or antenna masks");
         return;
     }
-    if (check == FirmwareCheck::regulatory && !image.current_regulatory_profile) {
+    if (check >= FirmwareCheck::regulatory && !image.current_regulatory_profile) {
         report("firmware lacks a supported regulatory profile query");
+        return;
+    }
+    if (check == FirmwareCheck::passive_scan && !image.passive_scan_supported) {
+        report("firmware lacks the supported passive scan commands");
         return;
     }
     StagedImage staged;

@@ -119,6 +119,7 @@ enum class StartupCase {
 };
 
 enum class RegulatoryCase { unused, valid, bad_count, disallowed, disabled, rejected };
+enum class ScanCase { unused, complete, early_completion, aborted, timeout };
 
 struct StartupFixture {
     StartupCase scenario;
@@ -126,7 +127,7 @@ struct StartupFixture {
     ReceiveStatus receive_status{};
     uint32_t used[rx_ring_entries]{};
     uint8_t buffer[ax::page_size]{};
-    uint8_t replies[5][ax::page_size]{};
+    uint8_t replies[8][ax::page_size]{};
     CommandDescriptor commands[command_ring_entries]{};
     CommandPayloads payloads{};
     unsigned commands_sent = 0;
@@ -134,6 +135,7 @@ struct StartupFixture {
     bool wrong_sequence = false;
     bool reject_scan_config = false;
     RegulatoryCase regulatory = RegulatoryCase::unused;
+    ScanCase passive = ScanCase::unused;
     bool master = false;
     bool requested_master = false;
     bool sent_doorbell = false;
@@ -142,27 +144,110 @@ struct StartupFixture {
 
     explicit StartupFixture(StartupCase scenario) : scenario(scenario) {
         csr[0x24 / 4] = scenario == StartupCase::blocked ? 0 : 1u << 27;
+        csr[0x380 / 4] = 0x02112233;
+        csr[0x384 / 4] = 0x4455;
         alive_packet(buffer);
     }
 
+    void scan_notifications(uint8_t* reply) const {
+        const auto completion = [](uint8_t* frame, uint8_t id, uint8_t status) {
+            frame[0] = 20;
+            frame[4] = 0xf;
+            frame[7] = 0x80;
+            frame[8] = id;
+            frame[14] = status;
+        };
+        completion(reply + 64, 7, 1); // A different scan.
+        for (unsigned offset : {128u, 256u, 384u}) {
+            auto* frame = reply + offset;
+            frame[0] = 90;
+            frame[4] = 0xc1;
+            frame[7] = 0x80;
+            auto* mpdu = frame + 8;
+            mpdu[0] = 38;
+            mpdu[12] = offset == 384 ? 1 : 3;
+            mpdu[34] = 1;
+            auto* beacon = mpdu + 48;
+            beacon[0] = 0x80;
+            beacon[16] = 0x02;
+            beacon[21] = offset == 384 ? 0x12 : 0x11;
+            // Zero-length SSID is valid for a hidden network.
+        }
+        if (passive != ScanCase::timeout)
+            completion(reply + 512, 0, passive == ScanCase::aborted ? 2 : 1);
+        if (passive == ScanCase::early_completion) {
+            uint8_t ack[64];
+            memcpy(ack, reply, sizeof(ack));
+            memmove(reply, reply + sizeof(ack), 512);
+            memcpy(reply + 512, ack, sizeof(ack));
+        }
+    }
+
     void command_reply(unsigned index) {
-        assert(index == ++commands_sent && index <= 5);
+        assert(index == ++commands_sent && index <= 8);
         const unsigned slot = index - 1;
         const auto& command = payloads[slot];
-        const bool mcc = index == 4 && regulatory != RegulatoryCase::unused;
-        const uint8_t expected[][36]{
-            {3, 2, 0, 0, 4, 0, 0, 0, 2},
-            {0, 12, 1, 0, 4},
-            {2, 12, 2, 0, 4},
-            {0xc, 1, 3, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2},
-            {0xc, 1, 4, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2},
-        };
-        const uint8_t expected_mcc[36]{0xc8, 1, 3, 0, 28, 0, 0, 0, 'Z', 'Z', 0x10};
-        const auto command_bytes = mcc ? 36 : index >= 4 ? 20 : 12;
-        assert(!memcmp(mcc ? expected_mcc : expected[slot], command, sizeof(expected_mcc)));
-        assert(commands[slot].buffer_count == 1 &&
-               commands[slot].buffers[0].length == command_bytes);
+        const bool scanning = passive != ScanCase::unused;
+        const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
+        uint8_t expected[command_slot_bytes]{};
+        uint16_t payload_bytes = 4;
+        expected[2] = uint8_t(slot);
+        expected[1] = 1;
+        if (index <= 3) {
+            const uint8_t codes[]{3, 0, 2};
+            expected[0] = codes[slot];
+            expected[1] = index == 1 ? 2 : 12;
+            expected[8] = index == 1 ? 2 : 0;
+        } else if (scanning && index == 4) {
+            expected[0] = 0x98;
+            expected[8] = 1;
+        } else if (mcc) {
+            expected[0] = 0xc8;
+            payload_bytes = 28;
+            expected[8] = expected[9] = 'Z';
+            expected[10] = 0x10;
+        } else if (index <= 6) {
+            expected[0] = 0xc;
+            payload_bytes = 12;
+            expected[12] = 1;
+            expected[16] = 2;
+        } else if (index == 7) {
+            expected[0] = 0x28;
+            payload_bytes = 148;
+            expected[12] = 1;
+            expected[16] = 5;
+            const uint8_t address[]{2, 0x11, 0x22, 0x33, 0x44, 0x55};
+            memcpy(expected + 24, address, sizeof(address));
+            memset(expected + 32, 0xff, 6);
+            expected[40] = 0xf;
+            expected[44] = 0x15;
+            expected[60] = 0x44;
+        } else {
+            expected[0] = 0xd;
+            payload_bytes = 1940;
+            expected[12] = 6;
+            expected[16] = 2;
+            expected[17] = 8;
+            expected[44] = 6;
+            expected[48] = expected[49] = 110;
+            expected[53] = 2;
+            expected[60] = expected[61] = expected[62] = 1;
+            expected[68] = 36;
+            expected[70] = 1;
+            expected[594] = 1;
+        }
+        expected[4] = uint8_t(payload_bytes);
+        expected[5] = uint8_t(payload_bytes >> 8);
+        assert(!memcmp(expected, command, sizeof(expected)));
+        const uint16_t command_bytes = payload_bytes + 8;
+        const uint16_t first_bytes = command_bytes > 20 ? 20 : command_bytes;
+        assert(commands[slot].buffer_count == (command_bytes > 20 ? 2 : 1));
+        assert(commands[slot].buffers[0].length == first_bytes);
         assert(commands[slot].buffers[0].address == 0xa000 + slot * command_slot_bytes);
+        if (command_bytes > 20) {
+            assert(commands[slot].buffers[1].length == command_bytes - 20);
+            assert(commands[slot].buffers[1].address == 0xa014 + slot * command_slot_bytes);
+        }
 
         auto* reply = replies[slot];
         if (index == 2) {
@@ -172,7 +257,7 @@ struct StartupFixture {
             reply[7] = 0x80;
             reply += 64;
         }
-        const unsigned length = mcc ? 32 : index == 3 ? 472 : 4;
+        const unsigned length = mcc ? (scanning ? 84 : 32) : index == 3 ? 472 : 4;
         reply[0] = uint8_t(length);
         reply[1] = uint8_t(length >> 8);
         const bool reject = index == 4 && reject_scan_config;
@@ -193,10 +278,13 @@ struct StartupFixture {
         if (mcc) {
             auto* data = reply + 8;
             data[0] = regulatory == RegulatoryCase::rejected ? 4 : 0;
-            data[7] = 0;
-            data[16] = regulatory == RegulatoryCase::bad_count ? 3 : 2;
+            data[16] = scanning ? 15 : regulatory == RegulatoryCase::bad_count ? 3 : 2;
             data[20] = regulatory == RegulatoryCase::disallowed ? 0 : 0x09;
+            if (scanning)
+                data[76] = 0x01;
         }
+        if (index == 8)
+            scan_notifications(reply);
         used[index] = index + 1;
         receive_status.closed_buffer = uint16_t(index + 1);
     }
@@ -267,7 +355,7 @@ struct StartupFixture {
                 auto& model = *static_cast<StartupFixture*>(ptr);
                 if (id == 1)
                     return model.buffer;
-                return id >= 2 && id <= 6 ? model.replies[id - 2] : nullptr;
+                return id >= 2 && id <= 9 ? model.replies[id - 2] : nullptr;
             },
         };
         FirmwareBootMemory memory{0x9000, &receive_status, used};
@@ -325,7 +413,8 @@ void check_startup() {
         StartupFixture model(StartupCase::good);
         model.reject_scan_config = scenario == 1;
         model.malformed_nvm = scenario == 3;
-        const ScanChecks scan{{scenario == 2 ? uint8_t(4) : uint8_t(1), 2}, false};
+        const ScanChecks scan{{scenario == 2 ? uint8_t(4) : uint8_t(1), 2},
+                              FirmwareCheck::scan_config};
         const auto outcome = model.run(true, &scan);
         const char* expected[] = {
             "firmware scan configuration accepted",
@@ -354,7 +443,7 @@ void check_startup() {
           {RegulatoryCase::rejected, "firmware returned an invalid regulatory profile", 4}}) {
         StartupFixture model(StartupCase::good);
         model.regulatory = test.scenario;
-        const ScanChecks scan{{1, 2}, true};
+        const ScanChecks scan{{1, 2}, FirmwareCheck::regulatory};
         const auto outcome = model.run(true, &scan);
         assert(!strcmp(outcome.status, test.status) && model.commands_sent == test.commands);
         assert(outcome.alive && outcome.dma_idle && model.reset_after_dma && !model.master);
@@ -365,6 +454,26 @@ void check_startup() {
         }
     }
     std::puts("AX201_REGULATORY_MODEL_PASS");
+
+    for (const auto test :
+         {ScanCase::complete, ScanCase::early_completion, ScanCase::aborted, ScanCase::timeout}) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = test;
+        const ScanChecks scan{{1, 2}, FirmwareCheck::passive_scan};
+        const auto outcome = model.run(true, &scan);
+        assert(outcome.alive && outcome.dma_idle && model.reset_after_dma && !model.master);
+        assert(model.commands_sent == 8 && outcome.passive.channel_count == 2);
+        if (test == ScanCase::timeout)
+            assert(!strcmp(outcome.status, "passive scan completion timed out"));
+        else if (test == ScanCase::aborted)
+            assert(!strcmp(outcome.status, "firmware aborted the passive scan"));
+        else {
+            assert(!strcmp(outcome.status, "firmware passive scan complete"));
+            assert(outcome.passive.access_point_count == 1);
+        }
+    }
+    std::puts("AX201_PASSIVE_SCAN_MODEL_PASS");
 }
 } // namespace
 
@@ -379,6 +488,10 @@ int main(int argc, char** argv) {
     word(file, append(file, 48, 4), 0x04010c02);
     word(file, append(file, 48, 4), 0x0005010c);
     word(file, append(file, 48, 4), 0x050101c8);
+    word(file, append(file, 48, 4), 0x00010198);
+    word(file, append(file, 48, 4), 0x00050128);
+    word(file, append(file, 48, 4), 0x000f010d);
+    word(file, append(file, 48, 4), 0x046300c1);
     word(file, append(file, 29, 8) + 4, 1u << 9);
     word(file, append(file, 30, 8) + 4, 1u << 1);
     auto regulatory_caps = append(file, 30, 8);
@@ -399,6 +512,7 @@ int main(int argc, char** argv) {
     assert(image.nvm_version == 4);
     assert(image.scan_config_version == 5 && image.antennas.tx == 3 && image.antennas.rx == 3);
     assert(image.current_regulatory_profile);
+    assert(image.passive_scan_supported);
     assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
            image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
@@ -453,6 +567,7 @@ int main(int argc, char** argv) {
         assert(image.nvm_version == 4);
         assert(image.scan_config_version == 5 && image.antennas.tx == 3 && image.antennas.rx == 3);
         assert(image.current_regulatory_profile);
+        assert(image.passive_scan_supported);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

@@ -41,11 +41,12 @@ struct FirmwareImage {
     uint8_t scan_config_version;
     AntennaMasks antennas;
     bool current_regulatory_profile;
+    bool passive_scan_supported;
 };
 
 // The returned sections borrow the firmware bytes. A rejected image leaves output intact.
 const char* parse_firmware(const uint8_t*, size_t, FirmwareImage&);
 
-enum class FirmwareCheck { stage, start, nvm, scan_config, regulatory };
+enum class FirmwareCheck { stage, start, nvm, scan_config, regulatory, passive_scan };
 void check_firmware(bool probe_pci, FirmwareCheck);
 } // namespace ax::IntelWifi

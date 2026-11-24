@@ -2315,3 +2315,10 @@ Network discovery, a wireless interface, and association require further work.
 `iwlwifi.regulatory-check` reads the adapter's current country and channel
 permissions before configuring scanning. It stops if the profile is missing,
 invalid, or has no permitted channels.
+
+`iwlwifi.passive-scan` runs one passive scan across the 2.4 and 5 GHz channels
+allowed by both the firmware's current regulatory profile and the adapter's
+band support. The screen reports completion and a bounded count of access
+points from valid beacons and probe responses. The adapter resets afterwards.
+Run the check from the PXE RAM image for a physical test. Wi-Fi association
+and NetworkManager integration still require implementation.

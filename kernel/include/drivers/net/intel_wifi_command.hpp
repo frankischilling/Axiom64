@@ -11,7 +11,7 @@
 #include "drivers/net/intel_wifi_context.hpp"
 
 namespace ax::IntelWifi {
-inline constexpr unsigned command_slot_bytes = 64;
+inline constexpr unsigned command_slot_bytes = 2048;
 using CommandPayloads = uint8_t[command_ring_entries][command_slot_bytes];
 
 struct FirmwarePacket {

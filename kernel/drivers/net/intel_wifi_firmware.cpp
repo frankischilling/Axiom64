@@ -21,6 +21,19 @@ constexpr uint32_t tlv_runtime_section = 19, tlv_init_section = 20, tlv_phy_sku 
                    tlv_firmware_version = 36, tlv_command_versions = 48;
 constexpr uint32_t cpu_separator = 0xffffcccc, paging_separator = 0xaaaabbbb;
 
+struct ScanVersion {
+    uint8_t opcode, group, version;
+    bool notification;
+};
+
+constexpr ScanVersion scan_versions[]{
+    {0x98, 1, 1, false}, // TX antenna configuration.
+    {0x28, 1, 5, false}, // Station MAC context.
+    {0x0d, 1, 15, false},
+    {0xc1, 0, 4, true}, // AX201 receive descriptor.
+};
+constexpr unsigned scan_api_mask = (1u << (sizeof(scan_versions) / sizeof(*scan_versions))) - 1;
+
 uint32_t load32(const uint8_t* bytes) {
     return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) | (uint32_t(bytes[2]) << 16) |
            (uint32_t(bytes[3]) << 24);
@@ -64,6 +77,7 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     bool seen_nvm = false, seen_phy_sku = false, seen_scan_config = false, seen_mcc = false;
     bool mcc_v1_v5 = false;
     uint32_t first_api_flags = 0, capabilities[3]{};
+    unsigned seen_scan_apis = 0, supported_scan_apis = 0;
     for (size_t cursor = tlv_file_header; cursor < size;) {
         if (size - cursor < tlv_header)
             return "truncated TLV header";
@@ -119,6 +133,17 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
             if (length % 4)
                 return "invalid firmware command versions";
             for (unsigned i = 0; i < length; i += 4) {
+                unsigned flag = 1;
+                for (const auto& required : scan_versions) {
+                    if (payload[i] == required.opcode && payload[i + 1] == required.group) {
+                        if (seen_scan_apis & flag)
+                            return "duplicate firmware passive scan version";
+                        seen_scan_apis |= flag;
+                        if (payload[i + (required.notification ? 3 : 2)] == required.version)
+                            supported_scan_apis |= flag;
+                    }
+                    flag <<= 1;
+                }
                 if (payload[i] == 1 && !payload[i + 1]) {
                     if (seen_alive)
                         return "duplicate firmware ALIVE version";
@@ -174,6 +199,7 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     image.current_regulatory_profile =
         mcc_v1_v5 && (capabilities[0] & lar) && (capabilities[2] & mcc_11ax) &&
         ((first_api_flags & wifi_mcc) || (capabilities[0] & multi_mcc));
+    image.passive_scan_supported = supported_scan_apis == scan_api_mask;
     output = image;
     return nullptr;
 }

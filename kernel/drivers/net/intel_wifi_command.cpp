@@ -59,11 +59,20 @@ bool prepare_host_command(uint8_t (&slot)[command_slot_bytes], uint64_t dma,
     slot[1] = group;
     slot[2] = uint8_t(index); // Queue zero is reserved for host commands.
     slot[4] = uint8_t(payload_bytes);
+    slot[5] = uint8_t(payload_bytes >> 8);
     if (payload_bytes)
         memcpy(slot + header_bytes, payload, payload_bytes);
     descriptor = {};
-    descriptor.buffer_count = 1;
-    descriptor.buffers[0] = {command_bytes, dma};
+    constexpr uint16_t first_buffer_bytes = 20;
+    if (command_bytes <= first_buffer_bytes) {
+        descriptor.buffer_count = 1;
+        descriptor.buffers[0] = {command_bytes, dma};
+    } else {
+        descriptor.buffer_count = 2;
+        descriptor.buffers[0] = {first_buffer_bytes, dma};
+        descriptor.buffers[1] = {uint16_t(command_bytes - first_buffer_bytes),
+                                 dma + first_buffer_bytes};
+    }
     return true;
 }
 

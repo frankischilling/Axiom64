@@ -2432,8 +2432,11 @@ sending an `nl80211` connect request for an open network. The request
 selects an SSID from the scan results and can specify a BSSID and
 frequency. The acknowledgment means the driver accepted the request.
 The result arrives separately in the `mlme` multicast group after the
-firmware exchange. Carrier comes up after a successful result. A failed
-exchange stops the radio so the firmware can release its DMA buffers.
+firmware exchange. Carrier comes up after a successful result. If the
+access point refuses the join or fails to respond, the driver clears the
+attempt after firmware returns the transmit buffer. The radio can then
+scan and try again. A missing firmware completion stops the radio so it
+can release its DMA buffers safely.
 
 The open-network path accepts association requests from wpa_supplicant.
 It can prefer a BSSID or frequency and include operating classes or
@@ -2441,8 +2444,9 @@ extended capabilities in the request. When userspace asks to control the
 port, the driver passes only EAPOL frames until the supplicant authorizes
 the associated peer. Closing the socket that owns a connection ends it.
 The connection event includes the association request and response elements when
-available. If the access point refuses association, the event reports its status
-code.
+available. If the access point refuses authentication or association, the
+event reports its status code. If no response arrives, the event reports
+a timeout.
 
 The host tests cover the AX201's CCMP transmit command and receive path. They
 check that receive delivery rejects frames with a bad integrity check, a replayed

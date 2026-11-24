@@ -70,8 +70,9 @@ struct StationJoin {
     uint8_t group = 0, opcode = 0;
     bool submitted = false, acknowledged = false, indicated = false;
     bool controlled_port = false, association_sent = false, ccmp = false;
-    uint16_t association_status = 0;
+    uint16_t peer_status = 0;
     uint16_t cancel_reason = 0;
+    bool protection_ended = false;
     unsigned response_ie_bytes = 0;
     uint64_t deadline = 0;
 };
@@ -102,7 +103,9 @@ struct StationLeave {
     uint64_t deadline = 0;
     bool send_deauthentication = true;
     bool from_ap = false;
-    JoinPhase cancelled_at = JoinPhase::idle; // First join phase that did not complete.
+    JoinPhase unfinished_join = JoinPhase::idle;
+    JoinOutcome join_result = JoinOutcome::idle;
+    bool release_protection = false;
 };
 
 struct LiveScanSession {

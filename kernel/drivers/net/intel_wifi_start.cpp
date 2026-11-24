@@ -1340,19 +1340,29 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
 } // namespace
 
 namespace {
-enum class JoinProgress { waiting, ready, rejected, failed };
+enum class JoinProgress { waiting, ready, peer_rejected, radio_timeout, rejected, failed };
+
+bool join_transmitting(JoinPhase phase) {
+    return phase == JoinPhase::authenticate || phase == JoinPhase::associate;
+}
+
+JoinPhase finish_join_phase(StationJoin& join) {
+    if (join_transmitting(join.phase))
+        ++join.management.write_pointer;
+    return JoinPhase(unsigned(join.phase) + 1);
+}
 
 AuthEvent observe_join_reply(LiveScanSession& session, const FirmwarePacket& packet) {
     auto& join = session.join;
     if (join.phase == JoinPhase::authenticate)
         return observe_authentication_reply(packet, session.station_address, join.peer,
-                                            join.channel.number);
+                                            join.channel.number, &join.peer_status);
     AssociationReply reply;
     const auto result = observe_association_reply(packet, session.station_address, join.peer,
                                                   join.channel.number, reply);
     if (result == AuthEvent::accepted || result == AuthEvent::denied) {
         join.aid = reply.aid;
-        join.association_status = reply.status;
+        join.peer_status = reply.status;
         join.response_ie_bytes = reply.element_bytes;
         memcpy(session.association_response_ies, reply.elements, reply.element_bytes);
     }
@@ -1361,37 +1371,36 @@ AuthEvent observe_join_reply(LiveScanSession& session, const FirmwarePacket& pac
 
 JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket& packet) {
     auto& join = session.join;
-    if (join.phase == JoinPhase::beacon)
+    if (join.phase > JoinPhase::protect && join.phase <= JoinPhase::beacon &&
+        observe_session_protection(packet) == AuthEvent::ended)
+        join.protection_ended = true;
+    if (join.phase == JoinPhase::beacon) {
+        if (join.protection_ended)
+            return JoinProgress::radio_timeout;
         return observe_association_beacon(packet, join.peer, join.channel.number, join.timing)
                    ? JoinProgress::ready
                    : JoinProgress::waiting;
-    if (join.phase == JoinPhase::authenticate || join.phase == JoinPhase::associate) {
+    }
+    if (join_transmitting(join.phase)) {
         const auto tx = observe_authentication_tx(packet, join.management);
-        if (join.cancel_reason) {
-            if (tx == AuthEvent::malformed)
+        if (tx == AuthEvent::malformed)
+            return JoinProgress::failed;
+        join.acknowledged |= tx == AuthEvent::accepted || tx == AuthEvent::denied;
+        if (!join.cancel_reason && !join.indicated) {
+            const auto response = observe_join_reply(session, packet);
+            if (response == AuthEvent::malformed)
                 return JoinProgress::failed;
-            if (tx == AuthEvent::unrelated)
-                return JoinProgress::waiting;
-            ++join.management.write_pointer;
-            return JoinProgress::ready;
+            join.indicated = response == AuthEvent::accepted || response == AuthEvent::denied;
         }
-        if (tx == AuthEvent::denied)
-            return JoinProgress::rejected;
-        if (tx == AuthEvent::malformed || observe_session_protection(packet) == AuthEvent::ended)
-            return JoinProgress::failed;
-        join.acknowledged |= tx == AuthEvent::accepted;
-        const auto response =
-            join.indicated ? AuthEvent::unrelated : observe_join_reply(session, packet);
-        if (response == AuthEvent::denied)
-            return JoinProgress::rejected;
-        if (response == AuthEvent::malformed)
-            return JoinProgress::failed;
-        join.indicated |= response == AuthEvent::accepted;
-        if (join.acknowledged && join.indicated) {
-            ++join.management.write_pointer;
+        if (!join.acknowledged)
+            return JoinProgress::waiting;
+        if (join.cancel_reason)
             return JoinProgress::ready;
-        }
-        return JoinProgress::waiting;
+        if (join.peer_status)
+            return JoinProgress::peer_rejected;
+        if (tx == AuthEvent::denied || join.protection_ended)
+            return JoinProgress::radio_timeout;
+        return join.indicated ? JoinProgress::ready : JoinProgress::waiting;
     }
     if (packet.sequence == join.command_sequence) {
         if (packet.group == 0 && packet.opcode == 2)
@@ -1430,7 +1439,7 @@ JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket&
     return JoinProgress::ready;
 }
 
-JoinOutcome cancel_live_join(LiveScanSession& session, JoinPhase next) {
+JoinOutcome roll_back_join(LiveScanSession& session, JoinPhase next, JoinOutcome result) {
     auto& join = session.join;
     auto& station = session.station;
     station.peer = join.peer;
@@ -1439,8 +1448,15 @@ JoinOutcome cancel_live_join(LiveScanSession& session, JoinPhase next) {
     station.queue = join.data;
     station.management = join.management;
     station.next_sequence = join.sequence;
-    session.leave = {LeavePhase::deauthenticate, join.cancel_reason};
-    session.leave.cancelled_at = next;
+    auto& leave = session.leave;
+    leave = {LeavePhase::deauthenticate, uint16_t(join.cancel_reason ? join.cancel_reason : 3)};
+    leave.unfinished_join = next;
+    leave.join_result = result;
+    leave.release_protection = !join.protection_ended && next > JoinPhase::protect &&
+                               next <= JoinPhase::release_protection;
+    leave.send_deauthentication =
+        !join.protection_ended && (join.cancel_reason || (result == JoinOutcome::timeout &&
+                                                          join.phase >= JoinPhase::associate));
     join.phase = JoinPhase::idle;
     return JoinOutcome::pending;
 }
@@ -1456,12 +1472,9 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
         return JoinOutcome::failed;
     if (join.cancel_reason) {
         if (!join.submitted || join.phase == JoinPhase::beacon)
-            return cancel_live_join(session, join.phase);
-        if ((join.phase == JoinPhase::authenticate || join.phase == JoinPhase::associate) &&
-            join.acknowledged) {
-            ++join.management.write_pointer;
-            return cancel_live_join(session, JoinPhase(unsigned(join.phase) + 1));
-        }
+            return roll_back_join(session, join.phase, JoinOutcome::timeout);
+        if (join_transmitting(join.phase) && join.acknowledged)
+            return roll_back_join(session, finish_join_phase(join), JoinOutcome::timeout);
     }
     if (!join.submitted && !begin_join_phase(session, commands, now_ms))
         return JoinOutcome::failed;
@@ -1479,9 +1492,14 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
             return JoinOutcome::failed;
         case JoinProgress::rejected:
             return JoinOutcome::rejected;
+        case JoinProgress::peer_rejected:
+            return roll_back_join(session, finish_join_phase(join), JoinOutcome::rejected);
+        case JoinProgress::radio_timeout:
+            return roll_back_join(session, finish_join_phase(join), JoinOutcome::timeout);
         case JoinProgress::ready:
+            const auto next = finish_join_phase(join);
             if (join.cancel_reason)
-                return cancel_live_join(session, JoinPhase(unsigned(join.phase) + 1));
+                return roll_back_join(session, next, JoinOutcome::timeout);
             if (join.phase == JoinPhase::release_protection) {
                 session.station.peer = join.peer;
                 session.station.peer.beacon_interval_tu = join.timing.beacon_interval_tu;
@@ -1495,12 +1513,16 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
                 join.phase = JoinPhase::idle;
                 return JoinOutcome::connected;
             }
-            join.phase = JoinPhase(unsigned(join.phase) + 1);
+            join.phase = next;
             join.submitted = false;
             return JoinOutcome::pending;
         }
     }
-    return now_ms < join.deadline ? JoinOutcome::pending : JoinOutcome::timeout;
+    if (now_ms < join.deadline)
+        return JoinOutcome::pending;
+    if (join.phase == JoinPhase::beacon || (join_transmitting(join.phase) && join.acknowledged))
+        return roll_back_join(session, finish_join_phase(join), JoinOutcome::timeout);
+    return JoinOutcome::timeout;
 }
 
 int submit_live_leave(LiveScanSession& session, uint16_t reason) {
@@ -1616,12 +1638,13 @@ AuthEvent observe_leave_packet(const LiveScanSession& session, const FirmwarePac
 }
 
 bool leave_phase_needed(const StationLeave& leave) {
-    const auto phase = leave.cancelled_at;
+    const auto phase = leave.unfinished_join;
     switch (leave.phase) {
     case LeavePhase::deauthenticate:
-        return phase == JoinPhase::idle || phase > JoinPhase::authenticate;
+        return leave.send_deauthentication &&
+               (phase == JoinPhase::idle || phase > JoinPhase::authenticate);
     case LeavePhase::release_protection:
-        return phase > JoinPhase::protect && phase <= JoinPhase::release_protection;
+        return leave.release_protection;
     case LeavePhase::clear_mac:
         return phase == JoinPhase::idle || phase > JoinPhase::select_mac;
     case LeavePhase::remove_data:

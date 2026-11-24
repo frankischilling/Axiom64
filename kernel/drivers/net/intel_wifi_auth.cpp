@@ -562,14 +562,17 @@ bool observe_station_disconnect(const FirmwarePacket& packet, const uint8_t (&st
 }
 
 AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
-                                       const AccessPoint& peer, uint8_t channel) {
+                                       const AccessPoint& peer, uint8_t channel, uint16_t* status) {
     const uint8_t* body = nullptr;
     const auto result = management_reply(packet, station, peer, channel, 0xb0, body);
     if (result != AuthEvent::accepted)
         return result;
     if (read16(body) || read16(body + 2) != 2)
         return AuthEvent::unrelated;
-    return read16(body + 4) ? AuthEvent::denied : AuthEvent::accepted;
+    const auto code = read16(body + 4);
+    if (status)
+        *status = code;
+    return code ? AuthEvent::denied : AuthEvent::accepted;
 }
 
 AuthEvent observe_association_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],

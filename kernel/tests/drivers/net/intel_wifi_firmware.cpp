@@ -90,6 +90,7 @@ enum class AuthCase {
     denied_tx,
     denied_ap,
     reply_timeout,
+    protection_expired,
     wrong_target
 };
 enum class AssocCase { unused, accepted, refused, invalid_id, secured, bad_beacon, leave_failed };
@@ -399,7 +400,9 @@ struct StartupFixture {
         assert(!memcmp(authentication_payload + 128, body, length));
 
         auto* buffer = reply_buffer(commands_sent + authentication_rx_buffers + rejoin_rx_offset);
-        const bool first_reply = auth_case == AuthCase::reply_first && step != 2;
+        const bool first_reply = (auth_case == AuthCase::reply_first ||
+                                  (open_station && auth_case == AuthCase::denied_ap)) &&
+                                 !leaving;
         auto* tx = buffer + (first_reply ? 128 : 0);
         tx[0] = 52;
         tx[4] = 0x1c;
@@ -413,7 +416,14 @@ struct StartupFixture {
                 : 1;
         tx[52] = uint8_t(0x35 + step);
 
-        if (step != 2 && auth_case != AuthCase::reply_timeout) {
+        if (auth_case == AuthCase::protection_expired) {
+            auto* ended = buffer + 64;
+            ended[0] = 20;
+            ended[4] = 0xfb;
+            ended[5] = 3;
+            ended[7] = 0x80;
+            ended[12] = 1;
+        } else if (!leaving && auth_case != AuthCase::reply_timeout) {
             auto* rx = buffer + (first_reply ? 0 : 64);
             rx[0] = 82;
             rx[4] = 0xc1;
@@ -553,7 +563,10 @@ struct StartupFixture {
                                          ? actual - cancel_after_commands
                                          : 0;
         const bool cancel_phy = cancel_after_commands == 9 && cancel_step == 1;
-        const auto cancel_station = cancel_after_commands == 16 ? cancel_step : 0;
+        const auto cancel_station =
+            cancel_after_commands == 16 && cancel_step
+                ? cancel_step + unsigned(auth_case == AuthCase::protection_expired)
+                : 0;
         const unsigned clear_association = data ? 20 : 18;
         const unsigned release_session = open_station  ? 19
                                          : association ? clear_association + 1
@@ -1540,6 +1553,25 @@ void check_open_station() {
     std::puts("AX201_OPEN_STATION_MODEL_PASS");
 }
 
+void check_rejoin(StartupFixture& model, LiveScanSession& session, ScanElementStorage& scan,
+                  const StationRequest& request, uint64_t now) {
+    const auto previous_commands = model.commands_sent;
+    model.rejoin_command_offset = previous_commands - 7;
+    model.rejoin_rx_offset = model.authentication_rx_buffers;
+    model.authentication_rx_buffers = model.data_rx_buffers = model.cancel_after_commands = 0;
+    model.disconnect_reason = 0;
+    model.auth_case = AuthCase::accepted;
+    model.assoc_case = AssocCase::accepted;
+    assert(submit_live_scan(session, scan, ++now) == 0);
+    assert(poll_live_scan(session, ++now) == ScanOutcome::complete);
+    assert(submit_live_join(session, session.scan, request) == 0);
+    auto joined = JoinOutcome::pending;
+    for (const auto deadline = now + 98; now < deadline && joined == JoinOutcome::pending;)
+        joined = poll_live_join(session, ++now);
+    assert(joined == JoinOutcome::connected && model.commands_sent == previous_commands + 12);
+    assert(session.station.queue.id == 0x102 && session.station.next_sequence == 2);
+}
+
 void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanElementStorage& scan,
                           const StationRequest& request, ArpCase pending, bool missed_beacons) {
     const uint8_t arp[]{
@@ -1588,17 +1620,7 @@ void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanE
     assert(model.commands_sent == 25 && submit_live_leave(session, 3) == 0);
     assert(model.authentication_rx_buffers == transmissions + !missed_beacons);
 
-    model.rejoin_command_offset = model.commands_sent - 7;
-    model.rejoin_rx_offset = model.authentication_rx_buffers;
-    model.authentication_rx_buffers = model.data_rx_buffers = 0;
-    assert(submit_live_scan(session, scan, ++now) == 0);
-    assert(poll_live_scan(session, ++now) == ScanOutcome::complete);
-    assert(submit_live_join(session, session.scan, request) == 0);
-    auto joined = JoinOutcome::pending;
-    for (const auto deadline = now + 98; now < deadline && joined == JoinOutcome::pending;)
-        joined = poll_live_join(session, ++now);
-    assert(joined == JoinOutcome::connected && model.commands_sent == 37);
-    assert(session.station.queue.id == 0x102 && session.station.next_sequence == 2);
+    check_rejoin(model, session, scan, request, now);
 }
 
 void check_live_connection() {
@@ -1614,7 +1636,10 @@ void check_live_connection() {
         {AuthCase::reply_first, AssocCase::leave_failed, ArpCase::unused},
         {AuthCase::accepted, AssocCase::refused, ArpCase::unused},
         {AuthCase::denied_ap, AssocCase::accepted, ArpCase::unused},
+        {AuthCase::denied_tx, AssocCase::accepted, ArpCase::unused},
         {AuthCase::reply_timeout, AssocCase::accepted, ArpCase::unused},
+        {AuthCase::protection_expired, AssocCase::accepted, ArpCase::unused},
+        {AuthCase::accepted, AssocCase::bad_beacon, ArpCase::unused},
         {AuthCase::accepted, AssocCase::accepted, ArpCase::unused, true},
         {AuthCase::accepted, AssocCase::accepted, ArpCase::unused, false, true},
     };
@@ -1668,19 +1693,24 @@ void check_live_connection() {
         assert(submit_live_join(session, session.scan, request) == -16);
 
         auto outcome = JoinOutcome::pending;
-        for (uint64_t now = 2; now < 1500 && outcome == JoinOutcome::pending; ++now)
-            outcome = poll_live_join(session, now);
+        uint64_t now = 2;
+        while (now < 1500 && session.join.phase != JoinPhase::idle &&
+               outcome == JoinOutcome::pending)
+            outcome = poll_live_join(session, now++);
         const bool sent =
             authentication == AuthCase::accepted || authentication == AuthCase::reply_first;
         assert(session.join.association_sent == sent);
+        const uint16_t status = authentication == AuthCase::denied_ap ? 13
+                                : association == AssocCase::refused   ? 17
+                                                                      : 0;
+        assert(session.join.peer_status == status);
         if (sent) {
             const uint8_t elements[]{1, 1, 0x82};
             assert(session.join.response_ie_bytes == sizeof(elements));
             assert(!memcmp(session.association_response_ies, elements, sizeof(elements)));
-            assert(session.join.association_status == (association == AssocCase::refused ? 17 : 0));
         } else
-            assert(!session.join.response_ie_bytes && !session.join.association_status);
-        if (sent && association != AssocCase::refused) {
+            assert(!session.join.response_ie_bytes);
+        if (sent && association != AssocCase::refused && association != AssocCase::bad_beacon) {
             assert(outcome == JoinOutcome::connected && model.commands_sent == 19);
             assert(session.station.queue.id == 0x102 && session.station.channel == 1);
             assert(session.station.next_sequence == 2 && session.join.aid == 42);
@@ -1703,8 +1733,19 @@ void check_live_connection() {
             check_live_departure(model, session, scan, request, pending, missed_beacons);
         } else {
             assert(!session.station.queue.id && model.commands_sent == 16);
-            assert(outcome == (authentication == AuthCase::reply_timeout ? JoinOutcome::timeout
-                                                                         : JoinOutcome::rejected));
+            assert(outcome == JoinOutcome::pending);
+            assert(session.leave.join_result ==
+                   (status ? JoinOutcome::rejected : JoinOutcome::timeout));
+            assert(session.station.management.write_pointer == (sent ? 0x36 : 0x35));
+            assert(submit_live_scan(session, scan, now) == -16);
+            model.cancel_after_commands = model.commands_sent;
+            auto leave = LeaveOutcome::pending;
+            for (const auto deadline = now + 32; leave == LeaveOutcome::pending && now < deadline;)
+                leave = poll_live_leave(session, now++, nullptr, nullptr);
+            assert(leave == LeaveOutcome::disconnected && session.running && !model.requested_stop);
+            assert(model.commands_sent ==
+                   (authentication == AuthCase::protection_expired ? 21u : 22u));
+            check_rejoin(model, session, scan, request, now);
         }
         assert(stop_live_quz(session) && !model.master);
     }
@@ -1780,18 +1821,7 @@ void check_cancel_join() {
                                                                         : 22u));
         assert(model.authentication_rx_buffers == (cancel_at == JoinPhase::authenticate ? 2u : 0u));
 
-        model.rejoin_command_offset = model.commands_sent - 7;
-        model.rejoin_rx_offset = model.authentication_rx_buffers;
-        model.authentication_rx_buffers = model.cancel_after_commands = 0;
-        model.disconnect_reason = 0;
-        model.auth_case = AuthCase::accepted;
-        assert(submit_live_scan(session, scan, now++) == 0);
-        assert(poll_live_scan(session, now++) == ScanOutcome::complete);
-        assert(submit_live_join(session, session.scan, request) == 0);
-        auto outcome = JoinOutcome::pending;
-        while (outcome == JoinOutcome::pending && now < 100)
-            outcome = poll_live_join(session, now++);
-        assert(outcome == JoinOutcome::connected);
+        check_rejoin(model, session, scan, request, now);
         assert(stop_live_quz(session) && !model.master);
     }
     std::puts("AX201_CANCEL_JOIN_MODEL_PASS");

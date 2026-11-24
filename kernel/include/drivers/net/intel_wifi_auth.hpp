@@ -98,7 +98,8 @@ bool observe_station_disconnect(const FirmwarePacket&, const uint8_t (&station)[
                                 const AccessPoint&, uint8_t channel, uint16_t& reason);
 AuthEvent observe_authentication_tx(const FirmwarePacket&, PeerQueue);
 AuthEvent observe_authentication_reply(const FirmwarePacket&, const uint8_t (&station)[6],
-                                       const AccessPoint&, uint8_t channel);
+                                       const AccessPoint&, uint8_t channel,
+                                       uint16_t* status = nullptr);
 AuthEvent observe_association_reply(const FirmwarePacket&, const uint8_t (&station)[6],
                                     const AccessPoint&, uint8_t channel, AssociationReply&);
 } // namespace ax::IntelWifi

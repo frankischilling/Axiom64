@@ -571,9 +571,8 @@ void report_join_outcome(const NetAdapter& device, const LiveScanSession& sessio
     if (join.association_sent)
         request = {join.association.body + association_request_fixed_bytes,
                    join.association.length - association_request_fixed_bytes};
-    const uint16_t status = outcome == JoinOutcome::connected
-                                ? 0
-                                : (join.association_status ? join.association_status : 1);
+    const uint16_t status =
+        outcome == JoinOutcome::connected ? 0 : (join.peer_status ? join.peer_status : 1);
     wireless_connection_finished(device.info.index, join.peer.bssid, status,
                                  outcome == JoinOutcome::timeout, request,
                                  {session.association_response_ies, join.response_ie_bytes});
@@ -588,7 +587,7 @@ void poll_runtime(NetAdapter& device) {
         device.info.carrier = device.info.writable = false;
         const auto reason = radio->session.leave.reason;
         const auto from_ap = radio->session.leave.from_ap;
-        const bool cancelled_join = radio->session.leave.cancelled_at != JoinPhase::idle;
+        const auto join_result = radio->session.leave.join_result;
         radio->polling = true;
         const auto result =
             poll_live_leave(radio->session, clock_monotonic_ns() / 1000000, &device,
@@ -599,13 +598,13 @@ void poll_runtime(NetAdapter& device) {
         if (result == LeaveOutcome::pending)
             return;
         radio->owner_port = 0;
-        if (cancelled_join)
-            report_join_outcome(device, radio->session, JoinOutcome::timeout);
+        if (join_result != JoinOutcome::idle)
+            report_join_outcome(device, radio->session, join_result);
         if (result == LeaveOutcome::failed) {
             log("iwlwifi: stopping radio after incomplete station teardown\n");
             stop_runtime(device);
         }
-        if (!cancelled_join)
+        if (join_result == JoinOutcome::idle)
             wireless_disconnected(device.info.index, reason, from_ap);
         return;
     }

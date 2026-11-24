@@ -1,5 +1,17 @@
 {
   "distribution": "Alpine Linux 3.22 x86_64",
+  "firefox_lab": {
+    "name": "firefox-esr",
+    "version": "140.11.0-r0",
+    "repository": "community",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/firefox-esr-140.11.0-r0.apk",
+    "archive": "firefox-esr-140.11.0-r0.apk",
+    "sha256": "0da10c41edd87c594a05ef0c959f3b1df83ec5036355f8431a1d49bcad098370",
+    "license": "GPL-3.0-only AND LGPL-2.1-only AND LGPL-3.0-only AND MPL-2.0",
+    "upstream": "https://www.mozilla.org/en-US/firefox/organizations/",
+    "origin": "firefox-esr",
+    "source_commit": "3eb59d73169cd4f90317120e15f4bd640cb29dd6"
+  },
   "packages": [
     {
       "name": "abseil-cpp-raw-logging-internal",

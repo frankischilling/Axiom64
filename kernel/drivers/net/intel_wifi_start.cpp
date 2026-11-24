@@ -554,10 +554,31 @@ const char* run_management_exchange(CommandSession& commands, PeerQueue queue, u
                                                 ManagementFrame::associate, association, aid);
         if (error)
             return error;
-        if (const auto* leave_error =
-                exchange_management(commands, queue, rate, station, peer, channel,
-                                    ManagementFrame::leave, association, aid))
+        AssociationTiming timing;
+        const unsigned beacon_wait =
+            max(300u, min(1000u, peer.beacon_interval_tu * 3u * 1024 / 1000));
+        const auto* sync_error = wait_authentication(
+            commands, beacon_wait, "associated access point beacon timed out",
+            [&](const FirmwarePacket& packet, bool& done) -> const char* {
+                done = observe_association_beacon(packet, peer, channel.number, timing);
+                return nullptr;
+            });
+        uint8_t mac[mac_context_bytes];
+        FirmwarePacket reply{};
+        if (!sync_error) {
+            prepare_associated_mac(station, peer, aid, timing, mac);
+            if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
+                sync_error = "firmware rejected the associated MAC context";
+        }
+        const auto* leave_error = exchange_management(commands, queue, rate, station, peer, channel,
+                                                      ManagementFrame::leave, association, aid);
+        if (sync_error)
+            return sync_error;
+        if (leave_error)
             return leave_error;
+        prepare_authentication_mac(station, peer, mac);
+        if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
+            return "firmware could not clear the associated MAC context";
     }
     uint8_t protection[session_protection_bytes];
     prepare_session_protection(false, protection);
@@ -828,7 +849,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
         error = "peer queue check could not stop DMA";
     const char* success = "firmware ALIVE received";
     if (scan && scan->check == FirmwareCheck::associate)
-        success = "open-system association and deauthentication passed";
+        success = "open-system association, beacon synchronization, and deauthentication passed";
     else if (authenticate)
         success = "open-system authentication exchange passed";
     else if (peer_check)

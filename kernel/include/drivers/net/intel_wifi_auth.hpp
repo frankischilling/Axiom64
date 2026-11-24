@@ -21,6 +21,13 @@ struct AssociationRequest {
     unsigned length = 0;
 };
 
+struct AssociationTiming {
+    uint64_t beacon_tsf = 0;
+    uint32_t receive_time = 0;
+    uint16_t beacon_interval_tu = 0;
+    uint8_t dtim_count = 0, dtim_period = 0;
+};
+
 enum class ManagementFrame : uint8_t { associate = 0x00, authenticate = 0xb0, leave = 0xc0 };
 
 struct AuthenticationDma {
@@ -38,6 +45,10 @@ uint32_t authentication_rate(const uint8_t* ies, unsigned bytes, bool high_band,
 bool valid_authentication_dma(const AuthenticationDma&);
 void prepare_authentication_mac(const uint8_t (&station)[6], const AccessPoint&,
                                 uint8_t (&wire)[mac_context_bytes]);
+bool observe_association_beacon(const FirmwarePacket&, const AccessPoint&, uint8_t channel,
+                                AssociationTiming&);
+void prepare_associated_mac(const uint8_t (&station)[6], const AccessPoint&, uint16_t aid,
+                            const AssociationTiming&, uint8_t (&wire)[mac_context_bytes]);
 bool prepare_association_request(const AccessPoint&, const uint8_t* ies, unsigned bytes,
                                  bool high_band, AssociationRequest&);
 bool prepare_management_frame(const AuthenticationDma&, PeerQueue, uint32_t,

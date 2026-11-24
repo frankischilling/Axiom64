@@ -27,6 +27,11 @@ uint32_t read32(const uint8_t* data) {
     return read16(data) | (uint32_t(read16(data + 2)) << 16);
 }
 
+void write32(uint8_t* data, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i)
+        data[i] = uint8_t(value >> (8 * i));
+}
+
 uint8_t hex_digit(char value) {
     if (value >= '0' && value <= '9')
         return uint8_t(value - '0');
@@ -138,6 +143,65 @@ void prepare_authentication_mac(const uint8_t (&station)[6], const AccessPoint& 
     command[116] = uint8_t(peer.beacon_interval_tu);
     command[117] = uint8_t(peer.beacon_interval_tu >> 8);
     command[132] = 1; // Listen interval in beacons.
+}
+
+bool observe_association_beacon(const FirmwarePacket& packet, const AccessPoint& peer,
+                                uint8_t channel, AssociationTiming& timing) {
+    constexpr unsigned descriptor_bytes = 48, beacon_header = 36;
+    if (packet.group || packet.opcode != 0xc1 || !(packet.sequence & 0x8000) || !packet.payload ||
+        packet.length < descriptor_bytes + beacon_header)
+        return false;
+    const auto* rx = packet.payload;
+    const auto* frame = rx + descriptor_bytes;
+    const unsigned length = read16(rx);
+    if ((rx[12] & 3) != 3 || (rx[3] & 0x20) || rx[34] != channel || frame[0] != 0x80 ||
+        (frame[1] & 0xc3) || memcmp(frame + 10, peer.bssid, sizeof(peer.bssid)) ||
+        memcmp(frame + 16, peer.bssid, sizeof(peer.bssid)) || length < beacon_header ||
+        length > packet.length - descriptor_bytes)
+        return false;
+
+    const uint16_t interval = read16(frame + 32);
+    if (!interval)
+        return false;
+    uint8_t count = 0, period = 0;
+    for (unsigned offset = beacon_header; offset < length;) {
+        if (length - offset < 2)
+            return false;
+        const auto type = frame[offset], size = frame[offset + 1];
+        offset += 2;
+        if (size > length - offset)
+            return false;
+        if (type == 5) {
+            if (size < 4 || period || !frame[offset + 1] || frame[offset] >= frame[offset + 1])
+                return false;
+            count = frame[offset];
+            period = frame[offset + 1];
+        }
+        offset += size;
+    }
+    if (!period)
+        return false;
+    timing = {uint64_t(read32(frame + 24)) | (uint64_t(read32(frame + 28)) << 32), read32(rx + 36),
+              interval, count, period};
+    return true;
+}
+
+void prepare_associated_mac(const uint8_t (&station)[6], const AccessPoint& peer, uint16_t aid,
+                            const AssociationTiming& timing,
+                            uint8_t (&command)[mac_context_bytes]) {
+    prepare_authentication_mac(station, peer, command);
+    // The two clocks share a microsecond unit. The device timer wraps at 32 bits.
+    const uint64_t to_dtim = uint64_t(timing.dtim_count) * timing.beacon_interval_tu * 1024;
+    const uint64_t dtim_tsf = timing.beacon_tsf + to_dtim;
+    command[52] &= ~(1u << 6); // Stop forwarding every beacon after synchronization.
+    write32(command + 100, 1);
+    write32(command + 104, timing.receive_time + uint32_t(to_dtim));
+    write32(command + 108, uint32_t(dtim_tsf));
+    write32(command + 112, uint32_t(dtim_tsf >> 32));
+    write32(command + 116, timing.beacon_interval_tu);
+    write32(command + 124, uint32_t(timing.beacon_interval_tu) * timing.dtim_period);
+    write32(command + 136, aid);
+    write32(command + 140, timing.receive_time);
 }
 
 bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, unsigned bytes,

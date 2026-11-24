@@ -138,7 +138,7 @@ enum class AuthCase {
     reply_timeout,
     wrong_target
 };
-enum class AssocCase { unused, accepted, refused, invalid_id, secured, leave_failed };
+enum class AssocCase { unused, accepted, refused, invalid_id, secured, bad_beacon, leave_failed };
 enum class ScanCase {
     unused,
     complete,
@@ -467,7 +467,8 @@ struct StartupFixture {
 
     void authentication_doorbell(uint32_t value) {
         const auto step = authentication_rx_buffers;
-        assert(auth_case != AuthCase::unused && commands_sent == 16 && step <= 2);
+        const bool synced = step == 2 && assoc_case != AssocCase::bad_beacon;
+        assert(auth_case != AuthCase::unused && commands_sent == (synced ? 17u : 16u) && step <= 2);
         assert(!step || assoc_case != AssocCase::unused);
         assert(value == 0x01010035 + step);
         const auto slot = 4 + step;
@@ -532,6 +533,25 @@ struct StartupFixture {
                 frame[26] = assoc_case == AssocCase::refused ? 17 : 0;
                 frame[28] = assoc_case == AssocCase::invalid_id ? 0 : 42;
                 frame[29] = 0xc0;
+                auto* beacon = buffer + 192;
+                beacon[0] = 94;
+                beacon[4] = 0xc1;
+                beacon[7] = 0x80;
+                auto* beacon_mpdu = beacon + 8;
+                beacon_mpdu[0] = 42;
+                beacon_mpdu[12] = 3;
+                beacon_mpdu[34] = 1;
+                const uint8_t gp2[]{0xf0, 0xff, 0xff, 0xff};
+                memcpy(beacon_mpdu + 36, gp2, sizeof(gp2));
+                auto* beacon_frame = beacon_mpdu + 48;
+                memcpy(beacon_frame, header, sizeof(header));
+                beacon_frame[0] = 0x80;
+                memset(beacon_frame + 4, 0xff, 6);
+                const uint8_t timing[]{0, 0xff, 0xff, 0xff, 4, 0, 0, 0, 100, 0, 1, 0};
+                memcpy(beacon_frame + 24, timing, sizeof(timing));
+                const uint8_t period = assoc_case == AssocCase::bad_beacon ? 1 : 3;
+                const uint8_t tim[]{5, 4, 1, period, 0, 0};
+                memcpy(beacon_frame + 36, tim, sizeof(tim));
             }
         }
         ++authentication_rx_buffers;
@@ -549,9 +569,11 @@ struct StartupFixture {
         const auto& command = payloads[slot];
         const bool scanning = check_channels || passive != ScanCase::unused;
         const bool auth = auth_case != AuthCase::unused;
-        const unsigned peer_index = !auth || index <= 13 ? index
-                                    : index >= 18        ? index - 3
-                                                         : index - 1;
+        const bool association = assoc_case != AssocCase::unused;
+        const unsigned release_session = association ? 19 : 17;
+        const unsigned peer_index = !auth || index <= 13      ? index
+                                    : index > release_session ? index - (association ? 5 : 3)
+                                                              : index - 1;
         const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
         uint8_t expected[command_slot_bytes]{};
         uint16_t payload_bytes = 4;
@@ -588,7 +610,7 @@ struct StartupFixture {
             expected[60] = 0x44;
         } else if (check_channels) {
             payload_bytes = expect_channel_command(index, expected);
-        } else if (auth && index == 13) {
+        } else if (auth && (index == 13 || (association && (index == 17 || index == 18)))) {
             expected[0] = 0x28;
             expected[12] = 2;
             expected[16] = 5;
@@ -601,8 +623,19 @@ struct StartupFixture {
             expected[60] = 0x44;
             expected[124] = 100;
             expected[140] = 1;
+            if (index == 17) {
+                expected[60] = 4;
+                expected[108] = 1;
+                const uint8_t dtim[]{0xf0, 0x8f, 1, 0, 0, 0x8f, 1, 0, 5, 0, 0, 0};
+                memcpy(expected + 112, dtim, sizeof(dtim));
+                expected[132] = 44;
+                expected[133] = 1;
+                expected[144] = 42;
+                const uint8_t gp2[]{0xf0, 0xff, 0xff, 0xff};
+                memcpy(expected + 148, gp2, sizeof(gp2));
+            }
             payload_bytes = 148;
-        } else if (auth && (index == 16 || index == 17)) {
+        } else if (auth && (index == 16 || index == release_session)) {
             expected[0] = 5;
             expected[1] = 3;
             expected[12] = index == 16 ? 1 : 3;
@@ -1291,16 +1324,18 @@ void check_association_exchange() {
     };
 
     const Case cases[]{
-        {AssocCase::accepted, AuthCase::accepted, 21, 3, 42,
-         "open-system association and deauthentication passed"},
-        {AssocCase::accepted, AuthCase::reply_first, 21, 3, 42,
-         "open-system association and deauthentication passed"},
+        {AssocCase::accepted, AuthCase::accepted, 23, 3, 42,
+         "open-system association, beacon synchronization, and deauthentication passed"},
+        {AssocCase::accepted, AuthCase::reply_first, 23, 3, 42,
+         "open-system association, beacon synchronization, and deauthentication passed"},
         {AssocCase::refused, AuthCase::accepted, 16, 2, 0, "access point refused association"},
         {AssocCase::invalid_id, AuthCase::accepted, 16, 2, 0,
          "access point returned an invalid association reply"},
         {AssocCase::secured, AuthCase::accepted, 8, 0, 0,
          "association check requires a named open access point with supported legacy rates"},
-        {AssocCase::leave_failed, AuthCase::accepted, 16, 3, 42,
+        {AssocCase::bad_beacon, AuthCase::accepted, 16, 3, 42,
+         "associated access point beacon timed out"},
+        {AssocCase::leave_failed, AuthCase::accepted, 17, 3, 42,
          "firmware could not deliver the management frame"},
     };
     for (const auto& test : cases) {
@@ -1310,7 +1345,7 @@ void check_association_exchange() {
         model.peer_case = PeerCase::success;
         model.auth_case = test.auth_response;
         model.assoc_case = test.response;
-        model.live_replies.resize(24 * ax::page_size);
+        model.live_replies.resize(32 * ax::page_size);
         ScanElementStorage elements{};
         const ScanChecks request{
             {1, 2}, FirmwareCheck::associate, &elements, false, {{2, 0, 0, 0, 0, 0x11}}};

@@ -275,9 +275,22 @@ if installed_desktop:
     for path in (session_root, session_root + '/display-sessions', session_root + '/native-wayland-sessions'):
         directory(path)
     regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    if 'usr/lib/security/pam_elogind.so' not in files:
+        raise ValueError('Installed Plasma login requires the elogind PAM module')
     for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
         regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
                 0o100644)
+    regular('etc/pam.d/polkit-1', ROOT / 'userspace/desktop/pam/polkit-1.conf', 0o100644)
+    polkit_helper = 'usr/lib/polkit-1/polkit-agent-helper-1'
+    mode, helper = files[polkit_helper]
+    if mode != 0o104755:
+        raise ValueError('Unexpected mode for the packaged PolicyKit helper')
+    # The native PAM store requires effective root user and group credentials.
+    files[polkit_helper] = (mode | 0o2000, helper)
+    regular('etc/polkit-1/rules.d/49-axiom64-admin.rules',
+            ROOT / 'userspace/desktop/polkit-admin.rules', 0o100644)
+    files.setdefault('etc/localtime', (0o120777, b'/usr/share/zoneinfo/Etc/UTC'))
+    files.setdefault('etc/timezone', (0o100644, b'Etc/UTC\n'))
     regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
     regular(session_root + '/display-sessions/plasma.desktop',
             ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)

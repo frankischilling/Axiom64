@@ -49,7 +49,8 @@ enum class Device {
     touchpad,
     input_uevent,
     network_uevent,
-    power_supply_uevent
+    power_supply_uevent,
+    pci_uevent
 };
 
 struct Terminal {

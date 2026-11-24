@@ -45,7 +45,7 @@ Descriptor reads/writes, vectors, and message calls share the [retained I/O path
 
 Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, complete IPv6 control, policy routing, and general Linux netlink behavior remain required.
 
-## Input device events
+## Device events
 
 `AF_NETLINK` protocol `NETLINK_KOBJECT_UEVENT` exposes kernel input-device
 additions on multicast group 1. A device manager with `CAP_NET_ADMIN` can
@@ -64,8 +64,12 @@ A listener whose queue fills and loses a multicast event receives
 
 Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`
 to request a coldplug event. The file uses normal owner write permissions.
-Group 1 is reserved for the kernel. Other device actions and ancillary
-credentials supplied by the sender are unsupported.
+PCI devices publish their properties in `uevent` under
+`/sys/bus/pci/devices`. A caller with `CAP_SYS_ADMIN` can write an action
+such as `change` to replay those properties on group 1. The event contains
+the action, canonical device path, properties, and sequence number.
+Group 1 is reserved for the kernel. Ancillary credentials supplied by the
+sender are unsupported.
 The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)
 defines the datagram and coldplug format.
 

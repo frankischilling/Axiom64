@@ -36,6 +36,7 @@
 #include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
+#include "process/clock_sleep.hpp"
 #include "process/task.hpp"
 #include "process/scheduler.hpp"
 #include "process/cpu.hpp"
@@ -1275,29 +1276,8 @@ int64_t dispatch_linux_syscall(Frame* f, Task* running) {
     }
     case 33:
         return dup_fd(a, b);
-    case 35: {
-        Timespec ts;
-        if (!running->memory->space.copy_in(&ts, a, sizeof(ts)))
-            return -14;
-        if (ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1000000000)
-            return -22;
-        if (running->deadline && ticks >= running->deadline) {
-            running->deadline = 0;
-            return 0;
-        }
-        if (!running->deadline) {
-            if (!ts.sec && !ts.nsec)
-                return 0;
-            constexpr uint64_t tick_ns = 10000000;
-            const uint64_t phase = clock_monotonic_ns() % tick_ns;
-            const uint64_t extra = (phase + uint64_t(ts.nsec) + tick_ns - 1) / tick_ns;
-            const uint64_t room = UINT64_MAX - ticks;
-            running->deadline = extra > room || uint64_t(ts.sec) > (room - extra) / 100
-                                    ? UINT64_MAX
-                                    : ticks + uint64_t(ts.sec) * 100 + extra;
-        }
-        return block(Wait::sleep);
-    }
+    case 35:
+        return linux_clock_nanosleep(*running, 1, 0, a, b);
     case 39:
         return running->process->pid;
     case 186:
@@ -1772,6 +1752,8 @@ int64_t dispatch_linux_syscall(Frame* f, Task* running) {
                                                   : 10000000};
         return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
+    case 230:
+        return linux_clock_nanosleep(*running, int32_t(a), int32_t(b), c, d);
     case 137: {
         Path path;
         if (!path_at(-100, a, path))
@@ -1798,11 +1780,11 @@ int64_t dispatch_linux_syscall(Frame* f, Task* running) {
         if (c && !running->memory->space.string(c, type, sizeof(type)))
             return -14;
         bool check_dirty = false;
+        char options[1024]{};
         if (e) {
-            char options[1024];
             if (!running->memory->space.string(e, options, sizeof(options)))
                 return -14;
-            if (options[0]) {
+            if (options[0] && strcmp(type, "tmpfs")) {
                 if (!ext_volume_type(type) || (d & 32) || strcmp(options, "recovery=check"))
                     return -22;
                 check_dirty = true;
@@ -1811,7 +1793,7 @@ int64_t dispatch_linux_syscall(Frame* f, Task* running) {
         Path source;
         if (!(d & 32) && ext_volume_type(type) && !path_at(-100, a, source))
             return source.error;
-        return mount_filesystem(path, source, type, d, check_dirty);
+        return mount_filesystem(path, source, type, d, check_dirty, options);
     }
     case 166: {
         Path path;

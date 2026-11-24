@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Use the same administrator group as accountctl and sudo.
+polkit.addAdminRule(function () {
+    return ["unix-group:sudo"];
+});

@@ -410,6 +410,22 @@ build/usb-hid-mouse-test: kernel/tests/usb/hid_mouse.cpp kernel/drivers/usb/hid_
 test-usb-hid-mouse: build/usb-hid-mouse-test
 	ASAN_OPTIONS=detect_leaks=1 ./build/usb-hid-mouse-test
 
+.PHONY: test-cgroup-session
+test-cgroup-session:
+	$(PYTHON) scripts/cgroup_session_test.py
+
+.PHONY: test-device-events
+test-device-events:
+	$(PYTHON) scripts/device_event_test.py
+
+.PHONY: test-virtual-console
+test-virtual-console:
+	$(PYTHON) scripts/virtual_console_test.py
+
+.PHONY: test-tmpfs
+test-tmpfs:
+	$(PYTHON) scripts/tmpfs_test.py
+
 test-clock-wall:
 	$(PYTHON) scripts/clock_wall_test.py
 test-clock-wall-native:

@@ -24,6 +24,8 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "fs/cgroup.hpp"
+#include "fs/tmpfs.hpp"
 #include "fs/descriptor_inode.hpp"
 #include "fs/ext2/ext2.hpp"
 #include "fs/inotify.hpp"
@@ -67,6 +69,7 @@ enum class Kind {
     stat,
     comm,
     cmdline,
+    cgroup,
     cpuinfo,
     meminfo,
     system_stat,
@@ -118,9 +121,10 @@ static bool descriptor_directory(Kind kind) {
 
 static bool snapshot_file(Kind kind) {
     return kind == Kind::status || kind == Kind::stat || kind == Kind::comm ||
-           kind == Kind::fdinfo || kind == Kind::cpuinfo || kind == Kind::meminfo ||
-           kind == Kind::system_stat || kind == Kind::uptime || kind == Kind::mounts ||
-           kind == Kind::filesystem_types || kind == Kind::partitions || kind == Kind::ax201_status;
+           kind == Kind::cgroup || kind == Kind::fdinfo || kind == Kind::cpuinfo ||
+           kind == Kind::meminfo || kind == Kind::system_stat || kind == Kind::uptime ||
+           kind == Kind::mounts || kind == Kind::filesystem_types || kind == Kind::partitions ||
+           kind == Kind::ax201_status;
 }
 
 struct Entry {
@@ -542,6 +546,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "cmdline"))
         kind = Kind::cmdline;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "cgroup"))
+        kind = Kind::cgroup;
     else if (context->kind == Kind::process && !strcmp(name, "task"))
         kind = Kind::task_list;
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
@@ -1049,8 +1056,12 @@ static const char* filesystem_name(const Mount& mount) {
         return "ext2";
     if (mount.ops == &ramfs_ops)
         return "ramfs";
+    if (mount.ops == &tmpfs_ops)
+        return "tmpfs";
     if (mount.ops == &procfs_ops)
         return "proc";
+    if (mount.ops == &cgroup2_ops)
+        return "cgroup2";
     if (mount.ops == &posix_queue_filesystem())
         return "mqueue";
     return nullptr;
@@ -1215,8 +1226,8 @@ static int make_snapshot(Node* node, Snapshot& output) {
         return 0;
     }
     if (item->kind == Kind::filesystem_types) {
-        constexpr char types[] =
-            "nodev\tramfs\nnodev\tproc\nnodev\tmqueue\n\text2\n\text3\n\text4\n";
+        constexpr char types[] = "nodev\tramfs\nnodev\ttmpfs\nnodev\tproc\nnodev\tmqueue\nnodev\tcg"
+                                 "roup2\n\text2\n\text3\n\text4\n";
         auto bytes = static_cast<char*>(alloc(sizeof(types)));
         if (!bytes)
             return -12;
@@ -1227,6 +1238,24 @@ static int make_snapshot(Node* node, Snapshot& output) {
     if (item->kind == Kind::cpuinfo || item->kind == Kind::meminfo ||
         item->kind == Kind::system_stat || item->kind == Kind::uptime)
         return system_snapshot(item->kind, output);
+    if (item->kind == Kind::cgroup) {
+        auto owner = task(item->pid);
+        if (!owner)
+            return -3;
+        auto bytes = static_cast<char*>(alloc(sizeof(Path::text) + 4));
+        if (!bytes)
+            return -12;
+        int error = cgroup_path(*owner->process, bytes + 3, sizeof(Path::text));
+        if (error) {
+            release(bytes);
+            return error;
+        }
+        memcpy(bytes, "0::", 3);
+        size_t length = 3 + strlen(bytes + 3);
+        bytes[length++] = '\n';
+        output = {bytes, length};
+        return 0;
+    }
     return item->kind == Kind::stat ? stat(node, output) : status(node, output);
 }
 
@@ -1550,9 +1579,12 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 10) {
             memcpy(name, "root", 5);
             result.next = 11;
-        } else if (cookie == 11 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 11) {
+            memcpy(name, "cgroup", 7);
             result.next = 12;
+        } else if (cookie == 12 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 13;
         } else
             return 0;
     } else if (descriptor_directory(context->kind)) {

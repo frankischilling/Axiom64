@@ -65,11 +65,15 @@ static int converse(int count, const struct pam_message** messages, struct pam_r
     return PAM_SUCCESS;
 }
 
-static pam_handle_t* start(const char* name, const char* password) {
+static pam_handle_t* start_service(const char* service, const char* name, const char* password) {
     struct pam_conv conversation = {converse, (void*)password};
     pam_handle_t* handle = NULL;
-    CHECK(pam_start("axiom64-test", name, &conversation, &handle) == PAM_SUCCESS);
+    CHECK(pam_start(service, name, &conversation, &handle) == PAM_SUCCESS);
     return handle;
+}
+
+static pam_handle_t* start(const char* name, const char* password) {
+    return start_service("axiom64-test", name, password);
 }
 
 static void account_state(int create, int expired) {
@@ -140,6 +144,32 @@ static void verify_helper_cleanup(void) {
     puts("ACCOUNT_PAM_RECOVERED_SUPERVISOR_LEASE");
 }
 
+static void verify_policykit_helper(void) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(setresgid(1000, 1000, 0) == 0 && setresuid(1000, 0, 0) == 0);
+        pam_handle_t* handle = start_service("polkit-1", "alice", secret);
+        CHECK(pam_authenticate(handle, 0) == PAM_PERM_DENIED);
+        CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
+        CHECK(setegid(0) == 0);
+        handle = start("alice", secret);
+        CHECK(pam_authenticate(handle, 0) == PAM_PERM_DENIED);
+        CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
+        handle = start_service("polkit-1", "alice", secret);
+        CHECK(pam_acct_mgmt(handle, 0) == PAM_PERM_DENIED);
+        CHECK(pam_authenticate(handle, 0) == PAM_SUCCESS);
+        CHECK(pam_acct_mgmt(handle, 0) == PAM_SUCCESS);
+        CHECK(pam_setcred(handle, PAM_ESTABLISH_CRED) == PAM_PERM_DENIED);
+        CHECK(getuid() == 1000 && getgid() == 1000 && geteuid() == 0 && getegid() == 0);
+        CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
+        _exit(0);
+    }
+    wait_child(child);
+    session_active(0);
+    puts("ACCOUNT_PAM_VERIFIED_POLICYKIT_HELPER");
+}
+
 int main(void) {
     CHECK(getuid() == 0 && access("/etc/pam.d/axiom64-test", R_OK) == 0);
     CHECK(access(database, F_OK) != 0);
@@ -174,6 +204,7 @@ int main(void) {
     CHECK(pam_end(handle, PAM_SUCCESS) == PAM_SUCCESS);
     puts("ACCOUNT_PAM_VERIFIED_CREDENTIAL_AND_REJECTED_IDENTITY_CHANGE");
     verify_helper_cleanup();
+    verify_policykit_helper();
 
     handle = start("alice", secret);
     CHECK(pam_authenticate(handle, 0) == PAM_SUCCESS);

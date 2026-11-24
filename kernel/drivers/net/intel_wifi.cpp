@@ -897,6 +897,21 @@ bool live_bss_associated(const AccessPoint& point) {
            !memcmp(point.bssid, peer.bssid, sizeof(peer.bssid));
 }
 
+bool live_station_info(LiveStationInfo& info) {
+    if (!radio || !scanned_adapter.info.carrier || !radio->session.station.queue.id ||
+        radio->session.leave.phase != LeavePhase::idle)
+        return false;
+    const auto& station = radio->session.station;
+    const unsigned index = (station.rate & 0xf) + (station.rate & 0x100 ? scan_cck_rate_count : 0);
+    memcpy(info.bssid, station.peer.bssid, sizeof(info.bssid));
+    info.signal_dbm = station.peer.signal_dbm;
+    info.tx_rate_100kbps = station.rate && index < sizeof(scan_legacy_rates)
+                               ? uint16_t(scan_legacy_rates[index] * 5)
+                               : 0;
+    info.authorized = station.port_authorized;
+    return true;
+}
+
 int trigger_live_scan(const ScanRequest& request) {
     if (!radio)
         return -95;

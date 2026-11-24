@@ -96,6 +96,7 @@ bool prepare_scan_phase(const ScanChannelList&, PassiveScan&, uint8_t (&wire)[sc
 constexpr size_t scan_abort_bytes = 8;
 void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]);
 void observe_passive_scan(PassiveScan&, const FirmwarePacket&);
+int16_t receive_signal_dbm(uint8_t energy_a, uint8_t energy_b);
 
 enum class ScanOutcome {
     pending,

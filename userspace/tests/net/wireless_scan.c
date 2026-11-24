@@ -655,7 +655,69 @@ static void check_rsn_connect(int fd, unsigned family, unsigned index, const uin
     puts("WIRELESS_RSN_CONNECT_PASS");
 }
 
-static void check_connection(int fd, unsigned family, unsigned index) {
+static void check_station_query(int fd, unsigned family, unsigned index, const uint8_t peer[6],
+                                int authorized) {
+    const uint32_t connected =
+        (1u << NL80211_STA_FLAG_AUTHENTICATED) | (1u << NL80211_STA_FLAG_ASSOCIATED);
+    const uint32_t permit = 1u << NL80211_STA_FLAG_AUTHORIZED;
+    for (unsigned dump = 0; dump < 2; ++dump) {
+        struct packet request = make_request(family, NL80211_CMD_GET_STATION,
+                                             dump ? NLM_F_DUMP : NLM_F_ACK, 118 + dump);
+        append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+        if (!dump)
+            append_attribute(&request, NL80211_ATTR_MAC, peer, 6);
+        send_packet(fd, &request);
+        alignas(struct nlmsghdr) uint8_t bytes[1024];
+        receive(fd, bytes, sizeof(bytes), 0);
+        const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+        const struct genlmsghdr* generic = NLMSG_DATA(message);
+        require(message->nlmsg_type == family && generic->cmd == NL80211_CMD_NEW_STATION &&
+                    message->nlmsg_seq == request.header.nlmsg_seq &&
+                    !!(message->nlmsg_flags & NLM_F_MULTI) == dump,
+                "station reply identity");
+        require(read_u32(message_attribute(message, NL80211_ATTR_IFINDEX)) == index &&
+                    !memcmp(payload(message_attribute(message, NL80211_ATTR_MAC), 6), peer, 6),
+                "station reply selects the requested peer");
+        const struct nlattr* details = message_attribute(message, NL80211_ATTR_STA_INFO);
+        const int8_t* signal = payload(nested(details, NL80211_STA_INFO_SIGNAL), 1);
+        const struct nlattr* rate = nested(details, NL80211_STA_INFO_TX_BITRATE);
+        const uint16_t* raw_rate = payload(nested(rate, NL80211_RATE_INFO_BITRATE), 2);
+        uint16_t tx_rate;
+        memcpy(&tx_rate, raw_rate, sizeof(tx_rate));
+        require(*signal == -67 && tx_rate == 60, "station RSSI and transmit rate");
+        struct nl80211_sta_flag_update flags;
+        memcpy(&flags, payload(nested(details, NL80211_STA_INFO_STA_FLAGS), sizeof(flags)),
+               sizeof(flags));
+        require(flags.mask == (connected | permit) &&
+                    flags.set == (connected | (authorized ? permit : 0)),
+                "station flags reflect the controlled port");
+        receive(fd, bytes, sizeof(bytes), 0);
+        if (dump)
+            require(message->nlmsg_type == NLMSG_DONE && message->nlmsg_seq == 119,
+                    "station dump ends after one record");
+        else
+            check_error(message, 0);
+    }
+}
+
+static void check_station_query_empty(int fd, unsigned family, unsigned index,
+                                      const uint8_t peer[6]) {
+    struct packet request = make_request(family, NL80211_CMD_GET_STATION, NLM_F_DUMP, 120);
+    append_attribute(&request, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    send_packet(fd, &request);
+    alignas(struct nlmsghdr) uint8_t bytes[1024];
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    require(message->nlmsg_type == NLMSG_DONE && message->nlmsg_seq == 120, "no stale stations");
+    request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    request.header.nlmsg_seq++;
+    check_station_ack(fd, &request, EINVAL);
+    request.header.nlmsg_seq++;
+    append_attribute(&request, NL80211_ATTR_MAC, peer, 6);
+    check_station_ack(fd, &request, ENOENT);
+}
+
+static void check_connection(int fd, unsigned family, unsigned index, int verify_station) {
     const char name[] = "nl80211";
     alignas(struct nlmsghdr) uint8_t bytes[8192];
     send_request(fd, GENL_ID_CTRL, CTRL_CMD_GETFAMILY, 0, 15, CTRL_ATTR_FAMILY_NAME, name,
@@ -685,6 +747,9 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     require(read_u32(nested(commands, 5)) == NL80211_CMD_NEW_KEY &&
                 read_u32(nested(commands, 6)) == NL80211_CMD_DEL_KEY,
             "radio advertises key management");
+    require(read_u32(nested(commands, 7)) == NL80211_CMD_ABORT_SCAN &&
+                read_u32(nested(commands, 8)) == NL80211_CMD_GET_STATION && !nested(commands, 9),
+            "radio advertises scan abort and station queries in separate slots");
 
     struct packet request = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 17);
     const uint8_t peer[] = {2, 0, 0, 0, 0, 1};
@@ -772,6 +837,8 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&owned, NL80211_ATTR_MLO_SUPPORT, NULL, 0);
     check_station_ack(owner, &owned, 0);
     check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer, 1);
+    if (verify_station)
+        check_station_query(fd, family, index, peer, 0);
     leave.header.nlmsg_seq++;
     check_station_ack(fd, &leave, EPERM);
     struct packet authorize = make_request(family, NL80211_CMD_SET_STATION, NLM_F_ACK, 60);
@@ -783,6 +850,8 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     authorize.header.nlmsg_seq++;
     append_attribute(&authorize, NL80211_ATTR_STA_FLAGS2, &update, sizeof(update));
     check_station_ack(fd, &authorize, 0);
+    if (verify_station)
+        check_station_query(fd, family, index, peer, 1);
     require(close(owner) == 0, "close connection owner socket");
     check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL, 0);
     check_rsn_connect(fd, family, index, peer);
@@ -806,6 +875,10 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&remove_key, NL80211_ATTR_IFINDEX, &index, sizeof(index));
     append_attribute(&remove_key, NL80211_ATTR_KEY_IDX, &key_index, sizeof(key_index));
     check_key_ack(fd, &remove_key, EPERM);
+    if (verify_station) {
+        check_station_query_empty(fd, family, index, peer);
+        puts("WIRELESS_STATION_QUERY_PASS");
+    }
     puts("WIRELESS_LIVE_CONNECT_PASS");
     puts("WIRELESS_LIVE_DISCONNECT_PASS");
     puts("WIRELESS_CONTROLLED_PORT_PASS");
@@ -818,7 +891,8 @@ int main(int argc, char** argv) {
     int active = argc == 2 && !strcmp(argv[1], "--active");
     int live = active || (argc == 2 && !strcmp(argv[1], "--live"));
     int live_fixture = argc == 2 && !strcmp(argv[1], "--live-fixture");
-    int connect_fixture = argc == 2 && !strcmp(argv[1], "--connect-fixture");
+    int station_fixture = argc == 2 && !strcmp(argv[1], "--station-fixture");
+    int connect_fixture = station_fixture || (argc == 2 && !strcmp(argv[1], "--connect-fixture"));
     int abort_fixture = argc == 2 && !strcmp(argv[1], "--abort-fixture");
     require(argc == 1 || absent || observed || live || live_fixture || connect_fixture ||
                 abort_fixture,
@@ -839,7 +913,7 @@ int main(int argc, char** argv) {
         check_interface(fd, family, index, live || live_fixture || connect_fixture || abort_fixture,
                         live_fixture || connect_fixture || (!observed && !live));
         if (connect_fixture)
-            check_connection(fd, family, index);
+            check_connection(fd, family, index, station_fixture);
         else if (abort_fixture)
             check_scan_abort(fd, family, index, group);
         else if (live || live_fixture)

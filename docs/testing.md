@@ -2486,6 +2486,11 @@ The Blade still needs WPA2 authentication and encrypted traffic tests on a real
 access point. Networks that require protected management frames need additional
 driver support.
 
+While connected, `NL80211_CMD_GET_STATION` reports the access point's BSSID,
+the latest valid beacon signal in dBm, the transmit rate in 100 kbps units,
+and whether the controlled port is authorized. A station dump returns one
+entry while connected and an empty list after disconnect.
+
 Send `NL80211_CMD_DISCONNECT` to end a connection or cancel a pending
 association. Wait for the result on the `mlme` group before scanning or
 connecting again. An established connection ends with a disconnect event.

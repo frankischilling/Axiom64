@@ -232,16 +232,18 @@ void observe_beacon(PassiveScan& scan, const FirmwarePacket& packet) {
     point.beacon_interval_tu = read16(frame + interval_offset);
     point.capability = read16(frame + capability_offset);
     point.probe_response = frame[0] == 0x50;
-    if (channel == receive_channel) {
-        for (unsigned i = 0; i < 2; ++i) {
-            const uint8_t attenuation = data[energy_offset + i];
-            if (attenuation && attenuation < 128)
-                point.signal_dbm = max(point.signal_dbm, int16_t(-attenuation));
-        }
-    }
+    if (channel == receive_channel)
+        point.signal_dbm = receive_signal_dbm(data[energy_offset], data[energy_offset + 1]);
     store_access_point(scan, point, frame + beacon_header, uint16_t(frame_bytes - beacon_header));
 }
 } // namespace
+
+int16_t receive_signal_dbm(uint8_t energy_a, uint8_t energy_b) {
+    const auto dbm = [](uint8_t energy) {
+        return energy && energy < 128 ? int16_t(-energy) : scan_signal_unavailable;
+    };
+    return max(dbm(energy_a), dbm(energy_b));
+}
 
 bool decode_station_address(uint32_t high, uint32_t low, uint8_t (&address)[6]) {
     for (unsigned i = 0; i < 4; ++i)

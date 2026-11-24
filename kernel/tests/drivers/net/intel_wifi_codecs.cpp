@@ -469,6 +469,46 @@ struct StationKeyFixture {
     }
 };
 
+void check_station_signal() {
+    StationKeyFixture model;
+    LiveScanSession session(model.io, model.memory);
+    session.running = true;
+    auto& station = session.station;
+    station.queue.id = 1;
+    station.channel = 1;
+    station.peer.bssid[0] = 2;
+    station.peer.bssid[5] = 1;
+    session.receive.post_initial();
+    const auto beacon = [&](uint8_t energy_a, uint8_t energy_b, uint8_t peer, uint8_t status) {
+        uint8_t* rx = model.packet(0xc1, 0, 0x8000, 90);
+        rx[0] = 42;
+        rx[12] = status;
+        rx[32] = energy_a;
+        rx[33] = energy_b;
+        rx[34] = station.channel;
+        uint8_t* frame = rx + 48;
+        frame[0] = 0x80;
+        memcpy(frame + 10, station.peer.bssid, 6);
+        memcpy(frame + 16, station.peer.bssid, 6);
+        frame[15] = frame[21] = peer;
+        frame[32] = 100;
+        const uint8_t dtim[]{5, 4, 0, 1, 0, 0};
+        memcpy(frame + 36, dtim, sizeof(dtim));
+    };
+    beacon(77, 61, 1, 3);
+    assert(poll_live_station(session, 10, nullptr, nullptr, nullptr));
+    assert(station.peer.signal_dbm == -61);
+    beacon(32, 35, 2, 3);
+    beacon(20, 21, 1, 2);
+    beacon(0, 255, 1, 3);
+    assert(poll_live_station(session, 20, nullptr, nullptr, nullptr));
+    assert(station.peer.signal_dbm == -61);
+    beacon(0, 79, 1, 3);
+    assert(poll_live_station(session, 30, nullptr, nullptr, nullptr));
+    assert(station.peer.signal_dbm == -79);
+    std::puts("AX201_STATION_SIGNAL_MODEL_PASS");
+}
+
 void check_scan_abort() {
     enum class Case {
         complete_early,
@@ -600,6 +640,7 @@ void check_intel_wifi_station_keys() {
 
 void check_intel_wifi_scan_channels() {
     check_scan_abort();
+    check_station_signal();
     NvmInfo nvm{};
     nvm.bands = 3;
     RegulatoryProfile profile{};

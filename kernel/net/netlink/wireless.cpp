@@ -24,6 +24,7 @@ enum Attribute : uint16_t {
     key_index = 8,
     key_cipher = 9,
     key_sequence = 10,
+    station_info = 21,
     wiphy_bands = 22,
     ht_capability = 31,
     supported_iftypes = 32,
@@ -83,6 +84,8 @@ constexpr uint32_t scan_colocated_6ghz = 1u << 14;
 constexpr uint64_t device_id = 1;
 constexpr uint16_t multipart = 2, dump_flags = 0x300;
 constexpr uint8_t new_wiphy = 3, new_interface = 7, new_scan_results = 34, scan_aborted = 35;
+constexpr uint8_t new_station = 19;
+constexpr uint32_t authorized_flag = 1u << 1;
 constexpr size_t radio_reply_size = 2048;
 // Each channel needs at most 24 bytes, and band headers and rates fit in 512.
 static_assert(radio_reply_size >= 24 * IntelWifi::scan_channel_limit + 512);
@@ -90,6 +93,12 @@ static_assert(radio_reply_size >= 24 * IntelWifi::scan_channel_limit + 512);
 enum BandAttribute : uint16_t { band_frequencies = 1, band_rates = 2 };
 
 enum RateAttribute : uint16_t { rate_tenths_mbps = 1, rate_short_preamble = 2 };
+
+enum StationInfoAttribute : uint16_t {
+    station_signal = 7,
+    station_tx_bitrate = 8,
+    station_info_flags = 17,
+};
 
 enum FrequencyAttribute : uint16_t {
     center_frequency = 1,
@@ -182,8 +191,7 @@ int select_association_elements(const uint8_t* bytes, size_t size,
 }
 
 int select_station_request(const uint8_t* bytes, size_t length, unsigned index, uint8_t command,
-                           StationAttributes& request) {
-    constexpr uint32_t authorized_flag = 1u << 1;
+                           bool dump, StationAttributes& request) {
     constexpr unsigned enterprise_akm = 1, personal_akm = 2;
     bool seen[mlo_support + 1]{};
     unsigned allowed_akms = 0;
@@ -202,6 +210,8 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
             return -95;
         const bool device = field.type == ifindex || field.type == wdev;
         if (command == nl80211_disconnect && !device && field.type != reason_code)
+            return -95;
+        if (command == nl80211_get_station && !device && field.type != mac)
             return -95;
         if (command == nl80211_set_station && !device && field.type != mac &&
             field.type != station_flags)
@@ -363,6 +373,8 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
             return -95;
     }
     if (command == nl80211_set_station && (!seen[mac] || !seen[station_flags]))
+        return -22;
+    if (command == nl80211_get_station && !dump && !seen[mac])
         return -22;
     return 0;
 }
@@ -701,6 +713,29 @@ size_t dump_done(void* output, uint32_t sequence, uint32_t port, bool interrupte
     }
     return done.length;
 }
+
+size_t station_reply(const IntelWifi::LiveStationInfo& link, unsigned index,
+                     const NetlinkHeader& request, uint32_t port, bool dump, void* reply) {
+    Message message(reply);
+    message.value(ifindex, uint32_t(index));
+    message.value(wdev, device_id);
+    message.value(mac, link.bssid);
+    message.value(generation, IntelWifi::passive_scan_generation());
+    const size_t info = message.begin_nested(station_info);
+    if (link.signal_dbm != IntelWifi::scan_signal_unavailable)
+        message.value(station_signal, int8_t(link.signal_dbm));
+    if (link.tx_rate_100kbps) {
+        const size_t bitrate = message.begin_nested(station_tx_bitrate);
+        message.value(rate_tenths_mbps, link.tx_rate_100kbps);
+        message.end_nested(bitrate);
+    }
+    constexpr uint32_t connected_flags = (1u << 5) | (1u << 7); // Authenticated and associated.
+    const uint32_t flags[]{connected_flags | authorized_flag,
+                           connected_flags | (link.authorized ? authorized_flag : 0)};
+    message.value(station_info_flags, flags);
+    message.end_nested(info);
+    return message.finish(new_station, request.sequence, port, dump);
+}
 } // namespace
 
 bool wireless_scan_available() {
@@ -749,15 +784,35 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
     }
     const bool trigger = command == nl80211_trigger_scan;
     const bool abort = command == nl80211_abort_scan;
+    const bool connectable = wireless_connect_available();
+    const bool station_queries = connectable || info->carrier;
+    if (command == nl80211_get_station) {
+        if (!station_queries)
+            return netlink_ack(data, request, port, -95, capped, reply);
+        StationAttributes selected;
+        if (const int error = select_station_request(bytes + header, request.length - header,
+                                                     info->index, command, dump, selected))
+            return netlink_ack(data, request, port, error, capped, reply);
+        IntelWifi::LiveStationInfo link;
+        if (!IntelWifi::live_station_info(link) ||
+            (!dump && memcmp(link.bssid, selected.connection.bssid, sizeof(link.bssid))))
+            return dump ? dump_done(reply, request.sequence, port)
+                        : netlink_ack(data, request, port, -2, capped, reply);
+        if (dump)
+            followup_length = dump_done(followup, request.sequence, port);
+        else if (request.flags & 4)
+            followup_length = netlink_ack(data, request, port, 0, capped, followup);
+        return station_reply(link, info->index, request, port, dump, reply);
+    }
     if (command == nl80211_connect || command == nl80211_disconnect ||
         command == nl80211_set_station) {
-        if (dump || !wireless_connect_available())
+        if (dump || !connectable)
             return netlink_ack(data, request, port, -95, capped, reply);
         if (!privileged)
             return netlink_ack(data, request, port, -1, capped, reply);
         StationAttributes station_request;
         int error = select_station_request(bytes + header, request.length - header, info->index,
-                                           command, station_request);
+                                           command, false, station_request);
         if (!error) {
             if (command == nl80211_connect &&
                 station_request.connection.akm != IntelWifi::RsnAkm::open &&
@@ -824,22 +879,24 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         radio_band(message, list, 0, live);
         radio_band(message, list, 1, live);
         message.end_nested(bands);
-        if (live || wireless_connect_available()) {
+        if (live || station_queries) {
             const size_t commands = message.begin_nested(supported_commands);
             unsigned entry = 1;
             if (live)
                 message.value(entry++, uint32_t(nl80211_trigger_scan));
-            if (wireless_connect_available()) {
+            if (connectable) {
                 message.value(entry++, uint32_t(nl80211_connect));
                 message.value(entry++, uint32_t(nl80211_disconnect));
                 message.value(entry++, uint32_t(nl80211_set_station));
                 if (rsn) {
                     message.value(entry++, uint32_t(nl80211_new_key));
-                    message.value(entry, uint32_t(nl80211_del_key));
+                    message.value(entry++, uint32_t(nl80211_del_key));
                 }
             }
             if (live)
-                message.value(entry, uint32_t(nl80211_abort_scan));
+                message.value(entry++, uint32_t(nl80211_abort_scan));
+            if (station_queries)
+                message.value(entry, uint32_t(nl80211_get_station));
             message.end_nested(commands);
         }
         return message.finish(new_wiphy, request.sequence, port, dump);

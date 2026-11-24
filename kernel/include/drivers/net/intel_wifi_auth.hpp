@@ -40,6 +40,7 @@ struct AssociationTiming {
     uint32_t receive_time = 0;
     uint16_t beacon_interval_tu = 0;
     uint8_t dtim_count = 0, dtim_period = 0;
+    int16_t signal_dbm = scan_signal_unavailable;
 };
 
 enum class ManagementFrame : uint8_t { associate = 0x00, authenticate = 0xb0, leave = 0xc0 };

@@ -25,6 +25,15 @@ struct LiveStation {
     StationCcmpKeys keys{};
 };
 
+struct LiveStationInfo {
+    uint8_t bssid[6];
+    int16_t signal_dbm;
+    uint16_t tx_rate_100kbps;
+    bool authorized;
+};
+
+bool live_station_info(LiveStationInfo&);
+
 struct StationRequest {
     ScanSsid ssid{};
     uint8_t bssid[6]{};

@@ -18,7 +18,7 @@ inline constexpr uint8_t nl80211_get_wiphy = 1, nl80211_get_interface = 5, nl802
 inline constexpr uint8_t nl80211_trigger_scan = 33;
 inline constexpr uint8_t nl80211_abort_scan = 114;
 inline constexpr uint8_t nl80211_connect = 46, nl80211_disconnect = 48;
-inline constexpr uint8_t nl80211_set_station = 18;
+inline constexpr uint8_t nl80211_get_station = 17, nl80211_set_station = 18;
 inline constexpr uint8_t nl80211_new_key = 11, nl80211_del_key = 12;
 inline constexpr unsigned nl80211_scan_group = 17, nl80211_mlme_group = 18;
 

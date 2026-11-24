@@ -1511,6 +1511,7 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
             if (join.phase == JoinPhase::release_protection) {
                 session.station.peer = join.peer;
                 session.station.peer.beacon_interval_tu = join.timing.beacon_interval_tu;
+                session.station.peer.signal_dbm = join.timing.signal_dbm;
                 session.station.queue = join.data;
                 session.station.management = join.management;
                 session.station.channel = join.channel.number;
@@ -1823,8 +1824,11 @@ bool observe_station_packet(LiveScanSession& session, const FirmwarePacket& pack
         return true;
     }
     AssociationTiming timing;
-    if (observe_association_beacon(packet, station.peer, station.channel, timing))
+    if (observe_association_beacon(packet, station.peer, station.channel, timing)) {
         station.beacon_deadline = now_ms + station_beacon_timeout(station);
+        if (timing.signal_dbm != scan_signal_unavailable)
+            station.peer.signal_dbm = timing.signal_dbm;
+    }
     uint8_t frame[station_frame_bytes];
     if (const auto bytes =
             receive_station_data(packet, session.station_address, station.peer.bssid,

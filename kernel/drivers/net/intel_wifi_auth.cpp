@@ -228,8 +228,12 @@ bool observe_association_beacon(const FirmwarePacket& packet, const AccessPoint&
     }
     if (!period)
         return false;
-    timing = {uint64_t(read32(frame + 24)) | (uint64_t(read32(frame + 28)) << 32), read32(rx + 36),
-              interval, count, period};
+    timing = {uint64_t(read32(frame + 24)) | (uint64_t(read32(frame + 28)) << 32),
+              read32(rx + 36),
+              interval,
+              count,
+              period,
+              receive_signal_dbm(rx[32], rx[33])};
     return true;
 }
 

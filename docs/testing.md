@@ -2462,6 +2462,14 @@ a guest with NetworkManager and wpa_supplicant installed, a simulated
 WPA2-Personal access point verified the integrity codes on messages two and
 four. The test also verified both CCMP key installs and port authorization.
 
+With a simulated WPA2-Enterprise access point, the installed supplicant
+authenticated using PEAP and MSCHAPv2. The profile included the test CA and
+server name. The guest then completed the four-way handshake, installed both
+CCMP keys and authorized the connection. On that simulated link, NetworkManager
+acquired an IPv4 lease and installed its route and DNS server. Curl resolved
+the test hostname through that server and downloaded a file whose SHA-256
+matched the original.
+
 The Blade still needs WPA2 authentication and encrypted traffic tests on a real
 access point. Networks that require protected management frames need additional
 driver support.

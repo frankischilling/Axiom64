@@ -142,7 +142,7 @@ Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address&) {
     return {};
 }
 
-int ipv4_address_add(unsigned, const char*, const Ipv4Config&, Ipv4AddressLifetimes, bool) {
+int ipv4_address_add(unsigned, const char*, const Ipv4Config&, Ipv4AddressLifetimes, bool, bool) {
     return -95;
 }
 

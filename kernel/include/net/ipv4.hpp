@@ -54,6 +54,8 @@ struct Ipv4AddressCacheInfo {
 static_assert(sizeof(Ipv4AddressLifetimes) == 8 && sizeof(Ipv4AddressCacheInfo) == 16);
 
 struct Ipv4Address {
+    static constexpr uint32_t no_prefix_route = 0x200; // Linux IFA_F_NOPREFIXROUTE.
+
     Ipv4Config config;
     unsigned index = 0;
     char label[16]{};
@@ -88,7 +90,8 @@ int ipv4_configure(unsigned index, const Ipv4Config&);
 int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config&);
 
 int ipv4_address_add(unsigned index, const char* label, const Ipv4Config&,
-                     Ipv4AddressLifetimes = {}, bool replace = false);
+                     Ipv4AddressLifetimes = {}, bool replace = false,
+                     bool suppress_prefix_route = false);
 
 int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask);
 

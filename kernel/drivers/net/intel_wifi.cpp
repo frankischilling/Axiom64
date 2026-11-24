@@ -34,11 +34,12 @@ PassiveScan completed_scan{};
 ScanChannelList radio_channels{};
 uint32_t completed_generation = 1;
 void poll_runtime(NetAdapter&);
+int send_runtime(NetAdapter&, const void*, size_t);
 void stop_runtime(NetAdapter&);
 NetAdapter scanned_adapter{
     .info{.live = true, .stats{}, .wireless = true},
     .poll = poll_runtime,
-    .send = [](NetAdapter&, const void*, size_t) { return -95; },
+    .send = send_runtime,
     .stop = stop_runtime,
     .data = nullptr,
     .receive_only_diagnostic = true,
@@ -326,6 +327,10 @@ FirmwareBootIo boot_io(AdapterBoot& boot) {
     };
 }
 
+bool uses_data_queue(FirmwareCheck check) {
+    return check == FirmwareCheck::data_probe || check == FirmwareCheck::open_link;
+}
+
 FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
     FirmwareBootMemory memory{queues.context.address, &queues.status.data<ReceiveStatus>(),
                               queues.used_ring.data<BootQueues::UsedRing>()};
@@ -348,7 +353,7 @@ FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
                                  queues.authentication_payload.data<Payload>(),
                                  queues.authentication_payload.address};
     }
-    if (check == FirmwareCheck::data_probe) {
+    if (uses_data_queue(check)) {
         using Counts = uint16_t[transmit_byte_count_bytes / sizeof(uint16_t)];
         memory.data_queue = {queues.data_ring.address, queues.data_byte_counts.address};
         memory.data_transmit = {queues.data_ring.data<BootQueues::ManagementDescriptors>(),
@@ -370,11 +375,10 @@ bool restore_registers(BootQueues& queues, StagedImage& staged, uint16_t origina
     return restored;
 }
 
-void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
-                     const FirmwareImage& image, const AuthenticationTarget& target) {
+bool prepare_command_queues(BootQueues& queues, FirmwareCheck check) {
     if (check >= FirmwareCheck::nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
         report("command buffer allocation failed");
-        return;
+        return false;
     }
     const bool authenticate = management_exchange(check);
     const bool peer_test = authenticate || check == FirmwareCheck::peer_queue;
@@ -385,21 +389,30 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
                                    queues.management_ring.data<BootQueues::ManagementDescriptors>(),
                                    management_queue_entries))) {
         report("management queue allocation failed");
-        return;
+        return false;
     }
     if (authenticate && !queues.authentication_payload.allocate(authentication_dma_bytes)) {
         report("authentication payload allocation failed");
-        return;
+        return false;
     }
-    if (check == FirmwareCheck::data_probe &&
+    if (uses_data_queue(check) &&
         (!queues.data_ring.allocate(sizeof(BootQueues::ManagementDescriptors)) ||
          !queues.data_byte_counts.allocate(transmit_byte_count_bytes) ||
          !initialize_transmit_ring(queues.invalid_command.address,
                                    queues.data_ring.data<BootQueues::ManagementDescriptors>(),
                                    management_queue_entries))) {
         report("data queue allocation failed");
-        return;
+        return false;
     }
+    return true;
+}
+
+void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
+                     const FirmwareImage& image, const AuthenticationTarget& target) {
+    if (!prepare_command_queues(queues, check))
+        return;
+    const bool authenticate = management_exchange(check);
+    const bool peer_test = authenticate || check == FirmwareCheck::peer_queue;
     ScanElementStorage* elements = nullptr;
     if (authenticate || check == FirmwareCheck::passive_scan || check == FirmwareCheck::rescan) {
         elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
@@ -508,6 +521,7 @@ struct RuntimeRadio {
     LiveScanSession session{io, memory};
     uint16_t original_pci = 0;
     ScanElementStorage* pending = nullptr;
+    bool polling = false;
 
     ~RuntimeRadio() {
         release(pending);
@@ -519,6 +533,8 @@ RuntimeRadio* radio;
 void stop_runtime(NetAdapter& device) {
     if (!radio)
         return;
+    if (const auto pending = radio->session.station.pending_bytes)
+        net_tx_complete(device, pending, true);
     const bool idle = stop_live_quz(radio->session);
     restore_registers(radio->queues, radio->staged, radio->original_pci, idle);
     radio->~RuntimeRadio();
@@ -526,11 +542,42 @@ void stop_runtime(NetAdapter& device) {
     radio = nullptr;
     device.receive_only_diagnostic = true;
     device.info.live = false;
+    device.info.carrier = false;
+    device.info.writable = false;
+}
+
+int send_runtime(NetAdapter& device, const void* bytes, size_t length) {
+    if (!radio)
+        return -95;
+    const int error = submit_live_data(radio->session, static_cast<const uint8_t*>(bytes), length,
+                                       clock_monotonic_ns() / 1000000);
+    if (!error)
+        device.info.writable = false;
+    return error;
 }
 
 void poll_runtime(NetAdapter& device) {
-    if (!radio)
+    if (!radio || radio->polling)
         return;
+    if (radio->session.station.queue.id) {
+        radio->polling = true;
+        const bool connected = poll_live_station(
+            radio->session, clock_monotonic_ns() / 1000000, &device,
+            [](void* target, const uint8_t* bytes, size_t length) {
+                net_receive(*static_cast<NetAdapter*>(target), bytes, length);
+            },
+            [](void* target, size_t length, bool failed) {
+                auto& adapter = *static_cast<NetAdapter*>(target);
+                adapter.info.writable = true;
+                net_tx_complete(adapter, length, failed);
+            });
+        radio->polling = false;
+        if (!connected) {
+            log("iwlwifi: open station link lost\n");
+            stop_runtime(device);
+        }
+        return;
+    }
     const bool active = radio->session.active;
     const auto outcome = poll_live_scan(radio->session, clock_monotonic_ns() / 1000000);
     if (outcome == ScanOutcome::pending)
@@ -555,30 +602,43 @@ void poll_runtime(NetAdapter& device) {
         wireless_scan_finished(device.info.index, complete);
 }
 
-void launch_live_firmware(const FirmwareImage& image) {
+void launch_live_firmware(const FirmwareImage& image, FirmwareCheck check,
+                          const AuthenticationTarget& target) {
     void* storage = alloc(sizeof(RuntimeRadio));
     if (!storage) {
         report("live radio allocation failed");
         return;
     }
     auto* device = new (storage) RuntimeRadio;
-    bool prepared = prepare_image(image, device->staged, device->queues);
-    if (prepared && !device->queues.command_payloads.allocate(sizeof(CommandPayloads))) {
-        report("command buffer allocation failed");
-        prepared = false;
+    bool prepared = prepare_image(image, device->staged, device->queues) &&
+                    prepare_command_queues(device->queues, check);
+    const bool open = check == FirmwareCheck::open_link;
+    if (prepared && open) {
+        device->pending = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
+        if (!device->pending)
+            report("open station scan allocation failed");
+        prepared = device->pending != nullptr;
     }
     if (prepared && enable_registers(device->boot, device->original_pci)) {
-        device->memory = boot_memory(device->queues, FirmwareCheck::live_scan);
-        const auto result = start_live_quz(device->session, image.antennas);
+        device->memory = boot_memory(device->queues, check);
+        const auto result =
+            start_live_quz(device->session, image.antennas, open ? &target : nullptr,
+                           device->pending, image.dual_lmac);
         report(result.status);
         if (result.successful) {
             radio = device;
             memcpy(scanned_adapter.info.mac, device->session.station_address,
                    sizeof(device->session.station_address));
+            scanned_adapter.info.carrier = scanned_adapter.info.writable = open;
             if (net_register(scanned_adapter, "iwlwifi", &adapter)) {
                 scanned_adapter.receive_only_diagnostic = false;
                 radio_channels = device->session.channels;
-                completed_scan.status = PassiveScan::Status::complete;
+                if (open) {
+                    completed_scan = result.passive;
+                    device->pending = nullptr;
+                } else {
+                    completed_scan.status = PassiveScan::Status::complete;
+                }
             } else {
                 report("cannot register the live scan interface");
                 stop_runtime(scanned_adapter);
@@ -634,8 +694,8 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check,
         report("firmware lacks the supported authentication commands");
         return;
     }
-    if (check == FirmwareCheck::live_scan) {
-        launch_live_firmware(image);
+    if (check == FirmwareCheck::live_scan || check == FirmwareCheck::open_link) {
+        launch_live_firmware(image, check, target);
         return;
     }
     StagedImage staged;
@@ -662,7 +722,7 @@ uint32_t passive_scan_generation() {
 }
 
 bool live_scan_available() {
-    return radio != nullptr;
+    return radio && !radio->session.station.queue.id;
 }
 
 int trigger_live_scan(const ScanRequest& request) {

@@ -19,8 +19,13 @@ constexpr unsigned header_bytes = 24, body_bytes = 6;
 constexpr unsigned first_tb_bytes = 20, second_tb_bytes = 4 + header_bytes;
 constexpr unsigned second_tb_offset = 64, third_tb_offset = 128;
 static_assert(third_tb_offset + association_body_bytes <= authentication_dma_bytes);
-constexpr uint8_t arp_snap[]{0xaa, 0xaa, 3, 0, 0, 0, 8, 6};
+constexpr uint8_t snap_prefix[]{0xaa, 0xaa, 3, 0, 0};
+constexpr unsigned snap_bytes = 8, ethernet_bytes = 14;
 constexpr uint8_t arp_header[]{0, 1, 8, 0, 6, 4};
+
+bool uses_bridge_tunnel(uint16_t type) {
+    return type == 0x80f3 || type == 0x8137; // AppleTalk ARP and IPX.
+}
 
 uint16_t read16(const uint8_t* data) {
     return uint16_t(data[0] | (unsigned(data[1]) << 8));
@@ -313,8 +318,10 @@ bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, un
 }
 
 static bool prepare_station_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
-                                  const uint8_t (&header)[header_bytes], const uint8_t* body,
-                                  unsigned length) {
+                                  const uint8_t (&header)[header_bytes], uint16_t frame_sequence,
+                                  const uint8_t* body, unsigned bytes,
+                                  const uint8_t* prefix = nullptr, unsigned prefix_bytes = 0) {
+    const unsigned length = bytes + prefix_bytes;
     if (!valid_authentication_dma(dma) || !rate || !queue.id || queue.id >= 512 || !length ||
         length > authentication_dma_bytes - third_tb_offset)
         return false;
@@ -332,7 +339,11 @@ static bool prepare_station_frame(const AuthenticationDma& dma, PeerQueue queue,
     for (unsigned i = 0; i < 4; ++i)
         rate_field[i] = uint8_t(rate >> (8 * i));
     memcpy(rate_field + 4, header, sizeof(header));
-    memcpy(dma.payload + third_tb_offset, body, length);
+    rate_field[4 + 22] = uint8_t(frame_sequence << 4);
+    rate_field[4 + 23] = uint8_t(frame_sequence >> 4);
+    if (prefix_bytes)
+        memcpy(dma.payload + third_tb_offset, prefix, prefix_bytes);
+    memcpy(dma.payload + third_tb_offset + prefix_bytes, body, bytes);
 
     const unsigned slot = queue.write_pointer & (management_queue_entries - 1);
     auto& descriptor = dma.ring[slot];
@@ -347,7 +358,8 @@ static bool prepare_station_frame(const AuthenticationDma& dma, PeerQueue queue,
 
 bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
                               const uint8_t (&station)[6], const AccessPoint& peer,
-                              ManagementFrame kind, const AssociationRequest& association) {
+                              ManagementFrame kind, const AssociationRequest& association,
+                              uint16_t sequence) {
     constexpr uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
     constexpr uint8_t leave_body[]{3, 0}; // Station is leaving.
     const uint8_t* body = auth_body;
@@ -365,51 +377,94 @@ bool prepare_management_frame(const AuthenticationDma& dma, PeerQueue queue, uin
     memcpy(header + 4, peer.bssid, sizeof(peer.bssid));
     memcpy(header + 10, station, sizeof(station));
     memcpy(header + 16, peer.bssid, sizeof(peer.bssid));
-    return prepare_station_frame(dma, queue, rate, header, body, length);
+    return prepare_station_frame(dma, queue, rate, header, sequence, body, length);
+}
+
+bool prepare_station_data(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
+                          const uint8_t (&station)[6], const uint8_t (&bssid)[6],
+                          const uint8_t* frame, size_t length, uint16_t sequence) {
+    if (!frame || length < ethernet_bytes || length > station_frame_bytes ||
+        memcmp(frame + 6, station, sizeof(station)))
+        return false;
+    const uint16_t type = ip4::get16(frame + 12);
+    if (type < 1536 || (length > 1514 && type != 0x8100 && type != 0x88a8))
+        return false;
+    uint8_t header[header_bytes]{0x08, 0x01}; // Data frame headed to the distribution system.
+    memcpy(header + 4, bssid, sizeof(bssid));
+    memcpy(header + 10, station, sizeof(station));
+    memcpy(header + 16, frame, sizeof(station));
+    uint8_t snap[snap_bytes];
+    memcpy(snap, snap_prefix, sizeof(snap_prefix));
+    snap[5] = uses_bridge_tunnel(type) ? 0xf8 : 0;
+    ip4::put16(snap + 6, type);
+    return prepare_station_frame(dma, queue, rate, header, sequence, frame + ethernet_bytes,
+                                 unsigned(length - ethernet_bytes), snap, sizeof(snap));
 }
 
 bool prepare_arp_request(const AuthenticationDma& dma, PeerQueue queue, uint32_t rate,
-                         const uint8_t (&station)[6], const AuthenticationTarget& target) {
-    uint8_t header[header_bytes]{0x08, 0x01}; // Data frame headed to the distribution system.
-    memcpy(header + 4, target.bssid, sizeof(target.bssid));
-    memcpy(header + 10, station, sizeof(station));
-    memset(header + 16, 0xff, 6);
-
-    uint8_t body[sizeof(arp_snap) + 28]{};
-    memcpy(body, arp_snap, sizeof(arp_snap));
-    auto* arp = body + sizeof(arp_snap);
+                         const uint8_t (&station)[6], const AuthenticationTarget& target,
+                         uint16_t sequence) {
+    uint8_t frame[ethernet_bytes + 28]{};
+    memset(frame, 0xff, 6);
+    memcpy(frame + 6, station, sizeof(station));
+    ip4::put16(frame + 12, 0x0806);
+    auto* arp = frame + ethernet_bytes;
     memcpy(arp, arp_header, sizeof(arp_header));
     arp[7] = 1;
     memcpy(arp + 8, station, sizeof(station));
     ip4::put32(arp + 14, target.source_ipv4);
     ip4::put32(arp + 24, target.peer_ipv4);
-    return prepare_station_frame(dma, queue, rate, header, body, sizeof(body));
+    return prepare_station_data(dma, queue, rate, station, target.bssid, frame, sizeof(frame),
+                                sequence);
 }
 
-bool observe_arp_response(const FirmwarePacket& packet, const uint8_t (&station)[6],
-                          uint8_t channel, const AuthenticationTarget& target) {
+size_t receive_station_data(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                            const uint8_t (&bssid)[6], uint8_t channel,
+                            uint8_t (&output)[station_frame_bytes]) {
     constexpr unsigned descriptor_bytes = 48;
     if (packet.group || packet.opcode != 0xc1 || !(packet.sequence & 0x8000) || !packet.payload ||
         packet.length < descriptor_bytes + header_bytes)
-        return false;
+        return 0;
     const auto* rx = packet.payload;
     const auto* frame = rx + descriptor_bytes;
     if ((rx[12] & 3) != 3 || (rx[3] & 0x40) || rx[34] != channel ||
         (frame[0] != 0x08 && frame[0] != 0x88) || (frame[1] & 0xc7) != 2 || (frame[22] & 15) ||
-        memcmp(frame + 4, station, sizeof(station)) ||
-        memcmp(frame + 10, target.bssid, sizeof(target.bssid)))
-        return false;
+        (!(frame[4] & 1) && memcmp(frame + 4, station, sizeof(station))) ||
+        memcmp(frame + 10, bssid, sizeof(bssid)) || !memcmp(frame + 16, station, sizeof(station)) ||
+        (frame[16] & 1))
+        return 0;
     const unsigned body_offset = header_bytes + (frame[0] == 0x88 ? 2 : 0) + (rx[3] & 0x20 ? 2 : 0);
     const unsigned length = read16(rx);
-    if (length < body_offset + sizeof(arp_snap) + 28 || length > packet.length - descriptor_bytes ||
-        memcmp(frame + body_offset, arp_snap, sizeof(arp_snap)))
+    const unsigned trailer = (rx[2] & 0xf0) >> 3;
+    if (length < body_offset + snap_bytes + trailer || length > packet.length - descriptor_bytes)
+        return 0;
+    const auto* snap = frame + body_offset;
+    const uint16_t type = ip4::get16(snap + 6);
+    const size_t payload = length - body_offset - snap_bytes - trailer;
+    if (memcmp(snap, snap_prefix, sizeof(snap_prefix)) || type < 1536 ||
+        (snap[5] != 0xf8 && (snap[5] || uses_bridge_tunnel(type))) ||
+        payload > (type == 0x8100 || type == 0x88a8 ? 1504u : 1500u))
+        return 0;
+    memcpy(output, frame + 4, 6);
+    memcpy(output + 6, frame + 16, 6);
+    ip4::put16(output + 12, type);
+    memcpy(output + ethernet_bytes, snap + snap_bytes, payload);
+    return ethernet_bytes + payload;
+}
+
+bool observe_arp_response(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                          uint8_t channel, const AuthenticationTarget& target) {
+    uint8_t frame[station_frame_bytes];
+    const size_t length = receive_station_data(packet, station, target.bssid, channel, frame);
+    if (length < ethernet_bytes + 28 || memcmp(frame, station, sizeof(station)) ||
+        ip4::get16(frame + 12) != 0x0806)
         return false;
-    const auto* arp = frame + body_offset + sizeof(arp_snap);
+    const auto* arp = frame + ethernet_bytes;
     uint8_t sender = 0;
     for (unsigned i = 0; i < sizeof(station); ++i)
         sender |= arp[8 + i];
     return sender && !(arp[8] & 1) && !memcmp(arp, arp_header, sizeof(arp_header)) &&
-           ip4::get16(arp + 6) == 2 && !memcmp(arp + 8, frame + 16, sizeof(station)) &&
+           ip4::get16(arp + 6) == 2 && !memcmp(arp + 8, frame + 6, sizeof(station)) &&
            ip4::get32(arp + 14) == target.peer_ipv4 &&
            !memcmp(arp + 18, station, sizeof(station)) &&
            ip4::get32(arp + 24) == target.source_ipv4;
@@ -432,7 +487,7 @@ AuthEvent observe_authentication_tx(const FirmwarePacket& packet, PeerQueue queu
 namespace {
 AuthEvent management_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
                            const AccessPoint& peer, uint8_t channel, uint8_t subtype,
-                           const uint8_t*& body) {
+                           const uint8_t*& body, unsigned minimum = body_bytes) {
     constexpr unsigned descriptor_bytes = 48;
     if (packet.group || packet.opcode != 0xc1 || !(packet.sequence & 0x8000) || !packet.payload ||
         packet.length < descriptor_bytes + header_bytes)
@@ -440,17 +495,24 @@ AuthEvent management_reply(const FirmwarePacket& packet, const uint8_t (&station
     const auto* rx = packet.payload;
     const auto* frame = rx + descriptor_bytes;
     if ((rx[12] & 3) != 3 || (rx[3] & 0x20) || rx[34] != channel || frame[0] != subtype ||
-        (frame[1] & 0xc3) || memcmp(frame + 4, station, sizeof(station)) ||
+        (frame[1] & 0xc7) || (frame[22] & 15) || memcmp(frame + 4, station, sizeof(station)) ||
         memcmp(frame + 10, peer.bssid, sizeof(peer.bssid)) ||
         memcmp(frame + 16, peer.bssid, sizeof(peer.bssid)))
         return AuthEvent::unrelated;
     const unsigned length = read16(rx);
-    if (length < header_bytes + body_bytes || length > packet.length - descriptor_bytes)
+    if (length < header_bytes + minimum || length > packet.length - descriptor_bytes)
         return AuthEvent::malformed;
     body = frame + header_bytes;
     return AuthEvent::accepted;
 }
 } // namespace
+
+bool observe_station_disconnect(const FirmwarePacket& packet, const uint8_t (&station)[6],
+                                const AccessPoint& peer, uint8_t channel) {
+    const uint8_t* body = nullptr;
+    return management_reply(packet, station, peer, channel, 0xc0, body, 2) == AuthEvent::accepted ||
+           management_reply(packet, station, peer, channel, 0xa0, body, 2) == AuthEvent::accepted;
+}
 
 AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
                                        const AccessPoint& peer, uint8_t channel) {

@@ -2408,5 +2408,13 @@ point. Reserve the source address for the Blade and select a peer on the
 same IPv4 subnet. After association, the driver sends one ARP request
 through the access point and checks that the reply came from the selected
 peer. Success requires both the transmit completion and the matching ARP
-reply. The check stops the adapter afterward. Normal IP traffic and
-encrypted networks still need driver support.
+reply. The check stops the adapter afterward.
+
+To keep an association open for IP tests, boot with
+`iwlwifi.open-link=BSSID` and select an open lab access point. After
+`Intel AX201: open station ready` appears, bring up `wlan0` and run the
+usual IP client, such as `udhcpc -i wlan0` on a network with DHCP. Watch
+link state with `ip link show wlan0`. The driver lowers carrier when the
+access point disconnects, beacons stop, or a transmit completion times
+out. The radio stops on link loss. Reconnection, encrypted networks, and
+connection setup through NetworkManager still need driver support.

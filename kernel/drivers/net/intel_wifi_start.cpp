@@ -492,13 +492,15 @@ const char* start_management_session(CommandSession& commands) {
 const char* exchange_management(CommandSession& commands, PeerQueue& queue, uint32_t rate,
                                 const uint8_t (&station)[6], const AccessPoint& peer,
                                 const ScanChannel& channel, ManagementFrame kind,
-                                const AssociationRequest& association, uint16_t& aid) {
+                                const AssociationRequest& association, uint16_t& aid,
+                                uint16_t& sequence) {
     const bool authentication = kind == ManagementFrame::authenticate;
     const bool leaving = kind == ManagementFrame::leave;
     const auto sent = queue;
     if (!prepare_management_frame(commands.rx.memory.authentication, sent, rate, station, peer,
-                                  kind, association))
+                                  kind, association, sequence))
         return "cannot prepare management transmit descriptor";
+    ++sequence;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     commands.reg.write(command_write_pointer,
                        uint8_t(sent.write_pointer + 1) | (uint32_t(sent.id) << 16));
@@ -542,10 +544,12 @@ const char* exchange_management(CommandSession& commands, PeerQueue& queue, uint
 
 const char* exchange_arp(CommandSession& commands, PeerQueue& queue, uint32_t rate,
                          const uint8_t (&station)[6], uint8_t channel,
-                         const AuthenticationTarget& target) {
+                         const AuthenticationTarget& target, uint16_t& sequence) {
     const auto sent = queue;
-    if (!prepare_arp_request(commands.rx.memory.data_transmit, sent, rate, station, target))
+    if (!prepare_arp_request(commands.rx.memory.data_transmit, sent, rate, station, target,
+                             sequence))
         return "cannot prepare the ARP request";
+    ++sequence;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     commands.reg.write(command_write_pointer,
                        uint8_t(sent.write_pointer + 1) | (uint32_t(sent.id) << 16));
@@ -567,19 +571,27 @@ const char* exchange_arp(CommandSession& commands, PeerQueue& queue, uint32_t ra
         });
 }
 
-const char* check_associated_data(CommandSession& commands, uint8_t station_id,
-                                  PeerQueue management, uint32_t rate, const uint8_t (&station)[6],
-                                  uint8_t channel, const AuthenticationTarget& target) {
+bool allocate_data_queue(CommandSession& commands, uint8_t station_id, PeerQueue management,
+                         PeerQueue& data) {
     uint8_t scheduler[scheduler_command_bytes];
     FirmwarePacket reply{};
+    return prepare_add_station_queue(commands.rx.memory.data_queue, station_id, scheduler,
+                                     non_qos_tid) &&
+           commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) == Reply::matched &&
+           parse_station_queue(reply, data) && data.id != management.id;
+}
+
+const char* check_associated_data(CommandSession& commands, uint8_t station_id,
+                                  PeerQueue management, uint32_t rate, const uint8_t (&station)[6],
+                                  uint8_t channel, const AuthenticationTarget& target,
+                                  uint16_t& sequence) {
     PeerQueue data;
-    if (!prepare_add_station_queue(commands.rx.memory.data_queue, station_id, scheduler,
-                                   non_qos_tid) ||
-        commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
-        !parse_station_queue(reply, data) || data.id == management.id)
+    if (!allocate_data_queue(commands, station_id, management, data))
         return "firmware data queue allocation failed";
-    if (const auto* error = exchange_arp(commands, data, rate, station, channel, target))
+    if (const auto* error = exchange_arp(commands, data, rate, station, channel, target, sequence))
         return error; // Reset the adapter before reusing the transmit buffer.
+    uint8_t scheduler[scheduler_command_bytes];
+    FirmwarePacket reply{};
     if (!prepare_remove_station_queue(station_id, scheduler, non_qos_tid) ||
         commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
         !station_queue_removed(reply))
@@ -591,15 +603,18 @@ const char* run_management_exchange(CommandSession& commands, PeerQueue queue, u
                                     const uint8_t (&station)[6], const AccessPoint& peer,
                                     const ScanChannel& channel,
                                     const AssociationRequest& association, uint16_t& aid,
-                                    const AuthenticationTarget* probe) {
+                                    const AuthenticationTarget* probe, LiveStation* open) {
     if (const auto* error = start_management_session(commands))
         return error;
-    if (const auto* error = exchange_management(commands, queue, rate, station, peer, channel,
-                                                ManagementFrame::authenticate, association, aid))
+    uint16_t sequence = 0;
+    if (const auto* error =
+            exchange_management(commands, queue, rate, station, peer, channel,
+                                ManagementFrame::authenticate, association, aid, sequence))
         return error;
     if (association.length) {
-        const auto* error = exchange_management(commands, queue, rate, station, peer, channel,
-                                                ManagementFrame::associate, association, aid);
+        const auto* error =
+            exchange_management(commands, queue, rate, station, peer, channel,
+                                ManagementFrame::associate, association, aid, sequence);
         if (error)
             return error;
         AssociationTiming timing;
@@ -618,20 +633,34 @@ const char* run_management_exchange(CommandSession& commands, PeerQueue queue, u
             if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
                 sync_error = "firmware rejected the associated MAC context";
         }
+        if (open) {
+            if (sync_error)
+                return sync_error;
+            if (!allocate_data_queue(commands, 0, queue, open->queue))
+                return "firmware data queue allocation failed";
+            open->peer = peer;
+            open->peer.beacon_interval_tu = timing.beacon_interval_tu;
+            open->channel = channel.number;
+            open->rate = rate;
+            open->next_sequence = sequence;
+        }
         if (probe && !sync_error) {
             if (const auto* arp_error = check_associated_data(commands, 0, queue, rate, station,
-                                                              channel.number, *probe))
+                                                              channel.number, *probe, sequence))
                 return arp_error;
         }
-        const auto* leave_error = exchange_management(commands, queue, rate, station, peer, channel,
-                                                      ManagementFrame::leave, association, aid);
-        if (sync_error)
-            return sync_error;
-        if (leave_error)
-            return leave_error;
-        prepare_authentication_mac(station, peer, mac);
-        if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
-            return "firmware could not clear the associated MAC context";
+        if (!open) {
+            const auto* leave_error =
+                exchange_management(commands, queue, rate, station, peer, channel,
+                                    ManagementFrame::leave, association, aid, sequence);
+            if (sync_error)
+                return sync_error;
+            if (leave_error)
+                return leave_error;
+            prepare_authentication_mac(station, peer, mac);
+            if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
+                return "firmware could not clear the associated MAC context";
+        }
     }
     uint8_t protection[session_protection_bytes];
     prepare_session_protection(false, protection);
@@ -644,7 +673,7 @@ const char* run_management_exchange(CommandSession& commands, PeerQueue queue, u
 const char* check_peer_queue(CommandSession& commands, const ScanChannelList& channels,
                              const PassiveScan& scan, const ScanChecks& checks,
                              AntennaMasks usable_antennas, PeerQueue& queue,
-                             uint16_t& association_id) {
+                             uint16_t& association_id, LiveStation* open) {
     const bool authenticate = management_exchange(checks.check);
     const AccessPoint* peer = nullptr;
     const ScanChannel* channel = nullptr;
@@ -713,9 +742,11 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
         const auto* probe = checks.check == FirmwareCheck::data_probe ? &checks.target : nullptr;
         if (const auto* error =
                 run_management_exchange(commands, queue, rate, scan.station_address, *peer,
-                                        *channel, association, association_id, probe))
+                                        *channel, association, association_id, probe, open))
             return error;
     }
+    if (open)
+        return nullptr;
     if (!prepare_remove_station_queue(station, scheduler) ||
         commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
         !station_queue_removed(reply))
@@ -795,6 +826,7 @@ static bool stop_adapter(const Registers& reg, bool request_dma) {
 
 static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
                                    const ScanChecks* scan, LiveScanSession* live) {
+    const bool open = live && scan && scan->check == FirmwareCheck::open_link;
     const bool authenticate = scan && management_exchange(scan->check);
     const bool peer_check = authenticate || (scan && scan->check == FirmwareCheck::peer_queue);
     if (peer_check && !valid_peer_queue_memory(memory.peer_queue))
@@ -803,7 +835,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                          memory.authentication.address == memory.peer_queue.descriptor_ring ||
                          memory.authentication.address == memory.peer_queue.byte_counts))
         return {"invalid authentication DMA addresses", false, true};
-    if (scan && scan->check == FirmwareCheck::data_probe &&
+    if (scan && (open || scan->check == FirmwareCheck::data_probe) &&
         (!valid_peer_queue_memory(memory.data_queue) ||
          !valid_authentication_dma(memory.data_transmit) ||
          memory.data_transmit.ring == memory.authentication.ring ||
@@ -873,7 +905,7 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                     uint8_t address[6];
                     error = configure_scan_station(commands, address);
                     const auto channels = scan_channel_list(info, regulatory);
-                    if (!error && live) {
+                    if (!error && live && !open) {
                         live->channels = channels;
                         memcpy(live->station_address, address, sizeof(address));
                         live->running = true;
@@ -895,7 +927,24 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                             error = check_peer_queue(commands, channels, passive, *scan,
                                                      {uint8_t(info.tx_chains & scan->antennas.tx),
                                                       uint8_t(info.rx_chains & scan->antennas.rx)},
-                                                     peer_queue, association_id);
+                                                     peer_queue, association_id,
+                                                     open ? &live->station : nullptr);
+                        if (!error && open) {
+                            live->channels = channels;
+                            memcpy(live->station_address, address, sizeof(address));
+                            live->running = true;
+                            return {"open station ready",
+                                    alive,
+                                    false,
+                                    true,
+                                    info,
+                                    regulatory,
+                                    passive,
+                                    completed_scans,
+                                    checked_channels,
+                                    peer_queue,
+                                    association_id};
+                        }
                     }
                 }
             }
@@ -948,8 +997,14 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     return boot_quz(io, memory, scan, nullptr);
 }
 
-FirmwareBootResult start_live_quz(LiveScanSession& session, const AntennaMasks& antennas) {
-    const ScanChecks check{antennas, FirmwareCheck::live_scan};
+FirmwareBootResult start_live_quz(LiveScanSession& session, const AntennaMasks& antennas,
+                                  const AuthenticationTarget* open, ScanElementStorage* elements,
+                                  bool dual_lmac) {
+    if (session.running)
+        return {"radio already running", true, false};
+    const ScanChecks check{antennas, open ? FirmwareCheck::open_link : FirmwareCheck::live_scan,
+                           elements, dual_lmac, open ? *open : AuthenticationTarget{}};
+    session.station = {};
     return boot_quz(session.io, session.receive.memory, &check, &session);
 }
 
@@ -980,7 +1035,7 @@ int submit_live_scan(LiveScanSession& session, ScanElementStorage& elements, uin
                      const ScanRequest& request) {
     if (!session.running)
         return -95;
-    if (session.active)
+    if (session.active || session.station.queue.id)
         return -16;
 
     uint64_t allowed = 0, active = 0;
@@ -1027,5 +1082,71 @@ ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
         return ScanOutcome::pending;
     }
     return outcome;
+}
+
+int submit_live_data(LiveScanSession& session, const uint8_t* frame, size_t length,
+                     uint64_t now_ms) {
+    auto& station = session.station;
+    if (!session.running || !station.queue.id)
+        return -95;
+    if (station.pending_bytes)
+        return -11;
+    if (!prepare_station_data(session.receive.memory.data_transmit, station.queue, station.rate,
+                              session.station_address, station.peer.bssid, frame, length,
+                              station.next_sequence))
+        return -22;
+    ++station.next_sequence;
+    station.pending_bytes = length;
+    station.transmit_deadline = now_ms + 1000;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    Registers{session.io}.write(command_write_pointer, uint8_t(station.queue.write_pointer + 1) |
+                                                           (uint32_t(station.queue.id) << 16));
+    return 0;
+}
+
+bool poll_live_station(LiveScanSession& session, uint64_t now_ms, void* context,
+                       void (*receive)(void*, const uint8_t*, size_t),
+                       void (*complete)(void*, size_t, bool)) {
+    auto& station = session.station;
+    if (!session.running || !station.queue.id)
+        return false;
+    const Registers reg{session.io};
+    CommandSession commands{reg, session.receive, session.next_command};
+    if (!commands.acknowledge_pending())
+        return false;
+    const uint64_t beacon_timeout = max(3000u, 8u * station.peer.beacon_interval_tu * 1024 / 1000);
+    if (!station.beacon_deadline)
+        station.beacon_deadline = now_ms + beacon_timeout;
+    uint8_t frame[station_frame_bytes];
+    for (unsigned i = 0; i < 64; ++i) {
+        FirmwarePacket packet{};
+        const auto result = session.receive.next(packet);
+        if (result == PacketRead::malformed)
+            return false;
+        if (result == PacketRead::end)
+            break;
+        if (observe_station_disconnect(packet, session.station_address, station.peer,
+                                       station.channel))
+            return false;
+        if (station.pending_bytes) {
+            const auto tx = observe_authentication_tx(packet, station.queue);
+            if (tx == AuthEvent::malformed)
+                return false;
+            if (tx == AuthEvent::accepted || tx == AuthEvent::denied) {
+                const auto bytes = station.pending_bytes;
+                station.pending_bytes = 0;
+                ++station.queue.write_pointer;
+                complete(context, bytes, tx == AuthEvent::denied);
+            }
+        }
+        AssociationTiming timing;
+        if (observe_association_beacon(packet, station.peer, station.channel, timing))
+            station.beacon_deadline = now_ms + beacon_timeout;
+        if (const auto bytes = receive_station_data(packet, session.station_address,
+                                                    station.peer.bssid, station.channel, frame))
+            receive(context, frame, bytes);
+    }
+    return now_ms < station.beacon_deadline &&
+           (!station.pending_bytes || now_ms < station.transmit_deadline);
 }
 } // namespace ax::IntelWifi

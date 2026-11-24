@@ -64,12 +64,13 @@ enum class FirmwareCheck {
     authenticate,
     associate,
     data_probe,
-    live_scan
+    live_scan,
+    open_link
 };
 
 inline constexpr bool management_exchange(FirmwareCheck check) {
     return check == FirmwareCheck::authenticate || check == FirmwareCheck::associate ||
-           check == FirmwareCheck::data_probe;
+           check == FirmwareCheck::data_probe || check == FirmwareCheck::open_link;
 }
 
 struct AuthenticationTarget {

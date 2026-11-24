@@ -139,7 +139,7 @@ enum class AuthCase {
     wrong_target
 };
 enum class AssocCase { unused, accepted, refused, invalid_id, secured, bad_beacon, leave_failed };
-enum class ArpCase { unused, accepted, reply_first, wrong_peer, rejected_tx };
+enum class ArpCase { unused, accepted, reply_first, wrong_peer, rejected_tx, missing_completion };
 enum class ScanCase {
     unused,
     complete,
@@ -295,6 +295,7 @@ struct StartupFixture {
     AuthCase auth_case = AuthCase::unused;
     AssocCase assoc_case = AssocCase::unused;
     ArpCase arp_case = ArpCase::unused;
+    bool open_station = false;
     CommandDescriptor management_ring[management_queue_entries]{};
     uint16_t management_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
     CommandDescriptor data_ring[management_queue_entries]{};
@@ -492,9 +493,10 @@ struct StartupFixture {
         assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
         const uint8_t first[20]{0x1c, 0, uint8_t(slot), 1, uint8_t(24 + length), 0, 0, 12, 3};
         const uint8_t subtype = step == 0 ? 0xb0 : step == 1 ? 0 : 0xc0;
+        const uint8_t sequence = uint8_t(authentication_rx_buffers << 4);
         const uint8_t second[]{
-            0, 0x40, 0,    0,    subtype, 0,    0, 0, 2, 0, 0, 0,    0, 0x11,
-            2, 0x11, 0x22, 0x33, 0x44,    0x55, 2, 0, 0, 0, 0, 0x11, 0, 0,
+            0, 0x40, 0,    0,    subtype, 0,    0, 0, 2, 0, 0, 0,    0,        0x11,
+            2, 0x11, 0x22, 0x33, 0x44,    0x55, 2, 0, 0, 0, 0, 0x11, sequence, 0,
         };
         assert(!memcmp(authentication_payload, first, sizeof(first)));
         assert(!memcmp(authentication_payload + 64, second, sizeof(second)));
@@ -567,10 +569,11 @@ struct StartupFixture {
     }
 
     void arp_doorbell(uint32_t value) {
-        assert(arp_case != ArpCase::unused && commands_sent == 18 &&
-               authentication_rx_buffers == 2);
-        assert(value == 0x01020038);
-        constexpr unsigned slot = 7;
+        const unsigned pointer = 0x37 + data_rx_buffers;
+        assert(arp_case != ArpCase::unused && commands_sent == (open_station ? 19u : 18u) &&
+               authentication_rx_buffers == 2 + data_rx_buffers);
+        assert(value == 0x01020000 + pointer + 1);
+        const uint8_t slot = pointer & (management_queue_entries - 1);
         const auto& descriptor = data_ring[slot];
         const uint8_t body[]{0xaa, 0xaa, 3, 0, 0, 0,    8,    6,    0,    1,    8,   0,
                              6,    4,    0, 1, 2, 0x11, 0x22, 0x33, 0x44, 0x55, 192, 0,
@@ -579,9 +582,10 @@ struct StartupFixture {
         assert(descriptor.buffer_count == 3 && data_counts[slot] == 15);
         assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
         const uint8_t first[20]{0x1c, 0, slot, 2, 60, 0, 0, 12, 3};
-        const uint8_t header[]{0,    0x40, 0,    0,    8,    1,    0,    0,    2,    0,
-                               0,    0,    0,    0x11, 2,    0x11, 0x22, 0x33, 0x44, 0x55,
-                               0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0,    0};
+        const uint8_t sequence = uint8_t((2 + data_rx_buffers) << 4);
+        const uint8_t header[]{0,    0x40, 0,    0,    8,    1,    0,        0,    2,    0,
+                               0,    0,    0,    0x11, 2,    0x11, 0x22,     0x33, 0x44, 0x55,
+                               0xff, 0xff, 0xff, 0xff, 0xff, 0xff, sequence, 0};
         assert(!memcmp(first, authentication_payload, sizeof(first)));
         assert(!memcmp(header, authentication_payload + 64, sizeof(header)));
         assert(!memcmp(body, authentication_payload + 128, sizeof(body)));
@@ -590,14 +594,14 @@ struct StartupFixture {
         const bool first_reply = arp_case == ArpCase::reply_first;
         auto* tx = buffer + (first_reply ? 128 : 0);
         tx[0] = 52;
-        tx[4] = 0x1c;
+        tx[4] = arp_case == ArpCase::missing_completion ? 0x55 : 0x1c;
         tx[6] = slot;
         tx[7] = 2;
         tx[8] = 1;
         tx[44] = 2;
         tx[45] = 1;
         tx[48] = arp_case == ArpCase::rejected_tx ? 0x84 : 1;
-        tx[52] = 0x38;
+        tx[52] = uint8_t(pointer + 1);
 
         auto* rx = buffer + (first_reply ? 0 : 64);
         rx[0] = 116;
@@ -637,11 +641,13 @@ struct StartupFixture {
         const bool association = assoc_case != AssocCase::unused;
         const bool data = arp_case != ArpCase::unused;
         const unsigned clear_association = data ? 20 : 18;
-        const unsigned release_session = association ? clear_association + 1 : 17;
+        const unsigned release_session = open_station  ? 19
+                                         : association ? clear_association + 1
+                                                       : 17;
         const unsigned peer_index = !auth || index <= 13      ? index
                                     : index > release_session ? index - (release_session - 14)
                                                               : index - 1;
-        const bool data_queue = data && (index == 18 || index == 19);
+        const bool data_queue = data && (index == 18 || (index == 19 && !open_station));
         const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
         uint8_t expected[command_slot_bytes]{};
         uint16_t payload_bytes = 4;
@@ -974,12 +980,6 @@ struct StartupFixture {
             memory.command_payloads = &payloads;
             memory.command_dma = 0xa000;
         }
-        return memory;
-    }
-
-    FirmwareBootResult run(bool nvm = false, const ScanChecks* scan = nullptr) {
-        const auto io = make_io();
-        auto memory = make_memory(nvm, scan && scan->check >= FirmwareCheck::rescan);
         if (peer_case != PeerCase::unused)
             memory.peer_queue = {0x50000, 0x51000};
         if (auth_case != AuthCase::unused)
@@ -989,6 +989,12 @@ struct StartupFixture {
             memory.data_queue = {0x53000, 0x54000};
             memory.data_transmit = {data_ring, data_counts, authentication_payload, 0x52000};
         }
+        return memory;
+    }
+
+    FirmwareBootResult run(bool nvm = false, const ScanChecks* scan = nullptr) {
+        const auto io = make_io();
+        auto memory = make_memory(nvm, scan && scan->check >= FirmwareCheck::rescan);
         return start_and_stop_quz(io, memory, scan);
     }
 };
@@ -1502,6 +1508,92 @@ void check_associated_arp() {
     std::puts("AX201_ASSOCIATED_ARP_MODEL_PASS");
 }
 
+void check_open_station() {
+    const uint8_t arp[]{
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0x11, 0x22, 0x33, 0x44, 0x55, 8,    6,
+        0,    1,    8,    0,    6,    4,    0, 1,    2,    0x11, 0x22, 0x33, 0x44, 0x55,
+        192,  0,    2,    10,   0,    0,    0, 0,    0,    0,    192,  0,    2,    1,
+    };
+    AuthenticationTarget target;
+    assert(parse_authentication_target("02:00:00:00:00:11", target));
+    for (const auto scenario :
+         {ArpCase::accepted, ArpCase::rejected_tx, ArpCase::missing_completion}) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = PeerCase::success;
+        model.auth_case = AuthCase::accepted;
+        model.assoc_case = AssocCase::accepted;
+        model.arp_case = scenario;
+        model.open_station = true;
+        model.live_replies.resize(32 * ax::page_size);
+        const auto io = model.make_io();
+        const auto memory = model.make_memory(true, true);
+        LiveScanSession session(io, memory);
+        ScanElementStorage elements{};
+        const auto result = start_live_quz(session, {1, 2}, &target, &elements);
+        assert(result.successful && !result.dma_idle && result.association_id == 42 &&
+               model.master);
+        assert(session.running && session.station.queue.id == 0x102 && model.commands_sent == 19);
+        assert(submit_live_scan(session, elements, 20) == -16);
+        assert(submit_live_data(session, arp, 8, 20) == -22);
+        assert(submit_live_data(session, arp, sizeof(arp), 20) == 0);
+        assert(submit_live_data(session, arp, sizeof(arp), 21) == -11);
+
+        struct Observations {
+            unsigned received = 0, completed = 0, rejected = 0;
+        } seen;
+
+        const auto poll = [&](uint64_t now) {
+            return poll_live_station(
+                session, now, &seen,
+                [](void* owner, const uint8_t* data, size_t length) {
+                    assert(length == 42 && data[0] == 2 && data[5] == 0x55 && data[11] == 0x12);
+                    assert(data[12] == 8 && data[13] == 6 && data[21] == 2 && data[41] == 10);
+                    ++static_cast<Observations*>(owner)->received;
+                },
+                [](void* owner, size_t length, bool failed) {
+                    assert(length == 42);
+                    auto& stats = *static_cast<Observations*>(owner);
+                    ++stats.completed;
+                    stats.rejected += failed;
+                });
+        };
+        assert(poll(22) && seen.received == 1);
+        if (scenario == ArpCase::missing_completion) {
+            assert(seen.completed == 0 && !poll(1020) && session.station.pending_bytes == 42);
+        } else {
+            assert(seen.completed == 1 && seen.rejected == (scenario == ArpCase::rejected_tx));
+            assert(submit_live_data(session, arp, sizeof(arp), 23) == 0 && poll(24));
+            assert(seen.received == 2 && seen.completed == 2);
+            assert(session.station.queue.write_pointer == 0x39 && !session.station.pending_bytes);
+            if (scenario == ArpCase::accepted) {
+                const unsigned index = model.receive_status.closed_buffer;
+                auto* packet = model.reply_buffer(index - 1);
+                const uint8_t disconnect[]{0xc0, 0, 0, 0,    2, 0x11, 0x22, 0x33, 0x44,
+                                           0x55, 2, 0, 0,    0, 0,    0x11, 2,    0,
+                                           0,    0, 0, 0x11, 0, 0,    3,    0};
+                packet[0] = 4 + 48 + sizeof(disconnect);
+                packet[4] = 0xc1;
+                packet[7] = 0x80;
+                packet[8] = sizeof(disconnect);
+                packet[8 + 12] = 3;
+                packet[8 + 34] = 1;
+                memcpy(packet + 8 + 48, disconnect, sizeof(disconnect));
+                model.used[index] = index + 1;
+                model.receive_status.closed_buffer = uint16_t(index + 1);
+                assert(!poll(25));
+            } else {
+                assert(poll(3000) && !poll(3022));
+            }
+        }
+        assert(stop_live_quz(session) && !session.running && !model.master &&
+               model.reset_after_dma);
+        assert(submit_live_data(session, arp, sizeof(arp), 4000) == -95);
+    }
+    std::puts("AX201_OPEN_STATION_MODEL_PASS");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -1644,6 +1736,7 @@ int main(int argc, char** argv) {
     check_authentication_exchange();
     check_association_exchange();
     check_associated_arp();
+    check_open_station();
     check_receive_recycling();
     check_access_points();
 

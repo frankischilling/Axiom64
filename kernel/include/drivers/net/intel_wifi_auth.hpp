@@ -12,7 +12,8 @@
 
 namespace ax::IntelWifi {
 inline constexpr unsigned session_protection_bytes = 24;
-inline constexpr unsigned authentication_dma_bytes = 128 + 8 + 1500;
+inline constexpr unsigned station_frame_bytes = 1518;
+inline constexpr unsigned authentication_dma_bytes = 128 + 8 + station_frame_bytes - 14;
 // Capability, listen interval, SSID, and up to twelve rates in two elements.
 inline constexpr unsigned association_body_bytes = 4 + 2 + 32 + 2 + 12 + 2;
 
@@ -53,11 +54,19 @@ bool prepare_association_request(const AccessPoint&, const uint8_t* ies, unsigne
                                  bool high_band, AssociationRequest&);
 bool prepare_management_frame(const AuthenticationDma&, PeerQueue, uint32_t,
                               const uint8_t (&station)[6], const AccessPoint&, ManagementFrame,
-                              const AssociationRequest&);
+                              const AssociationRequest&, uint16_t sequence);
 bool prepare_arp_request(const AuthenticationDma&, PeerQueue, uint32_t, const uint8_t (&station)[6],
-                         const AuthenticationTarget&);
+                         const AuthenticationTarget&, uint16_t sequence);
 bool observe_arp_response(const FirmwarePacket&, const uint8_t (&station)[6], uint8_t channel,
                           const AuthenticationTarget&);
+bool prepare_station_data(const AuthenticationDma&, PeerQueue, uint32_t rate,
+                          const uint8_t (&station)[6], const uint8_t (&bssid)[6],
+                          const uint8_t* frame, size_t length, uint16_t sequence);
+size_t receive_station_data(const FirmwarePacket&, const uint8_t (&station)[6],
+                            const uint8_t (&bssid)[6], uint8_t channel,
+                            uint8_t (&frame)[station_frame_bytes]);
+bool observe_station_disconnect(const FirmwarePacket&, const uint8_t (&station)[6],
+                                const AccessPoint&, uint8_t channel);
 AuthEvent observe_authentication_tx(const FirmwarePacket&, PeerQueue);
 AuthEvent observe_authentication_reply(const FirmwarePacket&, const uint8_t (&station)[6],
                                        const AccessPoint&, uint8_t channel);

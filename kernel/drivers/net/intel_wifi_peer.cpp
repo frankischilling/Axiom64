@@ -90,9 +90,9 @@ bool prepare_remove_station_queue(uint8_t station, uint8_t (&command)[scheduler_
 }
 
 bool parse_station_queue(const FirmwarePacket& packet, PeerQueue& queue) {
-    if (!scheduler_reply(packet) || packet.length != 8 || !packet.payload ||
-        load16(packet.payload + 2))
+    if (!scheduler_reply(packet) || packet.length != 8 || !packet.payload)
         return false;
+    // Gen2 queue allocation uses the assigned queue number and write pointer.
     const auto id = load16(packet.payload);
     if (!id || id >= 512)
         return false;

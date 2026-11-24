@@ -894,7 +894,7 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check,
 RadioStatus radio_status() {
     RadioStatus status = diagnostic;
     status.live = radio != nullptr;
-    status.authorized = radio && radio->session.station.port_authorized;
+    status.authorized = associated_access_point() && radio->session.station.port_authorized;
     status.recovery_image = live_firmware != nullptr;
     return status;
 }

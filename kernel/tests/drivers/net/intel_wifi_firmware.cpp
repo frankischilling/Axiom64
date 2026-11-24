@@ -76,6 +76,7 @@ enum class RegulatoryCase { unused, valid, bad_count, disallowed, disabled, reje
 enum class PeerCase {
     unused,
     success,
+    marked_queue,
     passive_only,
     station_denied,
     short_queue,
@@ -815,8 +816,8 @@ struct StartupFixture {
             reply[11] = 0x80; // The ADD_STA status occupies the low byte.
         }
         if (peer && peer_index == 14 && command[0] == 0x17) {
-            reply[8] = reply[9] = 1;
-            reply[10] = peer_case == PeerCase::queue_denied;
+            reply[8] = reply[9] = peer_case == PeerCase::queue_denied ? 0 : 1;
+            reply[10] = peer_case == PeerCase::queue_denied || peer_case == PeerCase::marked_queue;
             reply[12] = 0x34;
             reply[13] = 0x12;
         }
@@ -1292,6 +1293,8 @@ void check_peer_queues() {
     const Case cases[]{
         {StartupCase::good, PeerCase::success, 18, true,
          "peer station and management queue check passed"},
+        {StartupCase::good, PeerCase::marked_queue, 18, true,
+         "peer station and management queue check passed"},
         {StartupCase::good, PeerCase::passive_only, 8, false,
          "no infrastructure access point on a channel permitted for active operation"},
         {StartupCase::good, PeerCase::station_denied, 13, false,
@@ -1317,7 +1320,9 @@ void check_peer_queues() {
         const bool stopped = test.startup != StartupCase::stop_failed;
         assert(result.dma_idle == stopped && !model.master && model.reset_after_dma);
         assert(result.alive && result.completed_scans == 1);
-        assert(result.successful == (stopped && test.response == PeerCase::success));
+        const bool success =
+            test.response == PeerCase::success || test.response == PeerCase::marked_queue;
+        assert(result.successful == (stopped && success));
         assert(result.peer_queue.id == (test.queue_allocated ? 257 : 0));
         assert(result.peer_queue.write_pointer == (test.queue_allocated ? 0x34 : 0));
     }
@@ -1328,6 +1333,9 @@ void check_peer_queues() {
     allocation[1] = 2; // One beyond the last supported queue.
     assert(!parse_station_queue({0x17, 5, 0, allocation, sizeof(allocation)}, queue));
     assert(queue.id == 23 && queue.write_pointer == 0x40);
+    const uint8_t blade_reply[]{1, 0, 1, 0, 0, 0, 0, 0};
+    assert(parse_station_queue({0x17, 5, 0, blade_reply, sizeof(blade_reply)}, queue));
+    assert(queue.id == 1 && queue.write_pointer == 0);
     std::puts("AX201_PEER_QUEUE_MODEL_PASS");
 }
 

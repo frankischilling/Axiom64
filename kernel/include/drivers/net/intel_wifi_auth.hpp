@@ -16,12 +16,21 @@ inline constexpr unsigned station_frame_bytes = 1518;
 inline constexpr unsigned authentication_dma_bytes = 128 + 8 + station_frame_bytes - 14;
 // Capability, listen interval, SSID, and up to twelve rates in two elements.
 inline constexpr unsigned association_extra_limit = 64;
+inline constexpr unsigned association_request_fixed_bytes = 4;
 inline constexpr unsigned association_body_bytes =
-    4 + 2 + 32 + 2 + 12 + 2 + association_extra_limit;
+    association_request_fixed_bytes + 2 + 32 + 2 + 12 + 2 + association_extra_limit;
+inline constexpr unsigned association_response_ie_capacity = page_size - 8 - 48 - 24 - 6;
 
 struct AssociationRequest {
     uint8_t body[association_body_bytes]{};
     unsigned length = 0;
+};
+
+struct AssociationReply {
+    uint16_t status = 0, aid = 0;
+    // Borrowed from the receive packet until the receive reader advances.
+    const uint8_t* elements = nullptr;
+    unsigned element_bytes = 0;
 };
 
 struct AssociationTiming {
@@ -74,5 +83,5 @@ AuthEvent observe_authentication_tx(const FirmwarePacket&, PeerQueue);
 AuthEvent observe_authentication_reply(const FirmwarePacket&, const uint8_t (&station)[6],
                                        const AccessPoint&, uint8_t channel);
 AuthEvent observe_association_reply(const FirmwarePacket&, const uint8_t (&station)[6],
-                                    const AccessPoint&, uint8_t channel, uint16_t& aid);
+                                    const AccessPoint&, uint8_t channel, AssociationReply&);
 } // namespace ax::IntelWifi

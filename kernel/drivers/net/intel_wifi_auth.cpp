@@ -530,17 +530,18 @@ AuthEvent observe_authentication_reply(const FirmwarePacket& packet, const uint8
 }
 
 AuthEvent observe_association_reply(const FirmwarePacket& packet, const uint8_t (&station)[6],
-                                    const AccessPoint& peer, uint8_t channel, uint16_t& aid) {
+                                    const AccessPoint& peer, uint8_t channel,
+                                    AssociationReply& reply) {
     const uint8_t* body = nullptr;
     const auto result = management_reply(packet, station, peer, channel, 0x10, body);
     if (result != AuthEvent::accepted)
         return result;
-    if (read16(body + 2))
-        return AuthEvent::denied;
-    const auto id = read16(body + 4) & 0x7ff;
-    if (!id || id > 2007)
+    const uint16_t status = read16(body + 2);
+    const uint16_t aid = read16(body + 4) & 0x7ff;
+    const unsigned bytes = read16(packet.payload) - header_bytes - body_bytes;
+    if ((!status && (!aid || aid > 2007)) || bytes > association_response_ie_capacity)
         return AuthEvent::malformed;
-    aid = uint16_t(id);
-    return AuthEvent::accepted;
+    reply = {status, uint16_t(status ? 0 : aid), body + body_bytes, bytes};
+    return status ? AuthEvent::denied : AuthEvent::accepted;
 }
 } // namespace ax::IntelWifi

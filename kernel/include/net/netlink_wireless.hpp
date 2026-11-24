@@ -37,8 +37,15 @@ size_t wireless_reply(const void*, const NetlinkHeader&, uint32_t port, bool cap
 size_t wireless_dump_record(const WirelessDump&, uint32_t port, void* output);
 void wireless_dump_advance(WirelessDump&);
 void wireless_scan_finished(unsigned ifindex, bool complete);
-void wireless_connection_finished(unsigned ifindex, const uint8_t (&bssid)[6], bool success,
-                                  bool timeout);
+
+struct WirelessElements {
+    const uint8_t* bytes = nullptr;
+    size_t length = 0;
+};
+
+void wireless_connection_finished(unsigned ifindex, const uint8_t (&bssid)[6], uint16_t status,
+                                  bool timeout, WirelessElements request,
+                                  WirelessElements response);
 void wireless_disconnected(unsigned ifindex, uint16_t reason = 1);
 void wireless_socket_closed(unsigned port);
 void netlink_broadcast_wireless(unsigned group, const void*, size_t);

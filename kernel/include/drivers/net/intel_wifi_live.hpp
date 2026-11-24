@@ -64,7 +64,9 @@ struct StationJoin {
     uint16_t sequence = 0, command_sequence = 0, aid = 0;
     uint8_t group = 0, opcode = 0;
     bool submitted = false, acknowledged = false, indicated = false;
-    bool controlled_port = false;
+    bool controlled_port = false, association_sent = false;
+    uint16_t association_status = 0;
+    unsigned response_ie_bytes = 0;
     uint64_t deadline = 0;
 };
 
@@ -102,6 +104,7 @@ struct LiveScanSession {
     PassiveScanExchange exchange{scan, 0, 0};
     LiveStation station{};
     StationJoin join{};
+    uint8_t association_response_ies[association_response_ie_capacity];
     StationLeave leave{};
     AntennaMasks antennas{};
     bool dual_lmac = false;

@@ -15,6 +15,7 @@
 #include <vector>
 
 void check_intel_wifi_access_points();
+void check_intel_wifi_association_codec();
 void check_intel_wifi_key_codec();
 
 namespace {
@@ -595,6 +596,12 @@ struct StartupFixture {
                 frame[26] = assoc_case == AssocCase::refused ? 17 : 0;
                 frame[28] = assoc_case == AssocCase::invalid_id ? 0 : 42;
                 frame[29] = 0xc0;
+                if (open_station) {
+                    const uint8_t elements[]{1, 1, 0x82};
+                    rx[0] += sizeof(elements);
+                    mpdu[0] += sizeof(elements);
+                    memcpy(frame + 30, elements, sizeof(elements));
+                }
                 auto* beacon = buffer + 192;
                 beacon[0] = 94;
                 beacon[4] = 0xc1;
@@ -1568,18 +1575,6 @@ void check_association_exchange() {
         assert(result.successful == (test.response == AssocCase::accepted));
     }
 
-    AccessPoint peer{};
-    peer.capability = 1;
-    peer.ssid[0] = 'A';
-    peer.ssid_length = 1;
-    const uint8_t rsn[]{1, 1, 0x82, 48, 2, 1, 0};
-    const uint8_t wpa[]{1, 1, 0x82, 221, 4, 0, 0x50, 0xf2, 1};
-    const uint8_t basic[]{1, 2, 0x8c, 0xff};
-    AssociationRequest request;
-    assert(!prepare_association_request(peer, rsn, sizeof(rsn), false, request));
-    assert(!prepare_association_request(peer, wpa, sizeof(wpa), false, request));
-    assert(!prepare_association_request(peer, basic, sizeof(basic), true, request));
-    assert(!prepare_association_request(peer, basic, sizeof(basic) - 1, true, request));
     std::puts("AX201_ASSOCIATION_MODEL_PASS");
 }
 
@@ -1757,24 +1752,24 @@ void check_live_departure(StartupFixture& model, LiveScanSession& session, ScanE
 void check_live_connection() {
     constexpr struct {
         AuthCase authentication;
+        AssocCase association;
         ArpCase pending;
     } cases[]{
-        {AuthCase::accepted, ArpCase::rejected_tx},
-        {AuthCase::accepted, ArpCase::missing_completion},
-        {AuthCase::reply_first, ArpCase::unused},
-        {AuthCase::denied_ap, ArpCase::unused},
-        {AuthCase::reply_timeout, ArpCase::unused},
+        {AuthCase::accepted, AssocCase::accepted, ArpCase::rejected_tx},
+        {AuthCase::accepted, AssocCase::accepted, ArpCase::missing_completion},
+        {AuthCase::reply_first, AssocCase::leave_failed, ArpCase::unused},
+        {AuthCase::accepted, AssocCase::refused, ArpCase::unused},
+        {AuthCase::denied_ap, AssocCase::accepted, ArpCase::unused},
+        {AuthCase::reply_timeout, AssocCase::accepted, ArpCase::unused},
     };
 
-    for (const auto& [authentication, pending] : cases) {
+    for (const auto& [authentication, association, pending] : cases) {
         StartupFixture model(StartupCase::good);
         model.regulatory = RegulatoryCase::valid;
         model.passive = ScanCase::complete;
         model.peer_case = PeerCase::success;
         model.auth_case = authentication;
-        model.assoc_case = pending == ArpCase::unused && authentication == AuthCase::reply_first
-                               ? AssocCase::leave_failed
-                               : AssocCase::accepted;
+        model.assoc_case = association;
         model.arp_case = pending == ArpCase::unused ? ArpCase::accepted : pending;
         model.open_station = true;
         model.live_replies.resize(48 * ax::page_size);
@@ -1805,7 +1800,17 @@ void check_live_connection() {
         auto outcome = JoinOutcome::pending;
         for (uint64_t now = 2; now < 1500 && outcome == JoinOutcome::pending; ++now)
             outcome = poll_live_join(session, now);
-        if (authentication == AuthCase::accepted || authentication == AuthCase::reply_first) {
+        const bool sent =
+            authentication == AuthCase::accepted || authentication == AuthCase::reply_first;
+        assert(session.join.association_sent == sent);
+        if (sent) {
+            const uint8_t elements[]{1, 1, 0x82};
+            assert(session.join.response_ie_bytes == sizeof(elements));
+            assert(!memcmp(session.association_response_ies, elements, sizeof(elements)));
+            assert(session.join.association_status == (association == AssocCase::refused ? 17 : 0));
+        } else
+            assert(!session.join.response_ie_bytes && !session.join.association_status);
+        if (sent && association != AssocCase::refused) {
             assert(outcome == JoinOutcome::connected && model.commands_sent == 19);
             assert(session.station.queue.id == 0x102 && session.station.channel == 1);
             assert(session.station.next_sequence == 2 && session.join.aid == 42);
@@ -1902,6 +1907,7 @@ int main(int argc, char** argv) {
     check_security_key_commands();
     check_peer_queues();
     check_authentication_exchange();
+    check_intel_wifi_association_codec();
     check_association_exchange();
     check_associated_arp();
     check_open_station();

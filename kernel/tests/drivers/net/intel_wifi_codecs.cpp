@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/tests/drivers/net/intel_wifi_codecs.cpp
- * @brief   Test AX201 scan records and CCMP key commands on the host.
+ * @brief   Test AX201 scan, association, and CCMP key messages on the host.
  * @author  frankischilling
  * @date    2026-11-24
  *
  * Copyright (C) 2026 frankischilling
  */
+#include "drivers/net/intel_wifi_auth.hpp"
 #include "drivers/net/intel_wifi_key.hpp"
 #include "drivers/net/intel_wifi_scan.hpp"
 #include <cassert>
@@ -15,6 +16,48 @@
 
 using namespace ax::IntelWifi;
 using Bytes = std::vector<uint8_t>;
+
+void check_intel_wifi_association_codec() {
+    AccessPoint peer{};
+    peer.capability = 1;
+    peer.ssid[0] = 'A';
+    peer.ssid_length = 1;
+    peer.bssid[0] = 2;
+    const uint8_t rsn[]{1, 1, 0x82, 48, 2, 1, 0};
+    const uint8_t wpa[]{1, 1, 0x82, 221, 4, 0, 0x50, 0xf2, 1};
+    const uint8_t basic[]{1, 2, 0x8c, 0xff};
+    AssociationRequest request;
+    assert(!prepare_association_request(peer, rsn, sizeof(rsn), false, request));
+    assert(!prepare_association_request(peer, wpa, sizeof(wpa), false, request));
+    assert(!prepare_association_request(peer, basic, sizeof(basic), true, request));
+    assert(!prepare_association_request(peer, basic, sizeof(basic) - 1, true, request));
+
+    constexpr uint8_t station[]{2, 0, 0, 0, 0, 3};
+    uint8_t receive[ax::page_size]{};
+    const auto length = uint16_t(24 + 6 + association_response_ie_capacity);
+    receive[0] = uint8_t(length);
+    receive[1] = uint8_t(length >> 8);
+    receive[12] = 3;
+    receive[34] = 1;
+    auto* frame = receive + 48;
+    frame[0] = 0x10;
+    memcpy(frame + 4, station, sizeof(station));
+    memcpy(frame + 10, peer.bssid, sizeof(peer.bssid));
+    memcpy(frame + 16, peer.bssid, sizeof(peer.bssid));
+    frame[28] = 42;
+    frame[29] = 0xc0;
+    FirmwarePacket packet{0xc1, 0, 0x8000, receive, size_t(48 + length)};
+    AssociationReply reply;
+    assert(observe_association_reply(packet, station, peer, 1, reply) == AuthEvent::accepted);
+    assert(reply.aid == 42 && !reply.status && reply.elements == frame + 30 &&
+           reply.element_bytes == association_response_ie_capacity);
+    --packet.length;
+    assert(observe_association_reply(packet, station, peer, 1, reply) == AuthEvent::malformed);
+    packet.length += 2;
+    ++receive[0];
+    assert(observe_association_reply(packet, station, peer, 1, reply) == AuthEvent::malformed);
+    std::puts("AX201_ASSOCIATION_CODEC_PASS");
+}
 
 void check_intel_wifi_key_codec() {
     constexpr uint8_t key[ccmp_key_bytes]{0x12, 0x34, 0x56, 0x78};

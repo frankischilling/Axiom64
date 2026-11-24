@@ -38,6 +38,8 @@ enum Attribute : uint16_t {
     station_flags = 67,
     control_port = 68,
     status_code = 72,
+    request_ies = 77,
+    response_ies = 78,
     control_port_ethertype = 102,
     ht_capability_mask = 148,
     wdev = 153,
@@ -664,14 +666,20 @@ void wireless_scan_finished(unsigned index, bool complete) {
     netlink_broadcast_wireless(nl80211_scan_group, bytes, size);
 }
 
-void wireless_connection_finished(unsigned index, const uint8_t (&bssid)[6], bool success,
-                                  bool timeout) {
-    uint8_t bytes[80];
+void wireless_connection_finished(unsigned index, const uint8_t (&bssid)[6], uint16_t status,
+                                  bool timeout, WirelessElements request,
+                                  WirelessElements response) {
+    uint8_t
+        bytes[80 + IntelWifi::association_body_bytes + IntelWifi::association_response_ie_capacity];
     Message event(bytes);
     event.value(wiphy, uint32_t(0));
     event.value(ifindex, uint32_t(index));
     event.value(mac, bssid);
-    event.value(status_code, uint16_t(success ? 0 : 1));
+    event.value(status_code, status);
+    if (request.length && request.length <= IntelWifi::association_body_bytes)
+        event.attr(request_ies, request.bytes, request.length);
+    if (response.length && response.length <= IntelWifi::association_response_ie_capacity)
+        event.attr(response_ies, response.bytes, response.length);
     if (timeout)
         event.attr(timed_out, nullptr, 0);
     const size_t size = event.finish(nl80211_connect, 0, 0, false);

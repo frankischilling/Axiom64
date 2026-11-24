@@ -2440,7 +2440,9 @@ It can prefer a BSSID or frequency and include operating classes or
 extended capabilities in the request. When userspace asks to control the
 port, the driver passes only EAPOL frames until the supplicant authorizes
 the associated peer. Closing the socket that owns a connection ends it.
-Secured associations and encryption keys still need driver support.
+The connection event includes the association request and response elements when
+available. If the access point refuses association, the event reports its status
+code. Secured associations and encryption keys still need driver support.
 
 Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
 disconnect event on the `mlme` group before scanning or connecting again.

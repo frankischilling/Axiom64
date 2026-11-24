@@ -603,8 +603,16 @@ void poll_runtime(NetAdapter& device) {
             device.info.carrier = device.info.writable = true;
             ++completed_generation;
         }
-        wireless_connection_finished(device.info.index, radio->session.join.peer.bssid, connected,
-                                     result == JoinOutcome::timeout);
+        const auto& join = radio->session.join;
+        WirelessElements request;
+        if (join.association_sent)
+            request = {join.association.body + association_request_fixed_bytes,
+                       join.association.length - association_request_fixed_bytes};
+        const uint16_t status =
+            connected ? 0 : (join.association_status ? join.association_status : 1);
+        wireless_connection_finished(
+            device.info.index, join.peer.bssid, status, result == JoinOutcome::timeout, request,
+            {radio->session.association_response_ies, join.response_ie_bytes});
         if (!connected)
             stop_runtime(device);
         return;

@@ -592,13 +592,17 @@ const char* exchange_management(CommandSession& commands, PeerQueue& queue, uint
                 return "firmware returned an invalid management transmit completion";
             }
             if (!accepted) {
+                AssociationReply association_reply;
                 const auto reply =
                     authentication
                         ? observe_authentication_reply(packet, station, peer, channel.number)
-                        : observe_association_reply(packet, station, peer, channel.number, aid);
-                if (reply == AuthEvent::accepted)
+                        : observe_association_reply(packet, station, peer, channel.number,
+                                                    association_reply);
+                if (reply == AuthEvent::accepted) {
                     accepted = true;
-                else if (reply == AuthEvent::denied)
+                    if (!authentication)
+                        aid = association_reply.aid;
+                } else if (reply == AuthEvent::denied)
                     return authentication ? "access point refused open-system authentication"
                                           : "access point refused association";
                 else if (reply == AuthEvent::malformed)
@@ -1305,6 +1309,7 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
                                       session.station_address, join.peer, kind, join.association,
                                       join.sequence))
             return false;
+        join.association_sent = kind == ManagementFrame::associate;
         ++join.sequence;
         __atomic_thread_fence(__ATOMIC_RELEASE);
         commands.reg.write(command_write_pointer, uint8_t(join.management.write_pointer + 1) |
@@ -1323,6 +1328,23 @@ bool begin_join_phase(LiveScanSession& session, CommandSession& commands, uint64
 namespace {
 enum class JoinProgress { waiting, ready, rejected, failed };
 
+AuthEvent observe_join_reply(LiveScanSession& session, const FirmwarePacket& packet) {
+    auto& join = session.join;
+    if (join.phase == JoinPhase::authenticate)
+        return observe_authentication_reply(packet, session.station_address, join.peer,
+                                            join.channel.number);
+    AssociationReply reply;
+    const auto result = observe_association_reply(packet, session.station_address, join.peer,
+                                                  join.channel.number, reply);
+    if (result == AuthEvent::accepted || result == AuthEvent::denied) {
+        join.aid = reply.aid;
+        join.association_status = reply.status;
+        join.response_ie_bytes = reply.element_bytes;
+        memcpy(session.association_response_ies, reply.elements, reply.element_bytes);
+    }
+    return result;
+}
+
 JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket& packet) {
     auto& join = session.join;
     if (join.phase == JoinPhase::beacon)
@@ -1337,11 +1359,7 @@ JoinProgress observe_join_packet(LiveScanSession& session, const FirmwarePacket&
             return JoinProgress::failed;
         join.acknowledged |= tx == AuthEvent::accepted;
         const auto response =
-            join.phase == JoinPhase::authenticate
-                ? observe_authentication_reply(packet, session.station_address, join.peer,
-                                               join.channel.number)
-                : observe_association_reply(packet, session.station_address, join.peer,
-                                            join.channel.number, join.aid);
+            join.indicated ? AuthEvent::unrelated : observe_join_reply(session, packet);
         if (response == AuthEvent::denied)
             return JoinProgress::rejected;
         if (response == AuthEvent::malformed)

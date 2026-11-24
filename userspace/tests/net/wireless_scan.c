@@ -485,7 +485,7 @@ static void check_station_ack(int fd, const struct packet* request, int error) {
 }
 
 static void check_station_event(int fd, unsigned family, unsigned index, unsigned command,
-                                uint16_t expected, const uint8_t* peer) {
+                                uint16_t expected, const uint8_t* peer, int extra) {
     alignas(struct nlmsghdr) uint8_t bytes[1024];
     receive(fd, bytes, sizeof(bytes), 0);
     const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
@@ -503,6 +503,17 @@ static void check_station_event(int fd, unsigned family, unsigned index, unsigne
     uint16_t status;
     memcpy(&status, payload(message_attribute(message, field), sizeof(status)), sizeof(status));
     require(status == expected, "station event carries expected status or reason");
+    if (command == NL80211_CMD_CONNECT) {
+        const uint8_t request[] = {0, 3, 'l', 'a', 'b', 1, 1, 0x82, 127, 1, 0};
+        const size_t length = extra ? sizeof(request) : sizeof(request) - 3;
+        const uint8_t response[] = {1, 1, 0x82};
+        require(!memcmp(payload(message_attribute(message, NL80211_ATTR_REQ_IE), length), request,
+                        length),
+                "connect reports the transmitted request elements");
+        require(!memcmp(payload(message_attribute(message, NL80211_ATTR_RESP_IE), sizeof(response)),
+                        response, sizeof(response)),
+                "connect reports the received response elements");
+    }
 }
 
 static void check_connection(int fd, unsigned family, unsigned index) {
@@ -576,7 +587,7 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     check_station_ack(fd, &request, 0);
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, EBUSY);
-    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer, 0);
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, EISCONN);
 
@@ -589,14 +600,14 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     check_station_ack(fd, &explicit_reason, EBUSY);
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, EBUSY);
-    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, reason, NULL);
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, reason, NULL, 0);
 
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, 0);
-    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer, 0);
     leave.header.nlmsg_seq += 2;
     check_station_ack(fd, &leave, 0);
-    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL);
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL, 0);
 
     int owner = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
     require(owner >= 0, "open separate connection owner socket");
@@ -616,7 +627,7 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&owned, NL80211_ATTR_SOCKET_OWNER, NULL, 0);
     append_attribute(&owned, NL80211_ATTR_MLO_SUPPORT, NULL, 0);
     check_station_ack(owner, &owned, 0);
-    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer, 1);
     leave.header.nlmsg_seq++;
     check_station_ack(fd, &leave, EPERM);
     struct packet authorize = make_request(family, NL80211_CMD_SET_STATION, NLM_F_ACK, 60);
@@ -629,7 +640,15 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&authorize, NL80211_ATTR_STA_FLAGS2, &update, sizeof(update));
     check_station_ack(fd, &authorize, 0);
     require(close(owner) == 0, "close connection owner socket");
-    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL);
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL, 0);
+    struct packet refused = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 76);
+    const uint8_t alternate_peer[] = {2, 0, 0, 0, 0, 2};
+    append_attribute(&refused, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&refused, NL80211_ATTR_SSID, "lab", 3);
+    append_attribute(&refused, NL80211_ATTR_MAC, alternate_peer, sizeof(alternate_peer));
+    append_attribute(&refused, NL80211_ATTR_WIPHY_FREQ, &frequency, sizeof(frequency));
+    check_station_ack(fd, &refused, 0);
+    check_station_event(fd, family, index, NL80211_CMD_CONNECT, 17, alternate_peer, 0);
     require(setgid(1000) == 0 && setuid(1000) == 0, "drop connection privileges");
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, EPERM);
@@ -640,6 +659,7 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     puts("WIRELESS_LIVE_CONNECT_PASS");
     puts("WIRELESS_LIVE_DISCONNECT_PASS");
     puts("WIRELESS_CONTROLLED_PORT_PASS");
+    puts("WIRELESS_ASSOCIATION_EVENT_PASS");
 }
 
 int main(int argc, char** argv) {

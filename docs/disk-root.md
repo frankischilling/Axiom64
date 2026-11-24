@@ -35,11 +35,17 @@ python3 scripts/boot_media.py disk build/axiom64-installed.raw --installed \
     --initramfs build/rootfs-installed-desktop.cpio
 ```
 
-The image contains Limine, an EFI System Partition and a writable ext2 system
-partition. The boot configuration selects the system partition by its GPT ID.
+The image contains Limine, an EFI System Partition and a writable system
+partition with a classic internal journal. The boot configuration selects the
+system partition by its GPT ID. Axiom64 can replay the journal after an
+interrupted boot. Use `--no-root-journal` with `--installed` to create an
+unjournaled root for compatibility and recovery tests.
+Standalone disks and PXE entries for an installed root let the bootloader
+choose the display mode offered by the firmware.
 On first boot, create the administrator from the console as described in
 [accounts.md](accounts.md). SDDM starts the Breeze sign-in screen when setup
 finishes. It starts KDE Plasma with software rendering on its Xorg display.
+The nested Plasma session sizes itself to the authenticated Xorg screen.
 The installed desktop uses udev to discover input devices for both Breeze and
 the console desktop. If udev has not classified the input devices by the time
 Xorg starts, Xorg uses its fixed keyboard and mouse configuration.

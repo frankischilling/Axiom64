@@ -308,6 +308,10 @@ if installed_desktop:
     regular('usr/libexec/axiom64-display-manager', ROOT / 'userspace/services/display-manager.sh')
     regular('usr/libexec/axiom64-display-session', ROOT / 'userspace/desktop/display-session.sh')
     regular('usr/libexec/axiom64-plasma-session', ROOT / 'userspace/desktop/plasma-session.sh')
+    directory('usr/libexec/axiom64-plasma-bin')
+    regular('usr/libexec/axiom64-plasma-bin/kwin_wayland_wrapper',
+            ROOT / 'userspace/desktop/kwin-wayland-wrapper.sh')
+    regular('usr/libexec/axiom64-x11-screen-size', ROOT / 'build/axiom64-x11-screen-size')
     regular('usr/libexec/axiom64-plasma-shell', ROOT / 'userspace/desktop/plasma-shell.sh')
     regular('usr/libexec/axiom64-pipewire-launcher', ROOT / 'userspace/desktop/pipewire-launcher.sh')
     audio_profile = 'etc/axiom64/pipewire-hda'

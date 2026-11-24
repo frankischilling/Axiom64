@@ -35,4 +35,8 @@ int desktop_authority_write(int descriptor, unsigned display, const uint8_t cook
 // Invalid/truncated records fail before the caller sends any authorization bytes.
 int desktop_authority_read(const char* path, unsigned display, uint8_t cookie[16]);
 
+// Read the leading matching local record from the Xorg seat's authority file.
+// SDDM also appends a wildcard record. The client only uses the local record.
+int desktop_authority_read_local(const char* path, unsigned display, uint8_t cookie[16]);
+
 #endif

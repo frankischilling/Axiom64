@@ -63,7 +63,8 @@ def init_path(value):
     return value
 
 
-def stage_payload(directory, kernel, initramfs, options, *, init="/sbin/init", compress=False):
+def stage_payload(directory, kernel, initramfs, options, *, init="/sbin/init", compress=False,
+                  firmware_display=False):
     boot = directory / "boot"
     boot.mkdir(parents=True, exist_ok=True)
     if compress:
@@ -80,6 +81,9 @@ def stage_payload(directory, kernel, initramfs, options, *, init="/sbin/init", c
             except OSError:
                 shutil.copy2(source, target)
     config = (ROOT / "boot/limine.conf").read_text()
+    if firmware_display:
+        config = "".join(line for line in config.splitlines(keepends=True)
+                         if not line.lstrip().startswith("resolution:"))
     if compress:
         config = config.replace("module_path: boot():/boot/rootfs.cpio",
                                 "module_path: $boot():/boot/rootfs.cpio.gz")

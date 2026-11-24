@@ -62,6 +62,30 @@ def inspect_disk(directory, image, kernel, initramfs):
     verify_initramfs(directory / "disk-rootfs.cpio.gz", initramfs)
 
 
+def inspect_installed_roots(directory, kernel, initramfs):
+    cases = (("journaled", (), True), ("unjournaled", ("--no-root-journal",), False))
+    results = {}
+    for name, flags, expected in cases:
+        image = directory / f"installed-{name}.raw"
+        subprocess.run([sys.executable, ROOT / "scripts/boot_media.py", "disk", image, "--installed",
+                        "--kernel", kernel, "--initramfs", initramfs, *flags], check=True)
+        table = json.loads(subprocess.check_output(["sfdisk", "--json", image]))["partitiontable"]
+        root, = (partition for partition in table["partitions"] if partition["name"] == "AXIOM64_ROOT")
+        with image.open("rb") as stream:
+            stream.seek(root["start"] * table["sectorsize"] + 1024)
+            superblock = stream.read(1024)
+        has_journal = bool(int.from_bytes(superblock[92:96], "little") & 4)
+        if len(superblock) != 1024 or superblock[56:58] != b"\x53\xef" or has_journal != expected:
+            raise RuntimeError(f"{image}: incorrect ext-family root journal configuration")
+        menu = subprocess.check_output(["mtype", "-i", f"{image}@@{ESP_START * SECTOR}",
+                                        "::/boot/limine/limine.conf"], text=True)
+        if any(line.lstrip().startswith("resolution:") for line in menu.splitlines()):
+            raise RuntimeError(f"{image}: installed boot overrides the firmware display mode")
+        results[name] = {"sha256": digest(image), "has_journal": has_journal}
+        print(f"installed-{name}: passed", flush=True)
+    return results
+
+
 def send_wheel(monitor, button):
     monitor.command("input-send-event", {"events": [
         {"type": "btn", "data": {"button": button, "down": down}} for down in (True, False)
@@ -298,6 +322,7 @@ def main():
     if digest(pxe / "boot/axiom64.elf") != digest(kernel):
         raise RuntimeError("PXE kernel differs from the original")
     verify_initramfs(pxe / "boot/rootfs.cpio.gz", initramfs)
+    installed_roots = inspect_installed_roots(output, kernel, initramfs)
     subprocess.run([sys.executable, ROOT / "scripts/image.py", "--test", "--initramfs", initramfs,
                     "--output-directory", output, "--output-name", iso.name], cwd=ROOT, check=True)
     bad_disk = output / "invalid-root.raw"
@@ -373,7 +398,8 @@ def main():
                                          worker_ramfs.stat().st_size, smp=12, no_hpet=no_hpet))
                 print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps({"kernel_sha256": digest(kernel),
-        "initramfs_sha256": digest(initramfs), "boots": results}, indent=2) + "\n")
+        "initramfs_sha256": digest(initramfs), "installed_roots": installed_roots,
+        "boots": results}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

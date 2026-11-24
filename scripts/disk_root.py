@@ -86,7 +86,7 @@ def bootstrap(destination):
 
 
 def build(profile='full', verify_reproducible=False, source=None, destination=None, *,
-          bootstrap_destination=None, capacity_bytes=None):
+          bootstrap_destination=None, capacity_bytes=None, journal=False):
     source = source or ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
     entries = archive_entries(source)
     for name in ['dev', 'proc', 'run', 'sys', 'tmp']:
@@ -103,12 +103,16 @@ def build(profile='full', verify_reproducible=False, source=None, destination=No
     if destination is None:
         destination = ROOT / 'build' / ('root-disk.raw' if profile == 'full' else 'root-disk-desktop.raw')
     environment = dict(os.environ, E2FSPROGS_FAKE_TIME='1700000000')
+    features = 'none,filetype,sparse_super,large_file'
+    if journal:
+        features += ',has_journal'
+
     def populate_image(destination):
         with tempfile.TemporaryDirectory(prefix='axiom64-disk-root-') as temporary:
             stage = Path(temporary)
             populate(stage, entries)
             command = ['mke2fs', '-q', '-F', '-t', 'ext2', '-b', '4096', '-I', '128',
-                        '-O', 'none,filetype,sparse_super,large_file',
+                        '-O', features,
                         '-N', str(len(entries) + 4096), '-U', 'ba24cd46-6712-49c5-8615-82ea1e0c7546',
                         '-E', 'hash_seed=ba24cd46-6712-49c5-8615-82ea1e0c7546,lazy_itable_init=0,root_owner=0:0',
                         '-d', str(stage)]

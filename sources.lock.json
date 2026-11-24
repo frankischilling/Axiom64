@@ -2270,6 +2270,23 @@
       ]
     },
     {
+      "origin": "ddcutil",
+      "commit": "7a21d29ceff59ea0a8486a9dc2033d49a6f877a6",
+      "license": "GPL-2.0-only",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/7a21d29ceff59ea0a8486a9dc2033d49a6f877a6/community/ddcutil/APKBUILD",
+      "recipe_sha256": "38bc7da37b5a2447cd7f046ebdf8d0057d94d6901717c9cc7c8467ce95f548a3",
+      "files": [
+        {
+          "name": "ddcutil-2.2.0.tar.gz",
+          "sha512": "e650f1743e1d807b4a7030389729f0aac4e2558bc5374ea9a27a16c97818ba9ede87ddfe38aebffbb9e182c8efbfab913ba729f8cc5b8ccffe44a62280e2037c",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/ddcutil-2.2.0.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/7a21d29ceff59ea0a8486a9dc2033d49a6f877a6/community/ddcutil/ddcutil-2.2.0.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "desktop-file-utils",
       "commit": "d219babac2540b2418a91177836c9490e1388683",
       "license": "GPL-2.0-or-later",
@@ -11078,6 +11095,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/popt-1.19.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/d3abe30d43524bed75a29a3006e703ab51836548/main/popt/popt-1.19.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "powerdevil",
+      "commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "license": "GPL-2.0-or-later AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only)",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/powerdevil/APKBUILD",
+      "recipe_sha256": "90738a86762c1b07001705d59cdd90eee976f4cc05def9c2aeb29d1985feb602",
+      "files": [
+        {
+          "name": "powerdevil-6.3.6.tar.xz",
+          "sha512": "9143c70cb5238cab1d9bd302516c44c66f8d750593005e435a65a0103c6485a11945c30d30a241d130d3c101e0ae84291d1d8471f1cb92c87f80e361a3fa17a0",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/powerdevil-6.3.6.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a870ac60cf1509c99c38c56b38d377c6de2042cf/community/powerdevil/powerdevil-6.3.6.tar.xz"
           ]
         }
       ]

@@ -127,6 +127,16 @@ static int check_input_uevent(void) {
         setsockopt(listener, SOL_SOCKET, so_passcred, &enabled, sizeof(enabled)))
         return -1;
 
+    int receive_buffer = 0;
+    socklen_t buffer_size = sizeof(receive_buffer);
+    if (setsockopt(listener, SOL_SOCKET, SO_RCVBUF, &enabled, sizeof(enabled)) ||
+        getsockopt(listener, SOL_SOCKET, SO_RCVBUF, &receive_buffer, &buffer_size) ||
+        buffer_size != sizeof(receive_buffer) || receive_buffer != 256 ||
+        setsockopt(route, SOL_SOCKET, SO_RCVBUF, &enabled, sizeof(enabled)) ||
+        getsockopt(route, SOL_SOCKET, SO_RCVBUF, &receive_buffer, &buffer_size) ||
+        buffer_size != sizeof(receive_buffer) || receive_buffer != 4096)
+        return -1;
+
     const int trigger = open("/sys/class/input/event1/uevent", O_WRONLY | O_TRUNC);
     if (trigger < 0 || write(trigger, "bogus", 5) != -1 || errno != EINVAL ||
         write(trigger, "add\n", 4) != 4 || close(trigger))

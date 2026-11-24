@@ -668,6 +668,19 @@
       "installed_only": true
     },
     {
+      "name": "ddcutil",
+      "version": "2.2.0-r1",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ddcutil-2.2.0-r1.apk",
+      "archive": "ddcutil-2.2.0-r1.apk",
+      "sha256": "199d4fcd69e9bdc2640b618645d6cc89a843a934640d19b59a1051016233d53c",
+      "license": "GPL-2.0-only",
+      "upstream": "https://github.com/rockowitz/ddcutil",
+      "origin": "ddcutil",
+      "source_commit": "7a21d29ceff59ea0a8486a9dc2033d49a6f877a6",
+      "installed_only": true
+    },
+    {
       "name": "desktop-file-utils",
       "version": "0.28-r0",
       "repository": "community",
@@ -6762,6 +6775,32 @@
       "upstream": "https://github.com/rpm-software-management/popt",
       "origin": "popt",
       "source_commit": "d3abe30d43524bed75a29a3006e703ab51836548",
+      "installed_only": true
+    },
+    {
+      "name": "powerdevil",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/powerdevil-6.3.6-r0.apk",
+      "archive": "powerdevil-6.3.6-r0.apk",
+      "sha256": "965ff991c759ff7519ebd733e4ee5ccd0aee0f49d845f29737beb190b1567ec3",
+      "license": "GPL-2.0-or-later AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only)",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "powerdevil",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
+      "name": "powerdevil-libs",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/powerdevil-libs-6.3.6-r0.apk",
+      "archive": "powerdevil-libs-6.3.6-r0.apk",
+      "sha256": "b6f1b491d82f7b18ddddb7170aedc84ff1e6a509149001b348554c5cf3358abb",
+      "license": "GPL-2.0-or-later AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only)",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "powerdevil",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
       "installed_only": true
     },
     {

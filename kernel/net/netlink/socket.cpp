@@ -156,8 +156,10 @@ size_t netlink_available(NetlinkSocket* socket) {
 }
 
 bool netlink_ready(NetlinkSocket* socket, bool write) {
+    const size_t write_limit =
+        socket->protocol == uevent_protocol ? queue_bytes : socket->receive_limit;
     return write ? socket->count + socket->deliveries < queue_count &&
-                       socket->bytes + netlink_ack_size <= socket->receive_limit
+                       socket->bytes + netlink_ack_size <= write_limit
                  : socket->count != 0 || socket->error != 0;
 }
 
@@ -550,7 +552,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             else
                 socket->groups &= ~group;
         } else if (b == 1 && (c == 7 || c == 8)) {
-            size_t limit = 2 * min(size_t(uint32_t(value)), max_buffer_request);
+            const size_t limit = 2 * min(size_t(uint32_t(value)), max_buffer_request);
             if (c == 7)
                 socket->send_limit = max(size_t(2048), limit);
             else

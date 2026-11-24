@@ -91,7 +91,7 @@ def make_disk(work, payload, limine, root_volume=None, root_id=None, *, disk_byt
 
 
 def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/init", installed=False,
-                 disk_bytes=None, root_mib=None, root_partuuid=None):
+                 disk_bytes=None, root_mib=None, root_partuuid=None, root_journal=False):
     has_root = any(token.startswith(("root=", "rootfstype=")) for token in options.split())
     if installed and (kind != "disk" or has_root):
         raise ValueError("the installed disk requires its own root device and filesystem")
@@ -104,6 +104,8 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
         raise ValueError("disk bytes require a disk image and a positive multiple of 512")
     if root_mib is not None and (not installed or root_mib <= 0):
         raise ValueError("root MiB require an installed disk and a positive size")
+    if root_journal and not installed:
+        raise ValueError("a root journal requires an installed disk")
     root_bytes = root_mib * 1024 * 1024 if root_mib is not None else None
     if root_bytes is not None and disk_bytes is not None and root_bytes >= disk_bytes:
         raise ValueError("the root partition must fit alongside the boot partitions")
@@ -122,12 +124,13 @@ def build_medium(kind, output, kernel, initramfs, options="", *, init="/sbin/ini
             if installed:
                 root_volume = work / "root.ext2"
                 build_root_volume(source=initramfs, destination=root_volume, bootstrap_destination=bootstrap,
-                                  capacity_bytes=root_bytes)
+                                  capacity_bytes=root_bytes, journal=root_journal)
             else:
                 build_bootstrap(bootstrap)
             initramfs = bootstrap
             options += f" root=PARTUUID={root_id} rootfstype=ext2"
-        config = stage_payload(payload, kernel, initramfs, options, init=init, compress=True)
+        config = stage_payload(payload, kernel, initramfs, options, init=init, compress=True,
+                               firmware_display=installed or root_partuuid is not None)
         if kind == "disk":
             loader = payload / "boot/limine"
             efi = payload / "EFI/BOOT"
@@ -160,7 +163,9 @@ def main():
     parser.add_argument("--initramfs", type=Path,
                         help="guest archive to boot, or to install when using --installed")
     parser.add_argument("--installed", action="store_true",
-                        help="populate a writable ext2 system partition on a new raw disk image")
+                        help="populate a writable system partition with an internal journal")
+    parser.add_argument("--no-root-journal", action="store_true",
+                        help="create an unjournaled installed root for compatibility testing")
     parser.add_argument("--disk-bytes", type=int, help="exact capacity of the raw disk image in bytes")
     parser.add_argument("--root-mib", type=int, help="capacity of the installed ext2 root in MiB")
     parser.add_argument("--root-partuuid", type=UUID, help="PXE boot to an existing ext2 root with this GPT ID")
@@ -170,6 +175,8 @@ def main():
     args = parser.parse_args()
     if any(not token or any(char.isspace() for char in token) for token in args.kernel_option):
         parser.error("--kernel-option must be a nonempty token without whitespace")
+    if args.no_root_journal and not args.installed:
+        parser.error("--no-root-journal requires --installed")
     if args.initramfs is None and args.root_partuuid is None:
         args.initramfs = ROOT / "build/rootfs.cpio"
     for source in (args.kernel, args.initramfs):
@@ -180,6 +187,7 @@ def main():
             f" {token}" for token in args.kernel_option)
         build_medium(args.kind, args.output, args.kernel, args.initramfs, options,
                      init=args.init_path, installed=args.installed,
+                     root_journal=args.installed and not args.no_root_journal,
                      disk_bytes=args.disk_bytes, root_mib=args.root_mib, root_partuuid=args.root_partuuid)
     except FileExistsError:
         parser.error(f"output already exists: {args.output}")

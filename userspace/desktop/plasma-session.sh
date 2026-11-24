@@ -41,4 +41,5 @@ export QT_QUICK_BACKEND=software LIBGL_ALWAYS_SOFTWARE=1
 # Each Qt process can create its own llvmpipe worker pool.
 export LP_NUM_THREADS="${LP_NUM_THREADS:-2}"
 export QT_QPA_PLATFORMTHEME=kde XCURSOR_THEME=breeze_cursors
+export PATH="/usr/libexec/axiom64-plasma-bin:$PATH"
 /usr/bin/startplasma-wayland > "$state/plasma-session.log" 2>&1

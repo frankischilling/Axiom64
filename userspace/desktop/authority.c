@@ -26,6 +26,7 @@
 #include "authority.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -90,7 +91,8 @@ static int next(const uint8_t* data, size_t size, size_t* at, const uint8_t** va
     return 0;
 }
 
-int desktop_authority_read(const char* path, unsigned display, uint8_t cookie[16]) {
+static int read_local_cookie(const char* path, unsigned display, uint8_t cookie[16],
+                             bool single_record) {
     if (cookie)
         explicit_bzero(cookie, 16);
     if (!path || !cookie || display > 65535)
@@ -126,7 +128,7 @@ int desktop_authority_read(const char* path, unsigned display, uint8_t cookie[16
                    length != sizeof(protocol) - 1 || memcmp(value, protocol, length)))
         error = EINVAL;
     if (!error && (next(data, (size_t)metadata.st_size, &at, &value, &length) < 0 || length != 16 ||
-                   at != (size_t)metadata.st_size))
+                   (single_record && at != (size_t)metadata.st_size)))
         error = EINVAL;
     if (!error)
         memcpy(cookie, value, 16);
@@ -134,4 +136,12 @@ int desktop_authority_read(const char* path, unsigned display, uint8_t cookie[16
         explicit_bzero(cookie, 16);
     explicit_bzero(data, sizeof(data));
     return error ? failed(error) : 0;
+}
+
+int desktop_authority_read(const char* path, unsigned display, uint8_t cookie[16]) {
+    return read_local_cookie(path, display, cookie, true);
+}
+
+int desktop_authority_read_local(const char* path, unsigned display, uint8_t cookie[16]) {
+    return read_local_cookie(path, display, cookie, false);
 }

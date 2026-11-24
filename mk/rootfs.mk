@@ -43,6 +43,11 @@ build/desktop-session-bus: userspace/desktop/session-bus.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 
+build/axiom64-x11-screen-size: userspace/desktop/x11-screen-size.c \
+	userspace/desktop/authority.c userspace/desktop/authority.h
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -o $@
+
 build/pam_axiom64.so: scripts/build_pam_accounts.py scripts/build_accounts.py scripts/build_musl.py \
 	scripts/build_libxcrypt.py scripts/ports.py scripts/sources.py dependencies.json \
 	ports.lock.json sources.lock.json $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
@@ -55,7 +60,8 @@ build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py --profile desktop
 
-build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so userspace/desktop/kde.pam \
+build/rootfs-installed-desktop.cpio: $(ROOTFS_INPUTS) build/pam_axiom64.so \
+	build/axiom64-x11-screen-size userspace/desktop/kde.pam \
 	$(wildcard vendor/cmake/*.cmake) $(AX201_FIRMWARE) $(AX201_LICENSE) | busybox
 	$(PYTHON) scripts/rootfs.py --profile installed-desktop
 

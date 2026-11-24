@@ -24,6 +24,8 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "core/time.hpp"
+#include "drivers/platform/fb_console.hpp"
 #include "drivers/platform/pci.hpp"
 #include "firmware/aml.hpp"
 #include "firmware/acpi.hpp"
@@ -100,6 +102,123 @@ void notify_firmware(uint16_t port) {
         out16(port, (in16(port) & ~sleep_enable) | global_lock_release);
     }
 }
+
+class FirmwareLockGuard {
+  public:
+    explicit FirmwareLockGuard(bool required) {
+        if (!required) {
+            acquired = true;
+            return;
+        }
+        static const auto platform_lock = find_firmware_lock();
+        lock = platform_lock;
+        acquired = lock.word && Acpi::try_acquire_global_lock(*lock.word);
+    }
+
+    ~FirmwareLockGuard() {
+        if (acquired && lock.word && Acpi::release_global_lock(*lock.word)) {
+            notify_firmware(lock.pm1a);
+            notify_firmware(lock.pm1b);
+        }
+    }
+
+    explicit operator bool() const {
+        return acquired;
+    }
+
+  private:
+    FirmwareLock lock{};
+    bool acquired = false;
+};
+
+struct PowerIo {
+    Acpi::EmbeddedControllerPorts ports;
+    unsigned delay_budget;
+    const char* error;
+};
+
+PowerIo power_io;
+constexpr unsigned boot_ec_delay_budget = 500000, runtime_ec_delay_budget = 10000;
+
+Acpi::EmbeddedControllerIo controller_io(PowerIo& power) {
+    return {&power, [](void*, uint16_t port) { return in8(port); },
+            [](void*, uint16_t port, uint8_t value) { out8(port, value); },
+            [](void* context, unsigned us) {
+                auto& power = *static_cast<PowerIo*>(context);
+                if (us > power.delay_budget) {
+                    power.error = "embedded controller wait budget exhausted";
+                    return false;
+                }
+                power.delay_budget -= us;
+                if (clock_delay_us(us))
+                    return true;
+                power.error = "embedded controller wait timer failed";
+                return false;
+            }};
+}
+
+bool power_read_ec(void* context, uint8_t offset, uint8_t* bytes, size_t length) {
+    auto& power = *static_cast<PowerIo*>(context);
+    const FirmwareLockGuard guard(power.ports.global_lock);
+    if (!guard) {
+        power.error = "ACPI global lock unavailable during embedded controller read";
+        return false;
+    }
+    const bool read =
+        Acpi::read_embedded_controller(power.ports, controller_io(power), offset, bytes, length);
+    if (!read && !power.error)
+        power.error = "embedded controller read timed out";
+    return read;
+}
+
+bool power_write_ec(void* context, uint8_t offset, const uint8_t* bytes, size_t length) {
+    auto& power = *static_cast<PowerIo*>(context);
+    const FirmwareLockGuard guard(power.ports.global_lock);
+    if (!guard) {
+        power.error = "ACPI global lock unavailable during embedded controller write";
+        return false;
+    }
+    const bool written =
+        Acpi::write_embedded_controller(power.ports, controller_io(power), offset, bytes, length);
+    if (!written && !power.error)
+        power.error = "embedded controller write timed out";
+    return written;
+}
+
+bool power_read_cmos(void*, uint8_t offset, uint8_t* bytes, size_t length, bool lock) {
+    // The connection method uses ordinary RTC fields. Reading status C would
+    // acknowledge RTC interrupts, and other CMOS fields are outside this probe.
+    if (offset >= 10 || length > size_t(10 - offset))
+        return false;
+    const FirmwareLockGuard guard(lock);
+    if (!guard) {
+        power_io.error = "ACPI global lock unavailable during RTC read";
+        return false;
+    }
+    for (size_t i = 0; i < length; ++i) {
+        out8(0x70, uint8_t(offset + i));
+        bytes[i] = in8(0x71);
+    }
+    return true;
+}
+
+void power_probe_text(const char* text) {
+    log("%s", text);
+    while (*text)
+        fb_console_put(*text++);
+}
+
+void power_probe_value(const char* label, uint64_t value) {
+    char digits[21];
+    char* begin = digits + sizeof(digits);
+    *--begin = 0;
+    do {
+        *--begin = char('0' + value % 10);
+        value /= 10;
+    } while (value);
+    power_probe_text(label);
+    power_probe_text(begin);
+}
 } // namespace
 
 bool firmware_read_system_memory(uint64_t address, uint8_t* bytes, size_t length,
@@ -110,21 +229,91 @@ bool firmware_read_system_memory(uint64_t address, uint8_t* bytes, size_t length
     const auto* source = map_acpi_memory(address, length, true);
     if (!source)
         return false;
-    FirmwareLock lock{};
-    if (firmware_lock) {
-        // This provider is only used by the boot-time diagnostics.
-        static FirmwareLock platform_lock = find_firmware_lock();
-        lock = platform_lock;
-        if (!lock.word || !Acpi::try_acquire_global_lock(*lock.word))
-            return false;
-    }
+    const FirmwareLockGuard guard(firmware_lock);
+    if (!guard)
+        return false;
     for (size_t i = 0; i < length; ++i)
         bytes[i] = source[i];
-    if (lock.word && Acpi::release_global_lock(*lock.word)) {
-        notify_firmware(lock.pm1a);
-        notify_firmware(lock.pm1b);
-    }
     return true;
+}
+
+Acpi::PowerSupplyReader* firmware_open_power_supply_reader(const Acpi::DefinitionBlocks& blocks,
+                                                           const char** failure) {
+    const auto regions = pci_firmware_read_regions();
+    auto& ports = power_io.ports;
+    Acpi::PowerRegisters registers{};
+    if (decode_embedded_controller_ports(blocks, ports, regions)) {
+        if (ports.data != 0x62 || ports.command != 0x66) {
+            if (failure)
+                *failure = "unsupported embedded-controller ports";
+            log("ACPI power: unsupported EC at data=%x command=%x\n", uint64_t(ports.data),
+                uint64_t(ports.command));
+            return nullptr;
+        }
+        registers = {&power_io, power_read_ec, power_write_ec, power_read_cmos, ports};
+    }
+    // _REG can issue several controller transactions. Retain the per-transfer
+    // deadline and allow a longer aggregate wait before userspace starts.
+    power_io.delay_budget = boot_ec_delay_budget;
+    power_io.error = nullptr;
+    auto* reader = Acpi::open_power_supply_reader(blocks, regions, registers, failure);
+    if (!reader && failure && power_io.error)
+        *failure = power_io.error;
+    return reader;
+}
+
+bool firmware_sample_power_supplies(Acpi::PowerSupplyReader& reader,
+                                    Acpi::PowerSupplySnapshot& readings, bool initial,
+                                    const char** failure) {
+    // An EC wait can hold the kernel lock. Bound the total delay per sample.
+    power_io.delay_budget = initial ? boot_ec_delay_budget : runtime_ec_delay_budget;
+    power_io.error = nullptr;
+    const bool sampled = Acpi::sample_power_supplies(reader, readings);
+    if (failure)
+        *failure = sampled ? nullptr : power_io.error ? power_io.error : "firmware sample failed";
+    return sampled;
+}
+
+void firmware_probe_power_supplies(const Acpi::DefinitionBlocks& blocks) {
+    auto* reader = firmware_open_power_supply_reader(blocks);
+    Acpi::PowerSupplySnapshot readings{};
+    const bool success = reader && firmware_sample_power_supplies(*reader, readings, true);
+    Acpi::close_power_supply_reader(reader);
+    if (!success) {
+        power_probe_value("ACPI power: firmware evaluation failed ec=", power_io.ports.data != 0);
+        power_probe_text("\n");
+        return;
+    }
+    power_probe_value("ACPI power: batteries=", readings.battery_count);
+    power_probe_value(" adapters=", readings.adapter_count);
+    power_probe_text("\n");
+    for (unsigned i = 0; i < readings.adapter_count; ++i) {
+        const auto& adapter = readings.adapters[i];
+        power_probe_text("ACPI AC: ");
+        power_probe_text(adapter.name);
+        power_probe_value(" online=", adapter.online);
+        power_probe_text("\n");
+    }
+    for (unsigned i = 0; i < readings.battery_count; ++i) {
+        const auto& battery = readings.batteries[i];
+        power_probe_text("ACPI battery: ");
+        power_probe_text(battery.name);
+        if (!battery.present) {
+            power_probe_text(" empty bay\n");
+            continue;
+        }
+        power_probe_text(" model=");
+        power_probe_text(battery.model);
+        power_probe_value(" unit=", battery.unit);
+        power_probe_value(" state=", battery.state);
+        power_probe_text("\n");
+        power_probe_value("ACPI battery: remaining=", battery.remaining_capacity);
+        power_probe_value(" full=", battery.full_capacity);
+        power_probe_value(" design=", battery.design_capacity);
+        power_probe_value(" voltage_mv=", battery.voltage);
+        power_probe_value(" rate=", battery.rate);
+        power_probe_text("\n");
+    }
 }
 
 bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,

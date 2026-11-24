@@ -1000,7 +1000,7 @@ test-virtio-gpu: build/axiom64.elf
 	$(PYTHON) scripts/virtio_gpu_test.py
 
 .PHONY: test-acpi-routing
-build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_resources.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
+build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_objects.cpp kernel/firmware/aml_resources.cpp kernel/firmware/embedded_controller.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-acpi-routing: build/acpi-routing-tests

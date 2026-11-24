@@ -75,10 +75,17 @@ bool firmware_read_system_memory(uint64_t address, uint8_t* bytes, size_t length
 namespace Acpi {
 struct InterruptTopology;
 struct DefinitionBlocks;
+struct PowerSupplyReader;
+struct PowerSupplySnapshot;
 } // namespace Acpi
 
 bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology&, Acpi::DefinitionBlocks&);
 void firmware_probe_i2c_hid(const Acpi::DefinitionBlocks&);
+void firmware_probe_power_supplies(const Acpi::DefinitionBlocks&);
+Acpi::PowerSupplyReader* firmware_open_power_supply_reader(const Acpi::DefinitionBlocks&,
+                                                           const char** failure = nullptr);
+bool firmware_sample_power_supplies(Acpi::PowerSupplyReader&, Acpi::PowerSupplySnapshot&,
+                                    bool initial = false, const char** failure = nullptr);
 void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology&,
                                        const Acpi::DefinitionBlocks&);
 } // namespace ax

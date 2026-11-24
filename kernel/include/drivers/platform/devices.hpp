@@ -48,7 +48,8 @@ enum class Device {
     alsa_playback,
     touchpad,
     input_uevent,
-    network_uevent
+    network_uevent,
+    power_supply_uevent
 };
 
 struct Terminal {
@@ -75,6 +76,7 @@ struct Pty {
 
 void devices_init(bool display_console, bool virtio_graphics);
 void inventory_device_added(Node*, bool synthetic);
+void inventory_device_changed(Node*);
 const ControlFileOps* inventory_uevent_control(Node*);
 
 uint64_t device_number(Node*);

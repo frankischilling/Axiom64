@@ -26,10 +26,15 @@ set -eu
 umask 077
 state=${XDG_STATE_HOME:-$HOME/.local/state}/axiom64
 mkdir -p "$state"
-XDG_RUNTIME_DIR=$(mktemp -d /tmp/axiom64-plasma-XXXXXX)
+uid=$(id -u)
+runtime="/run/user/$uid"
+if ! test "${XDG_RUNTIME_DIR:-}" = "$runtime" || ! test -d "$runtime" ||
+    test -L "$runtime" || ! test "$(stat -c '%u:%a' "$runtime")" = "$uid:700"; then
+    XDG_RUNTIME_DIR=$(mktemp -d /tmp/axiom64-plasma-XXXXXX)
+    trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
+fi
 export XDG_RUNTIME_DIR
 export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
-trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
 trap 'exit 0' HUP INT TERM
 
 export QT_QUICK_BACKEND=software LIBGL_ALWAYS_SOFTWARE=1

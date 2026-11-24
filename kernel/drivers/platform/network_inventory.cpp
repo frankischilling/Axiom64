@@ -49,6 +49,10 @@ bool publish_interface(const NetInfo& info, const char* parent, const char* type
     const size_t name = strlen(info.name);
     memcpy(event + offset, info.name, name);
     number_path(event + offset + name, "\nIFINDEX=", info.index);
+    if (info.wireless) {
+        constexpr char kind[] = "\nDEVTYPE=wlan";
+        memcpy(event + strlen(event), kind, sizeof(kind));
+    }
     auto* endpoint = inventory_attribute(path, "uevent", event);
     if (!endpoint || !inventory_attribute(path, "ifindex", index) ||
         !inventory_attribute(path, "iflink", index) || !inventory_attribute(path, "type", type) ||

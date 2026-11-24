@@ -25,6 +25,7 @@
  */
 #include "drivers/platform/devices.hpp"
 #include "drivers/graphics/drm_scanout.hpp"
+#include "drivers/platform/virtual_console.hpp"
 #include "drivers/graphics/virtio_gpu.hpp"
 #include "drivers/platform/inventory.hpp"
 #include "drivers/platform/legacy_io.hpp"
@@ -572,7 +573,8 @@ void devices_init(bool display_console, bool virtio_graphics, bool drm) {
         }
     }
     tag("/dev/tty0", Device::vt);
-    tag("/dev/tty1", Device::vt, 1);
+    tag("/dev/tty1", Device::vt, foreground_vt);
+    publish_foreground_console();
     tag("/dev/ptmx", Device::ptmx);
     for (unsigned i = 0; i < block_device_limit(); i++) {
         auto info = block_info(i);
@@ -1442,13 +1444,14 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x5602:
         return current_task()->memory->space.valid(arg, 8) ? 0 : -14;
     case 0x5603: {
-        uint16_t state[] = {1, 0, 2};
+        uint16_t state[] = {foreground_vt, 0, 1u | (1u << foreground_vt)};
         return output(arg, state, sizeof(state));
     }
     case 0x5605:
+        return 0;
     case 0x5606:
     case 0x5607:
-        return 0;
+        return arg == foreground_vt ? 0 : -6;
     case 0x4b3b:
         return output(arg, &vt_mode, 4);
     case 0x4b3a:

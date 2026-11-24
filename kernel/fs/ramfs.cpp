@@ -26,13 +26,28 @@
 #include "fs/vfs.hpp"
 #include "drivers/platform/devices.hpp"
 #include "fs/inotify.hpp"
+#include "fs/tmpfs.hpp"
 #include "fs/xattr.hpp"
 #include "process/task.hpp"
 
 namespace ax {
 static uint64_t next_inode = 1;
 
+void ramfs_set_control(Node* node, const ControlFileOps* control) {
+    if (node->mount->ops == &ramfs_ops)
+        node->filesystem_data = const_cast<ControlFileOps*>(control);
+}
+
+static const ControlFileOps* control(Node* node) {
+    if (auto inventory = inventory_uevent_control(node))
+        return inventory;
+    return static_cast<const ControlFileOps*>(node->filesystem_data);
+}
+
 static Node* allocate_node(Mount* mount, uint32_t mode) {
+    auto limits = tmpfs_limits(mount);
+    if (limits && limits->inodes && limits->used_inodes >= limits->inodes)
+        return nullptr;
     Node* node = nullptr;
     for (size_t i = 0; i < node_count; i++)
         if (!nodes[i].mount) {
@@ -43,6 +58,8 @@ static Node* allocate_node(Mount* mount, uint32_t mode) {
         node = &nodes[node_count++];
     if (!node)
         return nullptr;
+    if (limits)
+        ++limits->used_inodes;
     *node = {};
     node->inode = next_inode++;
     node->links = (mode & 0170000) == directory ? 2 : 1;
@@ -125,23 +142,67 @@ static int remove(Node* node) {
     file_node(node)->ctime = node_now();
     node->parent->mtime = node->parent->ctime = node_now();
     node_retire_xattrs(node);
+    if (tmpfs_limits(node->mount))
+        schedule_filesystem_reclaim();
     return 0;
 }
 
 void ramfs_reclaim_device(Node* node) {
     if (!node || !node->mount || node->mount->ops != &ramfs_ops || !node->removed || node->links ||
-        (node->mode & 0170000) != character || node->hardlink || node->owned ||
-        node_referenced(node))
+        (node->mode & 0170000) != character)
         return;
+    ramfs_reclaim_unlinked(node);
+}
+
+static void release_storage(Node& node) {
+    if (!node.hardlink && node.owned) {
+        if (node.backing_physical)
+            page_free(node.backing_physical, node.capacity / page_size);
+        else
+            release(node.data);
+    }
+}
+
+static bool reclaim_unlinked(Node* node, TmpfsLimits* limits) {
+    if (!node->parent || !node->removed || node->first_child ||
+        (!limits && (node->hardlink || node->owned)) ||
+        (!node->hardlink && (node->links || node_referenced(node))))
+        return false;
     Node** slot = &node->parent->first_child;
     while (*slot && *slot != node)
         slot = &(*slot)->next_sibling;
     if (*slot != node)
-        return;
+        return false;
     *slot = node->next_sibling;
     inotify_retire_inode(node);
     xattr_store_destroy(node->xattrs);
+    if (limits) {
+        --limits->used_inodes;
+        if (node->backing_physical)
+            limits->used_pages -= node->capacity / page_size;
+        release_storage(*node);
+    }
     *node = {};
+    return true;
+}
+
+bool ramfs_reclaim_unlinked(Node* node) {
+    return reclaim_unlinked(node, nullptr);
+}
+
+static void reclaim_tmpfs(Mount* mount) {
+    auto limits = tmpfs_limits(mount);
+    bool released;
+    do {
+        released = false;
+        // Retire removed names before releasing the inode they refer to.
+        for (size_t i = 0; i < node_count; ++i)
+            if (nodes[i].mount == mount && nodes[i].hardlink)
+                released |= reclaim_unlinked(&nodes[i], limits);
+        for (size_t i = 0; i < node_count; ++i)
+            if (nodes[i].mount == mount && !nodes[i].hardlink)
+                released |= reclaim_unlinked(&nodes[i], limits);
+    } while (released);
 }
 
 static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
@@ -162,10 +223,53 @@ static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
     return 0;
 }
 
+static int resize_tmpfs(Node& node, size_t size, TmpfsLimits& limits) {
+    const size_t old = node.backing_physical ? node.capacity / page_size : 0;
+    const size_t next = align_up(size) / page_size;
+    if (old == next)
+        return 0;
+    const bool shared = old && page_shared(node.backing_physical, old);
+    if (next < old) {
+        // A shared mapping retains its backing and that backing stays charged.
+        if (shared)
+            return 0;
+        page_free(node.backing_physical + next * page_size, old - next);
+        limits.used_pages -= old - next;
+        node.capacity = next * page_size;
+        if (!next) {
+            node.backing_physical = 0;
+            node.data = nullptr;
+            node.owned = false;
+        }
+        return 0;
+    }
+    if (shared)
+        return -16;
+    if (limits.pages && next - old > limits.pages - limits.used_pages)
+        return -28;
+    auto backing = page_alloc(next);
+    if (!backing)
+        return -12;
+    auto data = static_cast<uint8_t*>(physical(backing));
+    if (node.size)
+        memcpy(data, node.data, node.size);
+    release_storage(node);
+    limits.used_pages += next - old;
+    node.data = data;
+    node.backing_physical = backing;
+    node.owned = true;
+    node.capacity = next * page_size;
+    return 0;
+}
+
 static int truncate(Node* node, size_t size) {
     if (size > 256 * 1024 * 1024)
         return -27;
-    if (!node->owned || size > node->capacity) {
+    auto limits = tmpfs_limits(node->mount);
+    if (limits) {
+        if (int error = resize_tmpfs(*node, size, *limits))
+            return error;
+    } else if (!node->owned || size > node->capacity) {
         if (node->backing_physical &&
             page_shared(node->backing_physical, node->capacity / page_size))
             return -16;
@@ -187,10 +291,10 @@ static int truncate(Node* node, size_t size) {
     }
     if (size > node->size)
         memset(node->data + node->size, 0, size - node->size);
-    else if (size < node->size)
-        memset(node->data + size, 0, node->size - size);
+    else if (size < min(node->size, node->capacity))
+        memset(node->data + size, 0, min(node->size, node->capacity) - size);
     node->size = size;
-    node->allocated_blocks = (size + 511) / 512;
+    node->allocated_blocks = limits ? node->capacity / 512 : (size + 511) / 512;
     node->mtime = node->ctime = node_now();
     return 0;
 }
@@ -253,6 +357,8 @@ static int sync(Mount* mount, Node*, bool) {
 }
 
 static int map_shared(Node* node, uint64_t offset, size_t length, uint64_t& physical_address) {
+    if (control(node))
+        return -19;
     if (offset > SIZE_MAX - length)
         return -27;
     size_t old = node->size;
@@ -262,7 +368,8 @@ static int map_shared(Node* node, uint64_t offset, size_t length, uint64_t& phys
     if (error)
         return error;
     node->size = old;
-    node->allocated_blocks = old_blocks;
+    if (!tmpfs_limits(node->mount))
+        node->allocated_blocks = old_blocks;
     node->mtime = mtime;
     node->ctime = ctime;
     physical_address = node->backing_physical + offset;
@@ -289,12 +396,7 @@ static void destroy(Mount* mount) {
             continue;
         if (!node.hardlink)
             xattr_store_destroy(node.xattrs);
-        if (!node.hardlink && node.owned) {
-            if (node.backing_physical)
-                page_free(node.backing_physical, node.capacity / page_size);
-            else
-                release(node.data);
-        }
+        release_storage(node);
         node = {};
     }
 }
@@ -322,9 +424,53 @@ static int removexattr(Node* node, const XattrName& name) {
     return error;
 }
 
-const FilesystemOps ramfs_ops = {
-    find,     create,      link,    remove,  rename,   read,
-    write,    truncate,    setattr, readdir, sync,     map_shared,
-    stats,    destroy,     nullptr, nullptr, getxattr, listxattr,
-    setxattr, removexattr, nullptr, nullptr, nullptr,  inventory_uevent_control};
+namespace {
+constexpr FilesystemOps memory_ops = {
+    .lookup = find,
+    .create = create,
+    .link = link,
+    .remove = remove,
+    .rename = rename,
+    .read = read,
+    .write = write,
+    .truncate = truncate,
+    .setattr = setattr,
+    .readdir = readdir,
+    .sync = sync,
+    .map_shared = map_shared,
+    .stats = stats,
+    .destroy = destroy,
+    .remount = nullptr,
+    .prepare_unmount = nullptr,
+    .getxattr = getxattr,
+    .listxattr = listxattr,
+    .setxattr = setxattr,
+    .removexattr = removexattr,
+    .control = control,
+};
+} // namespace
+
+const FilesystemOps ramfs_ops = memory_ops;
+const FilesystemOps tmpfs_ops = [] {
+    auto operations = memory_ops;
+    operations.stats = [](Mount* mount, FilesystemStats& result) {
+        const auto& limits = *tmpfs_limits(mount);
+        result = {0x01021994,    page_size,
+                  limits.pages,  limits.pages ? limits.pages - limits.used_pages : 0,
+                  limits.inodes, limits.inodes ? limits.inodes - limits.used_inodes : 0};
+        return 0;
+    };
+    operations.destroy = [](Mount* mount) {
+        destroy(mount);
+        release(mount->data);
+        mount->data = nullptr;
+    };
+    operations.queue_reclaim = [](Node* node) { return node->removed; };
+    operations.reclaim_queued = reclaim_tmpfs;
+    operations.sync = [](Mount* mount, Node* node, bool data_only) {
+        reclaim_tmpfs(mount);
+        return sync(mount, node, data_only);
+    };
+    return operations;
+}();
 } // namespace ax

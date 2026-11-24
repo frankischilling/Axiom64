@@ -27,6 +27,7 @@
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
 #include "ipc/posix_message_queues.hpp"
+#include "process/clock_sleep.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
 #include "io/descriptor_wait.hpp"
@@ -204,11 +205,8 @@ void signal_interrupt(Task& task) {
             semaphore_discard(task);
         if (task.wait == Wait::message_queue)
             message_queue_discard(task);
-        if (task.wait == Wait::sleep && task.frame.rsi && task.deadline > ticks) {
-            uint64_t remaining = task.deadline - ticks,
-                     time[] = {remaining / 100, (remaining % 100) * 10000000};
-            task.memory->space.copy_out(task.frame.rsi, time, sizeof(time));
-        }
+        if (task.wait == Wait::sleep)
+            interrupted_result = clock_sleep_interrupt(task);
         task.frame.rip += 2;
         task.frame.rax = uint64_t(interrupted_result);
         task.deadline = 0;

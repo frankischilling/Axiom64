@@ -42,7 +42,7 @@ static void usage(void) {
           "  user-rename NAME NEW | user-shell NAME SHELL | user-home NAME HOME\n"
           "  member-add GROUP USER | member-delete GROUP USER\n"
           "  password NAME --password-fd FD | lock NAME | unlock NAME\n"
-          "  ensure-messagebus | ensure-sddm\n"
+          "  ensure-messagebus | ensure-sddm | ensure-polkitd\n"
           "  show NAME\n",
           stderr);
 }
@@ -341,7 +341,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "accountctl: pending home recovery: %s; updates are blocked\n",
                 strerror(recovery_error));
     int messagebus = !strcmp(argv[first], "ensure-messagebus");
-    if ((messagebus || !strcmp(argv[first], "ensure-sddm")) && argc == first + 1) {
+    int greeter_account = !strcmp(argv[first], "ensure-sddm");
+    int policykit = !strcmp(argv[first], "ensure-polkitd");
+    if ((messagebus || greeter_account || policykit) && argc == first + 1) {
         const struct account_user bus = {
             "messagebus", "!", "System message bus",     "/dev/null", "/bin/nologin",
             81,           81,  {-1, -1, -1, -1, -1, -1},
@@ -350,9 +352,15 @@ int main(int argc, char** argv) {
             "sddm", "!", "Display manager",        "/var/lib/sddm", "/bin/nologin",
             499,    499, {-1, -1, -1, -1, -1, -1},
         };
-        int result = ensure_service(db, records, messagebus ? bus : greeter, !messagebus);
+        const struct account_user authority = {
+            "polkitd", "!", "PolicyKit authority",    "/var/empty", "/bin/nologin",
+            498,       498, {-1, -1, -1, -1, -1, -1},
+        };
+        const struct account_user service =
+            messagebus ? bus : (greeter_account ? greeter : authority);
+        int result = ensure_service(db, records, service, greeter_account);
         if (result < 0)
-            perror(messagebus ? "accountctl: messagebus account" : "accountctl: sddm account");
+            fprintf(stderr, "accountctl: %s account: %s\n", service.name, strerror(errno));
         account_database_end(db);
         return result < 0;
     }

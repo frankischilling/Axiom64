@@ -33,6 +33,30 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native test-usb-hid-mouse
+.PHONY: test-intel-wifi-firmware
+AX201_FIRMWARE = vendor/firmware/intel-ax201/iwlwifi-QuZ-a0-hr-b0-77.ucode
+AX201_LICENSE = vendor/firmware/intel-ax201/LICENCE.iwlwifi_firmware
+test-intel-wifi-firmware: build/intel-wifi-firmware-test $(AX201_FIRMWARE)
+	./build/intel-wifi-firmware-test $(AX201_FIRMWARE)
+build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp \
+	kernel/tests/drivers/net/intel_wifi_codecs.cpp \
+	kernel/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_context.cpp \
+	kernel/drivers/net/intel_wifi_start.cpp kernel/drivers/net/intel_wifi_command.cpp \
+	kernel/drivers/net/intel_wifi_station.cpp kernel/drivers/net/intel_wifi_station.hpp \
+	kernel/drivers/net/intel_wifi_rx.cpp kernel/include/drivers/net/intel_wifi_rx.hpp \
+	kernel/include/drivers/net/intel_wifi_live.hpp \
+	kernel/drivers/net/intel_wifi_scan.cpp kernel/include/drivers/net/intel_wifi_scan.hpp \
+	kernel/drivers/net/intel_wifi_channel.cpp kernel/include/drivers/net/intel_wifi_channel.hpp \
+	kernel/drivers/net/intel_wifi_peer.cpp kernel/include/drivers/net/intel_wifi_peer.hpp \
+	kernel/drivers/net/intel_wifi_auth.cpp kernel/include/drivers/net/intel_wifi_auth.hpp \
+	kernel/drivers/net/intel_wifi_key.cpp kernel/include/drivers/net/intel_wifi_key.hpp \
+	kernel/drivers/net/intel_wifi_rsn.cpp kernel/include/drivers/net/intel_wifi_rsn.hpp \
+	kernel/include/net/ipv4_wire.hpp \
+	kernel/include/drivers/net/intel_wifi.hpp kernel/include/drivers/net/intel_wifi_context.hpp \
+	kernel/include/drivers/net/intel_wifi_start.hpp kernel/include/drivers/net/intel_wifi_command.hpp \
+	kernel/include/mm/dma.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-partitions test-partitions-native
 .PHONY: test-block-cache test-guest-media
 .PHONY: test-vm-journal
@@ -385,6 +409,22 @@ build/usb-hid-mouse-test: kernel/tests/usb/hid_mouse.cpp kernel/drivers/usb/hid_
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $< kernel/drivers/usb/hid_mouse.cpp -o $@
 test-usb-hid-mouse: build/usb-hid-mouse-test
 	ASAN_OPTIONS=detect_leaks=1 ./build/usb-hid-mouse-test
+
+.PHONY: test-cgroup-session
+test-cgroup-session:
+	$(PYTHON) scripts/cgroup_session_test.py
+
+.PHONY: test-device-events
+test-device-events:
+	$(PYTHON) scripts/device_event_test.py
+
+.PHONY: test-virtual-console
+test-virtual-console:
+	$(PYTHON) scripts/virtual_console_test.py
+
+.PHONY: test-tmpfs
+test-tmpfs:
+	$(PYTHON) scripts/tmpfs_test.py
 
 test-clock-wall:
 	$(PYTHON) scripts/clock_wall_test.py
@@ -978,7 +1018,7 @@ test-drm-scanout: build/axiom64.elf
 	$(PYTHON) scripts/virtio_gpu_test.py --drm
 
 .PHONY: test-acpi-routing
-build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_resources.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
+build/acpi-routing-tests: kernel/tests/firmware/aml_routing.cpp kernel/firmware/aml.cpp kernel/firmware/aml_objects.cpp kernel/firmware/aml_resources.cpp kernel/firmware/embedded_controller.cpp kernel/drivers/platform/intel_gpio.cpp kernel/firmware/aml_internal.hpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-acpi-routing: build/acpi-routing-tests

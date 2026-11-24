@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/platform/uevent.cpp
- * @brief   Device inventory add events.
+ * @brief   Device inventory events.
  * @author  frankischilling
  * @date    2026-11-23
  *
@@ -29,9 +29,11 @@
 namespace ax {
 namespace {
 uint64_t sequence;
+constexpr const char* pci_actions[] = {"add",    "remove",  "change", "move",
+                                       "online", "offline", "bind",   "unbind"};
 
 struct Message {
-    char data[768];
+    char data[2048];
     size_t size = 0;
 
     void text(const char* value) {
@@ -77,10 +79,32 @@ int64_t read(Handle* handle, void* output, size_t length) {
     return copied;
 }
 
+int emit(Node*, const char* action, bool synthetic);
+
 int64_t write(Handle* handle, const void* data, size_t length) {
-    if (!((length == 3 && !memcmp(data, "add", 3)) || (length == 4 && !memcmp(data, "add\n", 4))))
+    auto* node = handle->node;
+    const auto* bytes = static_cast<const char*>(data);
+    const size_t size = length && bytes[length - 1] == '\n' ? length - 1 : length;
+    if (node->device == Device::pci_uevent) {
+        if (!capable(current_task()->credentials, Capability::sys_admin))
+            return -1;
+        if (!length)
+            return 0;
+        for (auto action : pci_actions) {
+            if (strlen(action) == size && !memcmp(bytes, action, size)) {
+                int error = emit(node, action, true);
+                return error ? error : int64_t(length);
+            }
+        }
         return -22;
-    inventory_device_added(handle->node, true);
+    }
+    if (size == 3 && !memcmp(bytes, "add", 3))
+        emit(node, "add", true);
+    else if (node->device == Device::power_supply_uevent && size == 6 &&
+             !memcmp(bytes, "change", 6))
+        emit(node, "change", true);
+    else
+        return -22;
     return length;
 }
 
@@ -89,29 +113,33 @@ int truncate(Node*, size_t length) {
 }
 
 constexpr ControlFileOps control{access, read, write, truncate};
-} // namespace
 
-void inventory_device_added(Node* node, bool synthetic) {
+int emit(Node* node, const char* action, bool synthetic) {
     char path[256]{};
     node_path(node, path, sizeof(path), false, root_node);
     size_t length = strlen(path);
     constexpr char endpoint[] = "/uevent";
     if (length <= sizeof(endpoint) + 4 || memcmp(path, "/sys/devices/", 13) ||
         strcmp(path + length - (sizeof(endpoint) - 1), endpoint))
-        return;
+        return -19;
     path[length - (sizeof(endpoint) - 1)] = 0;
     const char* relative = path + 4;
     Message event;
     // Reserve space for two terminated paths, the properties and fixed fields.
     size_t prefix_bytes = 2 * strlen(relative) + 100;
     if (prefix_bytes > sizeof(event.data) || node->size > sizeof(event.data) - prefix_bytes)
-        return;
-    event.text("add@");
+        return -7;
+    event.text(action);
+    event.text("@");
     event.field(relative);
-    event.field("ACTION=add");
+    event.text("ACTION=");
+    event.field(action);
     event.text("DEVPATH=");
     event.field(relative);
-    event.field(node->device == Device::network_uevent ? "SUBSYSTEM=net" : "SUBSYSTEM=input");
+    if (node->device == Device::power_supply_uevent)
+        event.field("SUBSYSTEM=power_supply");
+    else if (node->device != Device::pci_uevent)
+        event.field(node->device == Device::network_uevent ? "SUBSYSTEM=net" : "SUBSYSTEM=input");
     event.properties(node->data, node->size);
     if (synthetic)
         event.field("SYNTH_UUID=0");
@@ -119,10 +147,22 @@ void inventory_device_added(Node* node, bool synthetic) {
     event.number(++sequence);
     event.field("");
     netlink_broadcast_uevent(event.data, event.size);
+    return 0;
+}
+} // namespace
+
+void inventory_device_added(Node* node, bool synthetic) {
+    emit(node, "add", synthetic);
+}
+
+void inventory_device_changed(Node* node) {
+    emit(node, "change", false);
 }
 
 const ControlFileOps* inventory_uevent_control(Node* node) {
-    return node->device == Device::input_uevent || node->device == Device::network_uevent ? &control
-                                                                                          : nullptr;
+    if (node->device == Device::input_uevent || node->device == Device::network_uevent ||
+        node->device == Device::power_supply_uevent || node->device == Device::pci_uevent)
+        return &control;
+    return nullptr;
 }
 } // namespace ax

@@ -37,6 +37,7 @@
 #include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
+#include "process/clock_sleep.hpp"
 #include "process/task.hpp"
 #include "process/scheduler.hpp"
 #include "process/cpu.hpp"
@@ -1054,7 +1055,7 @@ static int64_t scheduler_parameter(unsigned request, int pid, int policy, uint64
     return policy ? -95 : 0;
 }
 
-static int64_t dispatch(Frame* f, Task* running) {
+int64_t dispatch_linux_syscall(Frame* f, Task* running) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
     case 188:
@@ -1290,29 +1291,8 @@ static int64_t dispatch(Frame* f, Task* running) {
     }
     case 33:
         return dup_fd(a, b);
-    case 35: {
-        Timespec ts;
-        if (!running->memory->space.copy_in(&ts, a, sizeof(ts)))
-            return -14;
-        if (ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1000000000)
-            return -22;
-        if (running->deadline && ticks >= running->deadline) {
-            running->deadline = 0;
-            return 0;
-        }
-        if (!running->deadline) {
-            if (!ts.sec && !ts.nsec)
-                return 0;
-            constexpr uint64_t tick_ns = 10000000;
-            const uint64_t phase = clock_monotonic_ns() % tick_ns;
-            const uint64_t extra = (phase + uint64_t(ts.nsec) + tick_ns - 1) / tick_ns;
-            const uint64_t room = UINT64_MAX - ticks;
-            running->deadline = extra > room || uint64_t(ts.sec) > (room - extra) / 100
-                                    ? UINT64_MAX
-                                    : ticks + uint64_t(ts.sec) * 100 + extra;
-        }
-        return block(Wait::sleep);
-    }
+    case 35:
+        return linux_clock_nanosleep(*running, 1, 0, a, b);
     case 39:
         return running->process->pid;
     case 186:
@@ -1787,6 +1767,8 @@ static int64_t dispatch(Frame* f, Task* running) {
                                                   : 10000000};
         return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
+    case 230:
+        return linux_clock_nanosleep(*running, int32_t(a), int32_t(b), c, d);
     case 137: {
         Path path;
         if (!path_at(-100, a, path))
@@ -1813,11 +1795,11 @@ static int64_t dispatch(Frame* f, Task* running) {
         if (c && !running->memory->space.string(c, type, sizeof(type)))
             return -14;
         bool check_dirty = false;
+        char options[1024]{};
         if (e) {
-            char options[1024];
             if (!running->memory->space.string(e, options, sizeof(options)))
                 return -14;
-            if (options[0]) {
+            if (options[0] && strcmp(type, "tmpfs")) {
                 if (!ext_volume_type(type) || (d & 32) || strcmp(options, "recovery=check"))
                     return -22;
                 check_dirty = true;
@@ -1826,7 +1808,7 @@ static int64_t dispatch(Frame* f, Task* running) {
         Path source;
         if (!(d & 32) && ext_volume_type(type) && !path_at(-100, a, source))
             return source.error;
-        return mount_filesystem(path, source, type, d, check_dirty);
+        return mount_filesystem(path, source, type, d, check_dirty, options);
     }
     case 166: {
         Path path;
@@ -2000,26 +1982,4 @@ static int64_t dispatch(Frame* f, Task* running) {
     }
 }
 
-extern "C" Frame* handle_syscall(Frame* f) {
-    KernelGuard guard;
-    cpu_account(current_task());
-    asm volatile("fxsave64 %0" : "=m"(current_task()->fpu));
-    clock_refresh();
-    uint64_t number = f->rax;
-    if (trace_syscalls)
-        log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(current_task()->pid), number, f->rdi,
-            f->rsi, f->rdx);
-    int64_t result = dispatch(f, current_task());
-    cpu_refresh();
-    epoll_notify();
-    if (trace_syscalls)
-        log("sys result=%d\n", result);
-    if (result == would_block) {
-        f->rip -= 2;
-        f->rax = number;
-    } else if (number != 15)
-        f->rax = result;
-    return schedule(f, number == 24 || result == would_block ||
-                           current_task()->state != State::runnable);
-}
 } // namespace ax

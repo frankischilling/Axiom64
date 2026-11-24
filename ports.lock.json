@@ -2561,6 +2561,19 @@
       "installed_only": true
     },
     {
+      "name": "ki18n-lang",
+      "version": "6.13.0-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/ki18n-lang-6.13.0-r0.apk",
+      "archive": "ki18n-lang-6.13.0-r0.apk",
+      "sha256": "30d2be55d70460d96d09d31e17d23baf36870882d8d57f5601a43a7729122514",
+      "license": "LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-or-later)",
+      "upstream": "https://community.kde.org/Frameworks",
+      "origin": "ki18n",
+      "source_commit": "d27137ba98af5d9e9ec49e472477d2c5458f6fe3",
+      "installed_only": true
+    },
+    {
       "name": "ki18n5",
       "version": "5.116.0-r1",
       "repository": "community",
@@ -6057,6 +6070,32 @@
       "installed_only": true
     },
     {
+      "name": "musl-locales",
+      "version": "0.1.0-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-locales-0.1.0-r1.apk",
+      "archive": "musl-locales-0.1.0-r1.apk",
+      "sha256": "042bff4633f44d96c9f3ceacd35d2153600567a8390d6f9d4eff9ca11d35a6f8",
+      "license": "LGPL-3.0-only",
+      "upstream": "https://git.adelielinux.org/adelie/musl-locales/-/wikis/home",
+      "origin": "musl-locales",
+      "source_commit": "65780305dd2517157357121ccddbe95c84e6d5a4",
+      "installed_only": true
+    },
+    {
+      "name": "musl-locales-lang",
+      "version": "0.1.0-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-locales-lang-0.1.0-r1.apk",
+      "archive": "musl-locales-lang-0.1.0-r1.apk",
+      "sha256": "a056d6cee190ce1767f4a62ee3766f9599412d9dbc72e2f3ae31a2cf6b702e3e",
+      "license": "MIT",
+      "upstream": "https://git.adelielinux.org/adelie/musl-locales/-/wikis/home",
+      "origin": "musl-locales",
+      "source_commit": "65780305dd2517157357121ccddbe95c84e6d5a4",
+      "installed_only": true
+    },
+    {
       "name": "nasm",
       "version": "2.16.03-r0",
       "repository": "main",
@@ -6648,6 +6687,19 @@
       "installed_only": true
     },
     {
+      "name": "plasma-desktop-lang",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/plasma-desktop-lang-6.3.6-r0.apk",
+      "archive": "plasma-desktop-lang-6.3.6-r0.apk",
+      "sha256": "3e6a0b1287748cd39aff2b5372c87f0d31ac4983e2ee04424e57fb246837b8fb",
+      "license": "GPL-2.0-only AND LGPL-2.1-only",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "plasma-desktop",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
       "name": "plasma-integration",
       "version": "6.3.6-r0",
       "repository": "community",
@@ -6700,6 +6752,19 @@
       "installed_only": true
     },
     {
+      "name": "plasma-workspace-lang",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/plasma-workspace-lang-6.3.6-r0.apk",
+      "archive": "plasma-workspace-lang-6.3.6-r0.apk",
+      "sha256": "1f44aaf6c6a4d3e2259ef5e9092680f76b90fceb135d93e4951f491b163fc8e8",
+      "license": "(GPL-2.0-only OR GPL-3.0-only) AND LGPL-2.1-or-later AND GPL-2.0-or-later AND MIT AND LGPL-2.1-only AND LGPL-2.0-or-later AND (LGPL-2.1-only OR LGPL-3.0-only) AND LGPL-2.0-only",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "plasma-workspace",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
       "name": "plasma-workspace-libs",
       "version": "6.3.6-r0",
       "repository": "community",
@@ -6726,6 +6791,32 @@
       "installed_only": true
     },
     {
+      "name": "polkit-common",
+      "version": "126-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/polkit-common-126-r0.apk",
+      "archive": "polkit-common-126-r0.apk",
+      "sha256": "8461a8277b62fc506f1434b52c551cd5dd364346ae7e2664834214788a01255d",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://github.com/polkit-org/polkit",
+      "origin": "polkit",
+      "source_commit": "77ce154b13a366a8f4ee9be915b72caf0e06a245",
+      "installed_only": true
+    },
+    {
+      "name": "polkit-elogind",
+      "version": "126-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/polkit-elogind-126-r0.apk",
+      "archive": "polkit-elogind-126-r0.apk",
+      "sha256": "85aadf593db2822f63260ca4c996728dc82bfe116e2b064d5bd056c07081fbe0",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://github.com/polkit-org/polkit",
+      "origin": "polkit",
+      "source_commit": "77ce154b13a366a8f4ee9be915b72caf0e06a245",
+      "installed_only": true
+    },
+    {
       "name": "polkit-elogind-libs",
       "version": "126-r0",
       "repository": "community",
@@ -6736,6 +6827,19 @@
       "upstream": "https://github.com/polkit-org/polkit",
       "origin": "polkit",
       "source_commit": "77ce154b13a366a8f4ee9be915b72caf0e06a245",
+      "installed_only": true
+    },
+    {
+      "name": "polkit-kde-agent-1",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/polkit-kde-agent-1-6.3.6-r0.apk",
+      "archive": "polkit-kde-agent-1-6.3.6-r0.apk",
+      "sha256": "cae0b2c508347db237c7e46c6f57f7ac0f1e8a5696bbcff923dd598d31098e75",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "polkit-kde-agent-1",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
       "installed_only": true
     },
     {
@@ -7898,6 +8002,19 @@
       "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/systemsettings-6.3.6-r0.apk",
       "archive": "systemsettings-6.3.6-r0.apk",
       "sha256": "3947af9b486452046024f2cd9263e4897f1cad3a9b6afba153719fe1fda3e01a",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://kde.org/plasma-desktop/",
+      "origin": "systemsettings",
+      "source_commit": "a870ac60cf1509c99c38c56b38d377c6de2042cf",
+      "installed_only": true
+    },
+    {
+      "name": "systemsettings-lang",
+      "version": "6.3.6-r0",
+      "repository": "community",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/systemsettings-lang-6.3.6-r0.apk",
+      "archive": "systemsettings-lang-6.3.6-r0.apk",
+      "sha256": "5ced4501b434bd1bc58e7979e240645dec370a5892520f169a0f5e2c64eff313",
       "license": "GPL-2.0-or-later",
       "upstream": "https://kde.org/plasma-desktop/",
       "origin": "systemsettings",

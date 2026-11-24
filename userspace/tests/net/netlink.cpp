@@ -1111,6 +1111,47 @@ static void uncapped_reply(int fd) {
     puts("NETLINK_UNCAPPED_REPLY_PASS");
 }
 
+static void padded_address_dump(int fd) {
+    struct {
+        nlmsghdr header;
+        ifaddrmsg address;
+        uint8_t tail[128];
+    } request{};
+
+    request.header = {NLMSG_LENGTH(sizeof(ifaddrmsg)), RTM_GETADDR, NLM_F_DUMP | NLM_F_REQUEST,
+                      2195, 0};
+    request.address.ifa_family = AF_INET;
+    request.address.ifa_index = indexes[0];
+    check(send(fd, &request, sizeof(request), 0) == sizeof(request),
+          "accept a zero-filled address dump buffer past its declared message");
+    unsigned seen = 0;
+    bool done = false;
+    while (!done) {
+        alignas(nlmsghdr) uint8_t bytes[8192];
+        int length = recv(fd, bytes, sizeof(bytes), 0);
+        check(length > 0, "receive address dump");
+        for (auto* response = reinterpret_cast<nlmsghdr*>(bytes); NLMSG_OK(response, length);
+             response = NLMSG_NEXT(response, length)) {
+            check(response->nlmsg_seq == request.header.nlmsg_seq &&
+                      (response->nlmsg_flags & NLM_F_DUMP_FILTERED),
+                  "mark address results filtered by interface");
+            if (response->nlmsg_type == NLMSG_DONE) {
+                done = true;
+                break;
+            }
+            check(response->nlmsg_type == RTM_NEWADDR &&
+                      response->nlmsg_len >= NLMSG_LENGTH(sizeof(ifaddrmsg)),
+                  "receive a complete address record");
+            auto* address = static_cast<ifaddrmsg*>(NLMSG_DATA(response));
+            check(address->ifa_family == AF_INET && address->ifa_index == indexes[0],
+                  "exclude addresses on other interfaces");
+            ++seen;
+        }
+    }
+    check(seen != 0, "selected Ethernet address appears");
+    puts("NETLINK_PADDED_ADDR_PASS");
+}
+
 static void malformed(int fd) {
     for (unsigned kind = 0; kind < 12; kind++) {
         Packet request(RTM_NEWROUTE, NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL);
@@ -1521,6 +1562,7 @@ int main(int argc, char** argv) {
     int fd = open_socket();
     message_io(fd);
     uncapped_reply(fd);
+    padded_address_dump(fd);
     ownership(fd);
     configuration_adapter(fd);
     automatic_prefixes(fd);

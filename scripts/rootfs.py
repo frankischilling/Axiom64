@@ -25,7 +25,7 @@
 """Create a deterministic newc initramfs without privileged filesystem tools."""
 from pathlib import Path
 import subprocess
-from fetch import ROOT, LOCK
+from fetch import ROOT, LOCK, verify_archive
 from newc import write_cpio
 from ports import overlay_tar, packages
 from build_musl import loader, runtime_files
@@ -202,6 +202,13 @@ xorg_config("xorg.conf")
 regular("usr/libexec/axiom64-xorg-seat", desktop / "xorg-seat.sh")
 regular("etc/X11/system.twmrc", desktop / "system.twmrc", 0o100644)
 if installed_desktop:
+    firmware = ROOT / "vendor/firmware/intel-ax201"
+    for kind, target in (("firmware", "lib/firmware"), ("license", "usr/share/licenses/Intel-AX201")):
+        entry = LOCK["intel_ax201_firmware"][kind]
+        source = firmware / entry["name"]
+        verify_archive(source, entry["sha256"])
+        files.setdefault(target, (0o40755, b""))
+        regular(f"{target}/{entry['name']}", source, 0o100644)
     files["bin/man"] = (0o120777, b"/usr/bin/man")
     files["usr/bin/ip"] = (0o120777, b"/sbin/ip")
     files["usr/bin/ss"] = (0o120777, b"/sbin/ss")
@@ -237,6 +244,14 @@ for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
 if installed_desktop:
     for module in sorted((ROOT / "vendor/cmake").glob("*.cmake")):
         regular("usr/share/cmake/Modules/Platform/" + module.name, module, 0o100644)
+    regular("usr/bin/localectl", ROOT / "userspace/desktop/localectl.sh")
+    # Plasma looks for locale names directly in this directory.
+    locale_root = "usr/share/i18n/locales"
+    for path, (mode, _) in tuple(files.items()):
+        if (mode & 0o170000 == 0o100000 and path.startswith(locale_root + "/musl/")
+                and path.endswith(".UTF-8")):
+            name = Path(path).name
+            files.setdefault(f"{locale_root}/{name}", (0o120777, f"musl/{name}".encode()))
     for name in ("btop.desktop", "kitty.desktop", "thunar.desktop"):
         files[f"etc/skel/Desktop/{name}"] = (0o100755, files[f"usr/share/applications/{name}"][1])
     files.setdefault("etc/xdg", (0o40755, b""))
@@ -260,9 +275,22 @@ if installed_desktop:
     for path in (session_root, session_root + '/display-sessions', session_root + '/native-wayland-sessions'):
         directory(path)
     regular('usr/lib/security/pam_axiom64.so', ROOT / 'build/pam_axiom64.so', 0o100644)
+    if 'usr/lib/security/pam_elogind.so' not in files:
+        raise ValueError('Installed Plasma login requires the elogind PAM module')
     for service in ('sddm', 'sddm-autologin', 'sddm-greeter'):
         regular(f'etc/pam.d/{service}', ROOT / 'userspace/desktop/pam' / (service + '.conf'),
                 0o100644)
+    regular('etc/pam.d/polkit-1', ROOT / 'userspace/desktop/pam/polkit-1.conf', 0o100644)
+    polkit_helper = 'usr/lib/polkit-1/polkit-agent-helper-1'
+    mode, helper = files[polkit_helper]
+    if mode != 0o104755:
+        raise ValueError('Unexpected mode for the packaged PolicyKit helper')
+    # The native PAM store requires effective root user and group credentials.
+    files[polkit_helper] = (mode | 0o2000, helper)
+    regular('etc/polkit-1/rules.d/49-axiom64-admin.rules',
+            ROOT / 'userspace/desktop/polkit-admin.rules', 0o100644)
+    files.setdefault('etc/localtime', (0o120777, b'/usr/share/zoneinfo/Etc/UTC'))
+    files.setdefault('etc/timezone', (0o100644, b'Etc/UTC\n'))
     regular('etc/sddm.conf', ROOT / 'userspace/desktop/sddm.conf', 0o100644)
     regular(session_root + '/display-sessions/plasma.desktop',
             ROOT / 'userspace/desktop/plasma-session.desktop', 0o100644)

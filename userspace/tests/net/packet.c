@@ -32,6 +32,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -270,23 +271,58 @@ static void received(const unsigned char* bytes, const unsigned char* sent, size
               "host frame metadata");
 }
 
+struct protocol_listeners {
+    int matching, mismatched;
+};
+
+static struct protocol_listeners protocol_listeners(int index) {
+    struct protocol_listeners listeners = {raw(index, PROTOCOL, SOCK_NONBLOCK),
+                                           raw(index, PROTOCOL, SOCK_NONBLOCK)};
+    struct sock_filter code[] = {
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, SKF_AD_OFF + SKF_AD_PKTTYPE),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PACKET_HOST, 0, 5),
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, SKF_AD_OFF + SKF_AD_PROTOCOL),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PROTOCOL, 0, 3),
+        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, SKF_AD_OFF + SKF_AD_IFINDEX),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned)index, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, UINT32_MAX),
+        BPF_STMT(BPF_RET | BPF_K, 0),
+    };
+    struct sock_fprog program = {.len = sizeof(code) / sizeof(code[0]), .filter = code};
+    check(!setsockopt(listeners.matching, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)),
+          "attach narrow packet metadata loads");
+    code[5].k++;
+    check(
+        !setsockopt(listeners.mismatched, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)),
+        "attach packet metadata mismatch filter");
+    code[0].k = SKF_AD_OFF + SKF_AD_MAX;
+    check(setsockopt(listeners.mismatched, SOL_SOCKET, SO_ATTACH_FILTER, &program,
+                     sizeof(program)) == -1 &&
+              errno == EINVAL,
+          "unknown metadata offset keeps installed filter");
+    return listeners;
+}
+
 // A protocol-specific listener receives the peer reply without an outgoing copy.
-static void protocol_observation(int observer, const unsigned char* sent, size_t length,
-                                 const unsigned char mac[6], int index) {
-    struct pollfd item = {.fd = observer, .events = POLLIN};
+static void protocol_observation(struct protocol_listeners listeners, const unsigned char* sent,
+                                 size_t length, const unsigned char mac[6], int index) {
+    struct pollfd item = {.fd = listeners.matching, .events = POLLIN};
     check(poll(&item, 1, 3000) == 1 && (item.revents & POLLIN),
           "protocol listener receives actual peer reply");
     unsigned char bytes[1518];
     struct sockaddr_ll address = {0};
     socklen_t size = sizeof(address);
-    check(recvfrom(observer, bytes, sizeof(bytes), MSG_DONTWAIT, (struct sockaddr*)&address,
-                   &size) == (ssize_t)length &&
+    check(recvfrom(listeners.matching, bytes, sizeof(bytes), MSG_DONTWAIT,
+                   (struct sockaddr*)&address, &size) == (ssize_t)length &&
               size == sizeof(address),
           "protocol listener receives one complete frame");
     printf("PACKET_PROTOCOL_OBSERVATION index=%d type=%u length=%zu\n", index, address.sll_pkttype,
            length);
     received(bytes, sent, length, &address, mac, index);
-    check(close(observer) == 0, "close protocol listener before pressure trials");
+    item = (struct pollfd){.fd = listeners.mismatched, .events = POLLIN};
+    check(!poll(&item, 1, 100), "drop peer reply with mismatched metadata");
+    check(close(listeners.matching) == 0 && close(listeners.mismatched) == 0,
+          "close protocol listeners before pressure trials");
     printf("PACKET_PROTOCOL_PASS index=%d\n", index);
 }
 
@@ -305,10 +341,11 @@ static void protocol_selection(void) {
         check(ioctl(control, SIOCGIFFLAGS, &request) == 0, "protocol comparison flags");
         request.ifr_flags |= IFF_UP;
         check(ioctl(control, SIOCSIFFLAGS, &request) == 0, "protocol comparison interface up");
-        int sender = raw(index, PROTOCOL, 0), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
+        int sender = raw(index, PROTOCOL, 0);
+        struct protocol_listeners listeners = protocol_listeners(index);
         frame(sent, sizeof(sent), mac, lane, 0);
         check(write(sender, sent, sizeof(sent)) == sizeof(sent), "protocol comparison sends frame");
-        protocol_observation(observer, sent, sizeof(sent), mac, index);
+        protocol_observation(listeners, sent, sizeof(sent), mac, index);
         struct pollfd item = {.fd = sender, .events = POLLIN};
         check(poll(&item, 1, 3000) == 1 && (item.revents & POLLIN) &&
                   recv(sender, bytes, sizeof(bytes), 0) == sizeof(sent),
@@ -530,7 +567,7 @@ static void nic(int control, int index, unsigned sequences) {
           "carrier");
     link_state(control, &request, index);
     int fd = raw(index, PROTOCOL, SOCK_CLOEXEC), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
-    int protocol_listener = raw(index, PROTOCOL, SOCK_NONBLOCK);
+    struct protocol_listeners listeners = protocol_listeners(index);
     int cooked_listener = cooked(index);
     int disabled = raw(index, 0, SOCK_NONBLOCK), other = raw(index, PROTOCOL + 1, SOCK_NONBLOCK);
     int one = 1;
@@ -649,7 +686,7 @@ static void nic(int control, int index, unsigned sequences) {
                   "independent listener");
             received(bytes, sent, length, NULL, mac, index);
             if (sequence == 0) {
-                protocol_observation(protocol_listener, sent, length, mac, index);
+                protocol_observation(listeners, sent, length, mac, index);
                 receive_cooked(cooked_listener, index, sent, length);
                 lazy_timestamp_probe(observer, index, first_arrival);
             }

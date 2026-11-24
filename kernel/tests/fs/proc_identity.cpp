@@ -23,6 +23,8 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "fs/cgroup.hpp"
+#include "fs/tmpfs.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
 #include "fs/memfd.hpp"
@@ -110,7 +112,7 @@ uint64_t AddressSpace::resident_size() const {
 }
 
 // The filesystem objects provide distinct identities for procfs comparisons.
-const FilesystemOps ext2_ops{}, ramfs_ops{};
+const FilesystemOps ext2_ops{}, ramfs_ops{}, tmpfs_ops{}, cgroup2_ops{};
 
 const FilesystemOps& posix_queue_filesystem() {
     static const FilesystemOps ops{};
@@ -118,6 +120,10 @@ const FilesystemOps& posix_queue_filesystem() {
 }
 
 // Other procfs backends are exercised in the guest. Fail on unintended use here.
+int cgroup_path(const Process&, char*, size_t) {
+    std::abort();
+}
+
 void Task::set_name(const char*, size_t) {
     std::abort();
 }

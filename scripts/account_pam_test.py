@@ -81,6 +81,7 @@ def test_archive(staging):
         'bin/busybox': (0o100755, busybox.read_bytes()),
         'bin/sh': (0o120777, b'/bin/busybox'),
         'etc/pam.d/axiom64-test': (0o100644, (ROOT / 'userspace/desktop/pam/sddm.conf').read_bytes()),
+        'etc/pam.d/polkit-1': (0o100644, (ROOT / 'userspace/desktop/pam/polkit-1.conf').read_bytes()),
         'sbin/init': (0o100755, INIT),
         'usr/bin/account-pam': (0o100755, runner.read_bytes()),
         'usr/lib/security/pam_axiom64.so': (0o100644, (ROOT / 'build/pam_axiom64.so').read_bytes()),
@@ -110,6 +111,7 @@ def test_boot(image, firmware, log, staging):
                                 stderr=subprocess.STDOUT, timeout=150)
     markers = {f'Firmware: {firmware.upper()}', 'ACCOUNT_PAM_GUEST_PASS', 'PAM_DENIAL_AUDIT_RECORDS=5',
                'PAM_RECOVERED_LEASE_RECORDS=1', 'ACCOUNT_PAM_RECOVERED_SUPERVISOR_LEASE',
+               'ACCOUNT_PAM_VERIFIED_POLICYKIT_HELPER',
                'ACCOUNT_PAM_DENIED_PASSWORD_AND_ACCOUNT', 'ACCOUNT_PAM_VERIFIED_CREDENTIAL_AND_REJECTED_IDENTITY_CHANGE',
                'ACCOUNT_PAM_REJECTED_STALE_AND_PASSWORD_CHANGE_REQUIRED', 'ACCOUNT_PAM_REJECTED_UNPRIVILEGED_CALLER',
                'nvme: controller=0 shutdown complete', 'AXIOM64_EXIT status=0'}

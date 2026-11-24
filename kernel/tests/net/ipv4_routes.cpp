@@ -67,6 +67,21 @@ static void route_notifications() {
 int main() {
     route_notifications();
     {
+        ip4::AddressBook manual;
+        ip4::RouteTable routes;
+        const Ipv4Config config{0xc6120015, 0xffffff00, 0};
+        assert(!manual.add(1, "eth0", config, 0, {}, false, true));
+        assert(manual.find(1, config.address, config.mask));
+        assert(!routes.synchronize(manual) && !routes.at(0));
+
+        const Ipv4Route prefix{0xc6120000, config.mask, 0, 1, 600, 2, 253, config.address};
+        assert(!routes.insert(prefix, false, true));
+        assert(!manual.add(1, "eth0", config, 1, {90, 120}, true));
+        assert(!routes.synchronize(manual));
+        const auto route = routes.at(0);
+        assert(route && !route->automatic && route->value.metric == 600 && !routes.at(1));
+    }
+    {
         ip4::RouteTable aliases;
         Ipv4Route first{0xcb007100, 0xffffff00, 0, 1, 7, 3, 253};
         auto second = first;

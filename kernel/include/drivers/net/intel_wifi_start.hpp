@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/drivers/net/intel_wifi_start.hpp
+ * @brief   Polled AX201 firmware startup and shutdown.
+ * @author  frankischilling
+ * @date    2026-11-23
+ *
+ * Copyright (C) 2026 frankischilling
+ */
+#pragma once
+#include "drivers/net/intel_wifi_auth.hpp"
+
+namespace ax::IntelWifi {
+struct FirmwareBootIo {
+    void* context;
+    uint32_t (*read)(void*, unsigned offset);
+    void (*write)(void*, unsigned offset, uint32_t value);
+    bool (*delay)(void*, unsigned microseconds);
+    bool (*bus_master)(void*, bool enable);
+    uint8_t* (*receive_buffer)(void*, unsigned id);
+};
+
+struct FirmwareBootMemory {
+    uint64_t context_address;
+    volatile const ReceiveStatus* receive_status;
+    volatile const uint32_t* used_ring;
+    CommandDescriptor* commands = nullptr;
+    CommandPayloads* command_payloads = nullptr;
+    uint64_t command_dma = 0;
+    uint64_t* free_ring = nullptr;
+    const uint64_t* receive_descriptors = nullptr;
+    PeerQueueMemory peer_queue{};
+    AuthenticationDma authentication{};
+    PeerQueueMemory data_queue{};
+    AuthenticationDma data_transmit{};
+};
+
+enum class AlivePacket { missing, success, rejected, malformed };
+AlivePacket read_alive_notification(const uint8_t* data, size_t length);
+
+struct FirmwareBootResult {
+    const char* status;
+    bool alive;
+    bool dma_idle;
+    bool successful = false;
+    NvmInfo nvm{};
+    RegulatoryProfile regulatory{};
+    PassiveScan passive{};
+    unsigned completed_scans = 0;
+    unsigned checked_channels = 0;
+    PeerQueue peer_queue{};
+    uint16_t association_id = 0;
+};
+
+struct ScanChecks {
+    AntennaMasks antennas;
+    FirmwareCheck check;
+    ScanElementStorage* elements = nullptr;
+    bool dual_lmac = false;
+    AuthenticationTarget target{};
+};
+
+// The caller must retain every DMA allocation if the adapter cannot be stopped.
+FirmwareBootResult start_and_stop_quz(const FirmwareBootIo&, const FirmwareBootMemory&,
+                                      const ScanChecks* scan = nullptr);
+} // namespace ax::IntelWifi

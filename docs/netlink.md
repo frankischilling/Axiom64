@@ -8,7 +8,7 @@ Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `
 | --- | --- |
 | `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, IPv6, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
 | `RTM_NEWLINK`, `RTM_SETLINK` | Change administrative state and MTU on an existing Ethernet adapter with `CAP_NET_ADMIN`. A link change may set both fields in one request. IPv6 address-generation mode uses a separate request. |
-| `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family, including flags and cache information; IPv4 labels, local/peer address and optional broadcast; IPv6 prefix and scope |
+| `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family and, with strict checking enabled, interface index. Reports flags and cache information, plus IPv4 labels, local and peer addresses, and optional broadcast data, or IPv6 prefix and scope. |
 | `RTM_NEWROUTE` | Main-table unicast supports create with exclusive or append. IPv4 also supports create alone and accepts a local preferred source. IPv6 requires an explicit interface. IPv4 gateway routes can infer it from a configured subnet. |
 | `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters. IPv4 also accepts a preferred source filter. |
 | `RTM_GETROUTE` | Multipart dump with `NLM_F_DUMP`; IPv4 or unspecified family, optional protocol/interface filters; main-table unicast records followed by `NLMSG_DONE` and status |
@@ -21,7 +21,7 @@ The main table has 32 explicit slots, up to 32 automatic Ethernet prefixes and t
 
 New on-link routes require link scope; gateway routes require universe scope. An explicitly indexed direct route can be installed before the Ethernet interface has an IPv4 address, including while physical carrier is absent. Address assignment retains its protocol, scope and metric. Fresh output on an administratively down interface returns `ENETUNREACH`; the current physical-carrier guard returns `ENETDOWN`. A device-bound raw or UDP description can select another interface's source address, or zero when none exists. Unbound selection through an unconfigured direct route still needs Linux compatibility work. An omitted interface can only be inferred from a configured subnet. A gateway must currently be a nonlocal unicast address on the selected interface's configured subnet. Address messages complement the existing [IPv4 ioctls](ipv4.md#configuration-and-routing); the complete tuple and [ownership/recovery contract](network-configuration.md) avoid intermediate address/netmask changes. [IPv4 routing](ipv4.md) describes the corresponding packet behavior.
 
-Address mutation requests validate the eight-byte `ifaddrmsg`, universe scope, permanent/deprecated/secondary flags, and aligned `IFA_LOCAL`, `IFA_ADDRESS`, `IFA_LABEL`, `IFA_BROADCAST`, `IFA_CACHEINFO` and `IFA_FLAGS` attributes. The kernel derives the stored state flags from the address and lifetimes. Labels need not match the indexed device name; an omitted label uses that name. New local and address values must agree; deletion also accepts `IFA_LOCAL` without a peer attribute, in which case its prefix does not constrain the match. An explicit broadcast is retained as supplied; an omitted broadcast stays zero. Attribute addresses use network byte order and the interface index uses native byte order. The inventory holds at most 32 Ethernet addresses across the physical interfaces. Same-prefix additions become secondary addresses. By default, removing or expiring a primary removes those secondaries; configurable promotion preserves them. Invalid requests preserve the inventory. [Finite address lifetime development](ipv4.md#finite-address-lifetime-development) records replacement, cache information, promotion and current validation limits. Notifications remain required.
+Address mutation requests validate the eight-byte `ifaddrmsg`, universe scope, permanent/deprecated/secondary flags, and aligned `IFA_LOCAL`, `IFA_ADDRESS`, `IFA_LABEL`, `IFA_BROADCAST`, `IFA_CACHEINFO` and `IFA_FLAGS` attributes. The kernel derives address state flags from the address and lifetimes. IPv4 accepts `IFA_F_NOPREFIXROUTE` in `IFA_FLAGS`. The address remains usable for local traffic, and the kernel leaves its connected prefix route to userspace. Refreshing an existing address preserves this flag. Labels need not match the indexed device name; an omitted label uses that name. New local and address values must agree; deletion also accepts `IFA_LOCAL` without a peer attribute, in which case its prefix does not constrain the match. An explicit broadcast is retained as supplied; an omitted broadcast stays zero. Attribute addresses use network byte order and the interface index uses native byte order. The inventory holds at most 32 Ethernet addresses across the physical interfaces. Same-prefix additions become secondary addresses. By default, removing or expiring a primary removes those secondaries; configurable promotion preserves them. Invalid requests preserve the inventory. [Finite address lifetime development](ipv4.md#finite-address-lifetime-development) records replacement, cache information, promotion and current validation limits. Notifications remain required.
 
 Link and address dumps accept complete zero-filter headers. With strict checking disabled, all three supported dump types also accept the legacy family-only `rtgenmsg` request used by BusyBox. Its alignment padding is ignored, as on Linux; padding bytes are not filter fields. Strict checking requires the complete header. Unsupported filters, attributes, and families fail before a reply is published. Link inventories contain at most eight physical interfaces and loopback. Address inventories retain every assigned label plus fixed loopback, followed by checked multipart completion. Compile-time size bounds keep the complete address and route inventories within the existing reply reservation. The software transmit queue length is zero because output goes directly to bounded driver descriptors; `SIOCGIFTXQLEN` reports that same value.
 
@@ -45,7 +45,7 @@ Descriptor reads/writes, vectors, and message calls share the [retained I/O path
 
 Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, complete IPv6 control, policy routing, and general Linux netlink behavior remain required.
 
-## Input device events
+## Device events
 
 `AF_NETLINK` protocol `NETLINK_KOBJECT_UEVENT` exposes kernel input-device
 additions on multicast group 1. A device manager with `CAP_NET_ADMIN` can
@@ -64,8 +64,12 @@ A listener whose queue fills and loses a multicast event receives
 
 Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`
 to request a coldplug event. The file uses normal owner write permissions.
-Group 1 is reserved for the kernel. Other device actions and ancillary
-credentials supplied by the sender are unsupported.
+PCI devices publish their properties in `uevent` under
+`/sys/bus/pci/devices`. A caller with `CAP_SYS_ADMIN` can write an action
+such as `change` to replay those properties on group 1. The event contains
+the action, canonical device path, properties, and sequence number.
+Group 1 is reserved for the kernel. Ancillary credentials supplied by the
+sender are unsupported.
 The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)
 defines the datagram and coldplug format.
 

@@ -51,7 +51,8 @@ The installed desktop runs NetworkManager after the system D-Bus socket
 appears. Ethernet uses its internal DHCP client by default. The Plasma network
 applet reads the same D-Bus service. NetworkManager stores saved connections
 under `/etc/NetworkManager/system-connections/`. Test boots that enable
-`debug.ssh` use the [direct-cable network setup](pxe.md).
+`debug.ssh` use the older [direct-cable network setup](pxe.md). Boot without
+`debug.ssh` to use NetworkManager and open Networks in the Plasma system tray.
 
 The serial console remains available for recovery. Create the root-owned
 `/etc/axiom64/console-desktop` file and reboot to have console sign-in start
@@ -66,6 +67,12 @@ the shell. Look for the result in `plasma-activities.log` and session output
 in `plasma-session.log`. Both are in `~/.local/state/axiom64/`, or in the
 `axiom64/` directory under `$XDG_STATE_HOME` when set.
 
+New installed images use UTC. Breeze registers the authenticated session
+with elogind. Plasma uses that session's private runtime directory at
+`/run/user/<uid>` when available. If registration is unavailable, sign-in
+can start Plasma with a temporary directory. Changing the system clock
+from Plasma also requires PolicyKit authorization.
+
 Attach the image as a new VM disk. The command creates a regular image file and
 refuses an existing destination. Guided partitioning and installation to existing
 drives are tracked in [#27](https://github.com/frankischilling/Axiom64/issues/27).
@@ -75,6 +82,12 @@ fbconsole` to display the text login on the local screen. The text console
 accepts a PS/2 keyboard and keeps serial input and output available. Xorg
 takes over the screen in graphics mode. Console text and keyboard input
 return when the virtual terminal returns to text mode.
+
+`/sys/class/tty/tty0/active` exposes the foreground virtual terminal to
+desktop session managers. It reports `tty1`, the console also returned by
+`VT_GETSTATE`. The attribute can be watched with poll or epoll. Axiom64
+currently has one virtual terminal, so there are no switch events.
+`make test-virtual-console` checks this interface in BIOS and UEFI guests.
 
 Add `--kernel-option usb.xhci=keyboard` to enable USB boot keyboards and mice.
 Plug them into xHCI root ports before powering on. Axiom64 reads up to eight

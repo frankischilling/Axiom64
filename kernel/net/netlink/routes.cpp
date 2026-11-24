@@ -250,6 +250,13 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
     }
     if (!error && !(request.flags & 4))
         return 0;
-    return netlink_ack(input, request, port, capped, error, output);
+    size_t echo = capped || !error ? sizeof(request) : request.length;
+    NetlinkHeader header{uint32_t(20 + aligned(echo)), 2,
+                         uint16_t(echo == sizeof(request) ? 0x100 : 0), request.sequence, port};
+    memcpy(output, &header, sizeof(header));
+    memcpy(output + sizeof(header), &error, 4);
+    memcpy(output + 20, input, echo);
+    memset(output + 20 + echo, 0, aligned(echo) - echo);
+    return header.length;
 }
 } // namespace ax

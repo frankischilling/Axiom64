@@ -40,7 +40,7 @@ size_t aligned(size_t size) {
 
 struct NetlinkSocket {
     bool used = false, connected = false, capped = false, strict = false;
-    unsigned type = 3, protocol = netlink_route_protocol, head = 0, count = 0;
+    unsigned type = 3, head = 0, count = 0;
     unsigned deliveries = 0;
     uint32_t port = 0;
     size_t bytes = 0;
@@ -51,9 +51,9 @@ struct NetlinkSocket {
 namespace {
 NetlinkSocket sockets[socket_count];
 
-bool occupied(unsigned protocol, uint32_t port) {
+bool occupied(uint32_t port) {
     for (const auto& socket : sockets)
-        if (socket.used && socket.protocol == protocol && socket.port == port)
+        if (socket.used && socket.port == port)
             return true;
     return false;
 }
@@ -63,14 +63,13 @@ int bind_port(NetlinkSocket* socket, uint32_t port, unsigned process) {
         return port == socket->port ? 0 : -22;
     if (!port) {
         port = process;
-        for (unsigned attempt = 0; occupied(socket->protocol, port) && attempt < socket_count;
-             attempt++) {
+        for (unsigned attempt = 0; occupied(port) && attempt < socket_count; attempt++) {
             port = next_port--;
             if (!next_port)
                 next_port = UINT32_MAX;
         }
     }
-    if (!port || occupied(socket->protocol, port))
+    if (!port || occupied(port))
         return -98;
     socket->port = port;
     return 0;
@@ -161,7 +160,6 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
     if (!length)
         return -61;
     auto bytes = static_cast<const uint8_t*>(data);
-    const bool generic = socket->protocol == netlink_generic_protocol;
     size_t positions[queue_count]{}, capacities[queue_count]{}, count = 0, total = 0;
     // Reserve every response before processing the first request in this datagram.
     // No route mutation can succeed while allocation/backpressure loses its result.
@@ -175,12 +173,9 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         if (count == queue_count)
             return -90;
         positions[count] = at;
-        if (generic)
-            capacities[count] = generic_netlink_capacity(header, socket->capped);
-        else
-            capacities[count] = socket->capped && !routing_dump(header.type)
-                                    ? 36
-                                    : routing_capacity(header, bytes + at);
+        capacities[count] = socket->capped && !routing_dump(header.type)
+                                ? 36
+                                : routing_capacity(header, bytes + at);
         total += capacities[count++];
         if (header.length == length - at)
             break;
@@ -209,13 +204,9 @@ int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t
         auto reply = replies[i];
         reply->source = {};
         reply->reserved = capacities[i];
-        const auto* request = bytes + positions[i];
-        if (generic)
-            reply->length = generic_netlink_reply(request, socket->port, socket->capped, reply + 1);
-        else
-            reply->length =
-                routing_reply(request, socket->port, socket->capped, reply + 1,
-                              capable(task.credentials, Capability::net_admin), socket->strict);
+        reply->length =
+            routing_reply(bytes + positions[i], socket->port, socket->capped, reply + 1,
+                          capable(task.credentials, Capability::net_admin), socket->strict);
         if (!reply->length) {
             release(reply);
             continue;
@@ -236,7 +227,7 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             return -94;
         if (b & ~uint64_t(0x8080f))
             return -22;
-        if (c != netlink_route_protocol && c != netlink_generic_protocol)
+        if (c)
             return -93;
         socket = nullptr;
         for (auto& candidate : sockets)
@@ -249,7 +240,6 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
         *socket = {};
         socket->used = true;
         socket->type = b & 0xf;
-        socket->protocol = unsigned(c);
         auto opened = open_handle(nullptr, 2 | ((b & 0x800) ? 04000 : 0));
         if (!opened) {
             netlink_close(socket);
@@ -313,10 +303,8 @@ int64_t netlink_syscall(Task& task, const Frame& frame) {
             value = c == 10 ? socket->capped : socket->strict;
         else if (b == 1 && c == 3)
             value = socket->type;
-        else if (b == 1 && c == 4)
+        else if (b == 1 && (c == 4 || c == 38))
             value = 0;
-        else if (b == 1 && c == 38)
-            value = socket->protocol;
         else if (b == 1 && c == 39)
             value = 16;
         else if (b == 1 && c == 7)

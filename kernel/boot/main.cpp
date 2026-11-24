@@ -28,6 +28,7 @@
 #include "boot/arguments.hpp"
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
+#include "drivers/net/intel_wifi.hpp"
 #include "drivers/platform/devices.hpp"
 #include "drivers/platform/pci_inventory.hpp"
 #include "drivers/usb/xhci.hpp"
@@ -128,6 +129,9 @@ BootInfo boot_info;
     if (usb_keyboard)
         xhci_keyboard_init();
     net_init();
+    const bool probe_wifi = arguments.has("iwlwifi.probe");
+    if (probe_wifi || arguments.has("iwlwifi.firmware-check"))
+        IntelWifi::check_firmware(probe_wifi);
     publish_pci_inventory();
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));

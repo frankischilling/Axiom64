@@ -32,6 +32,12 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native test-usb-hid-mouse
+.PHONY: test-intel-wifi-firmware
+test-intel-wifi-firmware: build/intel-wifi-firmware-test
+	./build/intel-wifi-firmware-test
+build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp kernel/drivers/net/intel_wifi_firmware.cpp kernel/include/drivers/net/intel_wifi.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-partitions test-partitions-native
 .PHONY: test-block-cache test-guest-media
 .PHONY: test-vm-journal

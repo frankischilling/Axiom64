@@ -46,9 +46,14 @@ constexpr ConfigurationVersion configuration_versions[]{
     {0x18, 1, 12, 2}, // Peer station add and status.
     {0x19, 1, 2, 0},  // Peer station remove.
     {0x17, 5, 3, 2},  // Management queue scheduler and allocation reply.
+    {0x1c, 1, 9, 7},  // Management transmit command and completion.
+    {0x05, 3, 1, 0},  // Session protection.
+    {0xfb, 3, 99, 2}, // Session protection notification.
+    {0xf7, 5, 99, 3}, // Rate table notification for the v2 rate format.
 };
 constexpr unsigned channel_api_mask = (1u << 4) - 1;
-constexpr unsigned peer_api_mask =
+constexpr unsigned peer_api_mask = (1u << 7) - 1;
+constexpr unsigned authentication_api_mask =
     (1u << (sizeof(configuration_versions) / sizeof(*configuration_versions))) - 1;
 
 uint32_t load32(const uint8_t* bytes) {
@@ -238,8 +243,12 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     image.channel_context_supported =
         (supported_channel_apis & channel_api_mask) == channel_api_mask &&
         (capabilities[1] & binding_cdb) && !(api_flags[2] & smart_fifo_offload);
-    image.peer_queue_supported =
-        image.channel_context_supported && supported_channel_apis == peer_api_mask;
+    image.peer_queue_supported = image.channel_context_supported &&
+                                 (supported_channel_apis & peer_api_mask) == peer_api_mask;
+    constexpr uint32_t session_protection = 1u << (54 - 32);
+    image.authentication_supported = image.peer_queue_supported &&
+                                     supported_channel_apis == authentication_api_mask &&
+                                     (capabilities[1] & session_protection);
     output = image;
     return nullptr;
 }

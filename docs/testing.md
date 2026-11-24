@@ -2387,3 +2387,10 @@ unassociated peer to the firmware, and allocates a management transmit
 queue. It reports the queue ID and initial write pointer in the serial
 log. It removes the queue and peer before tearing down the binding and
 stopping DMA. The check posts no transmit frames.
+
+Use `iwlwifi.auth-check=xx:xx:xx:xx:xx:xx` with the BSSID of an access
+point you can use for testing. The check listens for that BSSID, selects
+a legacy rate advertised by the access point, and sends one open-system
+authentication request. It checks both the firmware transmit completion
+and the access point's reply before stopping the adapter. Association
+and network configuration are separate steps after authentication.

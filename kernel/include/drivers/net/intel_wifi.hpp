@@ -44,6 +44,7 @@ struct FirmwareImage {
     bool passive_scan_supported;
     bool channel_context_supported;
     bool peer_queue_supported;
+    bool authentication_supported;
     bool dual_lmac;
 };
 
@@ -60,7 +61,14 @@ enum class FirmwareCheck {
     rescan,
     channel_context,
     peer_queue,
+    authenticate,
     live_scan
 };
-void check_firmware(bool probe_pci, FirmwareCheck);
+
+struct AuthenticationTarget {
+    uint8_t bssid[6]{};
+};
+
+bool parse_authentication_target(const char*, AuthenticationTarget&);
+void check_firmware(bool probe_pci, FirmwareCheck, const AuthenticationTarget& = {});
 } // namespace ax::IntelWifi

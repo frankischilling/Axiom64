@@ -152,7 +152,15 @@ BootInfo boot_info;
     ipv6_observe_addresses(netlink_ipv6_address_event);
     const bool probe_wifi = arguments.has("iwlwifi.probe");
     auto wifi_check = IntelWifi::FirmwareCheck::stage;
-    if (arguments.has("iwlwifi.live-scan"))
+    IntelWifi::AuthenticationTarget auth_target;
+    char auth_bssid[18]{};
+    const int auth_argument = arguments.read("iwlwifi.auth-check=", auth_bssid, sizeof(auth_bssid));
+    bool valid_wifi_check = true;
+    if (auth_argument || arguments.has("iwlwifi.auth-check")) {
+        wifi_check = IntelWifi::FirmwareCheck::authenticate;
+        valid_wifi_check =
+            auth_argument == 1 && IntelWifi::parse_authentication_target(auth_bssid, auth_target);
+    } else if (arguments.has("iwlwifi.live-scan"))
         wifi_check = IntelWifi::FirmwareCheck::live_scan;
     else if (arguments.has("iwlwifi.peer-queue-check"))
         wifi_check = IntelWifi::FirmwareCheck::peer_queue;
@@ -170,9 +178,11 @@ BootInfo boot_info;
         wifi_check = IntelWifi::FirmwareCheck::nvm;
     else if (arguments.has("iwlwifi.start-check"))
         wifi_check = IntelWifi::FirmwareCheck::start;
-    if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
-        arguments.has("iwlwifi.firmware-check"))
-        IntelWifi::check_firmware(probe_wifi, wifi_check);
+    if (!valid_wifi_check)
+        log("iwlwifi: auth-check requires one unicast BSSID\n");
+    else if (probe_wifi || wifi_check != IntelWifi::FirmwareCheck::stage ||
+             arguments.has("iwlwifi.firmware-check"))
+        IntelWifi::check_firmware(probe_wifi, wifi_check, auth_target);
     log("Entering userspace in Ring 3\n");
     start_init(init, arguments.has("debug.ssh"), arguments.has("console.text"));
     __builtin_unreachable();

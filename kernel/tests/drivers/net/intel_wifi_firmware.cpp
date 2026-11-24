@@ -128,6 +128,16 @@ enum class PeerCase {
     queue_denied,
     remove_denied
 };
+enum class AuthCase {
+    unused,
+    accepted,
+    reply_first,
+    denied_session,
+    denied_tx,
+    denied_ap,
+    reply_timeout,
+    wrong_target
+};
 enum class ScanCase {
     unused,
     complete,
@@ -280,6 +290,11 @@ struct StartupFixture {
     bool check_channels = false;
     bool dual_lmac = false;
     PeerCase peer_case = PeerCase::unused;
+    AuthCase auth_case = AuthCase::unused;
+    CommandDescriptor management_ring[management_queue_entries]{};
+    uint16_t management_counts[transmit_byte_count_bytes / sizeof(uint16_t)]{};
+    uint8_t authentication_payload[authentication_dma_bytes]{};
+    unsigned authentication_rx_buffers = 0;
     unsigned bad_binding_status = 0;
     unsigned short_binding_status = 0;
     unsigned scan_delays = 0;
@@ -327,6 +342,13 @@ struct StartupFixture {
             beacon[21] = uint8_t((id ? 0x20 : 0x10) + (offset == 384 ? 2 : 1));
             if (peer_case != PeerCase::unused)
                 beacon[34] = 1; // ESS capability.
+            if (auth_case != AuthCase::unused) {
+                frame[0] = 93;
+                mpdu[0] = 41;
+                beacon[32] = 100;
+                beacon[38] = beacon[39] = 1;
+                beacon[40] = 0x82; // Basic 1 Mbps rate.
+            }
             // Zero-length SSID is valid for a hidden network.
         }
         if (passive != ScanCase::timeout) {
@@ -432,6 +454,58 @@ struct StartupFixture {
         return 36;
     }
 
+    void authentication_doorbell(uint32_t value) {
+        assert(auth_case != AuthCase::unused && commands_sent == 16 && !authentication_rx_buffers);
+        assert(value == 0x01010035);
+        const auto& descriptor = management_ring[4];
+        assert(descriptor.buffer_count == 3 && management_counts[4] == 8);
+        const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {6, 0x52080}};
+        assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
+        const uint8_t first[20]{0x1c, 0, 4, 1, 30, 0, 0, 12, 3};
+        const uint8_t second[]{
+            0, 0x40, 0,    0,    0xb0, 0,    0, 0, 2, 0, 0, 0,    0, 0x11,
+            2, 0x11, 0x22, 0x33, 0x44, 0x55, 2, 0, 0, 0, 0, 0x11, 0, 0,
+        };
+        const uint8_t body[6]{0, 0, 1, 0, 0, 0};
+        assert(!memcmp(authentication_payload, first, sizeof(first)));
+        assert(!memcmp(authentication_payload + 64, second, sizeof(second)));
+        assert(!memcmp(authentication_payload + 128, body, sizeof(body)));
+
+        auto* buffer = reply_buffer(commands_sent);
+        const bool first_reply = auth_case == AuthCase::reply_first;
+        auto* tx = buffer + (first_reply ? 128 : 0);
+        tx[0] = 52;
+        tx[4] = 0x1c;
+        tx[6] = 4;
+        tx[7] = 1;
+        tx[8] = 1;
+        tx[44] = tx[45] = 1;
+        tx[48] = auth_case == AuthCase::denied_tx ? 0x84 : 1;
+        tx[52] = 0x35;
+
+        if (auth_case != AuthCase::reply_timeout) {
+            auto* rx = buffer + (first_reply ? 0 : 64);
+            rx[0] = 82;
+            rx[4] = 0xc1;
+            rx[7] = 0x80;
+            auto* mpdu = rx + 8;
+            mpdu[0] = 30;
+            mpdu[12] = 3;
+            mpdu[34] = 1;
+            auto* frame = mpdu + 48;
+            const uint8_t header[]{
+                0xb0, 0, 0, 0,    2, 0x11, 0x22, 0x33, 0x44, 0x55, 2, 0,
+                0,    0, 0, 0x11, 2, 0,    0,    0,    0,    0x11, 0, 0,
+            };
+            memcpy(frame, header, sizeof(header));
+            frame[26] = 2;
+            frame[28] = auth_case == AuthCase::denied_ap ? 13 : 0;
+        }
+        authentication_rx_buffers = 1;
+        used[17] = 18;
+        receive_status.closed_buffer = 18;
+    }
+
     void command_reply(unsigned tail) {
         const unsigned index = ++commands_sent;
         assert(tail == (index & (command_sequence_count - 1)));
@@ -440,6 +514,10 @@ struct StartupFixture {
         const unsigned slot = sequence & (command_ring_entries - 1);
         const auto& command = payloads[slot];
         const bool scanning = check_channels || passive != ScanCase::unused;
+        const bool auth = auth_case != AuthCase::unused;
+        const unsigned peer_index = !auth || index <= 13 ? index
+                                    : index >= 18        ? index - 3
+                                                         : index - 1;
         const bool mcc = index == (scanning ? 5 : 4) && regulatory != RegulatoryCase::unused;
         uint8_t expected[command_slot_bytes]{};
         uint16_t payload_bytes = 4;
@@ -476,8 +554,31 @@ struct StartupFixture {
             expected[60] = 0x44;
         } else if (check_channels) {
             payload_bytes = expect_channel_command(index, expected);
+        } else if (auth && index == 13) {
+            expected[0] = 0x28;
+            expected[12] = 2;
+            expected[16] = 5;
+            const uint8_t address[]{2, 0x11, 0x22, 0x33, 0x44, 0x55};
+            memcpy(expected + 24, address, sizeof(address));
+            expected[32] = 2;
+            expected[37] = 0x11;
+            expected[40] = 0xf;
+            expected[44] = 0x15;
+            expected[60] = 0x44;
+            expected[124] = 100;
+            expected[140] = 1;
+            payload_bytes = 148;
+        } else if (auth && (index == 16 || index == 17)) {
+            expected[0] = 5;
+            expected[1] = 3;
+            expected[12] = index == 16 ? 1 : 3;
+            if (index == 16) {
+                expected[20] = 0x84;
+                expected[21] = 3;
+            }
+            payload_bytes = 24;
         } else if (peer_case != PeerCase::unused && index > 8) {
-            payload_bytes = expect_peer_command(index, expected);
+            payload_bytes = expect_peer_command(peer_index, expected);
         } else {
             expected[0] = 0xd;
             payload_bytes = 1940;
@@ -530,7 +631,7 @@ struct StartupFixture {
             assert(commands[slot].buffers[1].address == 0xa014 + slot * command_slot_bytes);
         }
 
-        auto* reply = reply_buffer(index - 1);
+        auto* reply = reply_buffer(index - 1 + authentication_rx_buffers);
         const bool backlog = index == 8 && passive == ScanCase::busy_queue;
         if (backlog) {
             for (unsigned offset = 0; offset < ax::page_size; offset += 64) {
@@ -548,16 +649,26 @@ struct StartupFixture {
             reply[7] = 0x80;
             reply += 64;
         }
+        if (auth && index == 16) {
+            // Firmware can notify session start before it acknowledges the control command.
+            reply[0] = 20;
+            reply[4] = 0xfb;
+            reply[5] = 3;
+            reply[7] = 0x80;
+            reply[12] = auth_case != AuthCase::denied_session;
+            reply[16] = 1;
+            reply += 64;
+        }
         const bool peer = peer_case != PeerCase::unused;
         const bool binding = (check_channels || peer) && index >= 8 && command[0] == 0x2b;
-        const unsigned length = binding               ? (index == short_binding_status ? 7 : 8)
-                                : peer && index == 13 ? 8
-                                : peer && index == 14
+        const unsigned length = binding ? (index == short_binding_status ? 7 : 8)
+                                : peer && peer_index == 13 && command[0] == 0x18 ? 8
+                                : peer && peer_index == 14 && command[0] == 0x17
                                     ? (peer_case == PeerCase::short_queue ? 11 : 12)
-                                : peer && index == 15 ? 12
-                                : mcc                 ? (scanning ? 84 : 32)
-                                : index == 3          ? 472
-                                                      : 4;
+                                : peer && peer_index == 15 && command[0] == 0x17 ? 12
+                                : mcc        ? (scanning ? 84 : 32)
+                                : index == 3 ? 472
+                                             : 4;
         reply[0] = uint8_t(length);
         reply[1] = uint8_t(length >> 8);
         const bool reject = index == 4 && reject_scan_config;
@@ -587,22 +698,22 @@ struct StartupFixture {
         }
         if (binding && index == bad_binding_status)
             reply[11] = 1;
-        if (peer && index == 13) {
+        if (peer && peer_index == 13 && command[0] == 0x18) {
             reply[8] = peer_case == PeerCase::station_denied ? 2 : 1;
             reply[11] = 0x80; // The ADD_STA status occupies the low byte.
         }
-        if (peer && index == 14) {
+        if (peer && peer_index == 14 && command[0] == 0x17) {
             reply[8] = reply[9] = 1;
             reply[10] = peer_case == PeerCase::queue_denied;
             reply[12] = 0x34;
             reply[13] = 0x12;
         }
-        if (peer && index == 15)
+        if (peer && peer_index == 15 && command[0] == 0x17)
             reply[10] = peer_case == PeerCase::remove_denied;
         if (!check_channels && index >= 8 && (!peer || index == 8))
             scan_notifications(reply, uint8_t((index - 8) & 1));
-        used[index] = index + 1;
-        receive_status.closed_buffer = uint16_t(index + 1 + backlog);
+        used[index + authentication_rx_buffers] = index + 1 + authentication_rx_buffers;
+        receive_status.closed_buffer = uint16_t(index + 1 + backlog + authentication_rx_buffers);
     }
 
     void write(unsigned offset, uint32_t value) {
@@ -651,7 +762,10 @@ struct StartupFixture {
         }
         if (offset == 0x460) {
             assert(master && sent_doorbell);
-            command_reply(value);
+            if (value >> 16)
+                authentication_doorbell(value);
+            else
+                command_reply(value);
         }
     }
 
@@ -710,6 +824,9 @@ struct StartupFixture {
         auto memory = make_memory(nvm, scan && scan->check >= FirmwareCheck::rescan);
         if (peer_case != PeerCase::unused)
             memory.peer_queue = {0x50000, 0x51000};
+        if (auth_case != AuthCase::unused)
+            memory.authentication = {management_ring, management_counts, authentication_payload,
+                                     0x52000};
         return start_and_stop_quz(io, memory, scan);
     }
 };
@@ -1080,6 +1197,56 @@ void check_peer_queues() {
     std::puts("AX201_PEER_QUEUE_MODEL_PASS");
 }
 
+void check_authentication_exchange() {
+    AuthenticationTarget target;
+    assert(parse_authentication_target("02:00:00:00:00:11", target));
+    assert(!parse_authentication_target("01:00:00:00:00:11", target));
+    assert(!parse_authentication_target("02:00:00-00:00:11", target));
+    assert(!parse_authentication_target("00:00:00:00:00:00", target));
+    assert(target.bssid[0] == 2 && target.bssid[5] == 0x11);
+    const uint8_t rates[]{1, 3, 0x82, 0x98, 0x8c};
+    assert(authentication_rate(rates, sizeof(rates), false, 3) == 0x4000);
+    assert(authentication_rate(rates, sizeof(rates), true, 2) == 0x8100);
+    assert(!authentication_rate(rates, sizeof(rates) - 1, false, 3));
+
+    struct Case {
+        AuthCase response;
+        unsigned commands;
+        bool transmitted;
+        const char* status;
+    };
+
+    const Case cases[]{
+        {AuthCase::accepted, 21, true, "open-system authentication exchange passed"},
+        {AuthCase::reply_first, 21, true, "open-system authentication exchange passed"},
+        {AuthCase::denied_session, 16, false, "firmware session protection failed"},
+        {AuthCase::denied_tx, 16, true, "firmware could not deliver the authentication request"},
+        {AuthCase::denied_ap, 16, true, "access point refused open-system authentication"},
+        {AuthCase::reply_timeout, 16, true, "open-system authentication timed out"},
+        {AuthCase::wrong_target, 8, false,
+         "requested access point not found on a permitted active channel"},
+    };
+    for (const auto& test : cases) {
+        StartupFixture model(StartupCase::good);
+        model.regulatory = RegulatoryCase::valid;
+        model.passive = ScanCase::complete;
+        model.peer_case = PeerCase::success;
+        model.auth_case = test.response;
+        model.live_replies.resize(22 * ax::page_size);
+        ScanElementStorage elements{};
+        ScanChecks request{{1, 2}, FirmwareCheck::authenticate, &elements, false, target};
+        if (test.response == AuthCase::wrong_target)
+            request.target.bssid[5] = 0x22;
+        const auto result = model.run(true, &request);
+        assert(model.commands_sent == test.commands && !strcmp(result.status, test.status));
+        assert(bool(model.authentication_rx_buffers) == test.transmitted);
+        assert(result.alive && result.dma_idle && !model.master && model.reset_after_dma);
+        assert(result.successful ==
+               (test.response == AuthCase::accepted || test.response == AuthCase::reply_first));
+    }
+    std::puts("AX201_AUTHENTICATION_MODEL_PASS");
+}
+
 void check_access_points() {
     PassiveScan scan{};
     ScanElementStorage elements{};
@@ -1173,11 +1340,16 @@ int main(int argc, char** argv) {
     word(file, append(file, 48, 4), 0x00020119);
     const auto scheduler_version = append(file, 48, 4);
     word(file, scheduler_version, 0x02030517);
+    word(file, append(file, 48, 4), 0x0709011c);
+    word(file, append(file, 48, 4), 0x00010305);
+    word(file, append(file, 48, 4), 0x026303fb);
+    const auto rate_version = append(file, 48, 4);
+    word(file, rate_version, 0x036305f7);
     word(file, append(file, 29, 8) + 4, 1u << 9);
     word(file, append(file, 30, 8) + 4, 1u << 1);
     const auto binding_caps = append(file, 30, 8);
     word(file, binding_caps, 1);
-    word(file, binding_caps + 4, (1u << 7) | (1u << 8));
+    word(file, binding_caps + 4, (1u << 7) | (1u << 8) | (1u << 22));
     auto regulatory_caps = append(file, 30, 8);
     word(file, regulatory_caps, 2);
     word(file, regulatory_caps + 4, 1u << 25);
@@ -1199,6 +1371,7 @@ int main(int argc, char** argv) {
     assert(image.passive_scan_supported);
     assert(image.channel_context_supported && image.dual_lmac);
     assert(image.peer_queue_supported);
+    assert(image.authentication_supported);
     assert(image.version[1] == 0x12345678 && image.alive_version == 6 &&
            image.paging_bytes == 4096);
     assert(image.regions[lmac].count == 1 && image.regions[umac].count == 1 &&
@@ -1213,6 +1386,7 @@ int main(int argc, char** argv) {
     check_scan_channels();
     check_channel_contexts();
     check_peer_queues();
+    check_authentication_exchange();
     check_receive_recycling();
     check_access_points();
 
@@ -1255,6 +1429,11 @@ int main(int argc, char** argv) {
     FirmwareImage unsupported_queue{};
     assert(!parse_firmware(old_scheduler.data(), old_scheduler.size(), unsupported_queue));
     assert(unsupported_queue.channel_context_supported && !unsupported_queue.peer_queue_supported);
+    Bytes unsupported_rate = file;
+    word(unsupported_rate, rate_version, 0x026305f7);
+    FirmwareImage unsupported_auth{};
+    assert(!parse_firmware(unsupported_rate.data(), unsupported_rate.size(), unsupported_auth));
+    assert(unsupported_auth.peer_queue_supported && !unsupported_auth.authentication_supported);
     Bytes no_regulatory = file;
     word(no_regulatory, regulatory_caps + 4, 0);
     FirmwareImage without_mcc{};
@@ -1281,6 +1460,7 @@ int main(int argc, char** argv) {
         assert(image.passive_scan_supported);
         assert(image.channel_context_supported && !image.dual_lmac);
         assert(image.peer_queue_supported);
+        assert(image.authentication_supported);
         assert(image.version[0] == 77 && image.alive_version == 6 &&
                image.paging_bytes == 0x97000 && image.regions[lmac].count == 14 &&
                image.regions[umac].count == 15 && image.regions[paging].count == 20);

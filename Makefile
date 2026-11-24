@@ -44,6 +44,7 @@ build/intel-wifi-firmware-test: kernel/tests/drivers/net/intel_wifi_firmware.cpp
 	kernel/drivers/net/intel_wifi_scan.cpp kernel/include/drivers/net/intel_wifi_scan.hpp \
 	kernel/drivers/net/intel_wifi_channel.cpp kernel/include/drivers/net/intel_wifi_channel.hpp \
 	kernel/drivers/net/intel_wifi_peer.cpp kernel/include/drivers/net/intel_wifi_peer.hpp \
+	kernel/drivers/net/intel_wifi_auth.cpp kernel/include/drivers/net/intel_wifi_auth.hpp \
 	kernel/include/drivers/net/intel_wifi.hpp kernel/include/drivers/net/intel_wifi_context.hpp \
 	kernel/include/drivers/net/intel_wifi_start.hpp kernel/include/drivers/net/intel_wifi_command.hpp \
 	kernel/include/mm/dma.hpp kernel/include/core/base.hpp

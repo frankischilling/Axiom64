@@ -86,6 +86,8 @@ struct PassiveScan {
     ScanElementStorage* elements = nullptr;
     uint8_t access_point_count = 0;
     bool access_points_truncated = false;
+    bool filter_peer = false;
+    AuthenticationTarget target{};
     enum class Status { pending, complete, aborted, malformed } status{};
 };
 

@@ -219,12 +219,20 @@ struct BootQueues {
     DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
     DmaBuffer command_payloads, receive_map;
     DmaBuffer management_ring, management_byte_counts;
+    DmaBuffer authentication_payload;
     unsigned receive_count = 0;
 
     void pin_until_reboot() {
-        DmaBuffer* buffers[] = {&free_ring,        &used_ring,       &status,
-                                &commands,         &invalid_command, &context,
-                                &command_payloads, &management_ring, &management_byte_counts};
+        DmaBuffer* buffers[] = {&free_ring,
+                                &used_ring,
+                                &status,
+                                &commands,
+                                &invalid_command,
+                                &context,
+                                &command_payloads,
+                                &management_ring,
+                                &management_byte_counts,
+                                &authentication_payload};
         for (auto* buffer : buffers)
             buffer->retain = true;
     }
@@ -335,8 +343,16 @@ FirmwareBootMemory boot_memory(BootQueues& queues, FirmwareCheck check) {
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
-    if (check == FirmwareCheck::peer_queue)
+    if (check == FirmwareCheck::peer_queue || check == FirmwareCheck::authenticate)
         memory.peer_queue = {queues.management_ring.address, queues.management_byte_counts.address};
+    if (check == FirmwareCheck::authenticate) {
+        using Counts = uint16_t[transmit_byte_count_bytes / sizeof(uint16_t)];
+        using Payload = uint8_t[authentication_dma_bytes];
+        memory.authentication = {queues.management_ring.data<BootQueues::ManagementDescriptors>(),
+                                 queues.management_byte_counts.data<Counts>(),
+                                 queues.authentication_payload.data<Payload>(),
+                                 queues.authentication_payload.address};
+    }
     return memory;
 }
 
@@ -353,12 +369,14 @@ bool restore_registers(BootQueues& queues, StagedImage& staged, uint16_t origina
 }
 
 void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
-                     const FirmwareImage& image) {
+                     const FirmwareImage& image, const AuthenticationTarget& target) {
     if (check >= FirmwareCheck::nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
         report("command buffer allocation failed");
         return;
     }
-    if (check == FirmwareCheck::peer_queue &&
+    const bool authenticate = check == FirmwareCheck::authenticate;
+    const bool peer_test = authenticate || check == FirmwareCheck::peer_queue;
+    if (peer_test &&
         (!queues.management_ring.allocate(sizeof(BootQueues::ManagementDescriptors)) ||
          !queues.management_byte_counts.allocate(transmit_byte_count_bytes) ||
          !initialize_transmit_ring(queues.invalid_command.address,
@@ -367,8 +385,12 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         report("management queue allocation failed");
         return;
     }
+    if (authenticate && !queues.authentication_payload.allocate(authentication_dma_bytes)) {
+        report("authentication payload allocation failed");
+        return;
+    }
     ScanElementStorage* elements = nullptr;
-    if (check == FirmwareCheck::passive_scan || check == FirmwareCheck::rescan) {
+    if (authenticate || check == FirmwareCheck::passive_scan || check == FirmwareCheck::rescan) {
         elements = static_cast<ScanElementStorage*>(alloc(sizeof(ScanElementStorage)));
         if (!elements) {
             report("scan result allocation failed");
@@ -383,21 +405,21 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     }
     const auto io = boot_io(boot);
     const auto memory = boot_memory(queues, check);
-    const ScanChecks scan{image.antennas, check, elements, image.dual_lmac};
+    const ScanChecks scan{image.antennas, check, elements, image.dual_lmac, target};
     const auto result =
         start_and_stop_quz(io, memory, check >= FirmwareCheck::scan_config ? &scan : nullptr);
     const bool restored = restore_registers(queues, staged, original, result.dma_idle);
     log("iwlwifi: %s, DMA idle=%u, PCI command restored=%u\n", result.status,
         uint64_t(result.dma_idle), uint64_t(restored));
-    if (result.successful && check == FirmwareCheck::peer_queue && !restored)
-        report("peer queue check could not restore PCI state");
+    if (result.successful && peer_test && !restored)
+        report("peer check could not restore PCI state");
     else
         report(result.status);
     if (check == FirmwareCheck::rescan)
         log("iwlwifi: completed scans=%u\n", uint64_t(result.completed_scans));
     if (check == FirmwareCheck::channel_context)
         log("iwlwifi: checked operating channels=%u\n", uint64_t(result.checked_channels));
-    if (check == FirmwareCheck::peer_queue && result.peer_queue.id)
+    if (peer_test && result.peer_queue.id)
         log("iwlwifi: management queue=%u initial pointer=%u\n", uint64_t(result.peer_queue.id),
             uint64_t(result.peer_queue.write_pointer));
     if (result.nvm.version)
@@ -408,7 +430,7 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
     if (result.regulatory.country[0])
         log("iwlwifi: regulatory domain=%s permitted=%u slots=%u\n", result.regulatory.country,
             uint64_t(result.regulatory.valid_channels), uint64_t(result.regulatory.channel_slots));
-    if (check != FirmwareCheck::peer_queue && result.successful && result.dma_idle && restored &&
+    if (!peer_test && result.successful && result.dma_idle && restored &&
         result.passive.status == PassiveScan::Status::complete) {
         release(completed_scan.elements);
         completed_scan = result.passive;
@@ -556,7 +578,8 @@ void launch_live_firmware(const FirmwareImage& image) {
     release(device);
 }
 
-void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
+void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check,
+                    const AuthenticationTarget& target) {
     FirmwareImage image{};
     if (const auto* error = parse_firmware(bytes, size, image)) {
         log("iwlwifi: firmware rejected: %s\n", error);
@@ -594,6 +617,10 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report("firmware lacks the supported peer station and scheduler commands");
         return;
     }
+    if (check == FirmwareCheck::authenticate && !image.authentication_supported) {
+        report("firmware lacks the supported authentication commands");
+        return;
+    }
     if (check == FirmwareCheck::live_scan) {
         launch_live_firmware(image);
         return;
@@ -601,7 +628,7 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
     StagedImage staged;
     BootQueues queues;
     if (prepare_image(image, staged, queues) && check != FirmwareCheck::stage)
-        launch_firmware(queues, staged, check, image);
+        launch_firmware(queues, staged, check, image, target);
 }
 } // namespace
 
@@ -646,7 +673,7 @@ int trigger_live_scan(const ScanRequest& request) {
     return 0;
 }
 
-void check_firmware(bool probe_pci, FirmwareCheck check) {
+void check_firmware(bool probe_pci, FirmwareCheck check, const AuthenticationTarget& target) {
     const bool start = check != FirmwareCheck::stage;
     if (probe_pci || start) {
         start_requested = start;
@@ -675,7 +702,7 @@ void check_firmware(bool probe_pci, FirmwareCheck check) {
         return;
     }
     if (node_read(file, 0, bytes, size) == int64_t(size))
-        stage_firmware(bytes, size, check);
+        stage_firmware(bytes, size, check, target);
     else {
         log("iwlwifi: firmware read failed\n");
         report("firmware read failed");

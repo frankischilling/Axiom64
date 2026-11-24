@@ -209,7 +209,9 @@ void observe_beacon(PassiveScan& scan, const FirmwarePacket& packet) {
     const uint8_t receive_channel = data[channel_offset];
     const auto* frame = data + descriptor_bytes;
     if (!scan_selected_channel(scan, receive_channel) || (frame[0] != 0x80 && frame[0] != 0x50) ||
-        !station_address_valid(frame + bssid_offset))
+        !station_address_valid(frame + bssid_offset) ||
+        (scan.filter_peer &&
+         memcmp(frame + bssid_offset, scan.target.bssid, sizeof(scan.target.bssid))))
         return;
 
     AccessPoint point;

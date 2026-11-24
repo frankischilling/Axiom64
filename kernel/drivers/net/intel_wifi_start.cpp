@@ -441,14 +441,107 @@ const char* check_channel_contexts(CommandSession& commands, const ScanChannelLi
     return checked ? nullptr : "no permitted 2.4 or 5 GHz channels";
 }
 
+template <typename Observe>
+const char* wait_authentication(CommandSession& commands, unsigned deadline, const char* timeout,
+                                Observe observe) {
+    for (unsigned elapsed = 0; elapsed < deadline; ++elapsed) {
+        if (!commands.acknowledge_pending())
+            return "authentication receive queue stopped";
+        for (unsigned i = 0; i < 64; ++i) {
+            FirmwarePacket packet{};
+            const auto result = commands.rx.next(packet);
+            if (result == PacketRead::malformed)
+                return "authentication receive queue is malformed";
+            if (result == PacketRead::end)
+                break;
+            bool done = false;
+            const auto* error = observe(packet, done);
+            if (done || error)
+                return error;
+        }
+        if (!commands.reg.delay(1000))
+            return "authentication timer unavailable";
+    }
+    return timeout;
+}
+
+const char* authenticate_peer(CommandSession& commands, PeerQueue queue, uint32_t rate,
+                              const uint8_t (&station)[6], const AccessPoint& peer,
+                              const ScanChannel& channel) {
+    uint8_t protection[session_protection_bytes];
+    prepare_session_protection(true, protection);
+    const auto sequence = commands.index;
+    if (!commands.submit(3, 5, protection, sizeof(protection)))
+        return "cannot submit session protection";
+    bool acknowledged = false, started = false;
+    const auto* start_error = wait_authentication(
+        commands, 100, "session protection did not start",
+        [&](const FirmwarePacket& packet, bool& done) -> const char* {
+            if (packet.sequence == sequence && packet.group == 0 && packet.opcode == 2)
+                return "firmware rejected session protection";
+            if (packet.sequence == sequence && packet.group == 3 && packet.opcode == 5)
+                acknowledged = true;
+            const auto event = observe_session_protection(packet);
+            if (event == AuthEvent::accepted)
+                started = true;
+            else if (event != AuthEvent::unrelated)
+                return "firmware session protection failed";
+            done = acknowledged && started;
+            return nullptr;
+        });
+    if (start_error)
+        return start_error;
+
+    if (!prepare_authentication_frame(commands.rx.memory.authentication, queue, rate, station,
+                                      peer))
+        return "cannot prepare authentication transmit descriptor";
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    commands.reg.write(command_write_pointer,
+                       uint8_t(queue.write_pointer + 1) | (uint32_t(queue.id) << 16));
+
+    bool transmitted = false, accepted = false;
+    const auto* tx_error = wait_authentication(
+        commands, 950, "open-system authentication timed out",
+        [&](const FirmwarePacket& packet, bool& done) -> const char* {
+            const auto tx = observe_authentication_tx(packet, queue);
+            if (tx == AuthEvent::accepted)
+                transmitted = true;
+            else if (tx == AuthEvent::denied)
+                return "firmware could not deliver the authentication request";
+            else if (tx == AuthEvent::malformed)
+                return "firmware returned an invalid authentication transmit completion";
+            const auto reply = observe_authentication_reply(packet, station, peer, channel.number);
+            if (reply == AuthEvent::accepted)
+                accepted = true;
+            else if (reply == AuthEvent::denied)
+                return "access point refused open-system authentication";
+            else if (reply == AuthEvent::malformed)
+                return "access point returned an invalid authentication reply";
+            if (observe_session_protection(packet) == AuthEvent::ended)
+                return "session protection ended before authentication completed";
+            done = transmitted && accepted;
+            return nullptr;
+        });
+    if (tx_error)
+        return tx_error;
+
+    prepare_session_protection(false, protection);
+    FirmwarePacket reply{};
+    return commands.send(3, 5, protection, sizeof(protection), reply) == Reply::matched
+               ? nullptr
+               : "firmware could not release session protection";
+}
+
 const char* check_peer_queue(CommandSession& commands, const ScanChannelList& channels,
-                             const PassiveScan& scan, uint8_t rx_mask, bool dual_lmac,
-                             PeerQueue& queue) {
+                             const PassiveScan& scan, const ScanChecks& checks,
+                             AntennaMasks usable_antennas, PeerQueue& queue) {
+    const bool authenticate = checks.check == FirmwareCheck::authenticate;
     const AccessPoint* peer = nullptr;
     const ScanChannel* channel = nullptr;
     for (unsigned i = 0; i < scan.access_point_count; ++i) {
         const auto& ap = scan.access_points[i];
-        if ((ap.capability & 3) != 1 || (peer && ap.signal_dbm <= peer->signal_dbm))
+        if ((ap.capability & 3) != 1 || (peer && ap.signal_dbm <= peer->signal_dbm) ||
+            (authenticate && memcmp(ap.bssid, checks.target.bssid, sizeof(ap.bssid))))
             continue;
         for (unsigned j = 0; j < channels.count; ++j) {
             const auto& candidate = channels.entries[j];
@@ -461,14 +554,35 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
         }
     }
     if (!peer)
-        return "no infrastructure access point on a channel permitted for active operation";
-    if (const auto* error =
-            apply_channel_context(commands, *channel, rx_mask, dual_lmac, true, true))
+        return authenticate
+                   ? "requested access point not found on a permitted active channel"
+                   : "no infrastructure access point on a channel permitted for active operation";
+    uint32_t rate = 0;
+    if (authenticate) {
+        if (!scan.elements)
+            return "authentication scan information is missing";
+        const auto& ies = scan.elements->records[peer - scan.access_points];
+        rate = authentication_rate(ies.probe, peer->probe_ie_bytes, channel->frequency_mhz >= 5000,
+                                   usable_antennas.tx);
+        if (!rate)
+            rate = authentication_rate(ies.beacon, peer->beacon_ie_bytes,
+                                       channel->frequency_mhz >= 5000, usable_antennas.tx);
+        if (!rate)
+            return "no supported authentication transmit rate";
+    }
+    if (const auto* error = apply_channel_context(commands, *channel, usable_antennas.rx,
+                                                  checks.dual_lmac, true, true))
         return error;
 
     constexpr uint8_t station = 0;
     uint8_t add_station[peer_station_bytes];
     FirmwarePacket reply{};
+    if (authenticate) {
+        uint8_t mac[mac_context_bytes];
+        prepare_authentication_mac(scan.station_address, *peer, mac);
+        if (commands.send(1, 0x28, mac, sizeof(mac), reply) != Reply::matched)
+            return "firmware could not select the authentication BSSID";
+    }
     if (!prepare_peer_station(*peer, station, add_station) ||
         commands.send(1, 0x18, add_station, sizeof(add_station), reply) != Reply::matched ||
         !peer_station_added(reply))
@@ -479,6 +593,11 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
         commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
         !parse_management_queue(reply, queue))
         return "firmware management queue allocation failed";
+    if (authenticate) {
+        if (const auto* error =
+                authenticate_peer(commands, queue, rate, scan.station_address, *peer, *channel))
+            return error;
+    }
     if (!prepare_remove_management_queue(station, scheduler) ||
         commands.send(5, 0x17, scheduler, sizeof(scheduler), reply) != Reply::matched ||
         !management_queue_removed(reply))
@@ -488,7 +607,7 @@ const char* check_peer_queue(CommandSession& commands, const ScanChannelList& ch
     prepare_remove_peer(station, remove_station);
     if (commands.send(1, 0x19, remove_station, sizeof(remove_station), reply) != Reply::matched)
         return "firmware peer station removal failed";
-    return apply_channel_context(commands, *channel, rx_mask, dual_lmac, false);
+    return apply_channel_context(commands, *channel, usable_antennas.rx, checks.dual_lmac, false);
 }
 
 const char* run_passive_scan(CommandSession& commands, const ScanChannelList& channels,
@@ -558,9 +677,14 @@ static bool stop_adapter(const Registers& reg, bool request_dma) {
 
 static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
                                    const ScanChecks* scan, LiveScanSession* live) {
-    const bool peer_check = scan && scan->check == FirmwareCheck::peer_queue;
+    const bool authenticate = scan && scan->check == FirmwareCheck::authenticate;
+    const bool peer_check = authenticate || (scan && scan->check == FirmwareCheck::peer_queue);
     if (peer_check && !valid_peer_queue_memory(memory.peer_queue))
         return {"invalid management queue DMA addresses", false, true};
+    if (authenticate && (!valid_authentication_dma(memory.authentication) ||
+                         memory.authentication.address == memory.peer_queue.descriptor_ring ||
+                         memory.authentication.address == memory.peer_queue.byte_counts))
+        return {"invalid authentication DMA addresses", false, true};
     if (!memory.context_address || memory.context_address != align_down(memory.context_address) ||
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
@@ -591,6 +715,10 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     PassiveScan passive{};
     if (scan)
         passive.elements = scan->elements;
+    if (authenticate) {
+        passive.filter_peer = true;
+        passive.target = scan->target;
+    }
     if (request_dma) {
         if (!io.bus_master(io.context, true)) {
             error = "PCI bus master did not enable";
@@ -637,9 +765,10 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
                                 ++completed_scans;
                         }
                         if (!error && peer_check)
-                            error = check_peer_queue(commands, channels, passive,
-                                                     info.rx_chains & scan->antennas.rx,
-                                                     scan->dual_lmac, peer_queue);
+                            error = check_peer_queue(commands, channels, passive, *scan,
+                                                     {uint8_t(info.tx_chains & scan->antennas.tx),
+                                                      uint8_t(info.rx_chains & scan->antennas.rx)},
+                                                     peer_queue);
                     }
                 }
             }
@@ -649,10 +778,14 @@ static FirmwareBootResult boot_quz(const FirmwareBootIo& io, const FirmwareBootM
     const bool idle = stop_adapter(reg, request_dma);
     if (channel_check && !idle && !error)
         error = "operating channel check could not stop DMA";
-    if (peer_check && !idle && !error)
+    if (authenticate && !idle && !error)
+        error = "authentication check could not stop DMA";
+    else if (peer_check && !idle && !error)
         error = "peer queue check could not stop DMA";
     const char* success = "firmware ALIVE received";
-    if (peer_check)
+    if (authenticate)
+        success = "open-system authentication exchange passed";
+    else if (peer_check)
         success = "peer station and management queue check passed";
     else if (channel_check)
         success = "operating channel binding check passed";

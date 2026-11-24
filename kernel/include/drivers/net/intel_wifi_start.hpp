@@ -8,7 +8,7 @@
  * Copyright (C) 2026 frankischilling
  */
 #pragma once
-#include "drivers/net/intel_wifi_peer.hpp"
+#include "drivers/net/intel_wifi_auth.hpp"
 
 namespace ax::IntelWifi {
 struct FirmwareBootIo {
@@ -30,6 +30,7 @@ struct FirmwareBootMemory {
     uint64_t* free_ring = nullptr;
     const uint64_t* receive_descriptors = nullptr;
     PeerQueueMemory peer_queue{};
+    AuthenticationDma authentication{};
 };
 
 enum class AlivePacket { missing, success, rejected, malformed };
@@ -53,6 +54,7 @@ struct ScanChecks {
     FirmwareCheck check;
     ScanElementStorage* elements = nullptr;
     bool dual_lmac = false;
+    AuthenticationTarget target{};
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.

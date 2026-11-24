@@ -68,6 +68,8 @@ PCI devices publish their properties in `uevent` under
 `/sys/bus/pci/devices`. A caller with `CAP_SYS_ADMIN` can write an action
 such as `change` to replay those properties on group 1. The event contains
 the action, canonical device path, properties, and sequence number.
+When an Ethernet driver binds, the PCI event adds its driver name to the
+existing device properties. The network interface publishes its own event.
 Group 1 is reserved for the kernel. Ancillary credentials supplied by the
 sender are unsupported.
 The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)

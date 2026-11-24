@@ -104,6 +104,9 @@ case "$($bb cat /etc/pci-test-layout)" in
         test "$($bb cat "$nic/class")" = 0x020000
         test "$($bb readlink -f "$nic/driver")" = /sys/bus/pci/drivers/e1000
         $bb grep -qx "PCI_SLOT_NAME=$slot" "$nic/uevent"
+        $bb grep -qx 'SUBSYSTEM=pci' "$nic/uevent"
+        $bb grep -qx 'PCI_ID=8086:100E' "$nic/uevent"
+        $bb grep -qx 'DRIVER=e1000' "$nic/uevent"
         $bb grep -qx 'INTERFACE=eth0' "$ethernet/uevent"
         $bb printf 'PCI_INVENTORY_ETHERNET %s\\n' "$slot"
         ;;

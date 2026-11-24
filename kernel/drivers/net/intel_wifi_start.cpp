@@ -10,7 +10,7 @@
  *
  * Copyright (C) 2026 frankischilling
  */
-#include "drivers/net/intel_wifi_start.hpp"
+#include "drivers/net/intel_wifi_rx.hpp"
 #include "mm/dma.hpp"
 
 namespace ax::IntelWifi {
@@ -20,7 +20,7 @@ constexpr unsigned reset = 0x20, gp = 0x24, gio = 0x3c, context_base = 0x40, dri
 constexpr unsigned mailbox_set = 0x88, shadow_control = 0xa8, gio_chicken = 0x100;
 constexpr unsigned hpet_debug = 0x240, link_power = 0x250;
 constexpr unsigned prph_write_address = 0x444, prph_read_address = 0x448;
-constexpr unsigned prph_write_data = 0x44c, prph_read_data = 0x450, receive_write_pointer = 0x1c80;
+constexpr unsigned prph_write_data = 0x44c, prph_read_data = 0x450;
 constexpr unsigned command_write_pointer = 0x460;
 constexpr unsigned hpm_debug = 0xa03440, hpm_power = 0xa03458, hpm_ltr_control = 0xa0348c;
 constexpr unsigned hpm_ltr = 0xa03480, peripheral_write_protect = 0xa04d00, cpu_start = 0xa05c44;
@@ -170,41 +170,6 @@ const char* prepare_adapter(const Registers& reg, bool& owned) {
     return nullptr;
 }
 
-constexpr unsigned posted_buffers = (rx_ring_entries - 1) & ~7u;
-
-struct ReceiveReader {
-    const FirmwareBootIo& io;
-    const FirmwareBootMemory& memory;
-    unsigned read = 0;
-    size_t offset = 0;
-    const uint8_t* buffer = nullptr;
-
-    PacketRead next(FirmwarePacket& packet) {
-        const unsigned closed = memory.receive_status->closed_buffer & rx_buffer_id_mask;
-        if (closed < read || closed > posted_buffers)
-            return PacketRead::malformed;
-        // The device completes DMA before publishing the closed-buffer index.
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        for (;;) {
-            if (buffer) {
-                const auto result = next_firmware_packet(buffer, page_size, offset, packet);
-                if (result != PacketRead::end)
-                    return result;
-                buffer = nullptr;
-            }
-            if (read == closed)
-                return PacketRead::end;
-            const unsigned id = memory.used_ring[read++] & rx_buffer_id_mask;
-            if (!id || id > posted_buffers)
-                return PacketRead::malformed;
-            buffer = io.receive_buffer(io.context, id);
-            if (!buffer)
-                return PacketRead::malformed;
-            offset = 0;
-        }
-    }
-};
-
 AlivePacket decode_alive(const FirmwarePacket& packet) {
     if (packet.opcode != 1 || packet.group != 0)
         return AlivePacket::missing;
@@ -223,8 +188,7 @@ const char* wait_for_alive(const Registers& reg, ReceiveReader& rx) {
         if (!posted && (cause & alive_interrupt)) {
             // Firmware programs the RX engine before it raises ALIVE. Publish whole blocks of
             // eight.
-            __atomic_thread_fence(__ATOMIC_RELEASE);
-            reg.write(receive_write_pointer, posted_buffers);
+            rx.post_initial();
             posted = true;
         }
         if (cause)
@@ -468,6 +432,8 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
         return {"invalid startup DMA addresses", false, true};
+    if (bool(memory.free_ring) != bool(memory.receive_descriptors))
+        return {"invalid receive recycling addresses", false, true};
     if ((scan && !memory.commands) ||
         (memory.commands && (!memory.command_payloads || !memory.command_dma ||
                              !Dma::fits(memory.command_dma, sizeof(CommandPayloads), Dma::pci))))

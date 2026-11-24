@@ -2335,7 +2335,10 @@ Use `iwlwifi.rescan-check` to request two passive scans in one firmware
 session before resetting the adapter. The display reports when both finish.
 The driver assigns each scan a separate identifier. A late completion from
 the first scan cannot finish the second one. The second scan replaces the
-first snapshot.
+first snapshot. This mode returns each fully read buffer to the receive
+ring and posts descriptors in groups of eight. The firmware test wraps
+the ring and rejects completions beyond the posted tail or for buffers
+the driver still owns.
 
 After the radio stops, the kernel exposes the snapshot through Linux's
 `nl80211` interface. The diagnostic publishes `wlan0` and supports reading

@@ -207,9 +207,10 @@ struct BootQueues {
     using Commands = CommandDescriptor[command_ring_entries];
     using InvalidCommand = uint8_t[invalid_command_size];
     using UsedRing = uint32_t[rx_ring_entries];
+    using ReceiveDescriptors = uint64_t[rx_ring_entries - 1];
 
     DmaBuffer free_ring, used_ring, status, commands, invalid_command, context;
-    DmaBuffer command_payloads;
+    DmaBuffer command_payloads, receive_map;
     unsigned receive_count = 0;
 
     void pin_until_reboot() {
@@ -223,14 +224,15 @@ struct BootQueues {
         if (free_ring.retain)
             return;
         for (unsigned i = 0; i < receive_count; ++i)
-            page_free(align_down(free_ring.data<FreeRing>()[i]), 1);
+            page_free(align_down(receive_map.data<ReceiveDescriptors>()[i]), 1);
     }
 
     bool prepare(const FirmwareImage& image, const FirmwareAddresses& addresses) {
         if (!free_ring.allocate(sizeof(FreeRing)) || !used_ring.allocate(sizeof(UsedRing)) ||
             !status.allocate(sizeof(ReceiveStatus)) || !commands.allocate(sizeof(Commands)) ||
             !invalid_command.allocate(sizeof(InvalidCommand)) ||
-            !context.allocate(sizeof(BootContext)))
+            !context.allocate(sizeof(BootContext)) ||
+            !receive_map.allocate(sizeof(ReceiveDescriptors)))
             return false;
 
         if (!prepare_command_ring(invalid_command.address, invalid_command.data<InvalidCommand>(),
@@ -242,14 +244,17 @@ struct BootQueues {
 
         // Keep one slot empty. The hardware write pointer is programmed after it configures RX.
         auto& ring = free_ring.data<FreeRing>();
+        auto& descriptors = receive_map.data<ReceiveDescriptors>();
+        // DMA slots move on reuse. Keep a separate, stable mapping for lookup and teardown.
         for (; receive_count < rx_ring_entries - 1; ++receive_count) {
             const auto address = Dma::allocate(1, Dma::pci);
             if (!address)
                 return false;
-            if (!encode_receive_buffer(address, receive_count + 1, ring[receive_count])) {
+            if (!encode_receive_buffer(address, receive_count + 1, descriptors[receive_count])) {
                 page_free(address, 1);
                 return false;
             }
+            ring[receive_count] = descriptors[receive_count];
         }
         return true;
     }
@@ -311,16 +316,20 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
             adapter.write16(pci_command, command);
             return adapter.read16(pci_command) == command;
         },
-        [](void* state, unsigned id) -> const uint8_t* {
+        [](void* state, unsigned id) -> uint8_t* {
             const auto& queues = static_cast<AdapterBoot*>(state)->queues;
             if (!id || id > queues.receive_count)
                 return nullptr;
-            return static_cast<const uint8_t*>(
-                physical(align_down(queues.free_ring.data<BootQueues::FreeRing>()[id - 1])));
+            return static_cast<uint8_t*>(physical(
+                align_down(queues.receive_map.data<BootQueues::ReceiveDescriptors>()[id - 1])));
         },
     };
     FirmwareBootMemory memory{queues.context.address, &queues.status.data<ReceiveStatus>(),
                               queues.used_ring.data<BootQueues::UsedRing>()};
+    if (check == FirmwareCheck::rescan) {
+        memory.free_ring = queues.free_ring.data<BootQueues::FreeRing>();
+        memory.receive_descriptors = queues.receive_map.data<BootQueues::ReceiveDescriptors>();
+    }
     if (nvm) {
         memory.commands = queues.commands.data<BootQueues::Commands>();
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();

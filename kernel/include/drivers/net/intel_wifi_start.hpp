@@ -17,7 +17,7 @@ struct FirmwareBootIo {
     void (*write)(void*, unsigned offset, uint32_t value);
     bool (*delay)(void*, unsigned microseconds);
     bool (*bus_master)(void*, bool enable);
-    const uint8_t* (*receive_buffer)(void*, unsigned id);
+    uint8_t* (*receive_buffer)(void*, unsigned id);
 };
 
 struct FirmwareBootMemory {
@@ -27,6 +27,8 @@ struct FirmwareBootMemory {
     CommandDescriptor* commands = nullptr;
     CommandPayloads* command_payloads = nullptr;
     uint64_t command_dma = 0;
+    uint64_t* free_ring = nullptr;
+    const uint64_t* receive_descriptors = nullptr;
 };
 
 enum class AlivePacket { missing, success, rejected, malformed };

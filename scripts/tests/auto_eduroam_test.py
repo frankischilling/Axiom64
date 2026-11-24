@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -46,6 +47,34 @@ elif "up" in args and case in ("activation-fails", "profile-missing"):
 
 
 class EduroamTest(unittest.TestCase):
+    def test_pinned_upstream_uses_two_answers(self):
+        root = SCRIPT.parents[2]
+        pin = json.loads((root / "dependencies.json").read_text())["auto_eduroam"]
+        with tarfile.open(SCRIPT.parent / pin["archive"]) as source:
+            with source.extractfile(f"auto-eduroam-{pin['revision']}/connect-eduroam.sh") as script:
+                upstream = script.read()
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            helper = work / "connect-eduroam.sh"
+            helper.write_bytes(upstream)
+            for name, program in (("nmcli", NMCLI), ("sleep", "#!/bin/sh\nexit 0\n"),
+                                  ("ping", "#!/bin/sh\nexit 0\n")):
+                tool = work / name
+                tool.write_text(program)
+                tool.chmod(0o755)
+            log = work / "commands.jsonl"
+            result = subprocess.run(
+                ["bash", helper], text=True, timeout=10, capture_output=True,
+                input="student@example.edu\nfixture-password\n",
+                env=dict(os.environ, PATH=f"{work}:{os.environ['PATH']}", TEST_LOG=str(log),
+                         TEST_SCENARIO="success"),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            add = next(call for call in calls if call[:2] == ["connection", "add"])
+            self.assertEqual(add[add.index("802-1x.identity") + 1], "student@example.edu")
+            self.assertEqual(calls[-1], ["connection", "up", "eduroam"])
+
     def run_fixture(self, scenario="success", *, valid_certificate=True):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)

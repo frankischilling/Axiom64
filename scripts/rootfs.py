@@ -232,12 +232,23 @@ eduroam = ROOT / "vendor/auto-eduroam"
 eduroam_home = "usr/share/axiom64/auto-eduroam"
 for path in ("usr/share/axiom64", eduroam_home):
     files.setdefault(path, (0o40755, b""))
+eduroam_pin = LOCK["auto_eduroam"]
+eduroam_archive = eduroam / eduroam_pin["archive"]
+verify_archive(eduroam_archive, eduroam_pin["sha256"])
+with tarfile.open(eduroam_archive) as source:
+    entry = f"auto-eduroam-{eduroam_pin['revision']}/connect-eduroam.sh"
+    with source.extractfile(entry) as script:
+        files[eduroam_home + "/connect-eduroam-upstream.sh"] = (0o100755, script.read())
 regular(eduroam_home + "/connect-eduroam.sh", eduroam / "connect-eduroam.sh")
 for name in ("README.md", "LICENSE"):
     regular(eduroam_home + "/" + name, eduroam / name, 0o100644)
 for path in ("root/auto-eduroam", "etc/skel/auto-eduroam"):
     files[path] = (0o120777, ("/" + eduroam_home).encode())
 files["usr/bin/connect-eduroam"] = (0o120777, f"/{eduroam_home}/connect-eduroam.sh".encode())
+files["usr/bin/connect-eduroam-verified"] = files["usr/bin/connect-eduroam"]
+files["usr/bin/connect-eduroam-upstream"] = (
+    0o120777, f"/{eduroam_home}/connect-eduroam-upstream.sh".encode()
+)
 for entry in sorted((ROOT / "userspace/desktop/launchers").glob("*.desktop")):
     regular("usr/share/applications/" + entry.name, entry, 0o100644)
     regular("etc/skel/Desktop/" + entry.name, entry, 0o100755)

@@ -81,7 +81,11 @@ def verify(disk, output, firmware, samples, networkmanager):
             run("/bin/sh installed-build-tools.sh", 12, timeout=300)
             run("test -r \"$HOME/auto-eduroam/LICENSE\" && "
                 "test -r \"$HOME/auto-eduroam/README.md\" && "
-                "\"$HOME/auto-eduroam/connect-eduroam.sh\" --help && connect-eduroam --help", 13)
+                "\"$HOME/auto-eduroam/connect-eduroam.sh\" --help && connect-eduroam --help && "
+                "cmp /usr/bin/connect-eduroam /usr/bin/connect-eduroam-verified && "
+                "test -x \"$HOME/auto-eduroam/connect-eduroam-upstream.sh\" && "
+                "cmp \"$HOME/auto-eduroam/connect-eduroam-upstream.sh\" "
+                "/usr/bin/connect-eduroam-upstream && bash -n /usr/bin/connect-eduroam-upstream", 13)
             if networkmanager:
                 run("nmcli --version && "
                     "nmcli -g IP4.ADDRESS device show eth0 | grep -Fx '10.0.2.15/24'", 14)

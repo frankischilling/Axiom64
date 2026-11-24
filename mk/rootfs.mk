@@ -31,6 +31,7 @@ ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-s
 	$(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/newc.py \
 	scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager scripts/configure-busybox.sh build/random-seed-static
+ROOTFS_INPUTS += $(wildcard vendor/auto-eduroam/*)
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py scripts/build_curl.py scripts/ca_bundle.py
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)

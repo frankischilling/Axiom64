@@ -46,6 +46,9 @@ password if the system asks you to authorize network changes. Confirm the
 prefilled school username and enter your school password at the NetworkManager
 Wi-Fi prompt. The helper saves the profile after the connection succeeds.
 If the connection fails, authorize cleanup of the temporary profile if prompted.
+The pinned upstream script is available as `connect-eduroam-upstream`.
+See the [helper instructions](../vendor/auto-eduroam/README.md) for its
+profile and certificate behavior.
 
 The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
 UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools

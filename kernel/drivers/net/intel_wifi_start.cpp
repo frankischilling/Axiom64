@@ -1199,6 +1199,8 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
         return -16;
     if (!request.ssid.length || request.ssid.length > sizeof(request.ssid.bytes))
         return -22;
+    if (request.akm != RsnAkm::open && !session.security_keys)
+        return -95;
     if (!scan.elements || scan.status != PassiveScan::Status::complete)
         return -2;
 
@@ -1227,12 +1229,15 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
                 continue;
             const bool high = channel.frequency_mhz >= 5000;
             const auto& elements = scan.elements->records[i];
+            const auto* advertised = peer.beacon_ie_bytes ? elements.beacon : elements.probe;
+            const unsigned advertised_bytes =
+                peer.beacon_ie_bytes ? peer.beacon_ie_bytes : peer.probe_ie_bytes;
             AssociationRequest association;
-            if (!prepare_association_request(peer, elements.beacon, peer.beacon_ie_bytes, high,
-                                             association, request.extra, request.extra_bytes))
+            if (!prepare_association_request(peer, advertised, advertised_bytes, high, association,
+                                             request.extra, request.extra_bytes, request.akm))
                 break;
-            const auto rate = authentication_rate(elements.beacon, peer.beacon_ie_bytes, high,
-                                                  session.antennas.tx);
+            const auto rate =
+                authentication_rate(advertised, advertised_bytes, high, session.antennas.tx);
             if (!rate)
                 break;
             candidate.peer = peer;
@@ -1246,7 +1251,8 @@ int submit_live_join(LiveScanSession& session, const PassiveScan& scan,
     if (!candidate.rate)
         return -2;
     candidate.phase = JoinPhase::phy;
-    candidate.controlled_port = request.controlled_port;
+    candidate.ccmp = request.akm != RsnAkm::open;
+    candidate.controlled_port = request.controlled_port || candidate.ccmp;
     session.join = candidate;
     return 0;
 }
@@ -1447,6 +1453,7 @@ JoinOutcome poll_live_join(LiveScanSession& session, uint64_t now_ms) {
                 session.station.channel = join.channel.number;
                 session.station.rate = join.rate;
                 session.station.next_sequence = join.sequence;
+                session.station.ccmp = join.ccmp;
                 session.station.port_authorized = !join.controlled_port;
                 join.phase = JoinPhase::idle;
                 return JoinOutcome::connected;

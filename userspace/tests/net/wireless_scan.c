@@ -570,6 +570,47 @@ static void check_station_event(int fd, unsigned family, unsigned index, unsigne
     }
 }
 
+static void check_rsn_connect(int fd, unsigned family, unsigned index, const uint8_t* peer) {
+    const uint8_t security[] = {48, 20,  1, 0, 0, 15, 172, 4,   1, 0, 0,
+                                15, 172, 4, 1, 0, 0,  15,  172, 1, 0, 0};
+    const uint32_t version = NL80211_WPA_VERSION_2, ccmp = 0x000fac04, eap = 0x000fac01;
+    const uint32_t frequency = 2412;
+    struct packet connect = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 110);
+    append_attribute(&connect, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    append_attribute(&connect, NL80211_ATTR_SSID, "lab", 3);
+    append_attribute(&connect, NL80211_ATTR_MAC, peer, 6);
+    append_attribute(&connect, NL80211_ATTR_WIPHY_FREQ, &frequency, sizeof(frequency));
+    append_attribute(&connect, NL80211_ATTR_IE, security, sizeof(security));
+    append_attribute(&connect, NL80211_ATTR_WPA_VERSIONS, &version, sizeof(version));
+    append_attribute(&connect, NL80211_ATTR_CIPHER_SUITES_PAIRWISE, &ccmp, sizeof(ccmp));
+    append_attribute(&connect, NL80211_ATTR_AKM_SUITES, &eap, sizeof(eap));
+    check_station_ack(fd, &connect, EINVAL); /* Missing group cipher. */
+    ++connect.header.nlmsg_seq;
+    append_attribute(&connect, NL80211_ATTR_CIPHER_SUITE_GROUP, &ccmp, sizeof(ccmp));
+    struct packet protected_management = connect;
+    const uint32_t mfp = NL80211_MFP_REQUIRED;
+    ++protected_management.header.nlmsg_seq;
+    append_attribute(&protected_management, NL80211_ATTR_USE_MFP, &mfp, sizeof(mfp));
+    check_station_ack(fd, &protected_management, EOPNOTSUPP);
+    check_station_ack(fd, &connect, 0);
+    alignas(struct nlmsghdr) uint8_t bytes[1024];
+    receive(fd, bytes, sizeof(bytes), 0);
+    const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
+    const struct genlmsghdr* event = NLMSG_DATA(message);
+    const struct nlattr* request_ie = message_attribute(message, NL80211_ATTR_REQ_IE);
+    const size_t basic_bytes = 8;
+    const uint8_t* ies = payload(request_ie, basic_bytes + sizeof(security));
+    require(message->nlmsg_type == family && event->cmd == NL80211_CMD_CONNECT &&
+                !memcmp(ies + basic_bytes, security, sizeof(security)),
+            "connect event carries the original RSN information element");
+    check_key_requests(fd, family, index, peer);
+    struct packet disconnect = make_request(family, NL80211_CMD_DISCONNECT, NLM_F_ACK, 115);
+    append_attribute(&disconnect, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    check_station_ack(fd, &disconnect, 0);
+    check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL, 0);
+    puts("WIRELESS_RSN_CONNECT_PASS");
+}
+
 static void check_connection(int fd, unsigned family, unsigned index) {
     const char name[] = "nl80211";
     alignas(struct nlmsghdr) uint8_t bytes[8192];
@@ -595,6 +636,11 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     require(read_u32(nested(commands, 3)) == NL80211_CMD_DISCONNECT, "radio advertises disconnect");
     require(read_u32(nested(commands, 4)) == NL80211_CMD_SET_STATION,
             "radio advertises station authorization");
+    require(read_u32(message_attribute(message, NL80211_ATTR_CIPHER_SUITES)) == 0x000fac04,
+            "radio advertises CCMP");
+    require(read_u32(nested(commands, 5)) == NL80211_CMD_NEW_KEY &&
+                read_u32(nested(commands, 6)) == NL80211_CMD_DEL_KEY,
+            "radio advertises key management");
 
     struct packet request = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 17);
     const uint8_t peer[] = {2, 0, 0, 0, 0, 1};
@@ -682,7 +728,6 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&owned, NL80211_ATTR_MLO_SUPPORT, NULL, 0);
     check_station_ack(owner, &owned, 0);
     check_station_event(fd, family, index, NL80211_CMD_CONNECT, 0, peer, 1);
-    check_key_requests(fd, family, index, peer);
     leave.header.nlmsg_seq++;
     check_station_ack(fd, &leave, EPERM);
     struct packet authorize = make_request(family, NL80211_CMD_SET_STATION, NLM_F_ACK, 60);
@@ -696,6 +741,7 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     check_station_ack(fd, &authorize, 0);
     require(close(owner) == 0, "close connection owner socket");
     check_station_event(fd, family, index, NL80211_CMD_DISCONNECT, 3, NULL, 0);
+    check_rsn_connect(fd, family, index, peer);
     struct packet refused = make_request(family, NL80211_CMD_CONNECT, NLM_F_ACK, 76);
     const uint8_t alternate_peer[] = {2, 0, 0, 0, 0, 2};
     append_attribute(&refused, NL80211_ATTR_IFINDEX, &index, sizeof(index));

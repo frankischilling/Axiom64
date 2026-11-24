@@ -253,25 +253,33 @@ void prepare_associated_mac(const uint8_t (&station)[6], const AccessPoint& peer
 
 bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, unsigned bytes,
                                  bool high_band, AssociationRequest& request, const uint8_t* extra,
-                                 unsigned extra_bytes) {
+                                 unsigned extra_bytes, RsnAkm akm) {
     request.length = 0;
-    if ((peer.capability & 0x13) != 1 || !peer.ssid_length ||
+    const bool secured = akm != RsnAkm::open;
+    if ((peer.capability & 0x13) != (secured ? 0x11 : 1) || !peer.ssid_length ||
         peer.ssid_length > sizeof(peer.ssid) || !ies || extra_bytes > association_extra_limit ||
-        (extra_bytes && !extra))
+        !station_rsn_matches(extra, extra_bytes, akm))
         return false;
 
     const unsigned first_rate = high_band ? scan_cck_rate_count : 0;
     unsigned rates = 0;
+    bool rsn_seen = false;
     for (unsigned offset = 0; offset < bytes;) {
         if (bytes - offset < 2)
             return false;
         const unsigned id = ies[offset], length = ies[offset + 1];
         offset += 2;
-        if (length > bytes - offset || id == 48)
+        if (length > bytes - offset)
             return false;
         const auto* data = ies + offset;
+        if (id == rsn_element) {
+            if (rsn_seen || !supports_rsn(data, length, akm, false))
+                return false;
+            rsn_seen = true;
+        }
         const uint8_t wpa_type[]{0, 0x50, 0xf2, 1};
-        if (id == 221 && length >= sizeof(wpa_type) && !memcmp(data, wpa_type, sizeof(wpa_type)))
+        if (!secured && id == 221 && length >= sizeof(wpa_type) &&
+            !memcmp(data, wpa_type, sizeof(wpa_type)))
             return false;
         if (id == 1 || id == 50) {
             for (unsigned i = 0; i < length; ++i) {
@@ -287,7 +295,7 @@ bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, un
         }
         offset += length;
     }
-    if (!rates)
+    if (!rates || rsn_seen != secured)
         return false;
 
     uint8_t supported[sizeof(scan_legacy_rates)];
@@ -297,7 +305,7 @@ bool prepare_association_request(const AccessPoint& peer, const uint8_t* ies, un
             supported[count++] = scan_legacy_rates[i];
 
     auto* body = request.body;
-    const auto capability = peer.capability & 0x0421; // ESS, short preamble, short slot.
+    const auto capability = peer.capability & 0x0431; // ESS, privacy, and short preamble/slot.
     body[0] = uint8_t(capability);
     body[1] = uint8_t(capability >> 8);
     body[2] = 1;

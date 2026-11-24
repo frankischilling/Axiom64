@@ -39,10 +39,17 @@ enum Attribute : uint16_t {
     auth_type = 53,
     reason_code = 54,
     key_type = 55,
+    cipher_suites = 57,
     timed_out = 65,
+    use_mfp = 66,
     station_flags = 67,
     control_port = 68,
+    privacy = 70,
     status_code = 72,
+    pairwise_cipher = 73,
+    group_cipher = 74,
+    wpa_versions = 75,
+    akm_suites = 76,
     request_ies = 77,
     response_ies = 78,
     key_bundle = 80,
@@ -159,8 +166,7 @@ int select_association_elements(const uint8_t* bytes, size_t size,
             return -22;
         const auto id = bytes[offset];
         const auto length = bytes[offset + 1];
-        // The supplicant supplies these two elements without overriding SSID, rates or security.
-        const unsigned flag = id == 59 ? 1 : id == 127 ? 2 : 0;
+        const unsigned flag = id == 59 ? 1 : id == 127 ? 2 : id == IntelWifi::rsn_element ? 4 : 0;
         if (!flag)
             return -95;
         if (!length || (seen & flag))
@@ -205,15 +211,33 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
         case ifindex:
         case frequency_mhz:
         case frequency_hint:
-        case auth_type: {
+        case auth_type:
+        case use_mfp:
+        case pairwise_cipher:
+        case group_cipher:
+        case wpa_versions:
+        case akm_suites: {
             uint32_t number;
             if (size != sizeof(number))
                 return -22;
             memcpy(&number, value, sizeof(number));
             if (field.type == ifindex && number != index)
                 return -19;
-            if (field.type == auth_type && number != 0)
+            if ((field.type == auth_type || field.type == use_mfp) && number != 0)
                 return -95;
+            if ((field.type == pairwise_cipher || field.type == group_cipher) &&
+                number != IntelWifi::ccmp_suite)
+                return -95;
+            if (field.type == wpa_versions && number != 2)
+                return -95;
+            if (field.type == akm_suites) {
+                if (number == IntelWifi::enterprise_suite)
+                    connection.akm = IntelWifi::RsnAkm::enterprise;
+                else if (number == IntelWifi::personal_suite)
+                    connection.akm = IntelWifi::RsnAkm::personal;
+                else
+                    return -95;
+            }
             if (field.type == frequency_mhz || field.type == frequency_hint) {
                 if (!number)
                     return -22;
@@ -270,6 +294,7 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
         case socket_owner:
         case control_port:
         case mlo_support:
+        case privacy:
             if (size)
                 return -22;
             request.owned |= field.type == socket_owner;
@@ -308,6 +333,16 @@ int select_station_request(const uint8_t* bytes, size_t length, unsigned index, 
         (!seen[ssid] || (seen[ht_capability] && !seen[ht_capability_mask]) ||
          (seen[vht_capability] && !seen[vht_capability_mask])))
         return -22;
+    if (command == nl80211_connect) {
+        const bool rsn = connection.akm != IntelWifi::RsnAkm::open;
+        if (rsn && (!seen[wpa_versions] || !seen[pairwise_cipher] || !seen[group_cipher]))
+            return -22;
+        if ((!rsn && (seen[wpa_versions] || seen[pairwise_cipher] || seen[group_cipher] ||
+                      seen[privacy])) ||
+            !IntelWifi::station_rsn_matches(connection.extra, connection.extra_bytes,
+                                            connection.akm))
+            return -95;
+    }
     if (command == nl80211_set_station && (!seen[mac] || !seen[station_flags]))
         return -22;
     return 0;
@@ -357,7 +392,7 @@ int unpack_key_field(KeyAttributes& key, unsigned field, const uint8_t* bytes, s
         if (size != sizeof(value))
             return -22;
         memcpy(&value, bytes, size);
-        if (field == cipher && value != 0x000fac04) // CCMP-128.
+        if (field == cipher && value != IntelWifi::ccmp_suite)
             return -95;
         if (field == type_field) {
             if (value > 1)
@@ -704,7 +739,11 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         int error = select_station_request(bytes + header, request.length - header, info->index,
                                            command, station_request);
         if (!error) {
-            if (command == nl80211_connect)
+            if (command == nl80211_connect &&
+                station_request.connection.akm != IntelWifi::RsnAkm::open &&
+                !IntelWifi::live_rsn_available())
+                error = -95;
+            else if (command == nl80211_connect)
                 error = IntelWifi::request_live_connection(station_request.connection,
                                                            station_request.owned ? port : 0);
             else if (command == nl80211_disconnect)
@@ -752,6 +791,12 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         message.attr(station, nullptr, 0);
         message.end_nested(types);
         const bool live = wireless_trigger_available();
+        const bool rsn = IntelWifi::live_rsn_available();
+        if (rsn) {
+            message.value(cipher_suites, IntelWifi::ccmp_suite);
+            const uint32_t suites[]{IntelWifi::enterprise_suite, IntelWifi::personal_suite};
+            message.value(akm_suites, suites);
+        }
         message.value(max_num_scan_ssids, uint8_t(live ? IntelWifi::scan_ssid_limit : 0));
         const size_t bands = message.begin_nested(wiphy_bands);
         const auto& list = IntelWifi::scan_channel_inventory();
@@ -766,7 +811,11 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
             if (wireless_connect_available()) {
                 message.value(entry++, uint32_t(nl80211_connect));
                 message.value(entry++, uint32_t(nl80211_disconnect));
-                message.value(entry, uint32_t(nl80211_set_station));
+                message.value(entry++, uint32_t(nl80211_set_station));
+                if (rsn) {
+                    message.value(entry++, uint32_t(nl80211_new_key));
+                    message.value(entry, uint32_t(nl80211_del_key));
+                }
             }
             message.end_nested(commands);
         }

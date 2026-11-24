@@ -2450,7 +2450,15 @@ packet number, or no matching key, and allows EAPOL during authentication.
 The key tests send pairwise and group key requests in both nl80211 attribute
 formats. The firmware model checks that a key becomes active after its
 acknowledgement, that a repeated install preserves replay counters, and that a
-timeout closes the link. Secured connections still require RSN association.
+timeout closes the link.
+
+The live driver supports WPA2 with CCMP-128 for both pairwise and group
+traffic. It accepts Enterprise and Personal profiles. The station keeps the
+controlled port closed until userspace installs a pairwise key and authorizes
+the connection. The firmware model checks the outgoing association frame.
+The Blade still needs WPA2 authentication and encrypted traffic tests on a
+real access point. Networks that require protected management frames need
+additional driver support.
 
 Send `NL80211_CMD_DISCONNECT` to end an open connection. Wait for the
 disconnect event on the `mlme` group before scanning or connecting again.

@@ -60,6 +60,156 @@ void check_intel_wifi_association_codec() {
     std::puts("AX201_ASSOCIATION_CODEC_PASS");
 }
 
+void initialize_intel_wifi_receive_descriptors(uint64_t* ring, uint64_t* descriptors) {
+    for (unsigned id = 1; id < rx_ring_entries; ++id) {
+        assert(encode_receive_buffer(0x200000 + id * ax::page_size, id, descriptors[id - 1]));
+        ring[id - 1] = descriptors[id - 1];
+    }
+}
+
+namespace {
+struct ReceiveFixture {
+    uint64_t free_ring[rx_ring_entries]{};
+    uint64_t descriptors[rx_ring_entries - 1]{};
+    uint32_t used_ring[rx_ring_entries]{};
+    bool device_owned[rx_ring_entries]{};
+    ReceiveStatus status{};
+    Bytes buffers = Bytes((rx_ring_entries - 1) * ax::page_size);
+    unsigned completed = 0, published = 0, doorbells = 0;
+    const FirmwareBootIo io{
+        this,
+        nullptr,
+        [](void* state, unsigned offset, uint32_t value) {
+            auto& self = *static_cast<ReceiveFixture*>(state);
+            assert(offset == 0x1c80);
+            assert(value == (self.doorbells ? (self.published + 8) % rx_ring_entries : 2040));
+            for (unsigned slot = self.published; slot != value;
+                 slot = (slot + 1) % rx_ring_entries) {
+                const unsigned id = self.free_ring[slot] & rx_buffer_id_mask;
+                assert(id && id < rx_ring_entries && !self.device_owned[id]);
+                assert(self.free_ring[slot] == self.descriptors[id - 1]);
+                self.device_owned[id] = true;
+            }
+            self.published = value;
+            ++self.doorbells;
+        },
+        nullptr,
+        nullptr,
+        [](void* state, unsigned id) { return static_cast<ReceiveFixture*>(state)->page(id); },
+    };
+    const FirmwareBootMemory memory{0x9000,  &status, used_ring, nullptr,
+                                    nullptr, 0,       free_ring, descriptors};
+
+    ReceiveFixture() {
+        initialize_intel_wifi_receive_descriptors(free_ring, descriptors);
+    }
+
+    uint8_t* page(unsigned id) {
+        assert(id && id < rx_ring_entries);
+        return buffers.data() + (id - 1) * ax::page_size;
+    }
+
+    void close_buffer(unsigned id) {
+        assert(completed % rx_ring_entries != published);
+        used_ring[completed++ % rx_ring_entries] = 0xc000 | id;
+        status.closed_buffer = completed & rx_buffer_id_mask;
+    }
+
+    void put(unsigned id, uint8_t opcode, bool multiple = false) {
+        assert(device_owned[id]);
+        device_owned[id] = false;
+        auto* bytes = page(id);
+        for (size_t i = 0; i < ax::page_size; ++i)
+            assert(!bytes[i]);
+        bytes[0] = 5;
+        bytes[4] = opcode;
+        bytes[8] = opcode;
+        if (multiple) {
+            bytes[64] = 5;
+            bytes[68] = uint8_t(opcode + 1);
+            bytes[72] = uint8_t(opcode + 1);
+        }
+        close_buffer(id);
+    }
+};
+
+} // namespace
+
+void check_intel_wifi_receive_recycling() {
+    ReceiveFixture fixture;
+    ReceiveReader reader(fixture.io, fixture.memory);
+    reader.post_initial();
+    FirmwarePacket packet{};
+    // The completion descriptor names the buffer, even when IDs arrive out of order.
+    fixture.put(2, 12, true);
+    fixture.put(1, 14);
+    assert(reader.next(packet) == PacketRead::packet && packet.opcode == 12);
+    assert(packet.payload[0] == 12 && fixture.doorbells == 1);
+    assert(reader.next(packet) == PacketRead::packet && packet.opcode == 13);
+    assert(packet.payload[0] == 13 && fixture.doorbells == 1);
+    assert(reader.next(packet) == PacketRead::packet && packet.opcode == 14);
+    assert(reader.next(packet) == PacketRead::end && fixture.doorbells == 2);
+    assert(fixture.free_ring[2047] == fixture.descriptors[1] &&
+           fixture.free_ring[0] == fixture.descriptors[0]);
+
+    unsigned returned = 2;
+    for (; returned < 4 * rx_ring_entries + 1; ++returned) {
+        const unsigned id = fixture.free_ring[returned % rx_ring_entries] & rx_buffer_id_mask;
+        const auto opcode = uint8_t(returned + 1);
+        fixture.put(id, opcode);
+        assert(reader.next(packet) == PacketRead::packet && packet.opcode == opcode &&
+               packet.payload[0] == opcode);
+        assert(reader.next(packet) == PacketRead::end);
+    }
+    assert(fixture.completed == returned && fixture.doorbells == 1026);
+
+    ReceiveFixture serial;
+    ReceiveReader bad_id(serial.io, serial.memory);
+    bad_id.post_initial();
+    serial.put(1, 1);
+    serial.put(2, 2);
+    assert(bad_id.next(packet) == PacketRead::packet);
+    assert(bad_id.next(packet) == PacketRead::packet);
+    assert(bad_id.next(packet) == PacketRead::end);
+    serial.close_buffer(2); // Released by the host, but not yet re-posted.
+    assert(bad_id.next(packet) == PacketRead::malformed);
+
+    ReceiveFixture unopened;
+    ReceiveReader bad_tail(unopened.io, unopened.memory);
+    bad_tail.post_initial();
+    unopened.status.closed_buffer = 2041;
+    assert(bad_tail.next(packet) == PacketRead::malformed);
+    unopened.status.closed_buffer = 0;
+    unopened.close_buffer(2041);
+    assert(bad_tail.next(packet) == PacketRead::malformed);
+    std::puts("AX201_RX_RECYCLE_MODEL_PASS packets=8194");
+}
+
+void check_intel_wifi_rsn_codec() {
+    constexpr uint8_t enterprise[]{48, 20,  1, 0, 0, 15, 172, 4,   1, 0, 0,
+                                   15, 172, 4, 1, 0, 0,  15,  172, 1, 0, 0};
+    assert(station_rsn_matches(enterprise, sizeof(enterprise), RsnAkm::enterprise));
+    assert(!station_rsn_matches(enterprise, sizeof(enterprise), RsnAkm::open));
+    assert(!station_rsn_matches(enterprise, sizeof(enterprise), RsnAkm::personal));
+    assert(!station_rsn_matches(enterprise, sizeof(enterprise) - 1, RsnAkm::enterprise));
+    uint8_t ap[sizeof(enterprise)];
+    memcpy(ap, enterprise, sizeof(ap));
+    ap[20] = 0x80; // Management frame protection is optional on the access point.
+    assert(supports_rsn(ap + 2, sizeof(ap) - 2, RsnAkm::enterprise, false));
+    assert(!station_rsn_matches(ap, sizeof(ap), RsnAkm::enterprise));
+    ap[20] = 0xc0;
+    assert(!supports_rsn(ap + 2, sizeof(ap) - 2, RsnAkm::enterprise, false));
+    ap[20] = 0;
+    ap[8] = 0xff; // Pairwise suite list overruns the element.
+    assert(!station_rsn_matches(ap, sizeof(ap), RsnAkm::enterprise));
+    memcpy(ap, enterprise, sizeof(ap));
+    ap[19] = 2;
+    assert(station_rsn_matches(ap, sizeof(ap), RsnAkm::personal));
+    ap[7] = 2; // TKIP group cipher.
+    assert(!station_rsn_matches(ap, sizeof(ap), RsnAkm::personal));
+    std::puts("AX201_RSN_CODEC_PASS");
+}
+
 void check_intel_wifi_ccmp_data() {
     constexpr uint8_t station[]{2, 0, 0, 0, 0, 3}, bssid[]{2, 0, 0, 0, 0, 1};
     CommandDescriptor ring[management_queue_entries]{};

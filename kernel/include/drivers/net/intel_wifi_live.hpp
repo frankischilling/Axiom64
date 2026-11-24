@@ -34,6 +34,7 @@ struct StationRequest {
     uint8_t extra[association_extra_limit]{};
     unsigned extra_bytes = 0;
     bool controlled_port = false;
+    RsnAkm akm = RsnAkm::open;
 };
 
 enum class JoinPhase : uint8_t {
@@ -67,7 +68,7 @@ struct StationJoin {
     uint16_t sequence = 0, command_sequence = 0, aid = 0;
     uint8_t group = 0, opcode = 0;
     bool submitted = false, acknowledged = false, indicated = false;
-    bool controlled_port = false, association_sent = false;
+    bool controlled_port = false, association_sent = false, ccmp = false;
     uint16_t association_status = 0;
     unsigned response_ie_bytes = 0;
     uint64_t deadline = 0;
@@ -150,4 +151,5 @@ StationKeyResult change_station_key(LiveScanSession&, const StationKeyRequest&, 
                                     void* context, void (*receive)(void*, const uint8_t*, size_t),
                                     void (*complete)(void*, size_t, bool));
 int request_live_key(const StationKeyRequest&);
+bool live_rsn_available();
 } // namespace ax::IntelWifi

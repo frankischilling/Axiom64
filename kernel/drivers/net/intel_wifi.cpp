@@ -798,6 +798,10 @@ bool live_connect_available() {
     return radio && radio->connectable;
 }
 
+bool live_rsn_available() {
+    return radio && radio->connectable && radio->session.security_keys;
+}
+
 int request_live_connection(const StationRequest& request, unsigned owner) {
     if (!live_connect_available())
         return -95;

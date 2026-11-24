@@ -9,6 +9,7 @@
  */
 #pragma once
 #include "drivers/net/intel_wifi_key.hpp"
+#include "drivers/net/intel_wifi_rsn.hpp"
 #include "drivers/net/intel_wifi_peer.hpp"
 
 namespace ax::IntelWifi {
@@ -77,7 +78,8 @@ void prepare_associated_mac(const uint8_t (&station)[6], const AccessPoint&, uin
                             const AssociationTiming&, uint8_t (&wire)[mac_context_bytes]);
 bool prepare_association_request(const AccessPoint&, const uint8_t* ies, unsigned bytes,
                                  bool high_band, AssociationRequest&,
-                                 const uint8_t* extra = nullptr, unsigned extra_bytes = 0);
+                                 const uint8_t* extra = nullptr, unsigned extra_bytes = 0,
+                                 RsnAkm akm = RsnAkm::open);
 bool prepare_management_frame(const AuthenticationDma&, PeerQueue, uint32_t,
                               const uint8_t (&station)[6], const AccessPoint&, ManagementFrame,
                               const AssociationRequest&, uint16_t sequence, uint16_t reason = 3);

@@ -20,10 +20,15 @@ void check_intel_wifi_ccmp_data();
 void check_intel_wifi_key_codec();
 void check_intel_wifi_scan_channels();
 void check_intel_wifi_station_keys();
+void check_intel_wifi_rsn_codec();
+void check_intel_wifi_receive_recycling();
+void initialize_intel_wifi_receive_descriptors(uint64_t*, uint64_t*);
 
 namespace {
 using namespace ax::IntelWifi;
 using Bytes = std::vector<uint8_t>;
+constexpr uint8_t enterprise_ie[]{48, 20,  1, 0, 0, 15, 172, 4,   1, 0, 0,
+                                  15, 172, 4, 1, 0, 0,  15,  172, 1, 0, 0};
 
 void word(Bytes& bytes, size_t where, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i)
@@ -159,128 +164,6 @@ enum class ScanCase {
     busy_queue
 };
 
-void initial_receive_descriptors(uint64_t* ring, uint64_t* descriptors) {
-    for (unsigned id = 1; id < rx_ring_entries; ++id) {
-        assert(encode_receive_buffer(0x200000 + id * ax::page_size, id, descriptors[id - 1]));
-        ring[id - 1] = descriptors[id - 1];
-    }
-}
-
-struct ReceiveFixture {
-    uint64_t free_ring[rx_ring_entries]{};
-    uint64_t descriptors[rx_ring_entries - 1]{};
-    uint32_t used_ring[rx_ring_entries]{};
-    bool device_owned[rx_ring_entries]{};
-    ReceiveStatus status{};
-    Bytes buffers = Bytes((rx_ring_entries - 1) * ax::page_size);
-    unsigned completed = 0, published = 0, doorbells = 0;
-    const FirmwareBootIo io{
-        this,
-        nullptr,
-        [](void* state, unsigned offset, uint32_t value) {
-            auto& self = *static_cast<ReceiveFixture*>(state);
-            assert(offset == 0x1c80);
-            assert(value == (self.doorbells ? (self.published + 8) % rx_ring_entries : 2040));
-            for (unsigned slot = self.published; slot != value;
-                 slot = (slot + 1) % rx_ring_entries) {
-                const unsigned id = self.free_ring[slot] & rx_buffer_id_mask;
-                assert(id && id < rx_ring_entries && !self.device_owned[id]);
-                assert(self.free_ring[slot] == self.descriptors[id - 1]);
-                self.device_owned[id] = true;
-            }
-            self.published = value;
-            ++self.doorbells;
-        },
-        nullptr,
-        nullptr,
-        [](void* state, unsigned id) { return static_cast<ReceiveFixture*>(state)->page(id); },
-    };
-    const FirmwareBootMemory memory{0x9000,  &status, used_ring, nullptr,
-                                    nullptr, 0,       free_ring, descriptors};
-
-    ReceiveFixture() {
-        initial_receive_descriptors(free_ring, descriptors);
-    }
-
-    uint8_t* page(unsigned id) {
-        assert(id && id < rx_ring_entries);
-        return buffers.data() + (id - 1) * ax::page_size;
-    }
-
-    void close_buffer(unsigned id) {
-        assert(completed % rx_ring_entries != published);
-        used_ring[completed++ % rx_ring_entries] = 0xc000 | id;
-        status.closed_buffer = completed & rx_buffer_id_mask;
-    }
-
-    void put(unsigned id, uint8_t opcode, bool multiple = false) {
-        assert(device_owned[id]);
-        device_owned[id] = false;
-        auto* bytes = page(id);
-        for (size_t i = 0; i < ax::page_size; ++i)
-            assert(!bytes[i]);
-        bytes[0] = 5;
-        bytes[4] = opcode;
-        bytes[8] = opcode;
-        if (multiple) {
-            bytes[64] = 5;
-            bytes[68] = uint8_t(opcode + 1);
-            bytes[72] = uint8_t(opcode + 1);
-        }
-        close_buffer(id);
-    }
-};
-
-void check_receive_recycling() {
-    ReceiveFixture fixture;
-    ReceiveReader reader(fixture.io, fixture.memory);
-    reader.post_initial();
-    FirmwarePacket packet{};
-    // The completion descriptor names the buffer, even when IDs arrive out of order.
-    fixture.put(2, 12, true);
-    fixture.put(1, 14);
-    assert(reader.next(packet) == PacketRead::packet && packet.opcode == 12);
-    assert(packet.payload[0] == 12 && fixture.doorbells == 1);
-    assert(reader.next(packet) == PacketRead::packet && packet.opcode == 13);
-    assert(packet.payload[0] == 13 && fixture.doorbells == 1);
-    assert(reader.next(packet) == PacketRead::packet && packet.opcode == 14);
-    assert(reader.next(packet) == PacketRead::end && fixture.doorbells == 2);
-    assert(fixture.free_ring[2047] == fixture.descriptors[1] &&
-           fixture.free_ring[0] == fixture.descriptors[0]);
-
-    unsigned returned = 2;
-    for (; returned < 4 * rx_ring_entries + 1; ++returned) {
-        const unsigned id = fixture.free_ring[returned % rx_ring_entries] & rx_buffer_id_mask;
-        const auto opcode = uint8_t(returned + 1);
-        fixture.put(id, opcode);
-        assert(reader.next(packet) == PacketRead::packet && packet.opcode == opcode &&
-               packet.payload[0] == opcode);
-        assert(reader.next(packet) == PacketRead::end);
-    }
-    assert(fixture.completed == returned && fixture.doorbells == 1026);
-
-    ReceiveFixture serial;
-    ReceiveReader bad_id(serial.io, serial.memory);
-    bad_id.post_initial();
-    serial.put(1, 1);
-    serial.put(2, 2);
-    assert(bad_id.next(packet) == PacketRead::packet);
-    assert(bad_id.next(packet) == PacketRead::packet);
-    assert(bad_id.next(packet) == PacketRead::end);
-    serial.close_buffer(2); // Released by the host, but not yet re-posted.
-    assert(bad_id.next(packet) == PacketRead::malformed);
-
-    ReceiveFixture unopened;
-    ReceiveReader bad_tail(unopened.io, unopened.memory);
-    bad_tail.post_initial();
-    unopened.status.closed_buffer = 2041;
-    assert(bad_tail.next(packet) == PacketRead::malformed);
-    unopened.status.closed_buffer = 0;
-    unopened.close_buffer(2041);
-    assert(bad_tail.next(packet) == PacketRead::malformed);
-    std::puts("AX201_RX_RECYCLE_MODEL_PASS packets=8194");
-}
-
 struct StartupFixture {
     StartupCase scenario;
     uint32_t csr[(0x1c80 / 4) + 1]{};
@@ -306,6 +189,7 @@ struct StartupFixture {
     bool open_station = false;
     KeyCase key_case = KeyCase::unused;
     bool extra_association_elements = false;
+    bool secured_association = false;
     uint16_t disconnect_reason = 0;
     unsigned rejoin_command_offset = 0, rejoin_rx_offset = 0;
     CommandDescriptor management_ring[management_queue_entries]{};
@@ -537,15 +421,22 @@ struct StartupFixture {
         const auto slot = 4 + step;
         const auto& descriptor = management_ring[slot];
         const uint8_t auth_body[]{0, 0, 1, 0, 0, 0};
-        const uint8_t assoc_body[]{1,  0,  1,  0,  0, 3,  'l', 'a', 'b', 1,  8, 2,  4,  11,  22, 12,
-                                   18, 24, 36, 50, 4, 48, 72,  96,  108, 59, 2, 81, 81, 127, 1,  0};
+        const uint8_t open_body[]{1,  0,  1,  0,  0, 3,  'l', 'a', 'b', 1,  8, 2,  4,  11,  22, 12,
+                                  18, 24, 36, 50, 4, 48, 72,  96,  108, 59, 2, 81, 81, 127, 1,  0};
+        uint8_t assoc_body[sizeof(open_body) + sizeof(enterprise_ie)];
+        memcpy(assoc_body, open_body, sizeof(open_body));
+        unsigned association_length = sizeof(open_body) - (extra_association_elements ? 0 : 7);
+        if (secured_association) {
+            assoc_body[0] |= 0x10;
+            memcpy(assoc_body + association_length, enterprise_ie, sizeof(enterprise_ie));
+            association_length += sizeof(enterprise_ie);
+        }
         const auto reason = disconnect_reason ? disconnect_reason : 3;
         const uint8_t leave_body[]{uint8_t(reason), uint8_t(reason >> 8)};
         const uint8_t* body = step == 0 ? auth_body : step == 1 ? assoc_body : leave_body;
-        const uint16_t length = step == 0 ? sizeof(auth_body)
-                                : step == 1
-                                    ? sizeof(assoc_body) - (extra_association_elements ? 0 : 7)
-                                    : sizeof(leave_body);
+        const uint16_t length = step == 0   ? sizeof(auth_body)
+                                : step == 1 ? association_length
+                                            : sizeof(leave_body);
         assert(descriptor.buffer_count == 3 && management_counts[slot] == (24 + length + 3) / 4);
         const TransmitBuffer buffers[]{{20, 0x52000}, {28, 0x52040}, {length, 0x52080}};
         assert(!memcmp(descriptor.buffers, buffers, sizeof(buffers)));
@@ -1055,7 +946,7 @@ struct StartupFixture {
         FirmwareBootMemory memory{0x9000, &receive_status, used};
         recycle = repost;
         if (recycle) {
-            initial_receive_descriptors(free_ring, descriptors);
+            initialize_intel_wifi_receive_descriptors(free_ring, descriptors);
             memory.free_ring = free_ring;
             memory.receive_descriptors = descriptors;
         }
@@ -1732,6 +1623,7 @@ void check_live_connection() {
         AuthCase authentication;
         AssocCase association;
         ArpCase pending;
+        bool secured = false;
     } cases[]{
         {AuthCase::accepted, AssocCase::accepted, ArpCase::rejected_tx},
         {AuthCase::accepted, AssocCase::accepted, ArpCase::missing_completion},
@@ -1739,9 +1631,10 @@ void check_live_connection() {
         {AuthCase::accepted, AssocCase::refused, ArpCase::unused},
         {AuthCase::denied_ap, AssocCase::accepted, ArpCase::unused},
         {AuthCase::reply_timeout, AssocCase::accepted, ArpCase::unused},
+        {AuthCase::accepted, AssocCase::accepted, ArpCase::unused, true},
     };
 
-    for (const auto& [authentication, association, pending] : cases) {
+    for (const auto& [authentication, association, pending, secured] : cases) {
         StartupFixture model(StartupCase::good);
         model.regulatory = RegulatoryCase::valid;
         model.passive = ScanCase::complete;
@@ -1770,6 +1663,21 @@ void check_live_connection() {
         memcpy(request.extra, extra, sizeof(extra));
         request.extra_bytes = sizeof(extra);
         model.extra_association_elements = true;
+        if (secured) {
+            request.akm = RsnAkm::enterprise;
+            request.controlled_port = false;
+            memcpy(request.extra + request.extra_bytes, enterprise_ie, sizeof(enterprise_ie));
+            request.extra_bytes += sizeof(enterprise_ie);
+            assert(submit_live_join(session, session.scan, request) == -95);
+            session.security_keys = true;
+            assert(submit_live_join(session, session.scan, request) == -2); // Open AP.
+            auto& peer = session.scan.access_points[0];
+            auto* beacon = scan.records[0].beacon;
+            memcpy(beacon + peer.beacon_ie_bytes, enterprise_ie, sizeof(enterprise_ie));
+            peer.beacon_ie_bytes += sizeof(enterprise_ie);
+            peer.capability |= 0x10;
+            model.secured_association = true;
+        }
         assert(submit_live_join(session, session.scan, request) == 0);
         assert(submit_live_leave(session, 3) == -16);
         assert(submit_live_scan(session, scan, 2) == -16 && model.commands_sent == 8);
@@ -1792,10 +1700,14 @@ void check_live_connection() {
             assert(outcome == JoinOutcome::connected && model.commands_sent == 19);
             assert(session.station.queue.id == 0x102 && session.station.channel == 1);
             assert(session.station.next_sequence == 2 && session.join.aid == 42);
-            assert(!session.station.port_authorized);
+            assert(!session.station.port_authorized && session.station.ccmp == secured);
             uint8_t packet[14]{};
             packet[12] = 8;
             assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
+            if (secured) {
+                assert(stop_live_quz(session) && !model.master);
+                continue;
+            }
             session.station.port_authorized = true;
             session.station.ccmp = true;
             assert(submit_live_data(session, packet, sizeof(packet), 22) == -13);
@@ -1894,11 +1806,12 @@ int main(int argc, char** argv) {
     check_peer_queues();
     check_authentication_exchange();
     check_intel_wifi_association_codec();
+    check_intel_wifi_rsn_codec();
     check_association_exchange();
     check_associated_arp();
     check_open_station();
     check_live_connection();
-    check_receive_recycling();
+    check_intel_wifi_receive_recycling();
     check_intel_wifi_access_points();
 
     auto reject = [&](const Bytes& invalid) {

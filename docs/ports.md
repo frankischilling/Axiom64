@@ -25,6 +25,11 @@ Tracing or attaching to a running program requires the kernel's remaining
 `ptrace` support. Try `man 2 open` or `man 1 less` to read the bundled
 Linux manual and program manuals through mandoc.
 
+The installed desktop includes translations for Plasma and System Settings.
+Use **System Settings → Region & Language** to choose a language or regional
+format, then sign out and back in. Run `localectl list-locales` to see the
+installed musl locales. Locale changes are made in Plasma.
+
 The installed Plasma desktop includes PowerDevil and its **Power and Battery**
 widget. The widget uses battery and charger data from UPower. On supported
 laptops, the tray shows the battery even at full charge. You can hide it

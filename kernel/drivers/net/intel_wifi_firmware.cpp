@@ -17,7 +17,8 @@ constexpr size_t tlv_file_header = 88, tlv_header = 8;
 constexpr uint32_t tlv_magic = 0x0a4c5749;
 constexpr uint32_t tlv_runtime_section = 19, tlv_init_section = 20, tlv_phy_sku = 23,
                    tlv_secure_runtime = 24, tlv_secure_init = 25, tlv_cpu_count = 27,
-                   tlv_paging_size = 32, tlv_firmware_version = 36, tlv_command_versions = 48;
+                   tlv_api_flags = 29, tlv_capabilities = 30, tlv_paging_size = 32,
+                   tlv_firmware_version = 36, tlv_command_versions = 48;
 constexpr uint32_t cpu_separator = 0xffffcccc, paging_separator = 0xaaaabbbb;
 
 uint32_t load32(const uint8_t* bytes) {
@@ -60,7 +61,9 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     FirmwareImage image{};
     auto region = lmac;
     bool seen_version = false, seen_cpu_count = false, seen_paging_size = false, seen_alive = false;
-    bool seen_nvm = false, seen_phy_sku = false, seen_scan_config = false;
+    bool seen_nvm = false, seen_phy_sku = false, seen_scan_config = false, seen_mcc = false;
+    bool mcc_v1_v5 = false;
+    uint32_t first_api_flags = 0, capabilities[3]{};
     for (size_t cursor = tlv_file_header; cursor < size;) {
         if (size - cursor < tlv_header)
             return "truncated TLV header";
@@ -98,6 +101,20 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
             image.antennas = {uint8_t((phy >> 16) & 0xf), uint8_t((phy >> 20) & 0xf)};
             break;
         }
+        case tlv_api_flags:
+            if (length != 8)
+                return "invalid firmware API flags";
+            if (!load32(payload))
+                first_api_flags |= load32(payload + 4);
+            break;
+        case tlv_capabilities: {
+            if (length != 8)
+                return "invalid firmware capabilities";
+            const auto word = load32(payload);
+            if (word < sizeof(capabilities) / sizeof(*capabilities))
+                capabilities[word] |= load32(payload + 4);
+            break;
+        }
         case tlv_command_versions:
             if (length % 4)
                 return "invalid firmware command versions";
@@ -117,6 +134,11 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
                         return "duplicate firmware scan configuration version";
                     seen_scan_config = true;
                     image.scan_config_version = payload[i + 2];
+                } else if (payload[i] == 0xc8 && payload[i + 1] == 1) {
+                    if (seen_mcc)
+                        return "duplicate firmware MCC version";
+                    seen_mcc = true;
+                    mcc_v1_v5 = payload[i + 2] == 1 && payload[i + 3] == 5;
                 }
             }
             break;
@@ -147,6 +169,11 @@ const char* parse_firmware(const uint8_t* bytes, size_t size, FirmwareImage& out
     }
     if (paging_data != image.paging_bytes)
         return "paging size mismatch";
+    constexpr uint32_t lar = 1u << 1, multi_mcc = 1u << 29, wifi_mcc = 1u << 9;
+    constexpr uint32_t mcc_11ax = 1u << (89 - 64);
+    image.current_regulatory_profile =
+        mcc_v1_v5 && (capabilities[0] & lar) && (capabilities[2] & mcc_11ax) &&
+        ((first_api_flags & wifi_mcc) || (capabilities[0] & multi_mcc));
     output = image;
     return nullptr;
 }

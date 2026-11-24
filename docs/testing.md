@@ -2311,3 +2311,7 @@ NVM reply and stopped the adapter over PXE.
 It requires scan configuration version 5 and intersects the antenna masks
 from the firmware and NVM. It checks the command reply, then stops the adapter.
 Network discovery, a wireless interface, and association require further work.
+
+`iwlwifi.regulatory-check` reads the adapter's current country and channel
+permissions before configuring scanning. It stops if the profile is missing,
+invalid, or has no permitted channels.

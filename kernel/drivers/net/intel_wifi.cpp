@@ -230,7 +230,7 @@ struct AdapterBoot {
 
 void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck check,
                      const AntennaMasks& antennas) {
-    const bool nvm = check == FirmwareCheck::nvm || check == FirmwareCheck::scan_config;
+    const bool nvm = check >= FirmwareCheck::nvm;
     if (nvm && !queues.command_payloads.allocate(sizeof(CommandPayloads))) {
         report("command buffer allocation failed");
         return;
@@ -276,8 +276,9 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
         memory.command_payloads = &queues.command_payloads.data<CommandPayloads>();
         memory.command_dma = queues.command_payloads.address;
     }
-    const auto* scan_antennas = check == FirmwareCheck::scan_config ? &antennas : nullptr;
-    const auto result = start_and_stop_quz(io, memory, scan_antennas);
+    const ScanChecks scan{antennas, check == FirmwareCheck::regulatory};
+    const auto result =
+        start_and_stop_quz(io, memory, check >= FirmwareCheck::scan_config ? &scan : nullptr);
     const auto restore = result.dma_idle ? original : uint16_t(original | intx_disable);
     adapter.write16(pci_command, restore);
     const bool restored = adapter.read16(pci_command) == restore;
@@ -289,6 +290,9 @@ void launch_firmware(BootQueues& queues, StagedImage& staged, FirmwareCheck chec
             uint64_t(result.nvm.version), uint64_t(result.nvm.channel_count),
             uint64_t(result.nvm.bands), uint64_t(result.nvm.tx_chains),
             uint64_t(result.nvm.rx_chains));
+    if (result.regulatory.country[0])
+        log("iwlwifi: regulatory domain=%s permitted=%u slots=%u\n", result.regulatory.country,
+            uint64_t(result.regulatory.valid_channels), uint64_t(result.regulatory.channel_slots));
     if (!result.dma_idle || !restored) {
         queues.pin_until_reboot();
         staged.retain = true;
@@ -305,8 +309,7 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report(error);
         return;
     }
-    if ((check == FirmwareCheck::nvm || check == FirmwareCheck::scan_config) &&
-        image.nvm_version != 4) {
+    if (check >= FirmwareCheck::nvm && image.nvm_version != 4) {
         log("iwlwifi: unsupported NVM version %u\n", uint64_t(image.nvm_version));
         report("firmware does not advertise NVM version 4");
         return;
@@ -316,9 +319,13 @@ void stage_firmware(const uint8_t* bytes, size_t size, FirmwareCheck check) {
         report("firmware does not advertise ALIVE version 6");
         return;
     }
-    if (check == FirmwareCheck::scan_config &&
+    if (check >= FirmwareCheck::scan_config &&
         (image.scan_config_version != 5 || !image.antennas.tx || !image.antennas.rx)) {
         report("firmware lacks scan configuration v5 or antenna masks");
+        return;
+    }
+    if (check == FirmwareCheck::regulatory && !image.current_regulatory_profile) {
+        report("firmware lacks a supported regulatory profile query");
         return;
     }
     StagedImage staged;

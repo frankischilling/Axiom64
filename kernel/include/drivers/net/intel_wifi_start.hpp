@@ -37,9 +37,15 @@ struct FirmwareBootResult {
     bool alive;
     bool dma_idle;
     NvmInfo nvm{};
+    RegulatoryProfile regulatory{};
+};
+
+struct ScanChecks {
+    AntennaMasks antennas;
+    bool regulatory;
 };
 
 // The caller must retain every DMA allocation if the adapter cannot be stopped.
 FirmwareBootResult start_and_stop_quz(const FirmwareBootIo&, const FirmwareBootMemory&,
-                                      const AntennaMasks* scan_antennas = nullptr);
+                                      const ScanChecks* scan = nullptr);
 } // namespace ax::IntelWifi

@@ -68,7 +68,7 @@ bool prepare_host_command(uint8_t (&slot)[command_slot_bytes], uint64_t dma,
 }
 
 bool read_nvm_v4(const FirmwarePacket& packet, NvmInfo& output) {
-    constexpr unsigned channels = 110, channel_offset = 28;
+    constexpr unsigned channels = regulatory_channel_limit, channel_offset = 28;
     if (packet.group != 12 || packet.opcode != 2 || !packet.payload ||
         packet.length != channel_offset + channels * sizeof(uint32_t))
         return false;
@@ -80,7 +80,36 @@ bool read_nvm_v4(const FirmwarePacket& packet, NvmInfo& output) {
     if ((load32(data) & 1) || !version || !data[7] || !count || count > channels || !bands || !tx ||
         tx > 3 || !rx || rx > 3)
         return false;
-    output = {version, data[7], uint8_t(count), uint8_t(bands), uint8_t(tx), uint8_t(rx)};
+    output = {version,     data[7],     uint8_t(count),        uint8_t(bands),
+              uint8_t(tx), uint8_t(rx), load32(data + 20) != 0};
+    return true;
+}
+
+bool read_regulatory_v5(const FirmwarePacket& packet, RegulatoryProfile& output) {
+    // The API 77 firmware advertises notification v5 with the 11ax MCC header.
+    constexpr unsigned header_bytes = 20, count_offset = 16;
+    if (packet.group != 1 || packet.opcode != 0xc8 || !packet.payload ||
+        packet.length < header_bytes)
+        return false;
+    const auto* data = packet.payload;
+    const auto count = load32(data + count_offset);
+    if (load32(data) > 1 || count > regulatory_channel_limit ||
+        packet.length != header_bytes + count * sizeof(uint32_t))
+        return false;
+    // Some firmware revisions use a zero word for the world domain.
+    const auto country = load16(data + 4);
+    const char a = country ? char(country >> 8) : '0';
+    const char b = country ? char(country) : '0';
+    if (country && country != 0x3030 && (a < 'A' || a > 'Z' || b < 'A' || b > 'Z'))
+        return false;
+    output = {};
+    output.country[0] = a;
+    output.country[1] = b;
+    output.channel_slots = uint8_t(count);
+    for (unsigned i = 0; i < count; ++i) {
+        output.flags[i] = load16(data + header_bytes + i * sizeof(uint32_t));
+        output.valid_channels += bool(output.flags[i] & 1);
+    }
     return true;
 }
 } // namespace ax::IntelWifi

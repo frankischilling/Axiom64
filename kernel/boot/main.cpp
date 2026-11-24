@@ -131,7 +131,9 @@ BootInfo boot_info;
     net_init();
     const bool probe_wifi = arguments.has("iwlwifi.probe");
     auto wifi_check = IntelWifi::FirmwareCheck::stage;
-    if (arguments.has("iwlwifi.scan-config-check"))
+    if (arguments.has("iwlwifi.regulatory-check"))
+        wifi_check = IntelWifi::FirmwareCheck::regulatory;
+    else if (arguments.has("iwlwifi.scan-config-check"))
         wifi_check = IntelWifi::FirmwareCheck::scan_config;
     else if (arguments.has("iwlwifi.nvm-check"))
         wifi_check = IntelWifi::FirmwareCheck::nvm;

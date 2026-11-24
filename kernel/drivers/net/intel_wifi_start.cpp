@@ -335,6 +335,21 @@ const char* configure_scan(CommandSession& commands, const NvmInfo& nvm,
                ? nullptr
                : "firmware scan configuration failed";
 }
+
+const char* request_regulatory_profile(CommandSession& commands, const NvmInfo& nvm,
+                                       RegulatoryProfile& profile) {
+    if (!nvm.lar_enabled)
+        return "firmware NVM has location-aware regulation disabled";
+    // Query the active firmware profile using the NVM default code and GET_CURRENT source.
+    const uint8_t request[28]{'Z', 'Z', 0x10};
+    FirmwarePacket response{};
+    if (commands.send(1, 0xc8, request, sizeof(request), response) != Reply::matched)
+        return "firmware regulatory profile query failed";
+    if (!read_regulatory_v5(response, profile))
+        return "firmware returned an invalid regulatory profile";
+    return profile.valid_channels ? nullptr
+                                  : "firmware regulatory profile has no permitted channels";
+}
 } // namespace
 
 AlivePacket read_alive_notification(const uint8_t* data, size_t length) {
@@ -350,12 +365,12 @@ AlivePacket read_alive_notification(const uint8_t* data, size_t length) {
 }
 
 FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBootMemory& memory,
-                                      const AntennaMasks* scan_antennas) {
+                                      const ScanChecks* scan) {
     if (!memory.context_address || memory.context_address != align_down(memory.context_address) ||
         !Dma::fits(memory.context_address, sizeof(BootContext), Dma::pci) ||
         !memory.receive_status || !memory.used_ring)
         return {"invalid startup DMA addresses", false, true};
-    if ((scan_antennas && !memory.commands) ||
+    if ((scan && !memory.commands) ||
         (memory.commands && (!memory.command_payloads || !memory.command_dma ||
                              !Dma::fits(memory.command_dma, sizeof(CommandPayloads), Dma::pci))))
         return {"invalid command DMA addresses", false, true};
@@ -370,6 +385,7 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     const bool request_dma = error == nullptr;
     bool alive = false;
     NvmInfo info{};
+    RegulatoryProfile regulatory{};
     if (request_dma) {
         if (!io.bus_master(io.context, true)) {
             error = "PCI bus master did not enable";
@@ -385,8 +401,10 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
             if (alive && memory.commands) {
                 CommandSession commands{reg, rx};
                 error = request_nvm(commands, info);
-                if (!error && scan_antennas)
-                    error = configure_scan(commands, info, *scan_antennas);
+                if (!error && scan && scan->regulatory)
+                    error = request_regulatory_profile(commands, info, regulatory);
+                if (!error && scan)
+                    error = configure_scan(commands, info, scan->antennas);
             }
         }
     }
@@ -401,10 +419,11 @@ FirmwareBootResult start_and_stop_quz(const FirmwareBootIo& io, const FirmwareBo
     }
     const bool reset_done = reset_adapter(reg);
     const char* success = "firmware ALIVE received";
-    if (scan_antennas)
-        success = "firmware scan configuration accepted";
+    if (scan)
+        success = scan->regulatory ? "firmware regulatory profile and scan configuration passed"
+                                   : "firmware scan configuration accepted";
     else if (memory.commands)
         success = "firmware NVM read passed";
-    return {error ? error : success, alive, !request_dma || (idle && reset_done), info};
+    return {error ? error : success, alive, !request_dma || (idle && reset_done), info, regulatory};
 }
 } // namespace ax::IntelWifi

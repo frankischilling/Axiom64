@@ -34,7 +34,18 @@ struct NvmInfo {
     uint8_t channel_count;
     uint8_t bands;
     uint8_t tx_chains, rx_chains;
+    bool lar_enabled;
 };
 
 bool read_nvm_v4(const FirmwarePacket&, NvmInfo&);
+
+inline constexpr unsigned regulatory_channel_limit = 110;
+
+struct RegulatoryProfile {
+    char country[3];
+    uint8_t channel_slots, valid_channels;
+    uint16_t flags[regulatory_channel_limit];
+};
+
+bool read_regulatory_v5(const FirmwarePacket&, RegulatoryProfile&);
 } // namespace ax::IntelWifi

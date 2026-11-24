@@ -59,6 +59,7 @@ struct NetAdapter {
     void (*stop)(NetAdapter&);
     void* data;
     bool receive_only_diagnostic = false;
+    void (*administrative_changed)(NetAdapter&) = nullptr;
 };
 
 using NetRegistrationObserver = void (*)(const NetInfo&, const PciFunction*);

@@ -1172,8 +1172,16 @@ ScanOutcome poll_live_scan(LiveScanSession& session, uint64_t now_ms) {
         return commands.poll_idle() ? ScanOutcome::pending : ScanOutcome::receive_failed;
     commands.poll_scan(session.exchange, now_ms);
     const auto outcome = session.exchange.outcome();
-    if (outcome == ScanOutcome::pending)
+    if (outcome == ScanOutcome::pending) {
+        if (session.exchange.abort_ready()) {
+            uint8_t wire[scan_abort_bytes];
+            prepare_scan_abort(session.scan.id, wire);
+            session.exchange.abort_submitted(commands.index, now_ms);
+            if (!commands.submit(1, 0xe, wire, sizeof(wire)))
+                return ScanOutcome::receive_failed;
+        }
         return outcome;
+    }
     session.active = false;
     const uint64_t passive = session.passive_channels;
     session.passive_channels = 0;

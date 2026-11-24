@@ -184,11 +184,17 @@ static void check_radio(const struct nlmsghdr* message, int live, int fixture) {
         payload(message_attribute(message, NL80211_ATTR_MAX_NUM_SCAN_SSIDS), 1);
     require(*max_ssids == (live ? 20 : 0), "radio advertises its scan SSID limit");
     const struct nlattr* commands = message_attribute(message, NL80211_ATTR_SUPPORTED_COMMANDS);
-    if (live)
+    if (live) {
         require(read_u32(nested(commands, 1)) == NL80211_CMD_TRIGGER_SCAN,
                 "radio advertises live scan requests");
-    else
+        int can_abort = 0;
+        const struct nlattr* entry;
+        for (unsigned i = 2; (entry = nested(commands, i)); ++i)
+            can_abort |= read_u32(entry) == NL80211_CMD_ABORT_SCAN;
+        require(can_abort, "radio advertises scan cancellation");
+    } else {
         require(!commands, "cached radio lacks live scan commands");
+    }
 
     unsigned total = 0;
     for (unsigned i = 0; i <= NL80211_BAND_5GHZ; ++i) {
@@ -319,13 +325,13 @@ static void check_stream(int fd, unsigned family, unsigned index, int fixture) {
         printf("nl80211 scan results: %u access points\n", count);
 }
 
-static void bring_up_interface(void) {
+static void set_interface_up(int up) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     require(fd >= 0, "open link control socket");
     struct ifreq link = {.ifr_name = "wlan0"};
     require(ioctl(fd, SIOCGIFFLAGS, &link) == 0, "read wireless link flags");
-    link.ifr_flags |= IFF_UP;
-    require(ioctl(fd, SIOCSIFFLAGS, &link) == 0, "bring up wireless link");
+    link.ifr_flags = up ? link.ifr_flags | IFF_UP : link.ifr_flags & ~IFF_UP;
+    require(ioctl(fd, SIOCSIFFLAGS, &link) == 0, "set wireless link state");
     require(close(fd) == 0, "release link control socket");
 }
 
@@ -415,7 +421,7 @@ static void check_live(int fd, unsigned family, unsigned index, unsigned group, 
             "subscribe to wireless scan events");
     if (fixture)
         trigger(fd, family, index, 10, ENETDOWN);
-    bring_up_interface();
+    set_interface_up(1);
     int dump = -1;
     if (fixture) {
         check_bad_ssids(fd, family, index);
@@ -482,6 +488,36 @@ static void check_station_ack(int fd, const struct packet* request, int error) {
     const struct nlmsghdr* message = (const struct nlmsghdr*)bytes;
     require(message->nlmsg_seq == request->header.nlmsg_seq, "station acknowledgment sequence");
     check_error(message, error);
+}
+
+static void check_scan_abort(int fd, unsigned family, unsigned index, unsigned group) {
+    require(group &&
+                setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group)) == 0,
+            "subscribe to scan completion");
+    struct packet abort = make_request(family, NL80211_CMD_ABORT_SCAN, NLM_F_ACK, 100);
+    append_attribute(&abort, NL80211_ATTR_IFINDEX, &index, sizeof(index));
+    check_station_ack(fd, &abort, ENETDOWN);
+    set_interface_up(1);
+    abort.header.nlmsg_seq++;
+    check_station_ack(fd, &abort, ENOENT);
+    trigger(fd, family, index, 102, 0);
+    abort.header.nlmsg_seq = 103;
+    check_station_ack(fd, &abort, 0);
+    scan_event(fd, family, index, NL80211_CMD_SCAN_ABORTED);
+
+    trigger(fd, family, index, 104, 0);
+    set_interface_up(0);
+    trigger(fd, family, index, 105, ENETDOWN);
+    set_interface_up(1);
+    trigger(fd, family, index, 106, EBUSY);
+    scan_event(fd, family, index, NL80211_CMD_SCAN_ABORTED);
+    trigger(fd, family, index, 107, 0);
+    scan_event(fd, family, index, NL80211_CMD_NEW_SCAN_RESULTS);
+    check_stream(fd, family, index, 1);
+    require(setgid(1000) == 0 && setuid(1000) == 0, "drop scan privileges");
+    abort.header.nlmsg_seq = 108;
+    check_station_ack(fd, &abort, EPERM);
+    puts("WIRELESS_SCAN_ABORT_PASS");
 }
 
 static void check_key_ack(int fd, const struct packet* request, int error) {
@@ -660,7 +696,7 @@ static void check_connection(int fd, unsigned family, unsigned index) {
     append_attribute(&request, NL80211_ATTR_WIPHY_FREQ, &frequency, sizeof(frequency));
     request.header.nlmsg_seq++;
     check_station_ack(fd, &request, ENETDOWN);
-    bring_up_interface();
+    set_interface_up(1);
     struct packet privacy = request;
     privacy.header.nlmsg_seq++;
     append_attribute(&privacy, NL80211_ATTR_PRIVACY, NULL, 0);
@@ -783,24 +819,29 @@ int main(int argc, char** argv) {
     int live = active || (argc == 2 && !strcmp(argv[1], "--live"));
     int live_fixture = argc == 2 && !strcmp(argv[1], "--live-fixture");
     int connect_fixture = argc == 2 && !strcmp(argv[1], "--connect-fixture");
-    require(argc == 1 || absent || observed || live || live_fixture || connect_fixture,
+    int abort_fixture = argc == 2 && !strcmp(argv[1], "--abort-fixture");
+    require(argc == 1 || absent || observed || live || live_fixture || connect_fixture ||
+                abort_fixture,
             "wireless test mode");
-    if (!getuid() && !live && !live_fixture && !connect_fixture)
+    if (!getuid() && !live && !live_fixture && !connect_fixture && !abort_fixture)
         require(setgid(1000) == 0 && setuid(1000) == 0, "drop root credentials");
     int fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
     require(fd >= 0, "open generic netlink");
     struct sockaddr_nl address = {.nl_family = AF_NETLINK};
     require(bind(fd, (const struct sockaddr*)&address, sizeof(address)) == 0, "bind local port");
     unsigned group;
-    const unsigned family = discover(fd, absent, live || live_fixture ? &group : NULL);
+    const unsigned family =
+        discover(fd, absent, live || live_fixture || abort_fixture ? &group : NULL);
     if (!absent) {
         const unsigned index = if_nametoindex("wlan0");
         require(index, "wireless interface detected");
         check_family_dump(fd, family);
-        check_interface(fd, family, index, live || live_fixture || connect_fixture,
+        check_interface(fd, family, index, live || live_fixture || connect_fixture || abort_fixture,
                         live_fixture || connect_fixture || (!observed && !live));
         if (connect_fixture)
             check_connection(fd, family, index);
+        else if (abort_fixture)
+            check_scan_abort(fd, family, index, group);
         else if (live || live_fixture)
             check_live(fd, family, index, group, live_fixture, active);
         else

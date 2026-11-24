@@ -748,6 +748,7 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
                                             : 0;
     }
     const bool trigger = command == nl80211_trigger_scan;
+    const bool abort = command == nl80211_abort_scan;
     if (command == nl80211_connect || command == nl80211_disconnect ||
         command == nl80211_set_station) {
         if (dump || !wireless_connect_available())
@@ -775,10 +776,10 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
                                             : 0;
     }
     if ((command != nl80211_get_wiphy && command != nl80211_get_interface &&
-         command != nl80211_get_scan && !trigger) ||
-        (command == nl80211_get_scan && !dump) || (trigger && dump))
+         command != nl80211_get_scan && !trigger && !abort) ||
+        (command == nl80211_get_scan && !dump) || ((trigger || abort) && dump))
         return netlink_ack(data, request, port, -95, capped, reply);
-    if (trigger && !privileged)
+    if ((trigger || abort) && !privileged)
         return netlink_ack(data, request, port, -1, capped, reply);
     IntelWifi::ScanRequest scan;
     if (int error =
@@ -790,8 +791,9 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
         cursor = {request.sequence, IntelWifi::passive_scan_generation(), 0, true};
         return 0;
     }
-    if (trigger) {
-        const int status = IntelWifi::trigger_live_scan(scan);
+    if (trigger || abort) {
+        const int status =
+            trigger ? IntelWifi::trigger_live_scan(scan) : IntelWifi::abort_live_scan();
         if (status || (request.flags & 4))
             return netlink_ack(data, request, port, status, capped, reply);
         return 0;
@@ -836,6 +838,8 @@ size_t wireless_reply(const void* data, const NetlinkHeader& request, uint32_t p
                     message.value(entry, uint32_t(nl80211_del_key));
                 }
             }
+            if (live)
+                message.value(entry, uint32_t(nl80211_abort_scan));
             message.end_nested(commands);
         }
         return message.finish(new_wiphy, request.sequence, port, dump);

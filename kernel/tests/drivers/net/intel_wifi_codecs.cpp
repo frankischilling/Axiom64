@@ -408,6 +408,7 @@ struct StationKeyFixture {
     CommandPayloads payloads{};
     uint8_t pages[8][ax::page_size]{};
     unsigned next_page = 0, commands = 0, completions = 0, received = 0;
+    bool scan_abort = false;
     enum class Reply { acknowledge, reject, withhold } reply = Reply::acknowledge;
     const FirmwareBootMemory memory{0, &status, used, descriptors, &payloads, 0x200000};
     const FirmwareBootIo io{
@@ -419,6 +420,11 @@ struct StationKeyFixture {
                 return;
             assert(offset == 0x460 && value == ++self.commands);
             const auto& data = self.payloads[value - 1];
+            if (self.scan_abort) {
+                constexpr uint8_t command[]{0xe, 1, 1, 0, 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0};
+                assert(value == 2 && !memcmp(command, data, sizeof(command)));
+                return;
+            }
             assert(data[0] == key_command_opcode && data[1] == key_command_group);
             assert(data[2] == value - 1 && data[4] == key_command_bytes);
             if (self.reply == Reply::acknowledge)
@@ -462,6 +468,70 @@ struct StationKeyFixture {
             });
     }
 };
+
+void check_scan_abort() {
+    enum class Case {
+        complete_early,
+        aborted,
+        completion_first,
+        not_found,
+        rejected,
+        malformed,
+        timeout
+    };
+    for (const auto test : {Case::complete_early, Case::aborted, Case::completion_first,
+                            Case::not_found, Case::rejected, Case::malformed, Case::timeout}) {
+        StationKeyFixture model;
+        model.scan_abort = true;
+        model.commands = 1;
+        LiveScanSession session(model.io, model.memory);
+        session.running = session.active = true;
+        session.next_command = 1;
+        session.scan.id = 1;
+        session.passive_channels = 1;
+        session.receive.post_initial();
+        session.exchange.restart(0, 1);
+        const auto done = [&](uint8_t id, uint8_t status) {
+            auto* data = model.packet(0xf, 0, 0x8000, 16);
+            data[0] = id;
+            data[6] = status;
+        };
+        session.exchange.request_abort();
+        assert(poll_live_scan(session, 10) == ScanOutcome::pending && model.commands == 1);
+        model.packet(0xd, 1, 0, 0);
+        if (test == Case::complete_early) {
+            done(1, 1);
+            assert(poll_live_scan(session, 11) == ScanOutcome::aborted && model.commands == 1);
+            assert(!session.active && !session.passive_channels);
+            continue;
+        }
+        assert(poll_live_scan(session, 11) == ScanOutcome::pending && model.commands == 2);
+        session.exchange.request_abort();
+        done(0, 2);
+        if (test == Case::completion_first)
+            done(1, 1);
+        assert(poll_live_scan(session, 12) == ScanOutcome::pending && model.commands == 2);
+        if (test == Case::timeout) {
+            assert(poll_live_scan(session, 2011) == ScanOutcome::completion_timeout);
+            continue;
+        }
+        if (test == Case::rejected) {
+            model.packet(2, 0, 1, 0);
+        } else {
+            auto* reply = model.packet(0xe, 1, 1, 4);
+            reply[0] = test == Case::not_found ? 2 : test == Case::malformed ? 3 : 0;
+        }
+        auto result = poll_live_scan(session, 13);
+        if (test == Case::aborted || test == Case::rejected) {
+            assert(result == ScanOutcome::pending);
+            done(1, test == Case::aborted ? 2 : 1);
+            result = poll_live_scan(session, 14);
+        }
+        assert(result == (test == Case::malformed ? ScanOutcome::malformed : ScanOutcome::aborted));
+        assert(!session.active && !session.passive_channels && session.running);
+    }
+    std::puts("AX201_SCAN_ABORT_MODEL_PASS");
+}
 } // namespace
 
 void check_intel_wifi_station_keys() {
@@ -529,6 +599,7 @@ void check_intel_wifi_station_keys() {
 }
 
 void check_intel_wifi_scan_channels() {
+    check_scan_abort();
     NvmInfo nvm{};
     nvm.bands = 3;
     RegulatoryProfile profile{};

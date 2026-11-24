@@ -93,6 +93,8 @@ struct PassiveScan {
 
 bool prepare_scan_phase(const ScanChannelList&, PassiveScan&, uint8_t (&wire)[scan_request_bytes],
                         uint32_t id, uint64_t channels, const ScanSsids&);
+constexpr size_t scan_abort_bytes = 8;
+void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]);
 void observe_passive_scan(PassiveScan&, const FirmwarePacket&);
 
 enum class ScanOutcome {
@@ -108,11 +110,13 @@ enum class ScanOutcome {
 
 // The transport supplies timestamps and notifications. Each call returns without waiting.
 class PassiveScanExchange {
+    enum class Abort { none, requested, submitted, awaiting_completion };
     PassiveScan& scan;
-    uint16_t sequence;
+    uint16_t sequence, abort_sequence = 0;
     uint64_t phase_start;
     ScanOutcome result = ScanOutcome::pending;
     bool accepted = false;
+    Abort abort = Abort::none;
 
   public:
     PassiveScanExchange(PassiveScan& scan, uint16_t sequence, uint64_t started_ms)
@@ -124,6 +128,9 @@ class PassiveScanExchange {
     }
 
     void restart(uint16_t new_sequence, uint64_t now_ms);
+    void request_abort();
+    bool abort_ready() const;
+    void abort_submitted(uint16_t command_sequence, uint64_t now_ms);
 
     void expire(uint64_t now_ms);
     void observe(const FirmwarePacket&, uint64_t now_ms);
@@ -137,6 +144,7 @@ unsigned passive_scan_interface();
 uint32_t passive_scan_generation();
 bool live_scan_available();
 int trigger_live_scan(const ScanRequest&);
+int abort_live_scan();
 struct StationRequest;
 bool live_connect_available();
 int request_live_connection(const StationRequest&, unsigned owner);

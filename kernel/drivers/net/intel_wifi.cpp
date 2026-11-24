@@ -36,6 +36,7 @@ uint32_t completed_generation = 1;
 void poll_runtime(NetAdapter&);
 int send_runtime(NetAdapter&, const void*, size_t);
 void stop_runtime(NetAdapter&);
+void configure_runtime(NetAdapter&);
 NetAdapter scanned_adapter{
     .info{.live = true, .stats{}, .wireless = true},
     .poll = poll_runtime,
@@ -43,6 +44,7 @@ NetAdapter scanned_adapter{
     .stop = stop_runtime,
     .data = nullptr,
     .receive_only_diagnostic = true,
+    .administrative_changed = configure_runtime,
 };
 
 void report(const char* status) {
@@ -534,6 +536,17 @@ struct RuntimeRadio {
 
 RuntimeRadio* radio;
 
+void configure_runtime(NetAdapter& device) {
+    if (!radio || device.info.administrative)
+        return;
+    if (radio->session.active)
+        radio->session.exchange.request_abort();
+    submit_live_leave(radio->session, 3);
+    if (device.info.carrier)
+        ++completed_generation;
+    device.info.carrier = device.info.writable = false;
+}
+
 void stop_runtime(NetAdapter& device) {
     if (!radio)
         return;
@@ -902,6 +915,17 @@ int trigger_live_scan(const ScanRequest& request) {
         return error;
     }
     radio->pending = elements;
+    return 0;
+}
+
+int abort_live_scan() {
+    if (!radio)
+        return -95;
+    if (!scanned_adapter.info.administrative)
+        return -100;
+    if (!radio->session.active)
+        return -2;
+    radio->session.exchange.request_abort();
     return 0;
 }
 

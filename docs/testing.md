@@ -2369,6 +2369,11 @@ duplicate frequencies, and selections with no permitted channels.
 The colocated 6 GHz scan hint can accompany these requests. The AX201
 scans its supported 2.4 and 5 GHz channels as usual.
 
+Use `NL80211_CMD_ABORT_SCAN` to cancel an active scan. Wait for
+`NL80211_CMD_SCAN_ABORTED` in the scan group before requesting another scan.
+Taking `wlan0` down also cancels an active scan and leaves the network if
+connected. Bring the interface up again to scan once cleanup finishes.
+
 Use `--active` for a broadcast probe test. Live requests may include up to
 20 SSID entries. A zero-length entry
 requests broadcast discovery, and a named entry requests a directed

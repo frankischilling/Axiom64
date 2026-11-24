@@ -128,17 +128,21 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
         return -95;
     if (mtu < 68 || mtu > info->maximum_mtu)
         return -22;
-    auto& writable = devices[index - 1]->info;
+    auto& adapter = *devices[index - 1];
+    auto& writable = adapter.info;
     uint32_t previous_mtu = writable.mtu;
     bool previous_administrative = writable.administrative;
     writable.administrative = administrative;
     writable.mtu = mtu;
-    if (previous_administrative != administrative)
+    if (previous_administrative != administrative) {
         if (int error = ipv4_administrative_changed(index)) {
             writable.administrative = previous_administrative;
             writable.mtu = previous_mtu;
             return error;
         }
+        if (adapter.administrative_changed)
+            adapter.administrative_changed(adapter);
+    }
     ip6::configuration_changed(index);
     if (previous_mtu != mtu) {
         ipv4_mtu_changed(index, previous_mtu);

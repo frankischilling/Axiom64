@@ -351,15 +351,36 @@ void observe_passive_scan(PassiveScan& scan, const FirmwarePacket& packet) {
         scan.status = PassiveScan::Status::malformed;
 }
 
+void prepare_scan_abort(uint32_t id, uint8_t (&wire)[scan_abort_bytes]) {
+    memset(wire, 0, sizeof(wire));
+    write32(wire, id);
+}
+
 void PassiveScanExchange::restart(uint16_t new_sequence, uint64_t now_ms) {
     sequence = new_sequence;
     phase_start = now_ms;
     result = ScanOutcome::pending;
     accepted = false;
+    abort = Abort::none;
+}
+
+void PassiveScanExchange::request_abort() {
+    if (result == ScanOutcome::pending && abort == Abort::none)
+        abort = Abort::requested;
+}
+
+bool PassiveScanExchange::abort_ready() const {
+    return result == ScanOutcome::pending && accepted && abort == Abort::requested;
+}
+
+void PassiveScanExchange::abort_submitted(uint16_t command_sequence, uint64_t now_ms) {
+    abort = Abort::submitted;
+    abort_sequence = command_sequence;
+    phase_start = now_ms;
 }
 
 void PassiveScanExchange::expire(uint64_t now_ms) {
-    const unsigned timeout_ms = accepted ? 12000 : 2000;
+    const unsigned timeout_ms = accepted && abort < Abort::submitted ? 12000 : 2000;
     if (result == ScanOutcome::pending && now_ms - phase_start >= timeout_ms)
         result = accepted ? ScanOutcome::completion_timeout : ScanOutcome::reply_timeout;
 }
@@ -368,6 +389,29 @@ void PassiveScanExchange::observe(const FirmwarePacket& packet, uint64_t now_ms)
     expire(now_ms);
     if (result != ScanOutcome::pending)
         return;
+    if (abort == Abort::submitted && packet.sequence == abort_sequence) {
+        if (packet.group == 1 && packet.opcode == 0xe) {
+            if (!packet.payload || packet.length != 4) {
+                result = ScanOutcome::malformed;
+                return;
+            }
+            const uint32_t status =
+                read16(packet.payload) | (uint32_t(read16(packet.payload + 2)) << 16);
+            constexpr uint32_t scan_not_found = 2;
+            if (status > scan_not_found) {
+                result = ScanOutcome::malformed;
+                return;
+            }
+            if (status == scan_not_found) {
+                result = ScanOutcome::aborted; // Firmware has no scan with this ID.
+                return;
+            }
+            abort = Abort::awaiting_completion;
+        } else if (packet.group == 0 && packet.opcode == 2) {
+            // The abort command ended, but the scan still owns its resources.
+            abort = Abort::awaiting_completion;
+        }
+    }
     observe_passive_scan(scan, packet);
     if (!accepted && packet.sequence == sequence) {
         if (packet.group == 0 && packet.opcode == 2) {
@@ -379,13 +423,13 @@ void PassiveScanExchange::observe(const FirmwarePacket& packet, uint64_t now_ms)
             phase_start = now_ms;
         }
     }
-    if (!accepted)
+    if (!accepted || abort == Abort::submitted)
         return;
     switch (scan.status) {
     case PassiveScan::Status::pending:
         break;
     case PassiveScan::Status::complete:
-        result = ScanOutcome::complete;
+        result = abort == Abort::none ? ScanOutcome::complete : ScanOutcome::aborted;
         break;
     case PassiveScan::Status::aborted:
         result = ScanOutcome::aborted;

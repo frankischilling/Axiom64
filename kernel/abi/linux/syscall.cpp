@@ -1300,11 +1300,16 @@ static int64_t dispatch(Frame* f, Task* running) {
             running->deadline = 0;
             return 0;
         }
-        if (!running->deadline)
-            running->deadline = ticks + uint64_t(ts.sec) * 100 + (ts.nsec + 9999999) / 10000000;
-        if (running->deadline == ticks) {
-            running->deadline = 0;
-            return 0;
+        if (!running->deadline) {
+            if (!ts.sec && !ts.nsec)
+                return 0;
+            constexpr uint64_t tick_ns = 10000000;
+            const uint64_t phase = clock_monotonic_ns() % tick_ns;
+            const uint64_t extra = (phase + uint64_t(ts.nsec) + tick_ns - 1) / tick_ns;
+            const uint64_t room = UINT64_MAX - ticks;
+            running->deadline = extra > room || uint64_t(ts.sec) > (room - extra) / 100
+                                    ? UINT64_MAX
+                                    : ticks + uint64_t(ts.sec) * 100 + extra;
         }
         return block(Wait::sleep);
     }
@@ -1764,6 +1769,11 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 228: {
         if (a > 7)
             return -22;
+        if (a == 1 || a == 4 || a == 7) {
+            uint64_t now = clock_monotonic_ns();
+            Timespec ts{int64_t(now / 1000000000), int64_t(now % 1000000000)};
+            return copy_result(b, &ts, sizeof(ts));
+        }
         uint64_t now = a == 2 || a == 3   ? cpu_ticks(*running, a == 3)
                        : a == 0 || a == 5 ? clock_realtime_ticks()
                                           : ticks;
@@ -1773,7 +1783,8 @@ static int64_t dispatch(Frame* f, Task* running) {
     case 229: {
         if (a > 7)
             return -22;
-        Timespec ts{0, 10000000};
+        Timespec ts{0, a == 1 || a == 4 || a == 7 ? int64_t(clock_monotonic_resolution_ns())
+                                                  : 10000000};
         return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
     case 137: {

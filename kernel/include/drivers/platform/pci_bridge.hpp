@@ -55,15 +55,16 @@ template <class Read> bool port_window(const Read& read, uint32_t control, const
     return contains(base, limit, bar);
 }
 
-template <class Read> bool memory_window(const Read& read, bool prefetchable, const PciBar& bar) {
+template <class Read>
+bool memory_bounds(const Read& read, bool prefetchable, uint64_t& base, uint64_t& limit) {
     uint32_t low;
     if (!read(prefetchable ? 0x24 : 0x20, 4, low))
         return false;
     const unsigned type = low & 0xf;
     if (type > unsigned(prefetchable) || ((low >> 16) & 0xf) != type)
         return false;
-    uint64_t base = (low & 0xfff0) << 16;
-    uint64_t limit = (low & 0xfff00000) | 0xfffff;
+    base = (low & 0xfff0) << 16;
+    limit = (low & 0xfff00000) | 0xfffff;
     if (type == 1) {
         uint32_t high_base, high_limit;
         if (!read(0x28, 4, high_base) || !read(0x2c, 4, high_limit))
@@ -71,7 +72,12 @@ template <class Read> bool memory_window(const Read& read, bool prefetchable, co
         base |= uint64_t(high_base) << 32;
         limit |= uint64_t(high_limit) << 32;
     }
-    return contains(base, limit, bar);
+    return true;
+}
+
+template <class Read> bool memory_window(const Read& read, bool prefetchable, const PciBar& bar) {
+    uint64_t base, limit;
+    return memory_bounds(read, prefetchable, base, limit) && contains(base, limit, bar);
 }
 
 inline bool forwards(const Acpi::PciBridges& bridges, uint16_t segment, uint8_t bus,

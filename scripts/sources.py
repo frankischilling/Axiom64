@@ -39,10 +39,11 @@ def resolve():
         base = f"https://raw.githubusercontent.com/alpinelinux/aports/{commit}/{package['repository']}/{origin}"
         recipe = download(base + "/APKBUILD", CACHE / origin / commit / "APKBUILD")
         checksums = re.search(r'sha512sums="(.*?)"', recipe.read_text(), re.S)
-        if not checksums:
+        # krb5-conf writes its only file from a heredoc in APKBUILD.
+        if not checksums and origin != "krb5-conf":
             raise RuntimeError(f"{origin}: missing source checksums")
         files = []
-        for line in checksums[1].splitlines():
+        for line in checksums[1].splitlines() if checksums else ():
             if not line.strip():
                 continue
             digest, name = line.split()
@@ -139,6 +140,11 @@ def prepare():
     inputs.extend(doom_sources())
     from build_cupidfetch import source_inputs as cupidfetch_sources
     inputs.append(cupidfetch_sources())
+    eduroam = ROOT / 'vendor/auto-eduroam'
+    pin = LOCK['auto_eduroam']
+    inputs.append(('auto-eduroam', [verify(eduroam / pin['archive'], pin['sha256'], 'sha256'),
+                                    eduroam / 'connect-eduroam.sh', eduroam / 'README.md',
+                                    eduroam / 'LICENSE']))
     password = LOCK['libxcrypt']
     signature = verify(download(password['signature_url'], CACHE / 'libxcrypt-upstream' /
                                 (password['archive'] + '.asc')), password['signature_sha256'], 'sha256')

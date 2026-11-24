@@ -89,12 +89,15 @@ def verify_desktop(guest, serial_path, socket_path, output, timeout):
                 control.command("screendump", {"filename": str(output / "kitty.png"), "format": "png"})
             finally:
                 control.close()
-            login.elevate("/bin/busybox poweroff -f")
+            login.elevate("test -r /run/axiom64-input-ready && "
+                          "grep -Fq \"Using input driver 'libinput' for 'Axiom64 PS/2 keyboard'\" "
+                          "/run/axiom64-seat/server.log && printf '%s%s\\n' KITTY_LIBINPUT_ PASS; "
+                          "/bin/busybox poweroff -f")
             shutdown_requested = True
         time.sleep(0.1)
     log = serial_path.read_text(errors="replace")
     required = ("Firmware: UEFI", "VFS_ROOT_PASS filesystem=ext2 device=PARTUUID=",
-                "exec pid=", "/usr/bin/kitty (dynamic musl)", "KITTY_INPUT_PASS",
+                "exec pid=", "/usr/bin/kitty (dynamic musl)", "KITTY_INPUT_PASS", "KITTY_LIBINPUT_PASS",
                 "nvme: controller=0 shutdown complete", "AXIOM64_EXIT status=0")
     if (guest.poll() != 1 or not shutdown_requested or
             not all(marker in log for marker in required)):

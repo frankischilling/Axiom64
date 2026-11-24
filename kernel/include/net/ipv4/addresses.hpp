@@ -39,6 +39,8 @@ class AddressBook {
   public:
     const Ipv4Address* at(unsigned position) const;
 
+    const Ipv4Address* find(unsigned index, uint32_t address, uint32_t mask) const;
+
     const Ipv4Address* label(unsigned index, const char*, uint32_t hint = 0) const;
 
     const Ipv4Address* preferred(unsigned index, uint32_t destination = 0) const;

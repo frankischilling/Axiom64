@@ -203,9 +203,11 @@ address=192.168.100.200
 netmask=255.255.255.0
 ```
 
-Use the appropriate interface and addresses for your lab. Debug SSH boots
-read this directory when it exists. Ordinary boots read the regular profiles
-under `/etc/network`.
+Use the appropriate interface and addresses for your lab. A debug SSH boot
+with this directory uses the native service and its lab profiles. Without
+the directory, a desktop boot starts NetworkManager and uses its saved
+connections, including Wi-Fi. Installs without NetworkManager use the
+native service with the regular profiles under `/etc/network`.
 
 ## FTP compatibility test
 

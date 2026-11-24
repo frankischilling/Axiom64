@@ -24,6 +24,8 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "net/packet.hpp"
+#include "net/socket_control.hpp"
+#include "net/socket_filter.hpp"
 #include "process/task.hpp"
 #include "core/time.hpp"
 
@@ -35,7 +37,9 @@ constexpr uint32_t packet_receive_max = 212992;
 struct PacketSocket {
     unsigned index = 0, head = 0, count = 0;
     uint16_t protocol = 0;
-    bool used = false, ignore_outgoing = false;
+    unsigned type = 3;
+    bool used = false, ignore_outgoing = false, auxiliary = false;
+    SocketFilter filter;
     size_t bytes = 0;
     unsigned queue_limit = 32;
     uint32_t receive_limit = packet_queue_bytes;
@@ -68,6 +72,7 @@ void packet_close(PacketSocket* socket) {
         packet_consume(socket);
     if (socket->timestamp_enabled)
         timestamp_sockets--;
+    socket->filter.detach();
     socket->used = false;
 }
 
@@ -106,6 +111,46 @@ unsigned packet_interface(PacketSocket* socket) {
     return socket->index;
 }
 
+bool packet_cooked(PacketSocket* socket) {
+    return socket->type == 2;
+}
+
+int packet_ethernet_header(const PacketAddress& destination, size_t payload, uint8_t* output) {
+    if (destination.family != 17 || destination.length != 6)
+        return -22;
+    const auto* info = net_info(unsigned(destination.index));
+    if (!info)
+        return -6;
+    memcpy(output, destination.address, 6);
+    memcpy(output + 6, info->mac, 6);
+    uint16_t protocol = destination.protocol;
+    if (protocol == network_protocol(1) || protocol == network_protocol(4)) {
+        if (payload >= 1536)
+            return -90;
+        protocol = network_protocol(uint16_t(payload));
+    }
+    memcpy(output + 12, &protocol, 2);
+    return 0;
+}
+
+size_t packet_receive_control(Task& task, PacketSocket* socket, const PacketFrame& frame,
+                              uint64_t address, uint64_t capacity, uint32_t& flags) {
+    if (!socket->auxiliary)
+        return 0;
+
+    struct AuxData {
+        uint32_t status, length, snapshot;
+        uint16_t mac, network, vlan_tag, vlan_protocol;
+    };
+
+    static_assert(sizeof(AuxData) == 20);
+    const AuxData data{
+        1, uint32_t(frame.wire_length), uint32_t(frame.length), 0, frame.network_offset, 0, 0};
+    SocketControlWriter writer(task, 263, address, capacity, flags); // SOL_PACKET
+    writer.append(8, &data, sizeof(data));                           // PACKET_AUXDATA
+    return writer.used;
+}
+
 bool packet_ready(PacketSocket* socket, bool write) {
     const auto info = net_info(socket->index);
     return write ? net_writable(socket->index) : socket->count != 0 || (info && !info->live);
@@ -113,6 +158,8 @@ bool packet_ready(PacketSocket* socket, bool write) {
 
 void packet_deliver(const NetInfo& info, const void* data, size_t length, unsigned type,
                     const void* sender) {
+    if (length < ethernet_header)
+        return;
     const auto bytes = static_cast<const uint8_t*>(data);
     uint16_t protocol;
     memcpy(&protocol, bytes + 12, 2);
@@ -132,22 +179,28 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
             (socket.protocol != network_protocol(3) && socket.protocol != protocol) ||
             (type == 4 && (socket.ignore_outgoing || socket.protocol != network_protocol(3))))
             continue;
+        const size_t offset = packet_cooked(&socket) ? ethernet_header : 0;
+        const size_t original = length - offset;
+        const size_t snapshot = socket.filter.snapshot(
+            {bytes + offset, original, network_protocol(protocol), type, info.index});
+        if (!snapshot && (original || socket.filter.code))
+            continue;
         socket.packets++;
         if (socket.count >= socket.queue_limit ||
-            length > socket.receive_limit - min(socket.bytes, size_t(socket.receive_limit))) {
+            snapshot > socket.receive_limit - min(socket.bytes, size_t(socket.receive_limit))) {
             socket.dropped++;
             continue;
         }
-        auto frame = static_cast<PacketFrame*>(alloc(sizeof(PacketFrame) + length));
+        auto frame = static_cast<PacketFrame*>(alloc(sizeof(PacketFrame) + snapshot));
         if (!frame) {
             socket.dropped++;
             continue;
         }
-        *frame = {address, length, timestamp};
-        memcpy(frame + 1, data, length);
+        *frame = {address, snapshot, original, timestamp, uint16_t(ethernet_header - offset)};
+        memcpy(frame + 1, bytes + offset, snapshot);
         socket.queue[(socket.head + socket.count) % packet_queue_size] = frame;
         socket.count++;
-        socket.bytes += length;
+        socket.bytes += snapshot;
     }
 }
 
@@ -165,6 +218,8 @@ int64_t packet_read(PacketSocket* socket, void* data, size_t length) {
 }
 
 int64_t packet_write(PacketSocket* socket, const void* data, size_t length) {
+    if (packet_cooked(socket))
+        return -22;
     int error = socket->index ? net_send(socket->index, data, length, socket) : -6;
     return error ? error : int64_t(length);
 }
@@ -193,7 +248,7 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
     if (frame.rax == 41) {
         if (!capable(task.credentials, Capability::net_raw))
             return -1;
-        if ((b & 0xf) != 3)
+        if ((b & 0xf) != 2 && (b & 0xf) != 3)
             return -95;
         if ((b & ~uint64_t(0x8080f)) || c > UINT16_MAX)
             return -22;
@@ -208,6 +263,7 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
         *socket = {};
         socket->used = true;
         socket->protocol = c;
+        socket->type = b & 0xf;
         auto opened = open_handle(nullptr, 2 | ((b & 0x800) ? 04000 : 0));
         if (!opened) {
             packet_close(socket);
@@ -240,6 +296,10 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
     case 51:
         return output_address(task, socket, b, c);
     case 54: {
+        if (b == 1 && c == 26) // SO_ATTACH_FILTER
+            return socket->filter.attach(task, d, frame.r8);
+        if (b == 1 && c == 27) // SO_DETACH_FILTER
+            return socket->filter.detach();
         if (b == 1 && c == 8) { // SO_RCVBUF: Linux reports twice the bounded request.
             uint32_t value;
             if (frame.r8 < 4)
@@ -250,13 +310,16 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
             socket->queue_limit = packet_queue_size;
             return 0;
         }
-        if (b == 263 && c == 23) {
+        if (b == 263 && (c == 8 || c == 23)) {
             int value;
             if (frame.r8 < 4)
                 return -22;
             if (!task.memory->space.copy_in(&value, d, 4))
                 return -14;
-            socket->ignore_outgoing = value != 0;
+            if (c == 8)
+                socket->auxiliary = value != 0;
+            else
+                socket->ignore_outgoing = value != 0;
             return 0;
         }
         return -92;
@@ -267,9 +330,11 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
             values[0] = socket->packets;
             values[1] = socket->dropped;
             actual = 8;
-        } else if (b == 1) {
+        } else if (b == 263 && c == 8)
+            values[0] = socket->auxiliary;
+        else if (b == 1) {
             if (c == 3)
-                values[0] = 3;
+                values[0] = socket->type;
             else if (c == 4)
                 values[0] = 0;
             else if (c == 7)

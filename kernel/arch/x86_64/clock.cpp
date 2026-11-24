@@ -30,6 +30,8 @@
 namespace ax {
 uint64_t ticks;
 static Clock::Counter timeline;
+static uint64_t elapsed_us;
+static constexpr uint64_t tick_ns = 10000000;
 static volatile uint32_t* hpet_registers;
 static uint32_t hpet_period;
 static constexpr uint32_t pm_frequency = 3579545;
@@ -86,7 +88,7 @@ static bool initialize_hpet(uint64_t rsdp) {
     bool started = (hpet_registers[0x10 / 4] & 3) == 1 && counter_read(initial);
     for (unsigned spins = 0; started && spins < 10000; spins++) {
         if (counter_read(reading) && reading != initial &&
-            timeline.reset(initial, period, 10000000000000ull)) {
+            timeline.reset(initial, period, 1000000000)) {
             hpet_period = period;
             return true;
         }
@@ -125,7 +127,7 @@ static bool initialize_pm_timer(uint64_t rsdp) {
             return false;
         const uint32_t delta = (reading - initial) & device.mask;
         if (delta && delta <= device.mask / 2) {
-            if (!timeline.reset(0, 100, pm_frequency))
+            if (!timeline.reset(0, 1000000, pm_frequency))
                 return false;
             pm_timer = device;
             pm_last = reading;
@@ -168,7 +170,7 @@ static bool initialize_tsc() {
         }
     }
     out8(0x61, speaker);
-    if (shortest == UINT64_MAX || !timeline.reset(timestamp(), 1, shortest))
+    if (shortest == UINT64_MAX || !timeline.reset(timestamp(), 10000, shortest))
         return false;
     tsc_per_us = (shortest + 9999) / 10000;
     return true;
@@ -191,11 +193,26 @@ bool clock_shared_counter_ready() {
     return hpet_registers != nullptr || pm_timer.port != 0;
 }
 
+uint64_t clock_monotonic_resolution_ns() {
+    return clock_shared_counter_ready() || use_tsc ? 1000 : tick_ns;
+}
+
+uint64_t clock_monotonic_ns() {
+    const uint64_t resolution = clock_monotonic_resolution_ns();
+    const uint64_t count = resolution == tick_ns ? ticks : elapsed_us;
+    return min(count, UINT64_MAX / resolution) * resolution;
+}
+
+static void sample_clock(uint64_t reading) {
+    elapsed_us = timeline.sample(reading);
+    ticks = max(ticks, elapsed_us / 10000);
+}
+
 void clock_refresh(bool timer) {
     if (hpet_registers) {
         uint64_t reading;
         if (counter_read(reading))
-            ticks = max(ticks, timeline.sample(reading));
+            sample_clock(reading);
     } else if (pm_timer.port) {
         uint32_t reading;
         // The bootstrap CPU's 100 Hz tick samples well inside the 24-bit wrap
@@ -203,10 +220,10 @@ void clock_refresh(bool timer) {
         if (read_pm_timer(pm_timer, reading)) {
             pm_extended += (reading - pm_last) & pm_timer.mask;
             pm_last = reading;
-            ticks = max(ticks, timeline.sample(pm_extended));
+            sample_clock(pm_extended);
         }
     } else if (use_tsc)
-        ticks = max(ticks, timeline.sample(timestamp()));
+        sample_clock(timestamp());
     else if (timer && ticks != UINT64_MAX)
         ticks++;
 }

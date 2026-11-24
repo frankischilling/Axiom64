@@ -40,8 +40,9 @@ static_assert(sizeof(PacketAddress) == 20);
 
 struct PacketFrame {
     PacketAddress source;
-    size_t length;
+    size_t length, wire_length;
     uint64_t realtime_ticks;
+    uint16_t network_offset;
 };
 
 inline const uint8_t* packet_bytes(const PacketFrame* frame) {
@@ -62,6 +63,13 @@ void packet_observed(PacketSocket*, const PacketFrame&);
 int packet_timestamp(PacketSocket*, int64_t (&value)[2], bool nanoseconds);
 
 unsigned packet_interface(PacketSocket*);
+
+bool packet_cooked(PacketSocket*);
+
+int packet_ethernet_header(const PacketAddress&, size_t payload, uint8_t* output);
+
+size_t packet_receive_control(Task&, PacketSocket*, const PacketFrame&, uint64_t address,
+                              uint64_t capacity, uint32_t& flags);
 
 void packet_deliver(const NetInfo&, const void*, size_t, unsigned type, const void* sender);
 

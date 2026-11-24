@@ -46,6 +46,9 @@ enum class Device {
     dsp,
     alsa_control,
     alsa_playback,
+    touchpad,
+    input_uevent,
+    network_uevent,
     drm_scanout
 };
 
@@ -72,6 +75,8 @@ struct Pty {
 };
 
 void devices_init(bool display_console, bool virtio_graphics, bool drm);
+void inventory_device_added(Node*, bool synthetic);
+const ControlFileOps* inventory_uevent_control(Node*);
 
 uint64_t device_number(Node*);
 

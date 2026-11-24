@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "drivers/platform/pci.hpp"
+#include "firmware/aml.hpp"
 #include "firmware/acpi.hpp"
 
 namespace ax {
@@ -40,10 +41,90 @@ const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
         if (entry.kind == BootMemoryKind::retained)
             return static_cast<const uint8_t*>(physical(address));
         if (entry.kind == BootMemoryKind::reserved || entry.kind == BootMemoryKind::firmware ||
-            entry.kind == BootMemoryKind::mapped_reserved)
+            entry.kind == BootMemoryKind::mapped_reserved || entry.kind == BootMemoryKind::acpi_nvs)
             return static_cast<const uint8_t*>(map_mmio(address, length));
     }
     return nullptr;
+}
+
+namespace {
+volatile uint8_t* map_acpi_memory(uint64_t address, size_t length, bool allow_reserved) {
+    if (!length || !boot_info.memory_at || length > UINT64_MAX - address)
+        return nullptr;
+    const auto end = address + length;
+    bool contained = false;
+    auto kind = BootMemoryKind::other;
+    for (size_t i = 0; i < boot_info.memory_count; ++i) {
+        const auto entry = boot_info.memory_at(boot_info.memory_context, i);
+        if (!entry.length || entry.base >= end ||
+            (entry.base < address && entry.length <= address - entry.base))
+            continue;
+        if (entry.kind != BootMemoryKind::acpi_nvs &&
+            !(allow_reserved && entry.kind == BootMemoryKind::reserved))
+            return nullptr;
+        if (kind != BootMemoryKind::other && kind != entry.kind)
+            return nullptr;
+        kind = entry.kind;
+        if (entry.base <= address && end - entry.base <= entry.length)
+            contained = true;
+    }
+    return contained ? static_cast<volatile uint8_t*>(map_mmio(address, length)) : nullptr;
+}
+
+struct FirmwareLock {
+    volatile uint32_t* word;
+    uint16_t pm1a, pm1b;
+};
+
+FirmwareLock find_firmware_lock() {
+    Acpi::GlobalLockControl control{};
+    if (!Acpi::find_global_lock_control(boot_info.rsdp, firmware_read, nullptr, control))
+        return {};
+    const auto* header = map_acpi_memory(control.facs, 64, false);
+    if (!header || header[0] != 'F' || header[1] != 'A' || header[2] != 'C' || header[3] != 'S')
+        return {};
+    uint32_t length = 0;
+    for (unsigned i = 0; i < 4; ++i)
+        length |= uint32_t(header[4 + i]) << (8 * i);
+    if (length < 64 || length > 4096)
+        return {};
+    auto* facs = map_acpi_memory(control.facs, length, false);
+    if (!facs)
+        return {};
+    return {reinterpret_cast<volatile uint32_t*>(facs + 16), control.pm1a, control.pm1b};
+}
+
+void notify_firmware(uint16_t port) {
+    if (port) {
+        constexpr uint16_t sleep_enable = 1 << 13, global_lock_release = 1 << 2;
+        out16(port, (in16(port) & ~sleep_enable) | global_lock_release);
+    }
+}
+} // namespace
+
+bool firmware_read_system_memory(uint64_t address, uint8_t* bytes, size_t length,
+                                 bool firmware_lock) {
+    if (!bytes || length > 9)
+        return false;
+    // A boot-time AML field can refer to a firmware reservation outside ACPI NVS.
+    const auto* source = map_acpi_memory(address, length, true);
+    if (!source)
+        return false;
+    FirmwareLock lock{};
+    if (firmware_lock) {
+        // This provider is only used by the boot-time diagnostics.
+        static FirmwareLock platform_lock = find_firmware_lock();
+        lock = platform_lock;
+        if (!lock.word || !Acpi::try_acquire_global_lock(*lock.word))
+            return false;
+    }
+    for (size_t i = 0; i < length; ++i)
+        bytes[i] = source[i];
+    if (lock.word && Acpi::release_global_lock(*lock.word)) {
+        notify_firmware(lock.pm1a);
+        notify_firmware(lock.pm1b);
+    }
+    return true;
 }
 
 bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,
@@ -89,6 +170,42 @@ bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,
     else
         log("ACPI: MCFG absent or rejected\n");
     return have_topology;
+}
+
+void firmware_probe_i2c_hid(const Acpi::DefinitionBlocks& blocks) {
+    Acpi::I2cHidDevices devices{};
+    if (!Acpi::decode_i2c_hid_devices(blocks, devices, pci_firmware_read_regions())) {
+        log("ACPI I2C HID: firmware discovery failed\n");
+        return;
+    }
+    log("ACPI I2C HID: devices=%u\n", uint64_t(devices.count));
+    for (unsigned i = 0; i < devices.count; ++i) {
+        const auto& device = devices.devices[i];
+        log("ACPI I2C HID: id=%s controller=%s bus=%u address=%x bits=%u speed-hz=%u\n",
+            device.hardware_id, device.controller, uint64_t(device.source_index),
+            uint64_t(device.address), uint64_t(device.ten_bit ? 10 : 7), uint64_t(device.max_hz));
+        if (device.has_descriptor_register)
+            log("ACPI I2C HID: id=%s descriptor-register=%x\n", device.hardware_id,
+                uint64_t(device.descriptor_register));
+        using Source = Acpi::I2cHidInterrupt::Source;
+        using Polarity = Acpi::I2cHidInterrupt::Polarity;
+        const auto& irq = device.interrupt;
+        if (irq.source == Source::none)
+            continue;
+        const char* source = irq.source == Source::gpio  ? "gpio"
+                             : irq.source == Source::gsi ? "gsi"
+                                                         : "isa";
+        const char* polarity = irq.polarity == Polarity::active_high  ? "high"
+                               : irq.polarity == Polarity::active_low ? "low"
+                                                                      : "both";
+        log("ACPI I2C HID: id=%s irq-source=%s line=%u trigger=%s polarity=%s shared=%u wake=%u\n",
+            device.hardware_id, source, uint64_t(irq.line), irq.edge ? "edge" : "level", polarity,
+            uint64_t(irq.shared), uint64_t(irq.wake));
+        if (irq.source == Source::gpio)
+            log("ACPI I2C HID: id=%s gpio-controller=%s pull=%u debounce-10us=%u\n",
+                device.hardware_id, irq.gpio_controller, uint64_t(irq.gpio_pull),
+                uint64_t(irq.gpio_debounce));
+    }
 }
 
 void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology& topology,

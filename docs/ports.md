@@ -10,7 +10,31 @@ ordinary terminal. The smaller desktop initramfs leaves out the toolchain.
 Build with `make build/axiom64.elf build/rootfs-installed-desktop.cpio` and run
 `python3 scripts/installed_toolchain_test.py` to check the installed profile.
 The test compiles and runs the examples as a signed-in user on BIOS and UEFI
-NVMe guests.
+NVMe guests. It also clones a Git repository, builds a C and C++ project
+with Ninja, runs it through CTest, and searches files and output with ripgrep.
+
+The installed desktop ships Git 2.49.1, CMake 3.31.7, Ninja 1.12.1, and
+ripgrep 14.1.1. The port locks pin their Alpine packages, needed libraries,
+source archives, and build recipes. CMake recognizes Axiom64 and uses the ELF
+shared-library settings for its Linux ABI. Git, CMake, and ripgrep manual
+pages are under `/usr/share/man`.
+
+The installed desktop also includes Micro, the OpenSSH clients, GDB, strace,
+iproute2's `ip` and `ss`, and BIND's `dig`. GDB can inspect ELF files.
+Tracing or attaching to a running program requires the kernel's remaining
+`ptrace` support. Try `man 2 open` or `man 1 less` to read the bundled
+Linux manual and program manuals through mandoc.
+
+The installed Plasma desktop includes PowerDevil and its **Power and Battery**
+widget. The widget uses battery and charger data from UPower. On supported
+laptops, the tray shows the battery even at full charge. You can hide it
+under **Power and Battery** in System Tray Settings.
+
+New accounts get an `auto-eduroam` folder with the setup helper and its
+instructions. Existing accounts get it at desktop sign-in if that path is
+available. Run `~/auto-eduroam/connect-eduroam.sh` or `connect-eduroam`.
+Connection setup needs NetworkManager, a supported Wi-Fi device, and the
+CA certificate and authentication server domain supplied by your school.
 
 The installed desktop includes GNU Diffutils, GNU Patch, Info-ZIP Zip and
 UnZip, XZ Utils, and Zstandard. Run them from a terminal or call the tools
@@ -28,6 +52,12 @@ llvmpipe provides OpenGL for the framebuffer X server. The source bundle
 includes the pinned Alpine recipes, the Go runtime and modules linked into
 `kitten`, and the release archive for its bundled symbol font. The full and
 desktop profiles use the smaller framebuffer session with xterm.
+
+The installed desktop includes NetworkManager 1.52.1, `nmcli`, and the
+Plasma 6.3.6 network applet. The package and source locks include the Wi-Fi
+backend, wpa_supplicant, the applet, and its libraries. See
+[persistent root boot](disk-root.md) for service startup and connection storage.
+Wi-Fi association on the Blade needs the Intel wireless driver.
 
 The installed desktop also ships btop 1.4.0. It reads live CPU and memory data,
 process names and arguments, and mounted filesystem capacity. The first desktop

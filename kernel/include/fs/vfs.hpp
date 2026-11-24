@@ -198,6 +198,7 @@ struct Handle {
     Node* opened_dentry = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
+    uint8_t input_clock = 0, input_recovery = 0;
     void* filesystem_data = nullptr;
     SocketTimeout receive_timeout{}, send_timeout{};
     uint64_t pipe_hangup_generation = 0;

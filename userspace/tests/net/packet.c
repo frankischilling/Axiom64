@@ -26,7 +26,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <netpacket/packet.h>
+#include <linux/filter.h>
+#include <linux/if_packet.h>
 #include <net/if.h>
 #include <poll.h>
 #include <pthread.h>
@@ -65,6 +66,76 @@ static int raw(int index, int protocol, int flags) {
         .sll_family = AF_PACKET, .sll_protocol = htons(protocol), .sll_ifindex = index};
     check(bind(fd, (struct sockaddr*)&address, sizeof(address)) == 0, "bind");
     return fd;
+}
+
+static int cooked(int index) {
+    int fd = socket(AF_PACKET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    check(fd >= 0, "cooked socket with reception disabled before bind");
+    struct sockaddr_ll address = {
+        .sll_family = AF_PACKET, .sll_protocol = htons(PROTOCOL), .sll_ifindex = index};
+    check(bind(fd, (struct sockaddr*)&address, sizeof(address)) == 0, "bind cooked socket");
+    int one = 1, kind = 0;
+    socklen_t length = sizeof(kind);
+    check(getsockopt(fd, SOL_SOCKET, SO_TYPE, &kind, &length) == 0 && kind == SOCK_DGRAM &&
+              setsockopt(fd, SOL_PACKET, PACKET_AUXDATA, &one, sizeof(one)) == 0,
+          "cooked type and auxiliary data");
+    struct sock_filter code[] = {BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0),
+                                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0x41583634, 0, 3),
+                                 BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 8),
+                                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 1),
+                                 BPF_STMT(BPF_RET | BPF_K, 12),
+                                 BPF_STMT(BPF_RET | BPF_K, 0)};
+    struct sock_fprog program = {.len = sizeof(code) / sizeof(code[0]), .filter = code};
+    check(setsockopt(fd, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
+          "attach cooked filter");
+    code[1].jf = 255;
+    check(setsockopt(fd, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == -1 &&
+              errno == EINVAL,
+          "invalid replacement keeps cooked filter");
+    return fd;
+}
+
+static void send_cooked(int fd, int index, unsigned char* frame, size_t length) {
+    struct sockaddr_ll to = {.sll_family = AF_PACKET,
+                             .sll_protocol = htons(PROTOCOL),
+                             .sll_ifindex = index,
+                             .sll_halen = 6};
+    memcpy(to.sll_addr, frame, 6);
+    struct iovec vectors[2] = {{frame + 14, 5}, {frame + 19, length - 19}};
+    struct msghdr message = {
+        .msg_name = &to, .msg_namelen = sizeof(to), .msg_iov = vectors, .msg_iovlen = 2};
+    check(sendmsg(fd, &message, 0) == (ssize_t)(length - 14), "cooked vector transmit");
+}
+
+static void receive_cooked(int fd, int index, const unsigned char* frame, size_t length) {
+    unsigned char bytes[12];
+    struct sockaddr_ll from = {0};
+    struct iovec vector = {bytes, sizeof(bytes)};
+
+    union {
+        struct cmsghdr align;
+        char bytes[CMSG_SPACE(sizeof(struct tpacket_auxdata))];
+    } control;
+    struct msghdr message = {.msg_name = &from,
+                             .msg_namelen = sizeof(from),
+                             .msg_iov = &vector,
+                             .msg_iovlen = 1,
+                             .msg_control = control.bytes,
+                             .msg_controllen = sizeof(control.bytes)};
+    check(recvmsg(fd, &message, 0) == sizeof(bytes) && !message.msg_flags &&
+              !memcmp(bytes, frame + 14, sizeof(bytes)) && from.sll_ifindex == index &&
+              from.sll_protocol == htons(PROTOCOL) && from.sll_pkttype == PACKET_HOST &&
+              from.sll_halen == 6 && !memcmp(from.sll_addr, frame, 6),
+          "cooked receive with filter snapshot");
+    struct cmsghdr* header = CMSG_FIRSTHDR(&message);
+    check(header && header->cmsg_level == SOL_PACKET && header->cmsg_type == PACKET_AUXDATA &&
+              header->cmsg_len == CMSG_LEN(sizeof(struct tpacket_auxdata)),
+          "cooked auxiliary control header");
+    struct tpacket_auxdata data;
+    memcpy(&data, CMSG_DATA(header), sizeof(data));
+    check(data.tp_len == length - 14 && data.tp_snaplen == sizeof(bytes) && data.tp_mac == 0 &&
+              data.tp_net == 0,
+          "cooked auxiliary lengths and offset");
 }
 
 static unsigned long long realtime(void) {
@@ -460,6 +531,7 @@ static void nic(int control, int index, unsigned sequences) {
     link_state(control, &request, index);
     int fd = raw(index, PROTOCOL, SOCK_CLOEXEC), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
     int protocol_listener = raw(index, PROTOCOL, SOCK_NONBLOCK);
+    int cooked_listener = cooked(index);
     int disabled = raw(index, 0, SOCK_NONBLOCK), other = raw(index, PROTOCOL + 1, SOCK_NONBLOCK);
     int one = 1;
     check(setsockopt(observer, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
@@ -504,7 +576,9 @@ static void nic(int control, int index, unsigned sequences) {
         for (unsigned sequence = base; sequence < end; sequence++) {
             size_t length = sequence % 7 == 6 ? 1514 : 64 + (sequence % 6) * 31;
             frame(sent, length, mac, index - 1, sequence);
-            if (sequence % 3 == 0)
+            if (sequence == 0)
+                send_cooked(cooked_listener, index, sent, length);
+            else if (sequence % 3 == 0)
                 check(write(fd, sent, length) == (ssize_t)length, "descriptor TX");
             else if (sequence % 3 == 1) {
                 struct iovec vectors[3] = {{sent, 5}, {sent + 5, 0}, {sent + 5, length - 5}};
@@ -576,8 +650,12 @@ static void nic(int control, int index, unsigned sequences) {
             received(bytes, sent, length, NULL, mac, index);
             if (sequence == 0) {
                 protocol_observation(protocol_listener, sent, length, mac, index);
+                receive_cooked(cooked_listener, index, sent, length);
                 lazy_timestamp_probe(observer, index, first_arrival);
             }
+            if (sequence == 1)
+                check(recv(cooked_listener, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN,
+                      "cooked filter discards nonmatching sequence");
             check(recv(disabled, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN,
                   "zero protocol filter");
             check(recv(other, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN, "protocol filter");
@@ -585,6 +663,7 @@ static void nic(int control, int index, unsigned sequences) {
         check(recv(fd, bytes, sizeof(bytes), MSG_DONTWAIT) == -1 && errno == EAGAIN,
               "whole frames consumed");
     }
+    check(close(cooked_listener) == 0, "close cooked packet socket");
     check(close(epoll) == 0 && close(observer) == 0 && close(disabled) == 0 && close(other) == 0,
           "listener close");
     listener_pressure(fd, index, mac, sequences);
@@ -718,8 +797,6 @@ int main(int argc, char** argv) {
         fault_test(!strcmp(argv[1], "fault-id"));
         return 0;
     }
-    check(socket(AF_PACKET, SOCK_DGRAM, htons(PROTOCOL)) == -1 && errno == EOPNOTSUPP,
-          "unsupported cooked packet socket");
     unsigned sequences = argc > 1 ? (unsigned)strtoul(argv[1], NULL, 10) : 16;
     check(sequences > 0 && sequences <= 100000, "frame count");
     int control = socket(AF_PACKET, SOCK_RAW, 0);

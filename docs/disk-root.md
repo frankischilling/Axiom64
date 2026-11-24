@@ -40,15 +40,23 @@ partition. The boot configuration selects the system partition by its GPT ID.
 On first boot, create the administrator from the console as described in
 [accounts.md](accounts.md). SDDM starts the Breeze sign-in screen when setup
 finishes. It starts KDE Plasma with software rendering on its Xorg display.
+The installed desktop uses udev to discover input devices for both Breeze and
+the console desktop. If udev has not classified the input devices by the time
+Xorg starts, Xorg uses its fixed keyboard and mouse configuration.
 The desktop includes shortcuts for
 Kitty, Thunar, btop, and both Freedoom campaigns. Use `build/rootfs-desktop.cpio`
 for a smaller disk image with twm and xterm.
+
+The installed desktop runs NetworkManager after the system D-Bus socket
+appears. Ethernet uses its internal DHCP client by default. The Plasma network
+applet reads the same D-Bus service. NetworkManager stores saved connections
+under `/etc/NetworkManager/system-connections/`. Test boots that enable
+`debug.ssh` use the [direct-cable network setup](pxe.md).
 
 The serial console remains available for recovery. Create the root-owned
 `/etc/axiom64/console-desktop` file and reboot to have console sign-in start
 the desktop directly. Remove the file to restore SDDM.
 The `console.text` kernel option starts a text-only login and skips SDDM.
-
 
 The installed desktop skips the animated splash by default to free CPU time
 for sign-in. You can choose a splash screen in Plasma System Settings.

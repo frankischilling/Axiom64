@@ -181,6 +181,33 @@ static void route_source_classes() {
     assert(ipv4_address_remove(1, other, 0xffffff00) == 0);
 }
 
+static void route_preferred_sources() {
+    constexpr uint32_t first = 0x0a170102, second = 0x0a170103, third = 0x0a170104;
+    constexpr uint32_t target = 0xc6336409;
+    assert(!ipv4_address_add(1, "eth0:second", {second, 0xffffff00, 0x0a1701ff}));
+    assert(!ipv4_address_add(1, "eth0:third", {third, 0xffffff00, 0x0a1701ff}));
+    const Ipv4Route primary{0, 0, 0x0a170101, 1, 100, 16, 0, first};
+    auto secondary = primary, last = primary, invalid = primary;
+    secondary.preferred_source = second;
+    last.preferred_source = third;
+    invalid.preferred_source = third + 1;
+    assert(ipv4_route_control(invalid, false, false, true) == -22);
+    assert(!ipv4_route_control(primary, false, false, true));
+    assert(!ipv4_route_control(secondary, false, false, true));
+    assert(ipv4_route_control(primary, false, false, true) == -17);
+    Ipv4Path path;
+    assert(!ipv4_path(0, target, 0, path) && path.source == first);
+    assert(!ipv4_route_control(primary, true, false));
+    assert(ipv4_route_control(primary, true, false) == -3);
+    assert(!ipv4_route_control(last, false, false, true));
+    assert(!ipv4_path(0, target, 0, path) && path.source == second);
+    assert(!ipv4_path(first, target, 0, path) && path.source == first);
+    assert(!ipv4_address_remove(1, second, 0xffffff00));
+    assert(!ipv4_path(0, target, 0, path) && path.source == third);
+    assert(!ipv4_address_remove(1, third, 0xffffff00));
+    assert(ipv4_path(0, target, 0, path) == -101);
+}
+
 static void address_aliases() {
     constexpr uint32_t first = 0x0a170102, alias = 0x0a170103, peer = 0x0a1701be;
     constexpr uint32_t other = 0x0a170302;
@@ -488,6 +515,7 @@ int main() {
     shared_next_hop();
     route_pressure();
     route_source_classes();
+    route_preferred_sources();
     address_aliases();
     retained_destinations();
     link_lifecycle();

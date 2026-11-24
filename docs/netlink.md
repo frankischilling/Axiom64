@@ -7,9 +7,10 @@ Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `
 | Operation | Supported contract |
 | --- | --- |
 | `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, IPv6, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
+| `RTM_NEWLINK`, `RTM_SETLINK` | Change administrative state and MTU on an existing Ethernet adapter with `CAP_NET_ADMIN`. A link change may set both fields in one request. IPv6 address-generation mode uses a separate request. |
 | `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family, including flags and cache information; IPv4 labels, local/peer address and optional broadcast; IPv6 prefix and scope |
-| `RTM_NEWROUTE` | `NLM_F_REQUEST` and `NLM_F_CREATE`; optional `NLM_F_EXCL` and `NLM_F_ACK`; IPv4 main-table unicast with a canonical destination/prefix; direct routes require an explicit physical interface and gateway routes can infer it from a configured subnet |
-| `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters; optional acknowledgment |
+| `RTM_NEWROUTE` | Main-table unicast supports create with exclusive or append. IPv4 also supports create alone and accepts a local preferred source. IPv6 requires an explicit interface. IPv4 gateway routes can infer it from a configured subnet. |
+| `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters. IPv4 also accepts a preferred source filter. |
 | `RTM_GETROUTE` | Multipart dump with `NLM_F_DUMP`; IPv4 or unspecified family, optional protocol/interface filters; main-table unicast records followed by `NLMSG_DONE` and status |
 | `RTM_NEWADDR` | Insert an IPv4 local address, prefix, label, optional broadcast and lifetimes on an explicit physical interface; replace refreshes existing lifetimes without changing its identity |
 | `RTM_DELADDR` | Delete a matching address/label; a supplied peer also requires its exact prefix; a mismatch returns `EADDRNOTAVAIL` |
@@ -26,6 +27,10 @@ Link and address dumps accept complete zero-filter headers. With strict checking
 
 Create/exclusive rejects an existing destination/prefix with the same priority, including a connected route at priority zero. Create without exclusive permits distinct next-hop/protocol aliases and rejects an identical route. Existing route ioctls retain their earlier behavior and report `RTPROT_BOOT` in dumps. Delete's zero gateway/priority/interface/protocol and nowhere scope are wildcard filters; callers managing ownership should supply explicit filters. Protocol tags describe routes and do not establish a security boundary between root processes.
 
+IPv4 create/append adds a route after earlier equal-priority aliases. `RTA_PREFSRC` is optional and must identify a local address when it is nonzero. New unbound output through that route uses this address. Explicitly selected socket sources still take precedence. Removing the last assignment of a preferred source withdraws the routes that specify it.
+
+IPv6 create/append accepts distinct interfaces or gateways at the same prefix and metric. A duplicate next hop returns `EEXIST`. Equal-priority routes with the same preference keep their insertion order when selecting a next hop. Removing a route by its gateway leaves the other route available. Multipath route attributes remain unsupported.
+
 Replies carry the request sequence, the socket's authoritative port identity, and kernel sender address. Errors use `NLMSG_ERROR` with negative errno and the original request. `NETLINK_CAP_ACK` bounds the echo to its header; uncapped errors include the original payload with zero alignment padding. Successful requested acknowledgments contain a capped header echo. A dump's records and completion are queued as one owned datagram. Each request in a batch has its own result; a batch is not a route transaction.
 
 ## Socket ownership and bounds
@@ -40,11 +45,88 @@ Descriptor reads/writes, vectors, and message calls share the [retained I/O path
 
 Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, complete IPv6 control, policy routing, and general Linux netlink behavior remain required.
 
+## Input device events
+
+`AF_NETLINK` protocol `NETLINK_KOBJECT_UEVENT` exposes kernel input-device
+additions on multicast group 1. A device manager with `CAP_NET_ADMIN` can
+send processed events to group 2 and pass work to another event socket
+by port ID. With `SO_PASSCRED` enabled, `recvmsg` returns the credentials
+captured by the kernel when the datagram was sent. Listeners can adjust
+their receive buffer and independently join or leave either group. If a
+listener attaches a classic BPF program with `SO_ATTACH_FILTER`, the
+kernel applies it before queueing events, including relays from a device
+manager. A zero result discards the event and a shorter result limits
+how many bytes the listener receives. `SO_DETACH_FILTER` removes the
+program.
+
+A listener whose queue fills and loses a multicast event receives
+`ENOBUFS`. Route sockets and their port IDs remain independent.
+
+Write `add` to a present evdev device's `/sys/class/input/eventN/uevent`
+to request a coldplug event. The file uses normal owner write permissions.
+Group 1 is reserved for the kernel. Other device actions and ancillary
+credentials supplied by the sender are unsupported.
+The [Linux uevent implementation](https://github.com/torvalds/linux/blob/v6.12/lib/kobject_uevent.c)
+defines the datagram and coldplug format.
+
 ## Ring 3 configuration adapter
 
 `userspace/net/config/routing.hpp` exposes `ax::net::Routing` behind a private nonblocking kernel-port socket. Route `change` requires a canonical mask, explicit interface, nonzero priority/protocol, and the appropriate link/universe scope. The adapter retains preferred-source and TOS fields when reading routes; host comparisons use them to distinguish independent owners. The guest still rejects preferred-source and TOS route mutations. Address `change` requires the complete canonical tuple and explicit interface. These checks prevent accidental wildcard deletion. Results are positive errno values; requests require a checked acknowledgment within a one-second monotonic deadline.
 
 `list` returns at most 65 route records and can filter by interface/protocol. It verifies kernel sender, sequence, port identity, record bounds, and multipart completion. Failure leaves the caller's records and count unchanged. It drains an undersized result before returning `ENOSPC`; malformed, timed-out, or interrupted exchanges discard the private socket. The caller can reopen it for later work. The [Configuration module](network-configuration.md) uses this adapter for DHCP/static tuple and route ownership. Normal startup supervises the [network manager](network-manager.md) as a Ring 3 child.
+
+## Generic netlink discovery
+
+`NETLINK_GENERIC` and `NETLINK_ROUTE` have separate port namespaces. The
+generic control family `nlctrl` answers `CTRL_CMD_GETFAMILY` by name or ID
+and supports a multipart family dump. It publishes its version, discovery
+operation and notification group. A lookup for an absent family returns
+`ENOENT`. Unicast replies carry the kernel source address. A requested
+acknowledgment follows the family reply as a separate datagram.
+
+Both protocols support `SO_PASSCRED` for kernel sender credentials and
+bounded `SO_SNDBUF` and `SO_RCVBUF` settings. Requests are capped at 512 KiB
+before doubling. The receive queue still holds at most 32 datagrams. Group
+membership can be set at bind time or changed with
+`NETLINK_ADD_MEMBERSHIP` and `NETLINK_DROP_MEMBERSHIP`. Route sockets
+subscribed to `RTNLGRP_LINK` receive kernel `RTM_NEWLINK` messages when
+administrative state, MTU or physical carrier changes. A full queue
+reports `ENOBUFS` so the listener can refresh its inventory. Subscribers
+to `RTNLGRP_IPV6_IFADDR` receive `RTM_NEWADDR` when an IPv6 address
+becomes usable after duplicate-address detection or changes flags or
+lifetimes. `RTM_DELADDR` reports explicit removal and expiry.
+`RTNLGRP_IPV4_IFADDR` reports additions, lifetime and flag updates, and
+removals. IPv4 events carry the same address fields as a dump. IPv6 route
+notifications still need support. Subscribers to
+`RTNLGRP_IPV4_ROUTE` receive `RTM_NEWROUTE` and `RTM_DELROUTE` for main-table
+routes added or removed through configuration or address and link changes.
+`SIOCETHTOOL` returns the
+bound Ethernet driver and PCI address with `ETHTOOL_GDRVINFO` and
+reports link state with `ETHTOOL_GLINK`.
+
+NetworkManager activates Ethernet with DHCPv4 and IPv6 router discovery in installed guests. Wi-Fi and the Plasma applet still need validation.
+
+The route test also checks discovery, the missing-family error, multipart
+completion, port reuse across protocols, and kernel credentials. Run the
+discovery checks on Linux with `make build/netlink-native` followed by
+`build/netlink-native --generic-only`. In QEMU it also checks link
+changes, rejection of an invalid MTU, orderly multicast delivery after
+overflow, driver identity and carrier state before and after QMP
+restores both links.
+
+## Device discovery
+
+Network interfaces have entries under `/sys/class/net`. Ethernet entries
+point to the interface under its PCI device. They publish the same
+interface index and PCI location reported by socket queries. Loopback
+appears under `/sys/devices/virtual/net`.
+
+The kernel announces network interfaces on the kernel device-event
+group. A privileged coldplug request to the interface's `uevent` file
+repeats the add event. Its properties include the interface name and
+index. The installed udev startup triggers network discovery alongside
+input discovery, so the network manager can process devices present
+before userspace starts.
 
 ## Verification
 

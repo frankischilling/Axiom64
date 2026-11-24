@@ -321,7 +321,9 @@ suspend state. Absolute realtime timers use the RTC-derived clock. Relative
 timers use elapsed time. Wake-alarm clock creation returns `EPERM` on the
 current platform. The wall clock has a fixed offset, so realtime clock steps
 cannot cancel an armed timer on this platform.
-Timers use the kernel clock's 10 ms resolution.
+Elapsed timers use the monotonic counter's resolution. A blocked reader can
+wake on the next scheduler interrupt. Absolute realtime timers use the
+calendar clock's 10 ms resolution.
 
 Reads return one 64-bit expiration count and consume it before copying, even
 when a later user page faults. A partial copy returns the number of bytes
